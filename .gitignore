@@ -1,0 +1,20 @@
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 运行时目录（Node / Python / dsh / 日志 / 凭据等，全部为下载或生成的临时数据）
+runtime/
+
+# PyInstaller 打包产物
+build/
+dist/
+*.spec
+
+# 打包好的可执行文件（可自行用 build_exe.bat 重新生成）
+DSH_Launcher.exe
+
+# 系统文件
+Thumbs.db
+Desktop.ini
+.DS_Store

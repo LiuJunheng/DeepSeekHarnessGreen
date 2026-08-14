@@ -1,0 +1,59 @@
+@echo off
+setlocal
+title DSH Launcher - Build EXE
+
+rem Build a single-file DSH_Launcher.exe using PyInstaller.
+rem PyInstaller is installed locally under runtime\pyinstaller (never touches
+rem system Python nor C drive). The final exe is copied to the project root,
+rem next to runtime\, so it can find node/dsh/home on first run.
+
+cd /d "%~dp0"
+
+rem 1. Find Python: bundled portable first, then system Python
+set "PYTHON_CMD="
+if exist "%~dp0runtime\python\python.exe" set "PYTHON_CMD=%~dp0runtime\python\python.exe"
+if not defined PYTHON_CMD (if exist "%~dp0runtime\python\python\python.exe" set "PYTHON_CMD=%~dp0runtime\python\python\python.exe")
+if not defined PYTHON_CMD (where py >nul 2>nul && set "PYTHON_CMD=py -3")
+if not defined PYTHON_CMD (where python >nul 2>nul && set "PYTHON_CMD=python")
+if not defined PYTHON_CMD (where python3 >nul 2>nul && set "PYTHON_CMD=python3")
+
+if not defined PYTHON_CMD (
+    echo [ERROR] Python is not found on this system.
+    pause
+    exit /b 1
+)
+echo [INFO] Using Python: %PYTHON_CMD%
+
+rem 2. Install PyInstaller locally (project-relative, China mirror first)
+set "PYINSTALLER_DIR=%~dp0runtime\pyinstaller"
+if not exist "%PYINSTALLER_DIR%" (
+    echo [INFO] Installing PyInstaller locally under runtime\pyinstaller ...
+    "%PYTHON_CMD%" -m pip install --target "%PYINSTALLER_DIR%" -i https://pypi.tuna.tsinghua.edu.cn/simple pyinstaller
+    if errorlevel 1 (
+        echo [ERROR] Failed to install PyInstaller. Check your network.
+        pause
+        exit /b 1
+    )
+)
+
+rem 3. Build single-file windowed exe (no UPX to reduce AV false positives)
+set "PYTHONPATH=%PYINSTALLER_DIR%;%PYTHONPATH%"
+echo [INFO] Building DSH_Launcher.exe ...
+"%PYTHON_CMD%" -m PyInstaller --onefile --windowed --noupx --name DSH_Launcher --distpath dist --workpath build --specpath build "%~dp0launcher.py"
+if errorlevel 1 (
+    echo [ERROR] Build failed. See messages above.
+    pause
+    exit /b 1
+)
+
+rem 4. Copy exe to project root (next to runtime\)
+copy /Y "dist\DSH_Launcher.exe" "DSH_Launcher.exe" >nul
+if exist "DSH_Launcher.exe" (
+    echo.
+    echo [OK] Build finished: DSH_Launcher.exe in project root.
+    echo     Double-click it, or move it alongside the runtime folder.
+) else (
+    echo [ERROR] Copy exe failed.
+)
+pause
+endlocal
