@@ -331,13 +331,10 @@ class Launcher:
             with tarfile.open(archive_path, "r:gz") as tar_handle:
                 tar_handle.extractall(target_dir)
 
-    def prepare_dsh(self):
-        """确保 dsh 已本地安装, 缺失则自动 npm install"""
-        if self.dsh_installed():
-            self.log("dsh 已就绪: %s" % os.path.join(DSH_DIR, DSH_BIN_JS))
-            return True
-
-        self.log("未检测到 dsh, 开始自动安装 %s ..." % self.config["dsh_package"])
+    def install_dsh(self):
+        """执行 dsh 的 npm 安装 (仅负责安装, 不判断是否已存在)
+        返回 True 表示安装成功; 供 prepare_dsh 首次安装与 update_dsh 更新时复用"""
+        self.log("开始安装 %s ..." % self.config["dsh_package"])
         os.makedirs(DSH_DIR, exist_ok=True)
         self.ensure_runtime_dirs()
 
@@ -382,6 +379,84 @@ class Launcher:
 
         self.log("dsh 安装成功 (版本: %s)" % self.dsh_version())
         return True
+
+    def prepare_dsh(self, force=False):
+        """确保 dsh 已本地安装, 缺失则自动 npm install
+        参数 force: True 时即使已安装也强制重装 (用于「更新」场景)"""
+        if not force and self.dsh_installed():
+            self.log("dsh 已就绪: %s" % os.path.join(DSH_DIR, DSH_BIN_JS))
+            return True
+        if force:
+            self.log("检测到强制更新, 开始重装 dsh ...")
+        else:
+            self.log("未检测到 dsh, 开始自动安装 %s ..." % self.config["dsh_package"])
+        return self.install_dsh()
+
+    def dsh_latest_version(self):
+        """查询 npm 上 @deepseek-ai/dsh 的最新版本号 (只读, 不改动本地)
+        查询失败返回 None"""
+        npm_cli = self.find_npm_cli()
+        node_exe = self.find_node_exe()
+        if npm_cli is None or node_exe is None:
+            self.log("未找到便携 Node, 无法查询最新版本")
+            return None
+        command = [node_exe, npm_cli, "view", self.config["dsh_package"], "version"]
+        # 根据镜像配置附加 registry 参数 (与安装一致)
+        mirror, is_auto = self.resolve_mirror()
+        if not is_auto:
+            command.append("--registry=%s" % NPM_REGISTRY[mirror])
+        env = self.build_env()
+        try:
+            self.log("正在查询 dsh 最新版本 ...")
+            result = subprocess.run(command, cwd=DSH_DIR, env=env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, encoding="utf-8", errors="replace",
+                                    timeout=60)
+            latest = (result.stdout or "").strip().splitlines()[-1].strip()
+            if latest and result.returncode == 0:
+                self.log("npm 上最新版本: %s" % latest)
+                return latest
+            self.log("查询失败, npm 输出: %s" % (result.stdout or result.stderr or ""))
+            return None
+        except Exception as error:
+            self.log("查询最新版本失败: %s" % error)
+            return None
+
+    def backup_dsh(self):
+        """把当前已安装的 dsh 目录备份到 runtime/dsh-backup-<版本> 下
+        返回备份目录绝对路径; 若当前未安装 dsh 返回 None"""
+        if not self.dsh_installed():
+            return None
+        version = self.dsh_version()
+        backup_dir = os.path.join(RUNTIME_DIR, "dsh-backup-%s" % version)
+        if os.path.exists(backup_dir):
+            backup_dir = os.path.join(
+                RUNTIME_DIR, "dsh-backup-%s-%s" % (version,
+                                                   time.strftime("%Y%m%d%H%M%S")))
+        self.log("正在备份旧版本 dsh (%s) ..." % version)
+        try:
+            shutil.copytree(DSH_DIR, backup_dir)
+            self.log("备份完成: %s" % backup_dir)
+            return backup_dir
+        except Exception as error:
+            self.log("备份失败: %s" % error)
+            return None
+
+    def update_dsh(self):
+        """更新 dsh 到最新版: 先备份旧版, 再强制重装最新版
+        返回更新后的版本号; 失败抛出异常"""
+        latest = self.dsh_latest_version()
+        if latest is None:
+            raise RuntimeError("无法获取最新版本号, 更新已取消")
+        self.log("当前版本: %s, 将更新到: %s" % (self.dsh_version(), latest))
+        backup_dir = self.backup_dsh()
+        if backup_dir is None:
+            raise RuntimeError("备份旧版本失败, 已取消更新 (避免数据丢失)")
+        # 备份成功后, 强制重装最新版 (prepare_dsh 的 force 会跳过已存在检查)
+        self.prepare_dsh(force=True)
+        self.log("更新完成, 当前版本: %s" % self.dsh_version())
+        self.log("旧版本备份在: %s (可手动删除)" % backup_dir)
+        return self.dsh_version()
 
     def dsh_version(self):
         """读取已安装 dsh 的版本号"""
@@ -680,6 +755,7 @@ def run_gui():
         install_btn.config(state="normal" if not server_running and not is_busy[0] else "disabled")
         start_btn.config(state="normal" if env_ready and not server_running and not is_busy[0] else "disabled")
         stop_btn.config(state="normal" if server_running and not is_busy[0] else "disabled")
+        update_btn.config(state="normal" if not server_running and not is_busy[0] else "disabled")
 
     # ---------- 状态栏 (顶部) ----------
     status_frame = ttk.Frame(root)
@@ -706,7 +782,7 @@ def run_gui():
         """设置忙碌状态, 禁用/启用按钮"""
         is_busy[0] = busy
         # 忙碌时所有操作按钮都禁用, 仅刷新状态可用
-        for btn in (install_btn, start_btn, stop_btn):
+        for btn in (install_btn, start_btn, stop_btn, update_btn):
             btn.config(state="disabled" if busy else "normal")
         if not busy:
             refresh_status()   # 恢复后重新刷新按钮状态
@@ -767,7 +843,64 @@ def run_gui():
         """在浏览器中打开 dsh 界面"""
         app.open_ui()
 
-    # 五个按钮: 安装环境 / 启动服务 / 停止服务 / 打开界面 / 刷新状态
+    def on_check_update():
+        """检查 dsh 是否有新版本, 有则弹窗让用户选择 更新 / 不更新"""
+        if is_busy[0]:
+            return
+        # 环境未就绪时先提示 (查询需要便携 Node + 已安装 dsh)
+        if not app.dsh_installed():
+            messagebox.showinfo("检查更新", "当前尚未安装 dsh, 请先点击「安装环境」。")
+            return
+        set_busy(True)
+        status_text.set("正在检查更新 ...")
+        status_indicator.itemconfig(dot, fill="#f59e0b")
+        append_log("--- 开始检查 dsh 更新 ---")
+        def worker():
+            try:
+                current_version = app.dsh_version()
+                latest_version = app.dsh_latest_version()
+                if latest_version is None:
+                    root.after(0, lambda: messagebox.showerror(
+                        "检查更新", "无法获取最新版本号, 请检查网络后重试。"))
+                elif latest_version == current_version:
+                    root.after(0, lambda: messagebox.showinfo(
+                        "检查更新", "已是最新版本: %s" % current_version))
+                else:
+                    root.after(0, lambda: ask_update(current_version, latest_version))
+            finally:
+                root.after(0, lambda: set_busy(False))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def ask_update(current_version, latest_version):
+        """发现新版本时弹出确认框, 让用户选择 更新 / 不更新
+        更新前会自动备份当前版本到 runtime/dsh-backup-<版本>"""
+        choose = messagebox.askyesno(
+            "发现新版本",
+            "当前版本: %s\n最新版本: %s\n\n是否立即更新?\n\n"
+            "更新前会自动备份当前版本到 runtime/dsh-backup-<版本>,\n"
+            "旧版本备份不会自动删除, 可随时手动清理。" % (current_version, latest_version),
+            icon="question")
+        if not choose:
+            append_log("用户选择暂不更新")
+            return
+        # 用户确认更新, 后台执行 (备份 + 重装)
+        set_busy(True)
+        status_text.set("正在更新 dsh ...")
+        status_indicator.itemconfig(dot, fill="#f59e0b")
+        append_log("--- 开始更新 dsh ---")
+        def update_worker():
+            try:
+                new_version = app.update_dsh()
+                root.after(0, lambda: messagebox.showinfo(
+                    "更新完成", "dsh 已更新到版本: %s\n\n"
+                    "旧版本已备份, 如需回退或清理请查看 runtime 目录。" % new_version))
+            except Exception as error:
+                root.after(0, lambda: messagebox.showerror("更新失败", str(error)))
+            finally:
+                root.after(0, lambda: set_busy(False))
+        threading.Thread(target=update_worker, daemon=True).start()
+
+    # 六个按钮: 安装环境 / 启动服务 / 停止服务 / 打开界面 / 检查更新 / 刷新状态
     install_btn = ttk.Button(button_frame, text="安装环境", command=on_install)
     install_btn.pack(side="left", padx=(0, 8))
 
@@ -778,6 +911,10 @@ def run_gui():
     stop_btn.pack(side="left", padx=8)
 
     ttk.Button(button_frame, text="打开界面", command=on_open).pack(side="left", padx=8)
+
+    update_btn = ttk.Button(button_frame, text="检查更新", command=on_check_update)
+    update_btn.pack(side="left", padx=8)
+
     ttk.Button(button_frame, text="刷新状态", command=refresh_status).pack(side="left", padx=8)
 
     # 初始刷新状态

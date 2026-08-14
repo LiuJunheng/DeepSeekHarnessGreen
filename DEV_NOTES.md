@@ -9,19 +9,21 @@
 2. 形态选型：用户选择 **Python GUI 启动器**（tkinter），配套 `.bat` 一键入口
 3. 网络：用户选择 **镜像自动检测**（国内优先、失败回退官方）
 4. 所有运行时数据（Node、dsh、会话）放在程序目录内，**绿色便携**，可整目录拷走
+5. dsh 官方会持续发版，需要**检查更新**能力：GUI「检查更新」按钮 → 查询 npm 最新版 → 弹窗让用户选择更新/不更新 → 更新前**自动备份旧版本**到 `runtime/dsh-backup-<版本>`，不覆盖，备份由用户手动管理是否删除
 
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
 |------|------|
 | 依赖 | 仅 Python 标准库（tkinter / urllib / subprocess / zipfile / tarfile / webbrowser / socket），零第三方依赖 |
 | 便携 Node | 自动下载 `node-v22.20.0` 到 `runtime/node`；国内 `registry.npmmirror.com/-/binary/node/...`，官方 `nodejs.org/dist/...`；zip（win）或 tar.gz（linux） |
-| dsh 安装 | 优先 `node.exe npm-cli.js install --prefix runtime/dsh @deepseek-ai/dsh`（用便携 Node 自带 npm），按镜像附 `--registry` |
+| dsh 安装 | 优先 `node.exe npm-cli.js install --prefix runtime/dsh @deepseek-ai/dsh`（用便携 Node 自带 npm），按镜像附 `--registry`；`install_dsh()` 只负责安装，`prepare_dsh(force)` 负责"缺失则装/强制重装" |
+| dsh 更新 | `dsh_latest_version()` 用 `npm view @deepseek-ai/dsh version` 只读查最新版；`backup_dsh()` 把旧版拷到 `runtime/dsh-backup-<版本>`（同名加时间戳后缀）；`update_dsh()` = 查询→备份→强制重装，备份失败即中止避免数据丢失 |
 | dsh 启动 | 直接调 `node <dsh>/node_modules/@deepseek-ai/dsh/lib/bin.js web --port 3080` |
 | 数据隔离 | 环境变量 `DSH_HOME=runtime/dsh-home`，会话/配置/存储全部落在程序目录 |
 | 绿色便携 | `build_env()` 把 npm 缓存/用户配置、pnpm home/store、TEMP/TMP 全部重定向到本地 `runtime/` 下（见下） |
 | 就绪检测 | 后台线程 socket 轮询端口，就绪后 `webbrowser.open` |
 | 进程管理 | Windows 下 `CREATE_NO_WINDOW` 隐藏服务控制台；PID 写 `runtime/server.pid` 供独立 `--stop` 使用；**stdin 用 `PIPE` 保持打开**（否则 dsh 读到 EOF 会退出，见避坑 #12）；`watch_server` 线程监听异常退出并记日志 |
-| 界面 | tkinter：状态栏 + 启动/停止/打开界面 + 设置(镜像/端口) + 运行日志框；关窗自动停服务 |
+| 界面 | tkinter：状态栏 + 安装/启动/停止/打开界面/检查更新/刷新状态 + 设置(镜像/端口) + 运行日志框；关窗自动停服务 |
 
 ### 绿色便携的环境变量重定向（build_env）
 | 环境变量 | 本地落点 | 作用 |
@@ -87,6 +89,13 @@
     - **按钮联动**：安装→启动→停止按状态自动可用/禁用（如服务运行中自动禁用安装/启动、仅停止/打开可用）。
     - **状态检测超时**：`is_server_running()` 里 Windows 的 `tasklist` 调用加 `timeout=5`，避免刷新状态时界面卡死。
     - **避坑**：闭包里先引用后定义（`refresh_status` 引用后续创建的 `install_btn` 等）没问题，只要首次调用发生在所有按钮创建之后即可；此处首调放在按钮创建后的 `refresh_status()`。
+22. **【检查更新】dsh 升级的备份优先策略**：
+    - **为什么原来"装了就永远最新"是错觉**：旧逻辑 `prepare_dsh()` 只在 dsh 缺失时安装，已安装就被判"就绪"跳过，官方发新版后本地不会自动变新。同步的唯一途径是手动删 `runtime/dsh`。
+    - **查询只读不改**：`dsh_latest_version()` 用 `npm view @deepseek-ai/dsh version`（复用 find_npm_cli + build_env + registry 镜像参数，与安装同源），只查不改，失败返回 `None` 而非抛错。
+    - **备份优先、失败即中止**：`update_dsh()` 顺序 = 查询最新版 → `backup_dsh()` 把旧版 `shutil.copytree` 到 `runtime/dsh-backup-<版本>`（同名备份自动加时间戳后缀避免覆盖）→ 备份成功后才 `prepare_dsh(force=True)` 强制重装。备份失败直接中止，防止"旧版被覆盖又没装上"的数据丢失。
+    - **防误删**：备份目录不做自动清理，是否删除交给用户手动管理（GUI 弹窗里已明确提示备份位置）。
+    - **代码复用**：把原 `prepare_dsh` 的安装主体抽成 `install_dsh()`，`prepare_dsh(force)` 只负责"缺失则装 / 强制重装"分支，首装与更新共用同一安装代码，避免双份逻辑漂移。
+    - **UI 防重入**：「检查更新」与「更新执行」均走 `set_busy` 互斥；弹窗确认（`askyesno`）在查询线程结束后用 `root.after(0, ...)` 回主线程弹出，避免跨线程弹窗。
 
 ## 五、Windows 实机测试记录（2026-08-14，绿色便携验证）
 ### 测试环境
