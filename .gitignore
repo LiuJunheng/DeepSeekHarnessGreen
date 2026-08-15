@@ -16,6 +16,7 @@ DSH_Launcher.exe
 
 # 分发 zip（发到 GitHub Release 用，不提交进仓库）
 DSH_Launcher_*.zip
+DSH_Skill_*.zip
 
 # 系统文件
 Thumbs.db
