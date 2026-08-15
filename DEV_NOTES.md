@@ -197,7 +197,16 @@
 - 后续可把 auto 镜像的"国内优先、失败回退"逻辑扩展到 npm install 阶段（见避坑 #15）
 - 独立 stop 时守护进程的"意外退出"提示为已知中性文案（避坑 #13），若体验要求可进一步优化为"端口关闭即视为主动停止"
 
-## 六、后续建议
+## 六、避坑（续）
+
+32. **【PowerShell】Invoke-RestMethod 发中文到 GitHub API 会变问号（编码坑，2026-08-15）**：
+    - **现象**：`ConvertTo-Json` + `Invoke-RestMethod` 发送含中文的 body 给 GitHub API，GitHub 收到后所有中文变成 `?`。
+    - **根因**：PowerShell 的 `Invoke-RestMethod` 在 `-Body` 传 string 时，默认按本地 ANSI 编码（Windows 中文系统 = GBK）序列化，而 GitHub API 按 UTF-8 解析，GBK 字节到 UTF-8 里非 ASCII 字符全部变 `?`。
+    - **修复**：不用 `-Body $jsonString`，改成 `$bytes = [System.Text.Encoding]::UTF8.GetBytes($jsonString)` + `-Body $bytes` + `-ContentType "application/json; charset=utf-8"`，强制 UTF-8 字节发送。
+    - **验证**：PATCH 修复后 body/name 中文正常。
+    - **教训**：以后任何 PowerShell 调 REST API 涉及中文，一律走 `UTF8.GetBytes` 字节流，不要直接传 string。`ConvertTo-Json` 生成的 string 本身是 UTF-16 在内存里，但 `-Body` 参数会丢给 `Content-Type` 的 charset 做编码转换，不传 charset 则用默认 ANSI。
+
+## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验
 - Windows 实机验证：建议在目标 Windows 机器上跑一遍 start.bat 首启全流程（沙箱仅能验证 Linux 逻辑）
