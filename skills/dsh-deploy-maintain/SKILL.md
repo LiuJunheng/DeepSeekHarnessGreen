@@ -6,7 +6,7 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
 # DeepSeek Harness 绿色便携版 · 部署维护与插件开发
 
 > 版本日期：2026-08-15
-> 本 Skill 沉淀自 `DeepSeekHarnessLauncher` 项目（Python tkinter 一键启动器 + 内置 `dsh-archive-purge` / `dsh-file-browser` / `dsh-session-rewind` 插件）的全过程实测经验，含 42 条避坑记录。适用于：把 dsh 封装成"双击即用、绿色便携、可整目录拷走"的形态，以及开发 DSH 插件（宿主端路由 + WebUI 客户端入口）。
+> 本 Skill 沉淀自 `DeepSeekHarnessLauncher` 项目（Python tkinter 一键启动器 + 内置 `dsh-archive-purge` / `dsh-file-browser` / `dsh-session-rewind` 插件）的全过程实测经验，含 46 条避坑记录。适用于：把 dsh 封装成"双击即用、绿色便携、可整目录拷走"的形态，以及开发 DSH 插件（宿主端路由 + WebUI 客户端入口）。
 
 ## 一、适用场景
 
@@ -133,17 +133,21 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
 
 **安全解压**：`_safe_extract_zip()` 逐成员 `os.path.normpath` 检查，拒绝绝对路径与 `..` 前缀（防 zip-slip 路径穿越）；`_detect_zip_content_root()` 兼容「zip 是整文件夹」与「zip 内直接是文件」两种形态——解压后仅一个顶层目录且含 `launcher.py`/`start.bat`/`DSH_Launcher.exe` 标志文件则判定为外层文件夹，返回内层作为内容根。
 
+> **zip 目录结构坑（2026-08-16，需求 #21，绿色版 v1.0.3 实测）**：`Compress-Archive -Path launcher.py, ..., "plugins", "skills"` 必须传**目录名** `"plugins"` / `"skills"`（zip 内保留 `plugins/`、`skills/` 前缀）。**不能**传 `"plugins\dsh-archive-purge"` 这种子路径——PowerShell 会把该目录直接打在 zip 根、**丢掉 `plugins/` 前缀**，更新覆盖时 `robocopy` 把插件错位拷到程序根目录。**双保险**：① 发布侧打包命令传目录名（README 已修正）；② 更新侧 `_normalize_update_structure()` 在 `prepare_green_update()` 解压后把 content_root 下错位的 `dsh-archive-purge`/`dsh-file-browser`/`dsh-session-rewind`/`dsh-deploy-maintain` 归位到 `plugins/` / `skills/`（正确位置已存在则跳过，以 zip 内正确结构为准），且 update_apply.bat 第 2.5 步**清理程序根目录的错位残留**（只删这 4 个已知旧目录，不碰用户数据/config/runtime）。打包后建议 `tar -tf xxx.zip` 确认 zip 根下有 `plugins/`、`skills/` 文件夹。
+
 **覆盖安装（update_apply.bat，分离进程执行）**：启动器自身文件被锁定无法自替换 → `launch_update_script()` 用 `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` 把 bat 变成**独立进程**，启动器随即退出，bat 存活完成覆盖后 `start` 重启新版。bat 流程：① 等文件锁释放 → ② 备份旧文件到 `runtime/update/backup/` → ③ `robocopy /E /XF config.json /XD runtime .git` 覆盖 → ④ 重启新版。
 
 **update_apply.bat 关键避坑（DETACHED 模式实测）**：
 - **不轮询 PID，改轮询 exe 文件锁**：启动器退出后 PID 被 Windows 立即复用，`tasklist` 会永远匹配上新进程 → 死循环。改用 `ren DSH_Launcher.exe .DSH_Launcher.exe.upd` 试探文件锁，能改名 = 锁已释放，随即改回原名继续；运行 .py 形态时无锁可轮询，直接短暂睡眠。
-- **`timeout` 命令在分离进程里失败**（需要控制台）→ 用 `ping -n <秒数+1> 127.0.0.1 >nul` 做无控制台睡眠。
+- **分离进程里别用 `ping`/`timeout`/`choice` 做睡眠延迟** → 用 `wscript.exe "%~dp0sleep_helper.vbs" <毫秒>`（`sleep_helper.vbs` 内容 `WScript.Sleep CLng(WScript.Arguments(0))`，由 `_write_update_bat()` 在 `runtime/update/` 同目录生成）。原因：`timeout`/`choice` 需要控制台、stdin 被重定向(DEVNULL)时直接报错退出；分离进程（无控制台）里调 `ping.exe` 会让 Windows 为它**新建控制台窗口逐次闪烁**，且若系统 ping.exe 损坏（启动报 0xc0000142）还会反复弹错误框把安装卡在等待循环。`wscript.exe` 是 GUI 子系统（不新建控制台窗口）、Windows 全自带、`WScript.Sleep` 精确。
 - **`goto` 不能写在括号块内**（`if (...)` 里用 goto 会解析错误）→ 全部用顶层标签 + 顺序跳转。
 - **`start` 目标文件不存在会弹错误框并卡死脚本** → 先 `if exist` 判断再 `start`。
 - bat 全文**纯 ASCII + CRLF**（写文件用 `encoding="ascii", newline=""`，行以 `\r\n` 连接），避免 Windows cmd 编码问题。
 
 **发布 Release（含中文正文）的编码坑**：用 GitHub API（PowerShell）创建/更新 Release 时，即使 `ConvertTo-Json` + `[System.Text.Encoding]::UTF8.GetBytes()` + `-ContentType "application/json; charset=utf-8"`，正文中文仍可能全变 `?`——因为 **Windows PowerShell 5.1 会把"无 BOM 的 UTF-8 .ps1"按系统 ANSI（GBK）读取**，脚本里写的中文字符串字面量在内存里已乱码，后面怎么编码都救不回。**正确做法**：发布脚本保持**纯 ASCII**（不写一个中文字符），中文正文单独放一个 UTF-8 文本文件，脚本里 `[System.IO.File]::ReadAllText(路径, [System.Text.Encoding]::UTF8)` 显式按 UTF-8 读入再发送。校验也别用 PowerShell 的 `-match "中文"`（同样会被 ANSI 读乱），导出 body 到 UTF-8 文件后用 python 检查是否含关键中文且无 U+FFFD/`?`；资产下载 URL 用 `curl.exe -s -I -L` 验证 200。**本经验已同步至 `DEV_NOTES.md` 避坑 #43。**
 > **追加坑（v1.0.3 发布，避坑 #46）**：`powershell -File script.ps1` 执行时，`$str | git credential fill` 这类"字符串管道到原生命令"会**静默失效**（交互式 PowerShell 正常，`-File` 模式报 `missing protocol field`）。取 git 凭据别用这条管道——先在交互终端把 token 存 `$env:GH_TOKEN`，脚本 `if ($env:GH_TOKEN) { $token = $env:GH_TOKEN.Trim() }` 读取（原逻辑作兜底）最稳。
+>
+> **追加坑（v1.0.3 实测，避坑 #47）**：分离进程里千万别用 `ping -n` 做等待延迟——实测下载没问题、退出启动器后 `update_apply.bat` 等待循环**不断弹 ping 窗口一闪一退**，且弹了几次后报 **"ping.exe application error（0xc0000142 = DLL 初始化失败）"**，安装永远不完成（系统 ping.exe 损坏 + 无控制台进程调控制台程序会新建窗口闪烁）。**全部延迟改用 `wscript.exe "%~dp0sleep_helper.vbs" <毫秒>`**（GUI 子系统不闪窗、Windows 全自带），详见 DEV_NOTES 需求 #19 / 避坑 #46。
 
 ### 3.5 会话回退（dsh-session-rewind WebUI 插件，2026-08-15 加入内置）
 

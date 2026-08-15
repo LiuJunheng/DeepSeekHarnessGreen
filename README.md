@@ -137,8 +137,11 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 
 重新生成该 zip（在项目根目录 PowerShell 执行）：
 ```powershell
-Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, config.json, README.md, DEV_NOTES.md, .gitignore, "plugins\dsh-archive-purge", "plugins\dsh-session-rewind", "plugins\dsh-file-browser", "skills\dsh-deploy-maintain" -DestinationPath DSH_Launcher_GreenPortable_Online_<日期>.zip -CompressionLevel Optimal
+Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, config.json, README.md, DEV_NOTES.md, .gitignore, "plugins", "skills" -DestinationPath DSH_Launcher_GreenPortable_Online_<日期>.zip -CompressionLevel Optimal
 ```
+> **重要（zip 目录结构）**：`-Path` 里的插件/skill 必须传**目录名** `"plugins"` / `"skills"`（zip 内保留 `plugins/`、`skills/` 前缀）。**不能**传 `"plugins\dsh-archive-purge"` 这种子路径——`Compress-Archive` 会把该目录直接打在 zip 根、**丢掉 `plugins/` 前缀**，更新覆盖时会把插件错位拷到程序根目录（详见 DEV_NOTES 需求 #21）。打包后建议用 `tar -tf xxx.zip`（或资源管理器打开）确认 zip 根下有 `plugins/`、`skills/` 文件夹且 `launcher.py` 等文件。
+>
+> **（2026-08-16 补充）**：`skills/` 下若留有 `Skill-dsh-deploy-maintain.zip`（Skill 同步包），传 `"skills"` 目录名会把它一起塞进绿色 zip。打包前请先将其移出（如 `Move-Item skills\Skill-dsh-deploy-maintain.zip %TEMP%\`），打包后再移回，避免绿色 zip 内嵌套冗余的同步 zip。
 
 ## 五、插件管理
 
@@ -216,7 +219,7 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 ### 安全与回退
 - **不替换** `config.json`（你自定义的端口/镜像设置）与 `runtime/`（你的会话数据 / 已装环境）。
 - 覆盖前旧文件自动备份到 `runtime/update/backup/`，新版有问题可手动复制回根目录回退。
-- 分发 zip 命名约定：`DSH_Launcher_GreenPortable_Online_<日期>_v<版本>.zip`，Release tag 为 `v<版本>`（当前 `v1.0.3`）。
+- 分发 zip 命名约定：`DSH_Launcher_GreenPortable_Online_<日期>_v<版本>.zip`，Release tag 为 `v<版本>`（当前 `v1.0.4`）。
 - 内置插件源码随绿色版更新，但**已安装**到 `runtime/dsh-home/profiles/web` 的插件副本是 pnpm 拷贝，需到「插件管理」重新安装本地插件才生效。
 
 ## 八、内置 Python 与 exe 打包

@@ -34,8 +34,10 @@
 - [ ] 官方 API 查询失败降级国内镜像（`mirror.nju.edu.cn/github-release/<owner>/<repo>/latest`）
 - [ ] 下载后校验文件大小，不符即删并报错
 - [ ] zip 安全解压（逐成员 normpath 拒绝 `..`/绝对路径，防 zip-slip）+ 内容根目录检测（兼容带/不带外层文件夹）
+- [ ] zip 打包命令的 `-Path` 传**目录名** `"plugins"` / `"skills"`（zip 内保留前缀）；**不能**传 `"plugins\dsh-xxx"` 子路径（会把插件目录打在 zip 根、丢前缀，覆盖时错位拷到程序根目录）；打包后 `tar -tf` 确认 zip 根下有 `plugins/`、`skills/`
+- [ ] 更新侧 `_normalize_update_structure()` 解压后把错位的 `dsh-*` 插件/skill 目录归位到 `plugins/` / `skills/`（正确位置已存在则跳过）；update_apply.bat 第 2.5 步清理程序根目录的错位残留（只删已知旧目录）
 - [ ] 覆盖安装 bat 跳过 `config.json`（用户配置）与 `runtime/`、`.git`（用户数据/仓库）
-- [ ] update_apply.bat 用「exe 文件锁轮询」等待启动器退出（不轮询 PID，防 PID 复用死循环）；DETACHED 模式下用 `ping -n` 睡眠替代 `timeout`，`goto` 只用顶层标签，`start` 前加 `if exist` 判断
+- [ ] update_apply.bat 用「exe 文件锁轮询」等待启动器退出（不轮询 PID，防 PID 复用死循环）；DETACHED 模式下用 `wscript.exe "%~dp0sleep_helper.vbs" <毫秒>` 睡眠替代 `ping`/`timeout`/`choice`（后三者无控制台时失败，`ping` 会闪烁窗口且系统 ping.exe 损坏时报 0xc0000142），`goto` 只用顶层标签，`start` 前加 `if exist` 判断
 - [ ] bat 全文纯 ASCII + CRLF，避免 Windows cmd 编码问题
 - [ ] 旧文件备份到 `runtime/update/backup/`，供手动回退
 - [ ] 发布 Release 正文含中文时：发布脚本保持纯 ASCII，中文拆到独立 UTF-8 文件用 `[System.IO.File]::ReadAllText(路径, UTF8)` 显式读取（PS 5.1 会把无 BOM 的 UTF-8 .ps1 按 ANSI 读，正文中文变 `?`，见 DEV_NOTES 避坑 #43）；校验用 python 而非 PowerShell 中文 `-match`

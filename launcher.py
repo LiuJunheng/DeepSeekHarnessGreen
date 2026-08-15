@@ -148,8 +148,8 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # 发布流程: 打 tag v{GREEN_VERSION} + Release 资产 DSH_Launcher_GreenPortable_Online_<日期>_v<tag>.zip
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
-GREEN_VERSION = "1.0.3"                            # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
-GREEN_VERSION_DATE = "2026年08月15日"               # 绿色版版本日期
+GREEN_VERSION = "1.0.4"                            # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
+GREEN_VERSION_DATE = "2026年08月16日"               # 绿色版版本日期
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
 GREEN_RELEASE_MIRROR = ("https://mirror.nju.edu.cn/github-release/%s/latest"
@@ -721,9 +721,34 @@ class Launcher:
                     return candidate
         return extracted_dir
 
+    def _normalize_update_structure(self, content_root):
+        """修正旧版错误 zip 的目录结构 (2026-08-16, 需求 #21):
+        旧打包命令 Compress-Archive 传 "plugins\\dsh-xxx" 子路径, PowerShell 会把该目录
+        直接打在 zip 根、丢掉 plugins/ / skills/ 前缀, 导致更新覆盖时插件错位拷到程序根目录。
+        这里把 content_root 下"本应位于 plugins/ / skills/ 的已知目录"归位到正确位置,
+        使 robocopy 覆盖落点正确; 若正确位置已存在同名目录则跳过 (以 zip 内正确结构为准)"""
+        plugin_names = ("dsh-archive-purge", "dsh-file-browser", "dsh-session-rewind")
+        skill_names = ("dsh-deploy-maintain",)
+        for plugin_name in plugin_names:
+            misplaced_path = os.path.join(content_root, plugin_name)
+            correct_path = os.path.join(content_root, "plugins", plugin_name)
+            if os.path.isdir(misplaced_path) and not os.path.isdir(correct_path):
+                plugins_dir = os.path.join(content_root, "plugins")
+                os.makedirs(plugins_dir, exist_ok=True)
+                shutil.move(misplaced_path, correct_path)
+                self.log("归位错位插件目录: %s -> plugins\\%s" % (plugin_name, plugin_name))
+        for skill_name in skill_names:
+            misplaced_path = os.path.join(content_root, skill_name)
+            correct_path = os.path.join(content_root, "skills", skill_name)
+            if os.path.isdir(misplaced_path) and not os.path.isdir(correct_path):
+                skills_dir = os.path.join(content_root, "skills")
+                os.makedirs(skills_dir, exist_ok=True)
+                shutil.move(misplaced_path, correct_path)
+                self.log("归位错位 skill 目录: %s -> skills\\%s" % (skill_name, skill_name))
+
     def prepare_green_update(self, new_zip_path):
         """准备覆盖安装: 解压分发 zip 到 runtime/update/extracted, 检测内容根目录,
-        生成 update_apply.bat (由启动器在退出后执行覆盖)。
+        修正旧版错位目录结构, 生成 update_apply.bat (由启动器在退出后执行覆盖)。
         返回元组 (内容根目录, bat 路径); 失败抛异常"""
         update_dir = GREEN_UPDATE_DIR
         os.makedirs(update_dir, exist_ok=True)
@@ -737,6 +762,8 @@ class Launcher:
         # 2. 检测内容根目录 (兼容带/不带一层外层文件夹两种 zip 形态)
         content_root = self._detect_zip_content_root(extracted_dir)
         self.log("更新内容根目录: %s" % content_root)
+        # 2.5. 修正旧版错误 zip 的插件/skill 错位目录 (需求 #21)
+        self._normalize_update_structure(content_root)
         # 3. 生成覆盖安装脚本 (纯 ASCII + CRLF, 遵循 .bat 规范)
         bat_path = os.path.join(update_dir, "update_apply.bat")
         self._write_update_bat(bat_path, content_root)
@@ -746,7 +773,18 @@ class Launcher:
     def _write_update_bat(self, bat_path, content_root):
         """生成 update_apply.bat (纯 ASCII + CRLF, 避免 Windows cmd 编码问题)。
         脚本在启动器完全退出后执行: 等待进程退出 -> 备份旧文件 -> robocopy 覆盖 ->
-        跳过 config.json(用户配置) 与 runtime/(用户数据/已装环境) -> 重新启动新版"""
+        跳过 config.json(用户配置) 与 runtime/(用户数据/已装环境) -> 重新启动新版。
+
+        延迟统一用 wscript + sleep_helper.vbs 实现, 不用 ping/timeout/choice:
+        - timeout/choice 在 stdin 被重定向(DEVNULL)时直接报错退出, 根本睡不了;
+        - 分离进程(无控制台)里调用 ping.exe 这类控制台程序, Windows 会为它
+          新建一个控制台窗口, 逐次弹出闪烁; 且若系统 ping.exe 损坏(0xc0000142),
+          还会反复弹错误框, 把安装卡在等待循环里;
+        - wscript.exe 是 GUI 子系统(调用时不会新建控制台窗口)且 Windows 全自带,
+          WScript.Sleep 延迟精确, 不依赖任何可能损坏的外部 exe。"""
+        vbs_path = os.path.join(os.path.dirname(bat_path), "sleep_helper.vbs")
+        with open(vbs_path, "w", encoding="ascii", newline="") as vbs_handle:
+            vbs_handle.write("WScript.Sleep CLng(WScript.Arguments(0))\r\n")
         relaunch_flag = "bat" if not self._is_frozen() else "exe"
         bat_lines = [
             # (启动器 PID 由 launch_update_script 以命令行参数传入, 目前不再用于等待(见 step 1))
@@ -783,12 +821,15 @@ class Launcher:
             "ren \"%BASE_DIR%\\.DSH_Launcher.exe.upd\" \"%BASE_DIR%\\DSH_Launcher.exe\" 2>nul",
             "goto :after_wait",
             ":still_locked",
-            "rem (ping sleep: timeout needs a console and fails in detached mode)",
-            "ping -n 2 127.0.0.1 >nul",
+            "rem (sleep via wscript helper: ping/timeout/choice all fail in a",
+            "rem  detached no-console process with redirected stdin - ping would",
+            "rem  also flash console windows and error out if the system ping.exe",
+            "rem  is broken (0xc0000142).  wscript is GUI-subsystem: no window.)",
+            "wscript.exe \"%~dp0sleep_helper.vbs\" 1000",
             "goto :wait_unlock",
             ":script_sleep",
             "rem give the launcher a moment to exit and release handles",
-            "ping -n 4 127.0.0.1 >nul",
+            "wscript.exe \"%~dp0sleep_helper.vbs\" 2500",
             ":after_wait",
             "rem crash-safety: remove any leftover rename marker",
             "if exist \"%BASE_DIR%\\.DSH_Launcher.exe.upd\" del /q \"%BASE_DIR%\\.DSH_Launcher.exe.upd\"",
@@ -801,6 +842,16 @@ class Launcher:
             "if exist \"%BASE_DIR%\\start.bat\" copy /y \"%BASE_DIR%\\start.bat\" \"%BACKUP_DIR%\\start.bat\" >nul 2>&1",
             "if exist \"%BASE_DIR%\\stop.bat\" copy /y \"%BASE_DIR%\\stop.bat\" \"%BACKUP_DIR%\\stop.bat\" >nul 2>&1",
             "if exist \"%BASE_DIR%\\config.json\" copy /y \"%BASE_DIR%\\config.json\" \"%BACKUP_DIR%\\config.json\" >nul 2>&1",
+            "",
+            "rem ---- 2.5. remove legacy misplaced plugin/skill dirs at program root ----",
+            "rem (old release zips packed the plugin folders at the zip root without the",
+            "rem  plugins/ or skills/ prefix, so robocopy dropped them at the program root.",
+            "rem  Correct location is under plugins/ and skills/ - clean these leftovers up.",
+            "rem  Only touches these known legacy dirs, never user data/config.)",
+            "if exist \"%BASE_DIR%\\dsh-archive-purge\" rmdir /s /q \"%BASE_DIR%\\dsh-archive-purge\"",
+            "if exist \"%BASE_DIR%\\dsh-file-browser\" rmdir /s /q \"%BASE_DIR%\\dsh-file-browser\"",
+            "if exist \"%BASE_DIR%\\dsh-session-rewind\" rmdir /s /q \"%BASE_DIR%\\dsh-session-rewind\"",
+            "if exist \"%BASE_DIR%\\dsh-deploy-maintain\" rmdir /s /q \"%BASE_DIR%\\dsh-deploy-maintain\"",
             "",
             "rem ---- 3. overlay: copy new content into program root ----",
             "rem     skip config.json (keep user config) and runtime/.git (user data/repo)",

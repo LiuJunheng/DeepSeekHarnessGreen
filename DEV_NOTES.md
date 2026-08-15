@@ -44,10 +44,19 @@
     - 验证：GET WebUI 根页从 `__DSH_BOOT__.entries` 拿 `dsh-archive-purge` 的 bundle URL，抓 bundle 确认**新文案在、旧文案（清空全部/删除所选/永久删除已归档…）已消失**——客户端 bundle 按请求生成，强制刷新页面即生效，无需重启服务。
 
 18. **内置插件 dsh-session-rewind（会话回退，另一 AI 开发 2026-08-15）**：解决 dsh 会话被工具运行时失效（`Cannot read properties of undefined (reading 'prepare')`）**永久毒化**的问题——崩溃回合在日志里留下孤儿 `tool_calls`（有调用无结果），之后每轮都被 DeepSeek API 400 拒绝，且 DSH 0.1.0-rc.6 没有"删失败消息"的界面功能。插件在 WebUI 设置页新增「会话回退」：列出会话 →「分析」逐回合（问题/步骤/工具调用/错误码/是否完成）→ 在任意**已完成**回合点「回退到此」走官方 `session.fork`（`{sessionId, atSeq}`）派生干净续接会话并自动打开；原会话保留。关键设计：**"派生新会话"而非"原地删消息"**——服务运行时会话由持久化层内存缓存，原地改写磁盘日志会被内存覆盖或产生 seq 断裂；`session.fork` 与官方 UI"分支"同源（官方只暴露末位回合，本插件放开到任意回合）。宿主端 `lib/index.js` 直接按磁盘扫描 `DSH_HOME/sessions/**/session.jsonl.zstd`（zstd 多帧），用官方 `@deepseek-ai/dsh-session` 的 `decodeStorageRecord` 展开事件（对 chunk-run 打包行布局无关）；接口 `GET /__dsh/session-rewind/list`、`GET /__dsh/session-rewind/inspect?id=<ID>`，均要求自定义头 `X-DSH-Plugin-Rewind: 1` 防 CSRF。配套 `tools/`：`rewind-session.mjs`（服务停机时离线原地截断，自动备份）、`apply-agentloop-guard.mjs`（给 dsh-agent-loop 工具派发入口加存在性检查，幂等）。安装：`--install-plugin plugins\dsh-session-rewind`，依赖 `@deepseek-ai/dsh-session@0.1.0-rc.6`。相关讨论 DeepSeek Harness #1959 / #1974。
-
-19. **发布 v1.0.3（2026-08-15）**：会话管理与会话回退两大功能齐活后打包发布。内容：`GREEN_VERSION` 升至 `"1.0.3"`（`GREEN_VERSION_DATE = "2026年08月15日"`）、README 更新（目录结构/CLI `--restore-session`/新增「配套：内置会话回退 WebUI 插件」章节/最新下载 tag v1.0.3）、DEV_NOTES 记录需求 #18、Skill 同步（SKILL.md 新增 3.5 会话回退 + 速查表一行 + deployment-checklist 会话回退项）。发布流程：重建 `DSH_Launcher.exe`（build_exe.bat）→ 打包 `DSH_Launcher_GreenPortable_Online_20260815_v1.0.3.zip`（含 plugins/dsh-session-rewind）与 `DSH_Skill_dsh-deploy-maintain_20260815.zip` → 提交（`8418084`）→ push master + tag `v1.0.3` → GitHub API 建 Release 上传两个 zip（正文走避坑 #43 的 UTF-8 文件方案，脚本纯 ASCII）→ 验证正文中文无乱码（python 断言含"会话回退/恢复"、无 U+FFFD/乱码 `?`）+ 资产下载 200。**本次发布踩到新坑见避坑 #46（`powershell -File` 下字符串管道到原生命令失效）。**
-
-20. **【v1.0.3 自更新 BUG】本地版本号恒为旧值，反复提示更新（2026-08-16 修复）**：发布 v1.0.3 后，本地启动器「检查绿色版更新」仍显示自己是 **1.0.1** 并提示可更新。根因：`DEFAULT_CONFIG` 里残留 `"green_version": "1.0.1"` 默认值（只改了 `GREEN_VERSION` 常量到 1.0.3），而 `green_local_version()` 是 **config 优先**（`self.config.get("green_version")`），config 加载时 `dict(DEFAULT_CONFIG)` + `update(saved)` 合并，用户 config.json 没写 green_version 就落回默认值 1.0.1 → 版本比较 `1.0.3 > 1.0.1` 恒成立 → 永远提示更新（哪怕已装到 1.0.3 也不会停）。**修复**：① 从 `DEFAULT_CONFIG` 删除 `green_version`（消除"双来源不同步"陷阱，`GREEN_VERSION` 常量成为唯一版本来源）；② `green_local_version()` 改为**直接读原始 config.json** 判断是否显式覆盖（读原始文件不读合并默认值），无覆盖则返回 `GREEN_VERSION`。验证：config.json 无 green_version → 本地版本号 = 1.0.3，`1.0.3 > 1.0.3` = False → 不再提示。**发布教训：凡版本号相关的默认值不要散落在多处，单一来源 + 覆盖逻辑必须读原始配置文件；改 launcher.py 后要同步重打 exe + 绿色 zip 并替换 Release 资产（先删旧资产再传，否则 422）。**
+19. **update_apply.bat 延迟机制修复：ping → wscript + sleep_helper.vbs（2026-08-16）**：v1.0.3 自更新实测，覆盖脚本 `runtime/update/update_apply.bat` 的等待延迟用 `ping -n`，在**分离进程（无控制台、stdin 重定向 DEVNULL）**里逐次调用 `ping.exe` 会：
+   - **窗口闪烁**：分离进程无控制台，cmd 调用控制台程序 `ping.exe` 时 Windows 为它**新建一个控制台窗口**，等待循环里每 1 秒弹一个、闪一下就退；
+   - **安装卡死**：用户机器上系统 `ping.exe` 损坏（启动报 `0xc0000142` = DLL 初始化失败），每次弹错误框、永远睡不到 → 覆盖安装始终不完成；
+   - 补充：`timeout`/`choice` 在 stdin 被重定向（DEVNULL）时直接报错退出，根本睡不了（旧方案已踩过）。
+   修复：`_write_update_bat()` 在 `runtime/update/` 同目录生成 `sleep_helper.vbs`（内容 `WScript.Sleep CLng(WScript.Arguments(0))`），延迟统一改 `wscript.exe "%~dp0sleep_helper.vbs" <毫秒>`。`wscript.exe` 是 **GUI 子系统**（调用时不会新建控制台窗口，全程无闪窗）、Windows 全自带（不依赖可能损坏的外部 exe）、`WScript.Sleep` 延迟精确。详见避坑 #46。
+20. **版本号双来源不同步修复：GREEN_VERSION 常量为唯一来源（2026-08-16）**：v1.0.3 发布后发现本地启动器显示版本号恒为 1.0.1、反复提示更新——根因是 `DEFAULT_CONFIG` 残留 `"green_version": "1.0.1"` 默认值（发布时只改了 `GREEN_VERSION` 常量），而 `green_local_version()` 走 `config.get()` 合并默认值 → 本地恒显示 1.0.1。修复：
+   - `DEFAULT_CONFIG` 删除 `green_version` 默认值（`GREEN_VERSION` 常量成为**唯一来源**）；
+   - `green_local_version()` 改为**直接读原始 `config.json`**（不读合并默认值）判断用户是否显式覆盖。
+   教训：版本号默认值必须单点存放；改 `launcher.py` 后必须重打 exe + 绿色 zip 并替换 Release 资产（先删旧资产再传，否则 422）。提交 `ccc6bdb`。
+21. **绿色版 zip 目录结构修复：插件不得被丢到 plugins 外面（2026-08-16）**：用户发现自动更新解压覆盖后**4 个插件目录（dsh-archive-purge / dsh-file-browser / dsh-session-rewind / dsh-deploy-maintain）被覆盖到程序根目录、而非 `plugins/` / `skills/` 下**——覆盖落点错误。根因：**发布侧 `Compress-Archive -Path` 传了 `"plugins\dsh-archive-purge"` 这类子路径**，PowerShell 会把该目录**直接打在 zip 根、丢掉 `plugins/` 前缀**；解压后 `_detect_zip_content_root()` 把内层当内容根，`robocopy` 就把这些目录整体拷到程序根目录（更糟的是根目录的 `launcher.py` 等也可能被旧结构覆盖错位）。修复（双保险）：
+   - **① 发布侧（治本）**：README 的打包命令改为传**目录名** `"plugins"` / `"skills"`，zip 内保留前缀；打包后 `tar -tf` 确认 zip 根下有 `plugins/`、`skills/`。
+   - **② 更新侧（容错）**：`launcher.py` 新增 `_normalize_update_structure(content_root)`——解压后把内容根下错位的已知插件/skill 目录**归位**到 `plugins/` / `skills/`（正确位置已存在则跳过，以 zip 内正确结构为准）；`update_apply.bat` 新增**第 2.5 步**清理程序根目录的错位残留（`if exist ... rmdir /s /q`，只删这 4 个已知旧目录，绝不碰用户数据/config/runtime）。
+   - **验证**：`runtime/tmp/test_normalize_update_structure.py` 3 个用例全过（旧版错位归位 / 新版正确结构不动 / 新旧混合正确位置优先）。详见避坑 #47。
 
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
@@ -331,12 +340,18 @@
     - **排查顺序（第三方"装了没完全生效"通用）**：① `package.json` 的 dependencies + bundles 是否含包 → ② **设 DSH_HOME** 后 dump-config 看插件层 → ③ 看插件 `package.json` 有无 `dsh.client`（双端才有 UI）→ ④ **看插件自身的"外部运行时要求"**（本插件：Python 3.11+ / API key / managed 环境）——这是最容易被忽略的一层 → ⑤ 服务重启后看 server.log 里插件自己打的 error（如 "runtime not ready"）。
     - **修复方向（绿色便携原则）**：把便携 Python 3.12+ 装进 `runtime/python`（或复用启动器已有的便携 Python，但它目前是 3.10），并在插件的 Web Settings（vision-toolkit 命名空间）里把 `runtime.python` 指向该 3.11+ 可执行文件、`provider.credential` 配好 key，然后重启服务；客户端验证 = WebUI 设置出现 vision-toolkit 区块 + server.log 出现 "dsh-vision-toolkit ... ready"。
     - **教训**：双端插件"树里有、UI 有、但能力不生效"时，先查插件自己的**运行时/凭据前提**（外部解释器版本、下载型依赖、API key），server.log 里插件用 `ctx.logger.error` 打印的降级提示是最直接的诊断入口。
-
-46. **【发布流程】`powershell -File` 执行脚本时，字符串管道到原生命令（`$str | git credential fill`）静默失效 → git 报 "missing protocol field"（2026-08-15）**：
-    - **现象**：发布 v1.0.3 的脚本里 `$credIn = "protocol=https`nhost=github.com`n`n"; $credOut = $credIn | git credential fill | Out-String`。在交互式 PowerShell 里同样写法正常返回 token（`TOKEN_LEN=40`），但用 `powershell -NoProfile -ExecutionPolicy Bypass -File make_release.ps1` 运行时，git 报 `fatal: refusing to work with credential missing protocol field`——脚本里 `$credIn.Length` 是 32（内容正确），说明**字符串本身没问题，是 `-File` 模式下的字符串管道没能把数据送进原生命令的 stdin**。
-    - **根因**：Windows PowerShell 5.1 中，脚本以 `-File` 方式启动时对"字符串 → 原生命令 stdin"的管道处理与交互式会话不一致（交互式正常、`-File` 失效的已知怪癖）。不要依赖这个管道取凭据。
-    - **修复（绕过）**：改用**环境变量传参**——先在交互式终端里用正常的管道取到 token 存 `$env:GH_TOKEN`，脚本改为 `if ($env:GH_TOKEN) { $token = $env:GH_TOKEN.Trim() } else { 原 git credential 逻辑兜底 }`。改后 Release 创建（201）与双资产上传（201）一次通过。
-    - **教训**：`-File` 模式 + 字符串管道原生命令属于不可靠路径，取 git 凭据改用环境变量注入最稳；涉及中文/字节的发送统一走避坑 #43 方案（纯 ASCII 脚本 + UTF-8 外部文件 + curl 字节流）。
+46. **【绿色版自更新】分离进程的睡眠延迟别用 ping/timeout/choice，用 wscript + sleep_helper.vbs（2026-08-16）**：
+    - **现象**：v1.0.3 自动更新下载没问题，手动退出启动器后，`update_apply.bat` 等待循环里**不断弹出 ping 命令窗口**（一闪一退），弹了几次后报 **"ping.exe application error，无法正常启动（0xc0000142）"**，覆盖安装始终没完成。
+    - **根因（两层）**：① **窗口闪烁**——`launch_update_script()` 用 `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` 分离启动 bat，该进程**没有控制台**；cmd 在无控制台的进程里调用 `ping.exe` 这类**控制台子系统**程序时，Windows 会为它**新建一个控制台窗口**，每次等待（`ping -n`）都弹一个闪窗。② **0xc0000142 = STATUS_DLL_INIT_FAILED（DLL 初始化失败）**——用户机器的系统 `ping.exe` 本身损坏（常见于系统文件损坏/安全软件劫持），控制台窗口一弹出来它就报错，延迟/错误处理被打断 → 循环卡住、安装永远不完成。补充：`timeout`/`choice` 在 stdin 被重定向（DEVNULL）时也直接报错退出，根本睡不了。
+    - **修复**：延迟统一改 `wscript.exe "%~dp0sleep_helper.vbs" <毫秒>`。`_write_update_bat()` 在 `runtime/update/` 同目录生成 `sleep_helper.vbs`（内容 `WScript.Sleep CLng(WScript.Arguments(0))`）。`wscript.exe` 是 **GUI 子系统**——调用时**不会新建控制台窗口**（不闪窗）、Windows 全自带（不依赖可能损坏的外部 exe）、`WScript.Sleep` 延迟精确到毫秒。替换后等待循环每轮静默睡 1000ms、解锁后睡 2500ms，全程无窗口。
+    - **验证**：生成的新 `update_apply.bat` 全部 sleep 均为 `wscript.exe "%~dp0sleep_helper.vbs" ...`；在文件锁占用场景端到端跑通（能正确等到解锁 → 备份 → robocopy 覆盖 → 重启新版）。
+    - **教训**：任何"分离进程 / 无控制台 / 后台静默"场景的 cmd 延迟，**首选 wscript + VBScript 的 `WScript.Sleep`**；`ping -n` 不仅闪窗，还依赖可能损坏的 ping.exe；`timeout`/`choice` 依赖交互/控制台，stdin 重定向就废。**本经验已同步至 `skills/dsh-deploy-maintain/`（SKILL.md 3.4）并重建 `Skill-dsh-deploy-maintain.zip`。**
+47. **【绿色版自更新】Compress-Archive 传子路径会丢目录前缀，导致插件被覆盖到程序根目录（2026-08-16）**：
+    - **现象**：v1.0.3 自动更新解压覆盖后，`plugins/dsh-archive-purge`、`plugins/dsh-file-browser`、`plugins/dsh-session-rewind`、`skills/dsh-deploy-maintain` 全被**覆盖到程序根目录**（`dsh-archive-purge/`、`dsh-file-browser/` 直接出现在 `BASE_DIR` 下），覆盖落点错误。
+    - **根因**：发布侧 `Compress-Archive -Path launcher.py, ..., "plugins\dsh-archive-purge", "plugins\dsh-file-browser", ...` 传的是**子路径**。PowerShell 的 `Compress-Archive` 对子路径目录会**直接打在 zip 根**（不带 `plugins/` 前缀）→ zip 里是 `dsh-archive-purge/...` 而非 `plugins/dsh-archive-purge/...` → 解压后 `robocopy` 按 zip 结构把这些目录整体拷到程序根目录，造成错位覆盖。用户根目录甚至可能出现一堆不该有的文件夹。
+    - **修复（双保险）**：① 发布侧打包命令改传**目录名** `"plugins"` / `"skills"`（README 已修正），zip 内保留前缀；② 更新侧 `launcher.py` 新增 `_normalize_update_structure(content_root)`：解压后把内容根下错位的已知插件/skill 目录归位到 `plugins/` / `skills/`（正确位置已存在则跳过），且 `update_apply.bat` 新增第 2.5 步清理程序根目录的错位残留（`if exist "%BASE_DIR%\dsh-archive-purge" rmdir /s /q ...`，只删这 4 个已知旧目录，不碰用户数据/config/runtime）。
+    - **验证**：`runtime/tmp/test_normalize_update_structure.py` 3 用例全过——①旧版错位 zip 结构正确归位到 plugins/skills；②新版正确 zip 结构不动；③新旧混合时正确位置优先、根目录错位保留由 bat 清理。测试类名是 `Launcher`（不是 `DSHLauncher`）。
+    - **教训**：用 `Compress-Archive` 打 zip 时，**想让目录带父级前缀，`-Path` 必须传目录名本身**；传子路径会丢前缀。发布前一定 `tar -tf` 核对 zip 根结构。**本经验已同步至 `skills/dsh-deploy-maintain/`（SKILL.md 3.4 + deployment-checklist）并重建 `Skill-dsh-deploy-maintain.zip`。**
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
