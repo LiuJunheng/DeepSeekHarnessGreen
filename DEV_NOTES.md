@@ -23,13 +23,25 @@
     - **GUI「数据维护」两按钮合并为单个「清理归档」**：原来 `清理归档会话`（全清）与 `删除会话…`（列表多选）语义重叠，合并为一个按钮，点击弹出会话列表弹窗（`open_purge_dialog`）：Treeview 列出标题/工作区/状态/有无日志，顶部一行「全选 / 全不选」，行点击即勾选，底部「删除选中 (N)」按钮，删除前二次确认；`on_purge` 统一入口（服务运行中弹窗提示先停止）。
     - **默认窗口放大**：主窗口默认 640x560 → **920x720**（最小 760x600），弹窗 920x540（最小 720x380），保证状态栏 + 按钮 + 数据维护 + 设置 + 日志全部**无需缩放即可完整显示**。
     - **删除的会话也一并更新**：`on_delete` 逐个 `purge_session(sid)`（服务已停止），失败项收集后统一提示，删除后自动 `refresh()` 刷新列表。
-13. **WebUI 单页面去重（2026-08-15）**：多次重启服务会在浏览器累积一堆相同标签页。方案：启动器向 WebUI 前端 `index.html` 注入心跳脚本（`patch_frontend()`，幂等），页面打开后每 15 秒向启动器本地心跳服务（`127.0.0.1:3081`）上报一次；「启动服务/打开界面」前用 `ui_is_open()` 检查最近 180 秒内是否有心跳，有则**不再打开新页面**。心跳带令牌（`runtime/ui-beacon.token`）防其它本地页面伪造上报；令牌持久化，重启启动器后旧标签页仍能继续上报。dsh 安装/升级后由 `install_dsh()` 自动重新注入。**本经验已同步至 `skills/dsh-deploy-maintain/`（SKILL.md 2.4 节 + 速查表 + deployment-checklist），并重建 `Skill-dsh-deploy-maintain.zip`、更新 `~/.trae-cn/skills` 已安装副本。**
+13. **WebUI 单页面去重（2026-08-15）**：多次重启服务会在浏览器累积一堆相同标签页。方案：启动器向 WebUI 前端 `index.html` 注入心跳脚本（`patch_frontend()`，幂等），页面打开后每 15 秒向启动器本地心跳服务（`127.0.0.1:3081`）上报一次；**自动打开**（「启动服务」后自动开页 / CLI `--start`）前用 `ui_is_open()` 检查最近 180 秒内是否有心跳，有则**不再打开新页面**；**手动点「打开界面」走 `open_ui(force=True)`，必定打开新页面，不受去重拦截**。心跳带令牌（`runtime/ui-beacon.token`）防其它本地页面伪造上报；令牌持久化，重启启动器后旧标签页仍能继续上报。dsh 安装/升级后由 `install_dsh()` 自动重新注入。**本经验已同步至 `skills/dsh-deploy-maintain/`（SKILL.md 2.4 节 + 速查表 + deployment-checklist），并重建 `Skill-dsh-deploy-maintain.zip`、更新 `~/.trae-cn/skills` 已安装副本。**
 14. **双通道更新（绿色版自更新，2026-08-15）**：本绿色版分发给其他用户后需要两种更新——①**官方核心**（dsh npm 包，已有「检查更新」）；②**本绿色版外围**（`launcher.py` / `DSH_Launcher.exe` / `plugins/` / 文档等，从本项目 GitHub Release 更新）。两条通道**完全独立、互不干扰**：核心更新只动 `runtime/dsh/`；外围更新只动程序根目录并**跳过 `config.json`（用户配置）与 `runtime/`（用户数据/已装环境）**。外围更新流程：GUI「检查绿色版更新」→ 查 GitHub Release（官方 API 失败降级国内镜像）→ 对比版本（`GREEN_VERSION` 常量，随发布手动更新）→ 确认下载 zip 到 `runtime/update/`（带进度、校验大小）→ 解压（防路径穿越 + 检测内容根目录）→ 生成 `update_apply.bat` → **退出启动器**，由分离进程 bat 完成「等文件锁释放 → 备份旧文件到 `runtime/update/backup/` → robocopy 覆盖（跳过 config/runtime/.git）→ 重启新版」。**本经验已同步至 `skills/dsh-deploy-maintain/`（SKILL.md 2.5 节 + 速查表 + deployment-checklist），并重建 `Skill-dsh-deploy-maintain.zip`、更新 `~/.trae-cn/skills` 已安装副本。**
 
 15. **WebUI 文件浏览与右键添加到对话（2026-08-15）**：用户要求 WebUI 增加「文件列表 + 选中文件预览」及「右键文件添加到对话」能力。先用 DSH **动态插件**（`cordis_define`/`cordis_run`，仅存在于当前进程、重启即失）快速验证功能，确认可行后转写为**静态插件 `dsh-file-browser`**（`plugins/dsh-file-browser/`，与 dsh-archive-purge 同款 bundle patch 结构，随服务启动自动加载，重启不丢、可长期维护升级，见避坑 #39）：
    - 宿主端 `lib/index.js` 注册三个本地路由（均要求 `x-dsh-file-browser: 1` 自定义头防跨站）：`GET /__dsh/file-browser/home`（起始目录 = workspace root）、`POST /__dsh/file-browser/list`（列目录：名称/类型/大小/子路径，单目录上限 1000 项）、`POST /__dsh/file-browser/read`（读文件：png/jpg/gif/webp/bmp 按扩展名走 `fs.readBytes` 返回 base64 data URL，≤4MB；其余走 `fs.readText` 按文本返回，≤200KB，二进制被 `fs` 拒绝转为错误）。复用 `ctx.get('fs')` 与 `ctx.get('sandboxPolicy')`，与模型读写同一套路径语义。
    - 客户端 `lib/client.js` 用加载器契约注入两个插槽：`conversation.input.left` 注册「📁 文件」开关按钮；`shell.overlay` 注册右侧浮层面板（列目录 + 预览 + 右键菜单：插入路径/内容到输入框、复制路径）。**「添加到对话」= 追加到输入框草稿**（不直接发消息）：面板在 root 作用域拿不到输入框 API，故走「右键菜单 `queueInsert` 排队 → 工具行按钮组件（session 作用域，standard-kit 提供 `useInput`/`inputActions`）消费，用 `inputActions.setDraft(当前草稿 + 文本)` 追加」的桥接。
    - 安装：`python launcher.py --install-plugin plugins\dsh-file-browser`（`dsh plugin` reconcile 自动加入 `dsh.profile.bundles`），重启服务生效。踩过的坑见避坑 #40/#41；根 README 第五章有使用说明。
+
+16. **会话管理支持"恢复(取消归档)"（2026-08-15）**：用户希望归档清理不止删除，还要能**复原**——勾选会话后可选择**恢复**还是**删除**。由于 dsh 的"归档"只是把会话 id 放进 `workspace.json` 的 `global.archivedSessionIds`（日志、工作区归属、投影缓存全部保留），**复原 = 反向移除该 id**，天然无损、不删数据（"把放逐的武将召回麾下，既往不咎"）。实现：
+    - 启动器新增 `restore_session(session_id)`：读 `workspace.json` → 若该 id 在 `archivedSessionIds` 中则移除并用 `_atomic_write_json`（同目录临时文件 + `os.replace`）原子写回；未归档/不存在/文件缺失均安全返回 False。
+    - GUI 弹窗 `open_purge_dialog` 标题改为「会话管理 (勾选后恢复或永久删除)」，底部新增「**恢复选中 (N)**」按钮：只处理"勾选且已归档"的会话（`archived_by_id` 过滤），二次确认后逐个 `restore_session`，失败项收集统一提示，完成后 `refresh()`。
+    - 「数据维护」按钮由「清理归档」改名「**会话管理**」，LabelFrame 标题改为「数据维护 (需先停止服务, 恢复不删数据)」。
+    - 命令行新增 `--restore-session <ID>`（与 `--purge-session` 对称，同样校验服务未运行）。
+    - **隔离测试**（`runtime/tmp/test_restore_session.py`，测完即删）：复制真实 `workspace.json` 到临时副本、monkeypatch `launcher.DSH_HOME_DIR` 指向副本，覆盖 6 个断言全部通过（恢复成功 / 归档移除 / **工作区归属保留** / 重复恢复返回 False / 恢复不存在返回 False / 测试会话确实仍在工作区）。避坑：测试会话优先选"已归档且仍归属某工作区"的 id，否则归属断言需放宽。
+
+17. **WebUI「清理归档」文案修正 + 旧拷贝同步（2026-08-15）**：用户反馈 WebUI 里仍显示误导文案（"永久删除已归档（隐藏）的会话…勾选后点击「删除所选」或「清空全部」"），但 WebUI 实际无法删除（运行时全部会话都在运行中）。根因：**`node_modules` 里装的还是"可删除"改版前的旧拷贝**（pnpm 对 `file:` 是拷贝非软链，改 `plugins/` 源文件不会自动同步，见避坑 #30）。处置：
+    - 更新 `plugins/dsh-archive-purge/lib/client.js` 说明文字为只读语义 + 指向启动器 GUI：**"这里列出的是已归档（隐藏）的会话…如需永久删除或恢复, 请在本机的启动器 GUI 操作：先停止服务 → 数据维护 → 会话管理 → 勾选会话后可「恢复选中」（取消归档, 不删数据）或「删除选中」（永久删除, 不可恢复）"**，并同步更新顶部 banner（"删除/恢复请到启动器 GUI：停止服务 → 数据维护 → 会话管理"）与文件头注释。
+    - 同步两份拷贝：`--install-plugin plugins\dsh-archive-purge`（幂等重装）+ 直接覆盖 `profiles/web/node_modules/dsh-archive-purge/lib/client.js`；用 MD5 校验源文件与 node_modules 拷贝一致。
+    - 验证：GET WebUI 根页从 `__DSH_BOOT__.entries` 拿 `dsh-archive-purge` 的 bundle URL，抓 bundle 确认**新文案在、旧文案（清空全部/删除所选/永久删除已归档…）已消失**——客户端 bundle 按请求生成，强制刷新页面即生效，无需重启服务。
 
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
@@ -43,7 +55,7 @@
 | 绿色便携 | `build_env()` 把 npm 缓存/用户配置、pnpm home/store、TEMP/TMP 全部重定向到本地 `runtime/` 下（见下） |
 | 工作区自动解析 | **不写死工作目录**：`resolve_default_workspace()` 自动判定——`workspace_conflicts_with_tmp()` 用 `os.path.commonpath` 检测"临时目录是否为工作区子路径"；冲突（程序根目录内含 `runtime/tmp` 的绿色便携默认形态）时默认工作区取程序目录内 `workspace` 子目录（`DEFAULT_WORKSPACE_SUBDIR`），不冲突时直接用程序根目录本身；config.json 的 `default_workspace` 可显式覆盖（冲突则警告并回退）。`seed_default_workspace()` 按解析结果预置注册表记录（title=目录名），详见避坑 #31 |
 | 就绪检测 | 后台线程 socket 轮询端口，就绪后 `webbrowser.open` |
-| WebUI 单页面去重 | 本地心跳服务（`http.server.ThreadingHTTPServer` 绑定 127.0.0.1:3081，daemon 线程）+ 前端 `index.html` 注入心跳脚本（`patch_frontend()` 幂等，`install_dsh()` 与 `start_server()` 自动补齐）：页面每 15 秒 `fetch` 一次 `http://127.0.0.1:3081/__dsh_ui_alive?t=<令牌>`（no-cors）；`ui_is_open()` 以最近 180 秒内有无心跳判定"界面已打开"，`wait_and_open()`/`open_ui()`/CLI `--start` 打开浏览器前先查此判定，已打开则跳过并记日志。令牌存 `runtime/ui-beacon.token`（`secrets.token_hex(8)`，读写失败退化为固定值仅影响防伪造）。配置项：`auto_open_browser`（默认 True，False 则启动不自动开浏览器）、`ui_beacon_port`（默认 3081，被占用时仅记日志并禁用去重）。 |
+| WebUI 单页面去重 | 本地心跳服务（`http.server.ThreadingHTTPServer` 绑定 127.0.0.1:3081，daemon 线程）+ 前端 `index.html` 注入心跳脚本（`patch_frontend()` 幂等，`install_dsh()` 与 `start_server()` 自动补齐）：页面每 15 秒 `fetch` 一次 `http://127.0.0.1:3081/__dsh_ui_alive?t=<令牌>`（no-cors）；`ui_is_open()` 以最近 180 秒内有无心跳判定"界面已打开"，**自动打开**（`wait_and_open()`/`open_ui(force=False)`/CLI `--start`）打开浏览器前先查此判定，已打开则跳过并记日志；**手动打开（GUI「打开界面」按钮 → `open_ui(force=True)`）必定打开新页面，不受去重限制**。令牌存 `runtime/ui-beacon.token`（`secrets.token_hex(8)`，读写失败退化为固定值仅影响防伪造）。配置项：`auto_open_browser`（默认 True，False 则启动不自动开浏览器）、`ui_beacon_port`（默认 3081，被占用时仅记日志并禁用去重）。 |
 | 进程管理 | Windows 下 `CREATE_NO_WINDOW` 隐藏服务控制台；PID 写 `runtime/server.pid` 供独立 `--stop` 使用；**stdin 用 `PIPE` 保持打开**（否则 dsh 读到 EOF 会退出，见避坑 #12）；`watch_server` 线程监听异常退出并记日志 |
 | 界面 | tkinter：状态栏 + 安装/启动/停止/打开界面/检查更新/刷新状态 + 设置(镜像/端口) + 运行日志框；主窗口默认 **920x720**（最小 760x600），保证全部信息无需缩放即可显示；关窗自动停服务 |
 | 插件管理 | 第六个按钮「插件管理」开新窗口；已装列表读 `runtime/dsh-home/profiles/<profile>/package.json` 的 `dependencies`；安装/移除走 `node bin.js plugin --profile <profile> add|remove`（内部转发 pnpm）；搜索源 = npm 注册表 API（国内镜像优先，结果经 `_is_dsh_plugin_package` 过滤只留 dsh 相关包）+ GitHub 官方话题页 `https://github.com/topics/dsh-plugin`；另有「加载推荐」按钮展示内置 `RECOMMENDED_PLUGINS`（npm 上已核实的 12 个 dsh 插件，无需网络也能看到可安装项）；GitHub 源插件安装规格 `github:owner/repo` |
@@ -69,6 +81,7 @@
 - `python launcher.py --start` → 无界面**守护模式**：启动后保持进程存活（维持 stdin 管道，防止 dsh 退出），服务停止后本进程自动返回
 - `python launcher.py --stop` → 停止服务
 - `python launcher.py --purge-archived` / `--purge-session <ID>` → 数据维护（永久删除归档/指定会话，需先停止服务，见避坑 #29）
+- `python launcher.py --restore-session <ID>` → 数据维护（复原/取消归档指定会话，需先停止服务，见避坑 #29 与需求 #16）
 - `python launcher.py --install-plugin <本地目录或npm包名>` / `--remove-plugin <包名>` → 插件安装/移除（本地目录自动转 `file:`，见避坑 #30）
 
 ## 三、规范细节（遵循项目用户规则）
@@ -170,6 +183,7 @@
     - **入口格式**：宿主端 `apply(ctx)` 用 `ctx.webServer.register({kind, path, handler})` 注册 HTTP 路由，返回值用 `ctx.effect(disposer, ...)` 注册释放；`inject` 数组声明依赖的服务（如 `["webServer", "workspaceRegistry"]`），cordis 会在激活前注入。客户端用加载器契约 `window.__ModuleLoader__.load({id, factory})`，在 `apply(ctx)` 里 `ctx.slots.inject("settings.section", ...)` 注册设置区块。
 29. **【会话删除】dsh 没有"永久删除/取消归档"接口，归档(archive)只是把会话隐藏；彻底删除需在服务停止后直接操作数据文件（2026-08-15）**：
     - **启动器侧（launcher.py）**：`purge_session` / `purge_archived_sessions` 三处一并清：① `sessions/<工作区编码>/<会话ID>/` 日志目录 ② `storages/workspace.json` 的 `sessionIds` / `archivedSessionIds` ③ `storages/session_projcache.json` 缓存行。注意 `_delete_session_log_dir` **只按会话 id 在工作区目录下遍历查找**（不拼接用户输入进路径，防路径穿越）；JSON 写回用 `_atomic_write_json`（同目录临时文件 + `os.replace`）保证原子性，避免半写损坏。
+    - **复原 = 反向操作归档标记（2026-08-15 新增）**：`restore_session(session_id)` 只把 id 从 `workspace.json` 的 `global.archivedSessionIds` 中移除并原子写回即可——日志、工作区归属、投影缓存 dsh 本来就没动过，天然无损。这与 `purge_session` 完全相反（purge 动三个来源，restore 只动归档标记一处），务必区分：**restore 不删任何数据**。
     - **插件侧（dsh-archive-purge 宿主）**：`workspaceRegistry.archivedSessionIds` 遍历 + `entity.detachSession(id)`（对未挂载 id 幂等）；`ctx.get("sessions")` 判活跳过运行中会话。已知取舍：dsh 没有"删归档 id"接口，摘除后 `archivedSessionIds` 会残留一个不指向任何会话的 id（隐藏标记，无害）；`session_projcache.json` 旧缓存行也无害，留待 dsh 自行覆盖。
     - **安全**：删除路由带自定义头 `x-dsh-plugin-purge: 1`（跨域请求无法带自定义头，会触发 CORS 预检且本服务不返回 CORS 头），防止外部网页对本地端口发起删除请求；路由只接受 POST。
     - **窗口期**：数据维护操作要求服务已停止（GUI 弹窗提示、命令行 `is_server_running()` 校验），避免与运行中的 dsh 写文件竞争。
@@ -264,7 +278,7 @@
 38. **【WebUI 单页面去重】心跳去重的关键设定与避坑（2026-08-15）**：
     - **前端注入点**：`frontend_index_path()` 定位到 `@deepseek-ai/dsh-web-frontend/dist/index.html`（`dsh-web-app` 通过 `require.resolve` 解析该路径，服务每次请求都 `readFile` 后经 `applyIndexTaps` 渲染——改文件立即生效，无需重启服务）。注入脚本放在 `</body>` 前，经典脚本解析即执行，不依赖应用 bundle。
     - **幂等写法**：以 `UI_BEACON_MARKER_START/END` 标记包裹整块脚本；已存在时整体替换（令牌/端口变了也能更新），未变化则跳过写文件（比较块内容，mtime 不变）。
-    - **心跳判定窗口**：`UI_ALIVE_WINDOW=180` 秒——浏览器后台标签页的 `setInterval` 会被节流到约 60 秒一次（Chrome），窗口必须大于节流间隔；代价是关掉标签页后最多 3 分钟内仍可能判定"已打开"（跳过开新页），属可接受的取舍。
+    - **心跳判定窗口**：`UI_ALIVE_WINDOW=180` 秒——浏览器后台标签页的 `setInterval` 会被节流到约 60 秒一次（Chrome），窗口必须大于节流间隔；代价是关掉标签页后最多 3 分钟内仍可能判定"已打开"（自动打开会跳过开新页），属可接受的取舍。**逃生通道**：手动点「打开界面」（`open_ui(force=True)`）不受该判定约束、必定开新页，因此关掉标签页后想立刻重开时点它即可。
     - **令牌防伪造**：任意本地网页都能 `no-cors` 打到 127.0.0.1:3081，若不做令牌校验，无关页面可伪造"界面已打开"导致永远不开新页；令牌写入 `runtime/ui-beacon.token` 持久化，重启启动器进程后旧标签页带旧令牌仍能上报（保证跨进程重启去重有效）。
     - **dsh 升级后必须重新注入**：升级=重装 `runtime/dsh`，`dist/index.html` 被覆盖、心跳脚本丢失；`install_dsh()` 末尾调 `patch_frontend()` 覆盖首装与更新两条路径，`start_server()` 启动前再兜底补一次（仅服务未运行时才走到）。
     - **端口被占用不阻断**：3081 被其它程序占用时仅记日志，`ui_is_open()` 恒 False，行为退化为旧版（每次都开新页），绝不因去重功能阻塞服务启动。
@@ -299,6 +313,18 @@
     - **修复**：**发布脚本保持纯 ASCII（一个中文字符都不写）**，中文 Release 正文单独放到一个 UTF-8 文本文件（如 `_release_body_tmp.md`，用编辑器/工具按 UTF-8 保存），脚本里 `[System.IO.File]::ReadAllText(路径, [System.Text.Encoding]::UTF8)` 显式按 UTF-8 读入，再 `ConvertTo-Json` + `UTF8.GetBytes` 发送。修复后（用 PATCH `/releases/{id}` 改 body）验证通过。
     - **验证**：`Invoke-RestMethod` GET release → `ConvertTo-Json` → `UTF8.GetBytes` 存成 UTF-8 文件 → 用 **python** 检查 body 含"更新内容"且无 U+FFFD / `?`（不要用 PowerShell 的 `-match "中文"` 校验——校验脚本里写中文同样会被 ANSI 读乱）；资产下载 URL 用 `curl.exe -s -I -L -o NUL -w "%{http_code}"` 验证返回 200。
     - **教训**：Windows PowerShell 里"脚本内含中文常量"一律按坑处理：要么把 `.ps1` 存成 **UTF-8 with BOM**，要么**脚本纯 ASCII + 中文拆到独立 UTF-8 文件显式读取**；任何中文校验也走 python/外部工具，别在 PowerShell 里写中文断言。
+44. **【DSH 第三方插件排查】宿主端"工具型"插件（如 dsh-find-plugin）无 UI、只注册 agent 工具；且用 dump-config 验证插件树必须设 DSH_HOME（2026-08-15）**：
+    - **现象**：用户通过插件管理器装了 `dsh-find-plugin`（npm `^0.3.5`，进了 `dsh.profile.bundles`），在 WebUI 看不到任何按钮/面板/设置项，感觉"没生效"。
+    - **根因（两层）**：① 该插件是**纯宿主端工具插件**——`package.json` 只声明 `dsh.bundle.patch`，**没有 `dsh.client`（无 WebUI 客户端入口）**，源码 `lib/index.js` 仅通过 `ctx.tools.register(defineTool({ name: 'find_dsh_plugin', ... }))` 注册一个 **agent 工具**（GitHub `dsh-plugin` topic 实时搜索，按 star 排序，返回描述 + 可直接执行的 `dsh plugin add` 安装命令）。它**不会在界面上出现任何东西**，只在对话里 agent 判定需要找插件时按需调用（如"帮我找一个能做微信通知的 DSH 插件"）。**"装完没见 UI"属于正常现象，不是装坏了。** ② 排查时我直接跑 `dsh --dump-config --profile web` **没设 DSH_HOME**，结果 dump 的是 `~/.dsh` 默认 home 的 profile（只有 dsh-base/dsh-web-app 两个内置 bundle），误判"插件没进插件树"——**必须 `$env:DSH_HOME=runtime\dsh-home` 后再 dump**，才能看到 `# == dsh-find-plugin` / `- id: find-dsh-plugin` 层。
+    - **验证（设对 DSH_HOME 后）**：`dsh --dump-config --profile web` 输出末尾可见 `# == dsh-archive-purge`、`# == dsh-find-plugin`、`# == dsh-file-browser` 三段，说明三个插件都正常合成进树；工具能否被 agent 调用，还需 `dsh web` 服务启动（当前未在运行）后新建会话触发。插件依赖 `@deepseek-ai/dsh-tools`（peerDep）解析正常（resolve 到 `runtime/dsh/node_modules/@deepseek-ai/dsh-tools/lib/index.js`，被 pnpm 提升到安装根）。
+    - **排查"装了插件没反应"的顺序**：① 看 `runtime/dsh-home/profiles/web/package.json` 的 `dependencies` + `dsh.profile.bundles` 是否含该包；② **设 DSH_HOME** 后 `dsh --dump-config --profile web` 看插件层是否在；③ 看插件 `package.json` 有无 `dsh.client`——**无则无 UI，属宿主端工具/路由插件**，靠 agent 调用或 HTTP 路由验证；④ 服务必须在安装后**重启**（bundle 补丁在启动时合成）。
+    - **教训**：验证任何 profile 相关命令（dump-config/插件管理等）都要先设 `DSH_HOME` 指向 `runtime/dsh-home`，否则拿到的是默认 home 的结果；第三方插件"没动静"先判断它是不是"无 UI 的工具插件"，再谈生效。
+45. **【DSH 第三方插件排查】`@dsh-external/dsh-vision-toolkit`（v0.1.4）：装进树但运行时未就绪 → 只显示设置界面、工具不注册（2026-08-15）**：
+    - **现象**：用户经插件管理器装上 dsh-vision-toolkit 后想确认是否生效。检查发现：插件树已合成（`dsh --dump-config` 设 DSH_HOME 后有 `# == @dsh-external/dsh-vision-toolkit` / `- id: vision-toolkit` 层）、双端声明齐全（`dsh.bundle.patch` + `dsh.client` 注入 client-runtime/ui-tool/ui-settings/locale）、16 个 peer 依赖全部可解析、`runtime/requirements.lock` 与 vendor 上游快照都在——**但实际不会真正生效**。
+    - **根因（双硬门槛）**：① **运行时未就绪**：插件默认 `runtime.mode: managed`，首次启动必须找到一个 **Python 3.11+** 解释器，用 `uv`（或 venv+pip）自动建隔离环境并按 `runtime/requirements.lock`（Pillow/numpy/vtracer 等）装依赖。本机只有 **Python 3.10 / 3.8**（`py -0p` 确认），`resolveBootstrapPython` 探测 `python`(=3.10)、`py -3`(=3.10.11)、`python3`(不存在) 全部失败 → `manager.initialize()` 抛错 → `lib/index.js` 明确 log **"runtime not ready; the vision-tools skill, activation bootstrap, and Agent-scoped visual tools are NOT registered. Settings remain available for repair."** —— 即**只有设置界面可用，10 个视觉工具 + vision-tools skill + 激活引导全都不注册**。旁证：`DSH_HOME/cache/dsh-vision-toolkit/` 下只有 `artifact-access.key`，**没有 `python/` 运行时目录**（从未成功创建）。② **API 凭据未配置**：默认 provider `https://api.inferera.com/v1`、credential 引用 `VISION_API_KEY`、model `gemini-3.6-flash`，但 `.credentials.yaml` 里无此 key——即使运行时修好，工具调用也需先配 key。
+    - **排查顺序（第三方"装了没完全生效"通用）**：① `package.json` 的 dependencies + bundles 是否含包 → ② **设 DSH_HOME** 后 dump-config 看插件层 → ③ 看插件 `package.json` 有无 `dsh.client`（双端才有 UI）→ ④ **看插件自身的"外部运行时要求"**（本插件：Python 3.11+ / API key / managed 环境）——这是最容易被忽略的一层 → ⑤ 服务重启后看 server.log 里插件自己打的 error（如 "runtime not ready"）。
+    - **修复方向（绿色便携原则）**：把便携 Python 3.12+ 装进 `runtime/python`（或复用启动器已有的便携 Python，但它目前是 3.10），并在插件的 Web Settings（vision-toolkit 命名空间）里把 `runtime.python` 指向该 3.11+ 可执行文件、`provider.credential` 配好 key，然后重启服务；客户端验证 = WebUI 设置出现 vision-toolkit 区块 + server.log 出现 "dsh-vision-toolkit ... ready"。
+    - **教训**：双端插件"树里有、UI 有、但能力不生效"时，先查插件自己的**运行时/凭据前提**（外部解释器版本、下载型依赖、API key），server.log 里插件用 `ctx.logger.error` 打印的降级提示是最直接的诊断入口。
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。

@@ -8,7 +8,8 @@ DeepSeek Harness 一键启动器 (Python 标准库实现, 无第三方依赖)
     3. 启动 dsh web 本地服务, 并自动打开浏览器 (界面已在浏览器中打开则不重复开新页)
     4. 提供 tkinter 图形界面 (启动 / 停止 / 打开界面 / 日志)
     5. 所有数据 (Node, dsh, DSH_HOME) 都放在本目录 runtime 下, 完全绿色便携
-    6. WebUI 单页面去重: 向前端注入心跳脚本, 检测到界面已打开就不再重复打开新页面
+    6. WebUI 单页面去重: 向前端注入心跳脚本, 自动打开时检测到界面已打开就不再重复
+       打开新页面; 手动点「打开界面」不受此限制, 必定打开新页面
 
 用法:
     python launcher.py           # 启动图形界面 (默认)
@@ -16,6 +17,7 @@ DeepSeek Harness 一键启动器 (Python 标准库实现, 无第三方依赖)
     python launcher.py --stop    # 停止服务
     python launcher.py --purge-session <会话ID>   # 永久删除一个会话 (需先停止服务)
     python launcher.py --purge-archived           # 永久删除所有已归档会话 (需先停止服务)
+    python launcher.py --restore-session <会话ID> # 复原(取消归档)一个会话 (需先停止服务)
     python launcher.py --install-plugin <本地插件目录或npm包名>  # 安装插件 (重启服务后生效)
     python launcher.py --remove-plugin <包名>     # 移除插件 (重启服务后生效)
 """
@@ -123,6 +125,8 @@ DEFAULT_PROFILE = "web"
 # 原理: 启动器向 WebUI 前端 index.html 注入一小段心跳脚本, 页面打开后每
 # UI_BEACON_PING_INTERVAL 秒向启动器的本地心跳服务上报一次; 启动器在自动打开
 # 浏览器前检查: 若最近 UI_ALIVE_WINDOW 秒内收到过心跳, 说明界面已打开, 跳过。
+# 该检查只约束自动打开 (启动服务后自动开页 / 命令行 --start 自动开页);
+# 手动点 GUI「打开界面」不受此限制, 必定打开新页面 (open_ui(force=True))。
 # dsh 升级重装后由 patch_frontend() 自动重新注入 (见 install_dsh 末尾)。
 # ---------------------------------------------------------------------------
 UI_BEACON_PORT = 3081            # 心跳上报端口 (config.json 的 ui_beacon_port 可覆盖)
@@ -1630,6 +1634,34 @@ class Launcher:
         self.log("归档会话清理完成: 删除 %d 个, 未找到日志 %d 个" % (deleted, missing))
         return deleted, missing
 
+    def restore_session(self, session_id):
+        """复原(取消归档)一个会话 (需服务已停止)。
+
+        归档(archive)只是把会话 id 放入 workspace.json 的
+        global.archivedSessionIds, 会话日志、工作区归属与投影缓存全部保留。
+        本方法反向操作: 把该 id 从 archivedSessionIds 中移除并原子写回,
+        会话即重新出现在 WebUI 会话列表。若该会话并未归档, 返回 False。
+        """
+        workspace_storage = os.path.join(DSH_HOME_DIR, "storages", "workspace.json")
+        if not os.path.isfile(workspace_storage):
+            self.log("未找到工作区注册表, 无法复原会话: %s" % session_id)
+            return False
+        with open(workspace_storage, "r", encoding="utf-8") as file_handle:
+            data = json.load(file_handle)
+        global_state = data.get("global") if isinstance(data, dict) else None
+        archived = global_state.get("archivedSessionIds") if isinstance(global_state, dict) else None
+        if not isinstance(archived, list) or session_id not in archived:
+            self.log("会话未在归档列表中, 无需复原: %s" % session_id)
+            return False
+        global_state["archivedSessionIds"] = [sid for sid in archived if sid != session_id]
+        try:
+            self._atomic_write_json(workspace_storage, data)
+        except Exception as error:
+            self.log("复原会话失败(写回注册表): %s: %s" % (session_id, error))
+            return False
+        self.log("会话已复原(取消归档): %s" % session_id)
+        return True
+
     def list_sessions(self):
         """枚举本地会话列表 (供 GUI 可视化删除)。
 
@@ -1709,12 +1741,15 @@ class Launcher:
                                    0 if s["archived"] else 1, s["id"]))
         return result
 
-    def open_ui(self):
-        """在浏览器中打开 dsh 界面 (若界面已在浏览器中打开则不再重复打开)"""
+    def open_ui(self, force=False):
+        """在浏览器中打开 dsh 界面。
+        force=False (自动打开, 如服务启动后自动开页): 若界面已在浏览器中打开则跳过,
+        避免多次重启累积重复标签页;
+        force=True (手动点「打开界面」): 必定打开新页面, 不受"最近打开过"去重限制"""
         self._ensure_ui_beacon_server()
         port = int(self.config.get("dsh_port", 3080))
         url = "http://127.0.0.1:%d" % port
-        if self.ui_is_open():
+        if not force and self.ui_is_open():
             self.log("WebUI 已在浏览器中打开, 不再重复打开新页面: %s" % url)
             return
         self.log("正在打开界面: %s" % url)
@@ -1874,7 +1909,7 @@ def run_gui():
         threading.Thread(target=worker, daemon=True).start()
 
     def on_purge():
-        """清理归档/删除会话: 弹出可视化列表, 支持勾选(全选/单选)后永久删除"""
+        """会话管理: 弹出可视化列表, 支持勾选(全选/单选)后选择「恢复(取消归档)」或「永久删除」"""
         if is_busy[0]:
             return
         if app.is_server_running():
@@ -1883,9 +1918,10 @@ def run_gui():
         open_purge_dialog()
 
     def open_purge_dialog():
-        """可视化会话列表窗口: 显示标题/工作区/状态, 支持勾选(全选/单选)后永久删除。"""
+        """可视化会话列表窗口: 显示标题/工作区/状态, 支持勾选(全选/单选)后
+        选择「恢复(取消归档)」或「永久删除」。"""
         top = tk.Toplevel(root)
-        top.title("清理归档会话 (勾选后永久删除)")
+        top.title("会话管理 (勾选后恢复或永久删除)")
         top.geometry("920x540")
         top.minsize(720, 380)
         top.transient(root)
@@ -1951,6 +1987,14 @@ def run_gui():
                 delete_btn.config(text="删除选中 (%d)" % selected_count)
             else:
                 delete_btn.config(text="删除选中")
+            # 更新已归档选中计数 (供恢复按钮显示, 只有已归档的才可恢复)
+            archived_selected = sum(1 for sid, value in checked.items()
+                                    if value and any(rec["id"] == sid and rec["archived"]
+                                                     for rec in all_items))
+            if archived_selected > 0:
+                restore_btn.config(text="恢复选中 (%d)" % archived_selected)
+            else:
+                restore_btn.config(text="恢复选中")
             # 更新全选/全不选按钮文字
             all_checked = all(checked.get(s["id"], False) for s in all_items) if all_items else False
             if all_items:
@@ -2010,6 +2054,7 @@ def run_gui():
                     parent=top):
                 return
             delete_btn.config(state="disabled")
+            restore_btn.config(state="disabled")
             toggle_all_btn.config(state="disabled")
             refresh_btn.config(state="disabled")
             failed = []
@@ -2032,6 +2077,51 @@ def run_gui():
                 messagebox.showerror("删除失败", str(error), parent=top)
             finally:
                 delete_btn.config(state="normal")
+                restore_btn.config(state="normal")
+                toggle_all_btn.config(state="normal")
+                refresh_btn.config(state="normal")
+
+        # 恢复选中 (取消归档): 只处理勾选且已归档的会话
+        def on_restore():
+            archived_by_id = {rec["id"] for rec in all_items if rec["archived"]}
+            selected_ids = [sid for sid, value in checked.items()
+                            if value and sid in archived_by_id]
+            if not selected_ids:
+                messagebox.showinfo("恢复会话", "请先勾选要恢复(取消归档)的会话。", parent=top)
+                return
+            preview = "\n".join(selected_ids[:8]) + ("\n…" if len(selected_ids) > 8 else "")
+            if not messagebox.askyesno(
+                    "恢复会话",
+                    "确定要恢复(取消归档)选中的 %d 个会话吗?\n\n%s\n\n"
+                    "恢复后它们将重新出现在 WebUI 会话列表, 原日志与内容不受影响。"
+                    % (len(selected_ids), preview),
+                    parent=top):
+                return
+            delete_btn.config(state="disabled")
+            restore_btn.config(state="disabled")
+            toggle_all_btn.config(state="disabled")
+            refresh_btn.config(state="disabled")
+            failed = []
+            try:
+                for sid in selected_ids:
+                    try:
+                        ok = app.restore_session(sid)
+                        if not ok:
+                            failed.append(sid)
+                    except Exception as error:
+                        failed.append(sid)
+                        append_log("恢复会话 %s 失败: %s" % (sid, error))
+                refresh()
+                if failed:
+                    messagebox.showwarning("恢复完成", "已恢复 %d 个会话, %d 个失败。" %
+                                           (len(selected_ids) - len(failed), len(failed)), parent=top)
+                else:
+                    messagebox.showinfo("恢复完成", "已恢复 %d 个会话。" % len(selected_ids), parent=top)
+            except Exception as error:
+                messagebox.showerror("恢复失败", str(error), parent=top)
+            finally:
+                delete_btn.config(state="normal")
+                restore_btn.config(state="normal")
                 toggle_all_btn.config(state="normal")
                 refresh_btn.config(state="normal")
 
@@ -2040,7 +2130,7 @@ def run_gui():
         bottom.pack(fill="x", padx=8, pady=(0, 8))
         count_label = ttk.Label(bottom, text="")
         count_label.pack(side="left")
-        ttk.Label(bottom, text="需先停止服务; 删除不可恢复",
+        ttk.Label(bottom, text="需先停止服务; 删除不可恢复, 恢复不删数据",
                   foreground="#a04040").pack(side="left", padx=(10, 0))
         toggle_all_btn = ttk.Button(bottom, text="全选", command=toggle_all)
         toggle_all_btn.pack(side="right", padx=(6, 0))
@@ -2050,13 +2140,15 @@ def run_gui():
         refresh_btn.pack(side="right", padx=(6, 0))
         delete_btn = ttk.Button(bottom, text="删除选中", command=on_delete)
         delete_btn.pack(side="right", padx=(6, 0))
+        restore_btn = ttk.Button(bottom, text="恢复选中", command=on_restore)
+        restore_btn.pack(side="right", padx=(6, 0))
 
         # 初始加载
         refresh()
 
     def on_open():
-        """在浏览器中打开 dsh 界面"""
-        app.open_ui()
+        """手动在浏览器中打开 dsh 界面 (必定打开新页面, 不受单页面去重拦截)"""
+        app.open_ui(force=True)
 
     def on_check_update():
         """检查 dsh 是否有新版本, 有则弹窗让用户选择 更新 / 不更新"""
@@ -2603,12 +2695,12 @@ def run_gui():
     ttk.Button(button_frame, text="刷新状态", command=refresh_status).pack(side="left", padx=8)
 
     # ---------- 数据维护区 (需先停止服务) ----------
-    maintenance_frame = ttk.LabelFrame(root, text="数据维护 (需先停止服务, 操作不可恢复)")
+    maintenance_frame = ttk.LabelFrame(root, text="数据维护 (需先停止服务, 恢复不删数据)")
     maintenance_frame.pack(fill="x", padx=14, pady=(0, 8))
-    purge_btn = ttk.Button(maintenance_frame, text="清理归档", command=on_purge)
+    purge_btn = ttk.Button(maintenance_frame, text="会话管理", command=on_purge)
     purge_btn.pack(side="left", padx=8, pady=6)
     ttk.Label(maintenance_frame,
-              text="弹出会话列表, 勾选(可全选)后永久删除已归档/指定的会话(日志+注册表条目)",
+              text="弹出会话列表, 勾选(可全选)后可恢复(取消归档)或永久删除选中的会话(日志+注册表条目)",
               foreground="#a04040").pack(side="left", padx=(12, 8))
 
     # 初始刷新状态
@@ -2738,6 +2830,23 @@ def main():
             return 0
         except Exception as error:
             print("清理归档失败: %s" % error)
+            return 1
+    if "--restore-session" in args:
+        app = Launcher()
+        app.on_log = lambda message: print(message)   # 命令行模式把日志打印到终端
+        try:
+            index = args.index("--restore-session")
+            session_id = args[index + 1] if index + 1 < len(args) else ""
+            session_id = (session_id or "").strip()
+            if not session_id:
+                print("用法: python launcher.py --restore-session <会话ID>")
+                return 2
+            if app.is_server_running():
+                print("服务正在运行, 请先停止服务: python launcher.py --stop")
+                return 1
+            return 0 if app.restore_session(session_id) else 1
+        except Exception as error:
+            print("复原会话失败: %s" % error)
             return 1
     if "--install-plugin" in args or "--remove-plugin" in args:
         app = Launcher()

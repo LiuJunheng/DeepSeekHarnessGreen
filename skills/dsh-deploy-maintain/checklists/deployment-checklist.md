@@ -17,6 +17,7 @@
 - [ ] PID 文件写 `runtime/server.pid`，冷启动有重复检测
 - [ ] 就绪检测用 socket 轮询端口，成功后 `webbrowser.open`
 - [ ] WebUI 单页面去重已生效：`dist/index.html` 含 `dsh-launcher-ui-beacon` 注入标记；心跳服务端口 3081 未被占用
+- [ ] 手动点「打开界面」必定开新页（`open_ui(force=True)` 不受去重拦截）；仅自动打开受 `ui_is_open()` 约束
 - [ ] 端口监听用 `grep -w 3080` 排查（`grep 3080` 会误匹配 `13080`）
 
 ## 更新
@@ -53,6 +54,7 @@
 - [ ] 日志目录删除只按 id 遍历查找，不拼接用户输入（防路径穿越）
 - [ ] JSON 写回用原子写（同目录临时文件 + `os.replace`）
 - [ ] 运行中的会话自动跳过
+- [ ] 恢复（取消归档）只改 workspace.json 的 archivedSessionIds，不删日志与归属；GUI「会话管理」弹窗支持勾选后「恢复选中」/「删除选中」
 
 ## 验证
 

@@ -64,7 +64,7 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
 - **启动**：`node <dsh>/node_modules/@deepseek-ai/dsh/lib/bin.js web --port 3080`。
 - **【严重】stdin 必须保持打开**：`subprocess.Popen` 未指定 `stdin` 时子进程继承父进程 stdin；在 .bat / 守护 / 无 TTY 环境下 stdin 是 EOF，**dsh 检测到后约 40 秒内静默退出**，网页报 "Failed to fetch" / "Service not running"。修复：`Popen(..., stdin=subprocess.PIPE)` 保持管道打开；CLI 守护模式由 Python 常驻持有管道写端，GUI 靠 mainloop 常驻。
 - **就绪检测**：后台线程 socket 轮询端口，就绪后 `webbrowser.open`。CLI 模式要**同步** `wait_ready()` 再开浏览器（daemon 线程会随主进程退出而消失）。
-- **WebUI 单页面去重（心跳机制，2026-08-15 新增）**：多次重启会在浏览器累积一堆相同标签页。做法 = 启动器向 `@deepseek-ai/dsh-web-frontend/dist/index.html`（`frontend_index_path()` 定位，服务每次请求都重新 `readFile` 后经 `applyIndexTaps` 渲染，**改文件立即生效**）注入一段幂等心跳脚本（`patch_frontend()`，用 `<!-- dsh-launcher-ui-beacon:start/end -->` 标记包裹，dsh 安装/升级后由 `install_dsh()` 与 `start_server()` 自动补齐）：页面每 15 秒 `fetch('http://127.0.0.1:3081/__dsh_ui_alive?t=<令牌>', {mode:'no-cors'})` 上报一次；启动器起一个 `http.server.ThreadingHTTPServer`（绑定 127.0.0.1:3081，daemon 线程）记录最近心跳，`ui_is_open()` 以最近 180 秒内有无心跳判定"界面已打开"，`wait_and_open()`/`open_ui()`/CLI `--start` 打开浏览器前先查，已打开则跳过并记日志。**令牌**存 `runtime/ui-beacon.token`（`secrets.token_hex(8)`，持久化保证重启启动器后旧标签页仍能上报）防无关本地页面伪造上报；端口被占用时仅记日志、去重自动禁用（退化为每次都开新页，绝不阻塞启动）。配置：`auto_open_browser`（默认 True，False 则启动不自动开浏览器）、`ui_beacon_port`（默认 3081）。**取舍**：浏览器后台标签页 `setInterval` 会节流到约 60 秒一次，故窗口设 180 秒；关掉标签页后最多 3 分钟内重启仍可能跳过开新页，属预期。
+- **WebUI 单页面去重（心跳机制，2026-08-15 新增）**：多次重启会在浏览器累积一堆相同标签页。做法 = 启动器向 `@deepseek-ai/dsh-web-frontend/dist/index.html`（`frontend_index_path()` 定位，服务每次请求都重新 `readFile` 后经 `applyIndexTaps` 渲染，**改文件立即生效**）注入一段幂等心跳脚本（`patch_frontend()`，用 `<!-- dsh-launcher-ui-beacon:start/end -->` 标记包裹，dsh 安装/升级后由 `install_dsh()` 与 `start_server()` 自动补齐）：页面每 15 秒 `fetch('http://127.0.0.1:3081/__dsh_ui_alive?t=<令牌>', {mode:'no-cors'})` 上报一次；启动器起一个 `http.server.ThreadingHTTPServer`（绑定 127.0.0.1:3081，daemon 线程）记录最近心跳，`ui_is_open()` 以最近 180 秒内有无心跳判定"界面已打开"，**仅自动打开**（`wait_and_open()`/`open_ui(force=False)`/CLI `--start`）先查此判定，已打开则跳过并记日志；**手动点「打开界面」= `open_ui(force=True)`，必定打开新页面，不受去重拦截**（关掉标签页后想立刻重开时点它即可）。**令牌**存 `runtime/ui-beacon.token`（`secrets.token_hex(8)`，持久化保证重启启动器后旧标签页仍能上报）防无关本地页面伪造上报；端口被占用时仅记日志、去重自动禁用（退化为每次都开新页，绝不阻塞启动）。配置：`auto_open_browser`（默认 True，False 则启动不自动开浏览器）、`ui_beacon_port`（默认 3081）。**取舍**：浏览器后台标签页 `setInterval` 会节流到约 60 秒一次，故窗口设 180 秒；关掉标签页后最多 3 分钟内重启仍可能跳过开新页，属预期（可点「打开界面」强制开新页）。
 - **冷启动重复检测**：PID 文件（`runtime/server.pid`）+ 进程存在性判断"已在运行"，避免重复起服务。排查端口监听要用 `grep -w 3080`（`grep 3080` 会误匹配 `13080` 子串）。
 
 ### 2.5 工作区与 ACL 沙箱（Windows 专属大坑）
@@ -103,16 +103,18 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
 - **GUI 多窗口线程安全**：耗时操作（搜索/安装/移除）在 `threading.Thread` 中执行，结果用 `root.after(0, ...)` 回主线程刷新列表/弹窗；忙时禁用全部操作按钮防重入。
 - **GUI 布局坑**：`ttk.Panedwindow` 必须显式 `.add(child, weight=N)` 注册子面板，否则中间区域完全空白。固定宽度容器里 pack 滚动条前，先确认内容（列宽总和）留足余量，否则滚动条被压缩成 1x1 不可见（`winfo_viewable()` 判真伪）。
 
-### 3.3 数据维护（会话永久删除，dsh 官方无此能力）
+### 3.3 数据维护（会话恢复 / 永久删除，dsh 官方无此能力）
 
 - **dsh 没有"永久删除/取消归档"接口**：网页"归档"只是把会话隐藏（日志 + 注册表条目全保留）。
 - **彻底删除需在服务停止后直接操作数据文件**，三处一并清理：
   1. `sessions/<工作区编码>/<会话ID>/` 日志目录（只按 id 遍历查找，**不拼接用户输入进路径，防路径穿越**）。
   2. `storages/workspace.json` 的 `sessionIds` / `archivedSessionIds`。
   3. `storages/session_projcache.json` 缓存行。
+- **复原（取消归档）= 反向操作归档标记（2026-08-15 新增）**：`restore_session(session_id)` 只把 id 从 `workspace.json` 的 `global.archivedSessionIds` 中移除并原子写回即可——日志、工作区归属、投影缓存 dsh 本来就没动过，**天然无损、不删任何数据**。与 `purge_session` 完全相反（purge 动三个来源，restore 只动归档标记一处）。
 - JSON 写回用 `_atomic_write_json`（同目录临时文件 + `os.replace`）保证原子性，避免半写损坏。
 - **数据维护要求服务已停止**（GUI 弹窗提示、CLI `is_server_running()` 校验），避免与运行中的 dsh 竞争写文件。
-- **界面形态（2026-08-15 改版）**：主窗口「数据维护」区只有一个「清理归档」按钮 → 弹出会话列表弹窗（Treeview：标题/工作区/状态/有无日志），首行「全选/全不选」，行点击勾选，底部「删除选中 (N)」二次确认后逐个删除；GUI 承担全部删除，WebUI 插件页只读展示（实际启动时服务运行中，WebUI 删不了）。主窗口默认 920x720 保证无需缩放即可看到全部信息。
+- **界面形态（2026-08-15 改版）**：主窗口「数据维护」区只有一个「会话管理」按钮 → 弹出会话列表弹窗（Treeview：标题/工作区/状态/有无日志），首行「全选/全不选」，行点击勾选，底部「**恢复选中 (N)**」（只处理"勾选且已归档"会话）与「**删除选中 (N)**」两个按钮，均二次确认后逐个执行；GUI 承担全部删除/恢复，WebUI 插件页只读展示（实际启动时服务运行中，WebUI 删不了）。主窗口默认 920x720 保证无需缩放即可看到全部信息。
+- **隔离测试**：复制真实 `workspace.json` 到临时副本 + monkeypatch `DSH_HOME_DIR` 指向副本，可安全验证恢复/删除逻辑，不碰真实数据；测试会话优先选"已归档且仍归属某工作区"的 id，以覆盖"恢复不丢归属"。
 - **GUI 测试遍历坑**：遍历控件树断言用具体类型 `ttk.Treeview`/`ttk.Button` 递归收集，别用 `tk.Frame` 宽基类——`ttk.Frame` 不是 `tk.Frame` 子类，会一个都匹配不到。
 
 ### 3.4 绿色版自更新（双通道更新，2026-08-15）
@@ -200,6 +202,22 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 - **排查**：客户端组件不渲染 → 先看控制台有无 `componentDidCatch` / "Rendered more|fewer hooks"；用 SSR（react-dom/server renderToString + 真实 React）可排除组件自身逻辑，但**无法复现 props-hook 身份漂移**——真实环境优先怀疑"从 props 拿 hook 并条件调用"。
 - **教训**：插槽条目的 standard props 里，**hook（`useXxx`）只能无条件调用且不能依赖其身份稳定性**；要读快照数据优先用 ownerProps 里的普通字段，而不是通过 props hook 现取。
 
+### 4.7 第三方"工具型"插件（如 dsh-find-plugin）无 UI、仅注册 agent 工具；验证插件树必须设 DSH_HOME
+
+- **分类**：DSH 插件分两类——**宿主端工具/路由插件**（`package.json` 只有 `dsh.bundle.patch`，无 `dsh.client`）与 **客户端 UI 插件**（有 `dsh.client`，WebUI 出现界面）。`dsh-find-plugin` 属前者：`lib/index.js` 只 `ctx.tools.register(defineTool({ name: 'find_dsh_plugin', ... }))` 注册一个 agent 工具（GitHub `dsh-plugin` topic 实时搜索，按 star 排序，返回描述 + 可执行的 `dsh plugin add` 命令）。**它不会在界面上出现任何按钮/面板/设置项**——"装完没见 UI"是正常现象，不是装坏了。
+- **触发方式**：工具型插件只在对话里 **agent 按需调用**（如"帮我找一个能做微信通知的 DSH 插件""有什么终端 TUI 插件"）。用户不主动问，工具永远不会被调用。安装后需**重启 `dsh web`**（bundle 补丁在启动时合成）。
+- **【高优先级坑】用 `dsh --dump-config --profile web` 验证插件树，必须 `$env:DSH_HOME=runtime\dsh-home` 后再跑**：直接跑会加载 `~/.dsh` 默认 home 的 profile（只有 dsh-base/dsh-web-app 两个内置 bundle），看不到自定义插件，误判"没进插件树"。设对 DSH_HOME 后输出末尾可见 `# == dsh-find-plugin` / `- id: find-dsh-plugin` 层。
+- **排查"装了插件没反应"的顺序**：① `runtime/dsh-home/profiles/web/package.json` 的 `dependencies` + `dsh.profile.bundles` 是否含该包；② **设 DSH_HOME** 后 dump-config 看插件层；③ 插件 `package.json` 有无 `dsh.client`——**无则无 UI，属工具/路由插件**，靠 agent 调用或 HTTP 路由验证；④ 安装后重启服务。
+- **依赖解析**：插件 peerDep（如 `@deepseek-ai/dsh-tools`）由 pnpm 提升到安装根（`runtime/dsh/node_modules/`），`require.resolve` 可验证。
+
+### 4.8 双端插件"树里有、UI 有、但能力不生效" → 先查插件自己的运行时/凭据前提（dsh-vision-toolkit 实测）
+
+- **案例**：`@dsh-external/dsh-vision-toolkit@0.1.4` 装上后——插件树已合成（设 DSH_HOME 后 dump-config 有 `# == @dsh-external/dsh-vision-toolkit` 层）、双端声明齐全（`dsh.bundle.patch` + `dsh.client`）、16 个 peer 依赖全可解析、`runtime/requirements.lock` 和 vendor 上游快照都在，**但实际只有设置界面可用，10 个视觉工具 + skill 全不注册**。
+- **根因①（运行时版本门槛）**：默认 `runtime.mode: managed`，首次启动必须找到 **Python 3.11+** 自动建隔离 venv 装依赖。本机只有 Python 3.10/3.8 → `resolveBootstrapPython` 探测 `python`/`py -3`/`python3` 全失败 → `manager.initialize()` 抛错 → 插件 `ctx.logger.error` 明确打印 **"runtime not ready; the vision-tools skill, activation bootstrap, and Agent-scoped visual tools are NOT registered. Settings remain available for repair."**。旁证：`DSH_HOME/cache/dsh-vision-toolkit/` 下只有 `artifact-access.key`、没有 `python/` 运行时目录。
+- **根因②（API 凭据）**：默认 provider `https://api.inferera.com/v1`、credential 引用 `VISION_API_KEY`，`.credentials.yaml` 无此 key——运行时修好也需先配 key。
+- **排查"装了但没完全生效"顺序**：① dependencies + bundles 是否含包 → ② 设 DSH_HOME 后 dump-config 看插件层 → ③ 有无 `dsh.client`（双端才有 UI）→ ④ **插件自身的外部运行时要求**（外部解释器版本 / 下载型依赖 / API key）——最容易被忽略 → ⑤ 重启服务后看 `server.log` 里插件自己 `ctx.logger.error` 的降级提示。
+- **修复（绿色便携）**：便携 Python 3.11+ 进 `runtime/python`，在插件 Web Settings（如 vision-toolkit 命名空间）把 `runtime.python` 指向它、配好 credential，重启服务；成功标志 = server.log 出现 "dsh-vision-toolkit ... ready"。
+
 ## 五、验证与排查速查表
 
 | 症状 | 首选排查动作 |
@@ -213,6 +231,9 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 | 日志报 `Unexpected token '\ufeff'` | 某 npm 包 package.json 带 UTF-8 BOM → 安装前/读入后去 BOM |
 | 改插件源码 WebUI 没变化 | pnpm 对 `file:` 是拷贝 → 重新安装插件 + 重启服务 |
 | 插件树里有但入口没有 | 重启服务（加减插件需重启生效） |
+| 装了插件在 WebUI 看不到任何东西（无 UI） | 查插件 `package.json` 有无 `dsh.client`——无则是宿主端工具/路由插件，靠 agent 按需调用（如 `find_dsh_plugin`）或 HTTP 路由验证，不是装坏了 |
+| `dsh --dump-config` 看不到自定义插件层 | 先 `$env:DSH_HOME=runtime\dsh-home` 再 dump（否则加载 `~/.dsh` 默认 home，只有内置 bundle） |
+| 双端插件"树里有、设置界面有、但工具/skill 不生效" | 查插件自身运行时前提：外部解释器版本（如 dsh-vision-toolkit 要 Python 3.11+）、下载型依赖（managed 环境是否已建）、API credential（`VISION_API_KEY` 是否配）→ 看 server.log 里插件 `ctx.logger.error` 的 "runtime not ready" 提示 |
 | 界面空白（GUI 布局） | `ttk.Panedwindow` 漏 `.add()`；滚动条被列宽挤成 1x1 |
 | 多次重启累积一堆相同 WebUI 标签页 | 查 `dist/index.html` 是否含 `dsh-launcher-ui-beacon` 标记（无则 `patch_frontend()` 没跑，多半是旧 exe/没重启）；有心跳仍开新页则查 3081 端口占用或 `runtime/ui-beacon.token` |
 | 「检查绿色版更新」查不到/报错 | 依次查：网络能否访问 api.github.com / 镜像 `mirror.nju.edu.cn/github-release`；Release 是否存在且 tag 带 `v` 前缀；资产名是否以 `DSH_Launcher_GreenPortable_Online_` 开头（否则 `green_find_zip_asset` 匹配不到） |
