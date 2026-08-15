@@ -45,6 +45,8 @@
 
 18. **内置插件 dsh-session-rewind（会话回退，另一 AI 开发 2026-08-15）**：解决 dsh 会话被工具运行时失效（`Cannot read properties of undefined (reading 'prepare')`）**永久毒化**的问题——崩溃回合在日志里留下孤儿 `tool_calls`（有调用无结果），之后每轮都被 DeepSeek API 400 拒绝，且 DSH 0.1.0-rc.6 没有"删失败消息"的界面功能。插件在 WebUI 设置页新增「会话回退」：列出会话 →「分析」逐回合（问题/步骤/工具调用/错误码/是否完成）→ 在任意**已完成**回合点「回退到此」走官方 `session.fork`（`{sessionId, atSeq}`）派生干净续接会话并自动打开；原会话保留。关键设计：**"派生新会话"而非"原地删消息"**——服务运行时会话由持久化层内存缓存，原地改写磁盘日志会被内存覆盖或产生 seq 断裂；`session.fork` 与官方 UI"分支"同源（官方只暴露末位回合，本插件放开到任意回合）。宿主端 `lib/index.js` 直接按磁盘扫描 `DSH_HOME/sessions/**/session.jsonl.zstd`（zstd 多帧），用官方 `@deepseek-ai/dsh-session` 的 `decodeStorageRecord` 展开事件（对 chunk-run 打包行布局无关）；接口 `GET /__dsh/session-rewind/list`、`GET /__dsh/session-rewind/inspect?id=<ID>`，均要求自定义头 `X-DSH-Plugin-Rewind: 1` 防 CSRF。配套 `tools/`：`rewind-session.mjs`（服务停机时离线原地截断，自动备份）、`apply-agentloop-guard.mjs`（给 dsh-agent-loop 工具派发入口加存在性检查，幂等）。安装：`--install-plugin plugins\dsh-session-rewind`，依赖 `@deepseek-ai/dsh-session@0.1.0-rc.6`。相关讨论 DeepSeek Harness #1959 / #1974。
 
+19. **发布 v1.0.3（2026-08-15）**：会话管理与会话回退两大功能齐活后打包发布。内容：`GREEN_VERSION` 升至 `"1.0.3"`（`GREEN_VERSION_DATE = "2026年08月15日"`）、README 更新（目录结构/CLI `--restore-session`/新增「配套：内置会话回退 WebUI 插件」章节/最新下载 tag v1.0.3）、DEV_NOTES 记录需求 #18、Skill 同步（SKILL.md 新增 3.5 会话回退 + 速查表一行 + deployment-checklist 会话回退项）。发布流程：重建 `DSH_Launcher.exe`（build_exe.bat）→ 打包 `DSH_Launcher_GreenPortable_Online_20260815_v1.0.3.zip`（含 plugins/dsh-session-rewind）与 `DSH_Skill_dsh-deploy-maintain_20260815.zip` → 提交（`8418084`）→ push master + tag `v1.0.3` → GitHub API 建 Release 上传两个 zip（正文走避坑 #43 的 UTF-8 文件方案，脚本纯 ASCII）→ 验证正文中文无乱码（python 断言含"会话回退/恢复"、无 U+FFFD/乱码 `?`）+ 资产下载 200。**本次发布踩到新坑见避坑 #46（`powershell -File` 下字符串管道到原生命令失效）。**
+
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
 |------|------|
@@ -327,6 +329,12 @@
     - **排查顺序（第三方"装了没完全生效"通用）**：① `package.json` 的 dependencies + bundles 是否含包 → ② **设 DSH_HOME** 后 dump-config 看插件层 → ③ 看插件 `package.json` 有无 `dsh.client`（双端才有 UI）→ ④ **看插件自身的"外部运行时要求"**（本插件：Python 3.11+ / API key / managed 环境）——这是最容易被忽略的一层 → ⑤ 服务重启后看 server.log 里插件自己打的 error（如 "runtime not ready"）。
     - **修复方向（绿色便携原则）**：把便携 Python 3.12+ 装进 `runtime/python`（或复用启动器已有的便携 Python，但它目前是 3.10），并在插件的 Web Settings（vision-toolkit 命名空间）里把 `runtime.python` 指向该 3.11+ 可执行文件、`provider.credential` 配好 key，然后重启服务；客户端验证 = WebUI 设置出现 vision-toolkit 区块 + server.log 出现 "dsh-vision-toolkit ... ready"。
     - **教训**：双端插件"树里有、UI 有、但能力不生效"时，先查插件自己的**运行时/凭据前提**（外部解释器版本、下载型依赖、API key），server.log 里插件用 `ctx.logger.error` 打印的降级提示是最直接的诊断入口。
+
+46. **【发布流程】`powershell -File` 执行脚本时，字符串管道到原生命令（`$str | git credential fill`）静默失效 → git 报 "missing protocol field"（2026-08-15）**：
+    - **现象**：发布 v1.0.3 的脚本里 `$credIn = "protocol=https`nhost=github.com`n`n"; $credOut = $credIn | git credential fill | Out-String`。在交互式 PowerShell 里同样写法正常返回 token（`TOKEN_LEN=40`），但用 `powershell -NoProfile -ExecutionPolicy Bypass -File make_release.ps1` 运行时，git 报 `fatal: refusing to work with credential missing protocol field`——脚本里 `$credIn.Length` 是 32（内容正确），说明**字符串本身没问题，是 `-File` 模式下的字符串管道没能把数据送进原生命令的 stdin**。
+    - **根因**：Windows PowerShell 5.1 中，脚本以 `-File` 方式启动时对"字符串 → 原生命令 stdin"的管道处理与交互式会话不一致（交互式正常、`-File` 失效的已知怪癖）。不要依赖这个管道取凭据。
+    - **修复（绕过）**：改用**环境变量传参**——先在交互式终端里用正常的管道取到 token 存 `$env:GH_TOKEN`，脚本改为 `if ($env:GH_TOKEN) { $token = $env:GH_TOKEN.Trim() } else { 原 git credential 逻辑兜底 }`。改后 Release 创建（201）与双资产上传（201）一次通过。
+    - **教训**：`-File` 模式 + 字符串管道原生命令属于不可靠路径，取 git 凭据改用环境变量注入最稳；涉及中文/字节的发送统一走避坑 #43 方案（纯 ASCII 脚本 + UTF-8 外部文件 + curl 字节流）。
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
