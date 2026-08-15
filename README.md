@@ -116,6 +116,9 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 >
 > 打包内容（即项目根目录的"发货清单"）：`launcher.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`config.json`、`README.md`、`DEV_NOTES.md`、`.gitignore`、`plugins/dsh-archive-purge/`。
 
+- **最新下载**（GitHub Release，tag `v1.0.0`）：<https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
+- 仓库：<https://github.com/LiuJunheng/DeepSeekHarnessGreen>
+
 新机使用三步：
 1. 解压到任意目录（如 `E:\DeepSeekHarnessLauncher`），双击 **start.bat**（或 `DSH_Launcher.exe`）；
 2. 点 **【安装环境】**，等待自动下载便携 Node + 安装 dsh + 补齐便携 Python（需联网，几分钟）；
