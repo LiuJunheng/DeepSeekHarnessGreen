@@ -29,6 +29,8 @@ DeepSeekHarnessLauncher/
 │   ├── tmp/               # 临时文件
 │   ├── server.pid         # 服务进程号
 │   └── server.log         # 服务运行日志
+├── plugins/               # 内置插件源码（如 dsh-archive-purge）
+├── skills/                # 本项目的 DSH 经验 Skill（已安装到 TRAE 全局 skills）
 └── README.md
 ```
 
@@ -170,7 +172,9 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 - 正在运行的会话不会被清理
 
 ### 配套：内置「清理归档」WebUI 插件
-启动器 `plugins/` 下自带 **`dsh-archive-purge`** 插件：安装并重启服务后，可在 WebUI「设置 → 清理归档」里一键清理所有归档会话，无需回到启动器。它是纯插件（不修改任何官方文件），通过「插件管理 → 选择本地插件文件夹安装…」选择 `plugins/dsh-archive-purge` 目录安装即可，详见 [plugins/dsh-archive-purge/README.md](plugins/dsh-archive-purge/README.md)。
+启动器 `plugins/` 下自带 **`dsh-archive-purge`** 插件：安装并重启服务后，可在 WebUI「设置 → 清理归档」里**勾选要删除的归档会话**（支持全选/全不选）后点击「删除所选」，或直接点击「清空全部」一键清理所有归档会话，无需回到启动器。它是纯插件（不修改任何官方文件），通过「插件管理 → 选择本地插件文件夹安装…」选择 `plugins/dsh-archive-purge` 目录安装即可，详见 [plugins/dsh-archive-purge/README.md](plugins/dsh-archive-purge/README.md)。
+
+> 常见问题：安装后 WebUI 设置里看不到「清理归档」→ 多为插件 `package.json` 的 `exports` 少了 `"./package.json"`（或改源码后没重新安装），详见插件 README 的「排查」一节。
 
 ## 七、内置 Python 与 exe 打包
 
@@ -198,12 +202,20 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 `cpython-3.10.20+20260807-x86_64-pc-windows-msvc-install_only.tar.gz` 解压进 `runtime/python`，
 目录布局放 `runtime/python/python.exe` 或 `runtime/python/任意子目录/python.exe` 均可被识别。
 
-## 六、安全说明
+## 八、安全说明
 - 服务只绑定 `127.0.0.1`（本机回环），不会暴露到公网
 - 所有文件读写、命令执行都发生在你选择的**工作区**内
 - 首次在网页里操作时，遇到高危命令确认框请仔细看后再点允许
 
-## 九、常见问题
+## 九、DSH 经验 Skill
+
+把本项目沉淀的部署 / 维护 / 插件开发经验整理成了 TRAE Skill：**`dsh-deploy-maintain`**。
+
+- 源文件在项目 `skills/dsh-deploy-maintain/`（主文档 `SKILL.md` + `checklists/` 检查清单 + `references/` 插件骨架与数据目录详解）。
+- 已安装到 TRAE 全局 skills（`~/.trae-cn/skills/dsh-deploy-maintain/`），新会话可直接用。
+- 内容：绿色便携部署（便携 Node / 环境变量重定向 / 工作区 ACL 沙箱 / exe 打包）、日常维护（更新备份 / 插件管理 / 数据维护）、DSH 插件开发（双端加载 / `ctx.effect` 路由注册 / `exports` 坑）、34 条避坑浓缩为排查速查表。
+
+## 十、常见问题
 
 | 问题 | 处理 |
 |------|------|

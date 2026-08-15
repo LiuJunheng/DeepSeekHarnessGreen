@@ -16,6 +16,8 @@
    - 用 DSH 里的 AI 开发了 **`dsh-archive-purge`** 插件：在 WebUI「设置 → 清理归档」里一键清理归档会话（宿主端注册本地路由 + 客户端注入设置区块），并在插件管理里增加**「选择本地插件文件夹安装…」**按钮，方便安装本地插件
 8. **本地插件安装优化**：手动安装栏除了 npm 包名 / `github:owner/repo#commit` 外，还支持直接选择**本地插件文件夹**（含 `package.json`）安装；`--install-plugin` 命令行同样支持传本地目录
 9. **工作区不写死（自动检查解决 ACL 冲突）**：此前为解决"程序根目录工作区与 `runtime/tmp` 冲突"写死了 `workspace` 子目录；用户要求去掉写死——由启动器**自动检测**临时目录与工作区是否冲突并解析出安全的默认工作区（详见避坑 #31）
+10. **清理归档支持选择会话（2026-08-15）**：WebUI「设置 → 清理归档」从"一键清空全部"升级为**列表勾选 + 选择清理**（对齐 GUI 启动器「数据维护」的可视化删除）：宿主端新增 `GET /__dsh/archive-purge` 列出已归档会话（id/标题/工作区/运行状态），`POST` 支持请求体 `{"ids": [...]}` 仅删所选、省略则清空全部；同时修复了「点击按钮报 HTTP 405」的路由注册 bug（见避坑 #34）
+11. **经验沉淀为 Skill（2026-08-15）**：把本项目部署 / 维护 / 插件开发全套实测经验整理成 TRAE Skill **`dsh-deploy-maintain`**（源文件在 `skills/dsh-deploy-maintain/`，已复制安装到 `~/.trae-cn/skills/dsh-deploy-maintain/`）。结构：`SKILL.md`（主文档，部署/维护/插件/排查速查表）+ `checklists/`（deployment-checklist / plugin-dev-checklist）+ `references/`（plugin-skeleton 插件代码骨架 / data-directories 数据目录机制）。Skill 内已内置 34 条避坑浓缩版；后续新增经验要同步回 SKILL.md 与 checklists
 
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
@@ -34,7 +36,7 @@
 | 插件管理 | 第六个按钮「插件管理」开新窗口；已装列表读 `runtime/dsh-home/profiles/<profile>/package.json` 的 `dependencies`；安装/移除走 `node bin.js plugin --profile <profile> add|remove`（内部转发 pnpm）；搜索源 = npm 注册表 API（国内镜像优先，结果经 `_is_dsh_plugin_package` 过滤只留 dsh 相关包）+ GitHub 官方话题页 `https://github.com/topics/dsh-plugin`；另有「加载推荐」按钮展示内置 `RECOMMENDED_PLUGINS`（npm 上已核实的 12 个 dsh 插件，无需网络也能看到可安装项）；GitHub 源插件安装规格 `github:owner/repo` |
 | 本地插件安装 | 手动安装栏新增「选择本地插件文件夹安装…」按钮（`filedialog.askdirectory` 选目录）；`install_plugin()` / `--install-plugin` 均支持：入参 `os.path.isdir(spec)` 为真时自动归一化为 `file:<绝对路径>`（`\`→`/`）交给 pnpm；pnpm 对 `file:` 本地路径默认**拷贝**而非软链，改源文件后需重新安装才同步 |
 | 数据维护 | 主窗口新增「数据维护」区（LabelFrame，需先停止服务，操作不可恢复）：`清理归档会话`= `purge_archived_sessions()`；`删除会话…` = 弹出 `list_sessions()` 的可视化 Treeview（标题/工作区/状态/有无日志），多选后逐个 `purge_session(session_id)`。三处数据源一并清理：① `sessions/<工作区编码>/<会话ID>/` 日志目录（`_delete_session_log_dir` 按 id 遍历查找，防路径穿越）② `storages/workspace.json` 的 `sessionIds`/`archivedSessionIds` ③ `storages/session_projcache.json` 缓存行（`_remove_session_from_registries` + `_atomic_write_json` 原子写回）。命令行等价：`--purge-archived` / `--purge-session <ID>`（服务运行时会校验并拒绝） |
-| 内置插件 dsh-archive-purge | `plugins/dsh-archive-purge/`：宿主端 `lib/index.js` 注册 `POST /__dsh/archive-purge`（带 `x-dsh-plugin-purge: 1` 自定义头防跨站触发，遍历 `workspaceRegistry.archivedSessionIds`，跳过运行中会话，删日志目录 + `detachSession` 摘除）；客户端 `lib/client.js` 用加载器契约 `window.__ModuleLoader__.load` 注入 `settings.section` 插槽（「清理归档」页）。安装方式：插件管理 → 选择本地插件文件夹安装 `plugins/dsh-archive-purge`（或用 `--install-plugin plugins\dsh-archive-purge`） |
+| 内置插件 dsh-archive-purge | `plugins/dsh-archive-purge/`：宿主端 `lib/index.js` 注册 `GET /__dsh/archive-purge`（列出已归档会话：id/标题(读 `storages/session_projcache.json` 尽力而为)/所属工作区/是否运行中）+ `POST /__dsh/archive-purge`（删除，带 `x-dsh-plugin-purge: 1` 自定义头防跨站触发）。POST 请求体 `{"ids": [...]}` 仅删除所选（结果去重），省略 `ids` 则遍历 `workspaceRegistry.archivedSessionIds` 清空全部；每个会话：跳过运行中 → 删日志目录 `sessions/<工作区>/<会话ID>/` → 遍历 `registry.list()` 逐个 `detachSession` 摘除。路由注册必须写成 `ctx.effect(() => ctx.webServer.register({...}), "…")`（把返回值当清理函数），否则注册后立即被注销（避坑 #34）。客户端 `lib/client.js` 用加载器契约 `window.__ModuleLoader__.load` 注入 `settings.section` 插槽（「清理归档」页）：挂载即 GET 拉列表，勾选列表 + 全选/全不选 + 「删除所选 / 清空全部 / 刷新列表」，成功后刷新列表。安装方式：插件管理 → 选择本地插件文件夹安装 `plugins/dsh-archive-purge`（或用 `--install-plugin plugins\dsh-archive-purge`） |
 
 ### 绿色便携的环境变量重定向（build_env）
 | 环境变量 | 本地落点 | 作用 |
@@ -205,6 +207,31 @@
     - **修复**：不用 `-Body $jsonString`，改成 `$bytes = [System.Text.Encoding]::UTF8.GetBytes($jsonString)` + `-Body $bytes` + `-ContentType "application/json; charset=utf-8"`，强制 UTF-8 字节发送。
     - **验证**：PATCH 修复后 body/name 中文正常。
     - **教训**：以后任何 PowerShell 调 REST API 涉及中文，一律走 `UTF8.GetBytes` 字节流，不要直接传 string。`ConvertTo-Json` 生成的 string 本身是 UTF-16 在内存里，但 `-Body` 参数会丢给 `Content-Type` 的 charset 做编码转换，不传 charset 则用默认 ANSI。
+
+33. **【DSH 插件】客户端插件不进 WebUI 的坑：`package.json` 的 `exports` 必须导出 `./package.json`（2026-08-15）**：
+    - **现象**：`dsh-archive-purge` 插件已装进 `profiles/web` 的 `dsh.profile.bundles`、`--dump-config` 插件树里也合成了 `archive-purge` 条目、服务正常启动，但 WebUI「设置 → 清理归档」入口死活不出现。
+    - **根因**：宿主端 `@deepseek-ai/dsh-client-modules` 的 `ClientModuleRegistry.resolveMeta()` 靠 `require.resolve("<插件名>/package.json")` 扫描**已加载进 cordis loader** 的条目，再看 `dsh.client.platform === "web"` 才把客户端 bundle 写入 `window.__DSH_BOOT__` 模块表。而插件 `package.json` 的 `exports` 只写了 `"."` 和 `"./client"`，**没写 `"./package.json"`**，于是 `require.resolve("dsh-archive-purge/package.json")` 抛 `ERR_PACKAGE_PATH_NOT_EXPORTED`，该插件被当作"不是客户端包"跳过 → 模块表里没有它 → WebUI 不显示。服务端 `resolveBundleDir` 用的是 `createRequire().resolve.paths()` + `existsSync`，不受 `exports` 限制，所以服务端插件树照常合成，二者行为不一致造成"服务端在、客户端不在"的假象。
+    - **修复**：插件 `package.json` 的 `exports` 增加 `"./package.json": "./package.json"`，然后**重新安装**插件（pnpm 对 `file:` 是拷贝非软链，改源文件后必须重装 `--install-plugin` 同步到 `node_modules`），重启服务。
+    - **验证**：`GET http://127.0.0.1:3080/` 的 `window.__DSH_BOOT__.entries` 里出现 `dsh-archive-purge` 条目（rev 变化），WebUI 设置页左侧出现「清理归档」，点击进入有「立即清理归档会话」按钮，控制台无 JS 报错。
+    - **教训**：写 DSH 客户端插件时，`exports` 字段要仿照官方包（如 `dsh-api-remotes`）带上 `"./package.json"`；排查"客户端功能不显示"先抓首页 `__DSH_BOOT__` 模块表是否含该插件，再用 `node -e` 验证 `require.resolve("<插件>/package.json")` 是否抛 `ERR_PACKAGE_PATH_NOT_EXPORTED`。
+
+34. **【DSH 插件】路由"注册后立即被注销"→ 点击按钮报 HTTP 405（2026-08-15）**：
+    - **现象**：`dsh-archive-purge` 客户端入口正常显示，点击「立即清理归档会话」后提示 **HTTP 405**。此时 `POST http://127.0.0.1:3080/__dsh/archive-purge`（带自定义头）返回 405，而 `dsh-host-webserver` 的路由匹配逻辑（`match()`：先查 `exact` 表再查 `prefixes` 表，未命中才落到 `frontend-static` 的 fallback）本身不产生 405——405 是 fallback 对**非 GET/HEAD** 请求的默认响应（`dsh-host-frontend-static/lib/index.js` `apply()` 里 `req.method !== "GET" && req.method !== "HEAD" → res.writeHead(405)`）。所以 **405 = 插件的路由根本没在 exact 表里**。
+    - **根因（误用 `ctx.effect`）**：Cordis 的 `ctx.effect(fn, label)` 会**立即执行 `fn()`**，并把 **`fn()` 的返回值**当作"清理函数"（dispose）存起来。官方写法是 `ctx.effect(() => ctx.webServer.register(route), "…")`——`register` 的返回值（注销函数）正是 `fn()` 的返回值，被存为清理函数。而我们的初版写成：
+      ```js
+      const disposer = ctx.webServer.register({...});  // 先注册
+      ctx.effect(disposer, "…");                        // 把"注销函数"当成 fn 传进去
+      ```
+      于是 `ctx.effect` 把 `disposer()` 当作 setup **立即执行**，路由刚注册进 exact 表又被 `table.delete(path)` 删掉 → 之后所有请求都落到 fallback → 非 GET 一律 405。客户端能显示（`dsh-client-modules` 靠 `require.resolve(package.json)` 扫元数据，与宿主 `apply` 是否成功无关），造成"入口在、路由不在"的假象。
+    - **修复**：改成官方写法 `ctx.effect(() => ctx.webServer.register({...}), "dsh-archive-purge: route")`。
+    - **验证**（重启服务后实测）：`GET`（带头）返回 `{"ok":true,"total":0,"sessions":[]}`；`POST`（空体）返回 `{"ok":true,"total":0,...}`；`POST {"ids":["fake"]}` 只处理传入 id 返回 `detached-only`——200 而非 405。
+    - **教训**：宿主插件注册任何路由/资源，**必须**用 `ctx.effect(() => 注册(...), label)` 模式；凡是"注册了但请求还是 404/405"的，先怀疑这个。同时注意 `dsh-client-modules` 与宿主端对"插件是否成功"的判定是两套独立机制，客户端显示了不代表宿主 `apply` 成功。
+
+35. **【Skill 打包】PowerShell `Copy-Item -Recurse` 目标目录已存在时会把源目录整个嵌进去（嵌套副本，2026-08-15）**：
+    - **现象**：`Copy-Item -Path "D:\...\skills\dsh-deploy-maintain" -Destination "C:\Users\bodyy\.trae-cn\skills\dsh-deploy-maintain" -Recurse` 后，目标出现 `...\dsh-deploy-maintain\dsh-deploy-maintain\` 嵌套（源目录被当子目录复制进已存在的同名目标）。
+    - **原因**：目标目录已存在（第一次已写了 SKILL.md），`Copy-Item -Recurse` 把**源目录本身**作为目标下的子目录创建，而非合并内容。
+    - **修复**：目标已存在时改用 `Copy-Item -Path "源\*" -Destination "目标\" -Recurse -Force`（通配符展开内容），或先删空目标再整目录复制。
+    - **教训**：复制目录到可能已存在的目标前，先确认目标是否为空；Skill 安装后必须 `Get-ChildItem -Recurse` 核对结构（`SKILL.md` 应在技能根目录，不能套一层同名子目录，否则 TRAE 识别不到）。同时 Skill 目录应**先在项目内写好**（编辑工具限制在工作目录内，无法直接写 `~/.trae-cn/skills`），再复制安装。
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
