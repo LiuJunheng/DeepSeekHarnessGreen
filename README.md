@@ -29,7 +29,7 @@ DeepSeekHarnessLauncher/
 │   ├── tmp/               # 临时文件
 │   ├── server.pid         # 服务进程号
 │   └── server.log         # 服务运行日志
-├── plugins/               # 内置插件源码（dsh-archive-purge 清理归档 / dsh-file-browser 文件浏览）
+├── plugins/               # 内置插件源码（dsh-archive-purge 清理归档 / dsh-session-rewind 会话回退 / dsh-file-browser 文件浏览）
 ├── skills/                # 本项目的 DSH 经验 Skill（已安装到 TRAE 全局 skills）
 └── README.md
 ```
@@ -125,9 +125,9 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 ### 轻量分发 zip（精简在线版，约 8MB）
 > 相较"整目录迁移"，此 zip **不含 `runtime/`（不带已下载的环境与会话）**，新机联网后由启动器自动下载 Node / Python / dsh，体积小、适合放到 GitHub Release 分发。
 >
-> 打包内容（即项目根目录的"发货清单"）：`launcher.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`config.json`、`README.md`、`DEV_NOTES.md`、`.gitignore`、`plugins/dsh-archive-purge/`、`plugins/dsh-file-browser/`、`skills/dsh-deploy-maintain/`。
+> 打包内容（即项目根目录的"发货清单"）：`launcher.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`config.json`、`README.md`、`DEV_NOTES.md`、`.gitignore`、`plugins/dsh-archive-purge/`、`plugins/dsh-session-rewind/`、`plugins/dsh-file-browser/`、`skills/dsh-deploy-maintain/`。
 
-- **最新下载**（GitHub Release，tag `v1.0.2`）：<https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
+- **最新下载**（GitHub Release，tag `v1.0.3`）：<https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
 - 仓库：<https://github.com/LiuJunheng/DeepSeekHarnessGreen>
 
 新机使用三步：
@@ -137,7 +137,7 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 
 重新生成该 zip（在项目根目录 PowerShell 执行）：
 ```powershell
-Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, config.json, README.md, DEV_NOTES.md, .gitignore, "plugins\dsh-archive-purge", "plugins\dsh-file-browser", "skills\dsh-deploy-maintain" -DestinationPath DSH_Launcher_GreenPortable_Online_<日期>.zip -CompressionLevel Optimal
+Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, config.json, README.md, DEV_NOTES.md, .gitignore, "plugins\dsh-archive-purge", "plugins\dsh-session-rewind", "plugins\dsh-file-browser", "skills\dsh-deploy-maintain" -DestinationPath DSH_Launcher_GreenPortable_Online_<日期>.zip -CompressionLevel Optimal
 ```
 
 ## 五、插件管理
@@ -193,6 +193,9 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 
 > 常见问题：安装后 WebUI 设置里看不到「清理归档」→ 多为插件 `package.json` 的 `exports` 少了 `"./package.json"`（或改源码后没重新安装），详见插件 README 的「排查」一节。
 
+### 配套：内置「会话回退」WebUI 插件
+启动器 `plugins/` 下自带 **`dsh-session-rewind`** 插件：解决 dsh 会话被工具运行时失效（`Cannot read properties of undefined (reading 'prepare')`）**永久毒化**的问题——崩溃回合会在日志里留下孤儿 `tool_calls`，之后每一轮都被 API 400 拒绝。安装并重启服务后，WebUI「设置 → 会话回退」可：列出全部会话 →「分析」任意会话（逐回合信息：用户问题 / 步骤数 / 工具调用数 / 错误码统计 / 是否完成）→ 在任意一个**已完成**回合上点「回退到此」，调用官方 `session.fork` 从该回合之后派生一个**干净的续接会话**并自动打开（原会话保留，可再交「会话管理」清理）。它是纯插件（不修改任何官方文件），通过「插件管理 → 选择本地插件文件夹安装…」选择 `plugins/dsh-session-rewind` 目录安装即可（命令行等价物：`python launcher.py --install-plugin plugins\dsh-session-rewind`），详见 [plugins/dsh-session-rewind/README.md](plugins/dsh-session-rewind/README.md)。
+
 ## 七、绿色版自更新（双通道更新）
 
 本绿色版支持**两条完全独立、互不干扰的更新通道**：
@@ -213,7 +216,7 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 ### 安全与回退
 - **不替换** `config.json`（你自定义的端口/镜像设置）与 `runtime/`（你的会话数据 / 已装环境）。
 - 覆盖前旧文件自动备份到 `runtime/update/backup/`，新版有问题可手动复制回根目录回退。
-- 分发 zip 命名约定：`DSH_Launcher_GreenPortable_Online_<日期>_v<版本>.zip`，Release tag 为 `v<版本>`（当前 `v1.0.2`）。
+- 分发 zip 命名约定：`DSH_Launcher_GreenPortable_Online_<日期>_v<版本>.zip`，Release tag 为 `v<版本>`（当前 `v1.0.3`）。
 - 内置插件源码随绿色版更新，但**已安装**到 `runtime/dsh-home/profiles/web` 的插件副本是 pnpm 拷贝，需到「插件管理」重新安装本地插件才生效。
 
 ## 八、内置 Python 与 exe 打包

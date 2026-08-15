@@ -55,6 +55,7 @@
 - [ ] JSON 写回用原子写（同目录临时文件 + `os.replace`）
 - [ ] 运行中的会话自动跳过
 - [ ] 恢复（取消归档）只改 workspace.json 的 archivedSessionIds，不删日志与归属；GUI「会话管理」弹窗支持勾选后「恢复选中」/「删除选中」
+- [ ] 会话回退（`dsh-session-rewind` 插件）：WebUI 设置页出现「会话回退」；「分析」能逐回合展示；在已完成回合「回退到此」能派生干净续接会话并自动打开；配套 `tools/rewind-session.mjs` / `apply-agentloop-guard.mjs` 幂等可反复执行
 
 ## 验证
 

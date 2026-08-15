@@ -43,6 +43,8 @@
     - 同步两份拷贝：`--install-plugin plugins\dsh-archive-purge`（幂等重装）+ 直接覆盖 `profiles/web/node_modules/dsh-archive-purge/lib/client.js`；用 MD5 校验源文件与 node_modules 拷贝一致。
     - 验证：GET WebUI 根页从 `__DSH_BOOT__.entries` 拿 `dsh-archive-purge` 的 bundle URL，抓 bundle 确认**新文案在、旧文案（清空全部/删除所选/永久删除已归档…）已消失**——客户端 bundle 按请求生成，强制刷新页面即生效，无需重启服务。
 
+18. **内置插件 dsh-session-rewind（会话回退，另一 AI 开发 2026-08-15）**：解决 dsh 会话被工具运行时失效（`Cannot read properties of undefined (reading 'prepare')`）**永久毒化**的问题——崩溃回合在日志里留下孤儿 `tool_calls`（有调用无结果），之后每轮都被 DeepSeek API 400 拒绝，且 DSH 0.1.0-rc.6 没有"删失败消息"的界面功能。插件在 WebUI 设置页新增「会话回退」：列出会话 →「分析」逐回合（问题/步骤/工具调用/错误码/是否完成）→ 在任意**已完成**回合点「回退到此」走官方 `session.fork`（`{sessionId, atSeq}`）派生干净续接会话并自动打开；原会话保留。关键设计：**"派生新会话"而非"原地删消息"**——服务运行时会话由持久化层内存缓存，原地改写磁盘日志会被内存覆盖或产生 seq 断裂；`session.fork` 与官方 UI"分支"同源（官方只暴露末位回合，本插件放开到任意回合）。宿主端 `lib/index.js` 直接按磁盘扫描 `DSH_HOME/sessions/**/session.jsonl.zstd`（zstd 多帧），用官方 `@deepseek-ai/dsh-session` 的 `decodeStorageRecord` 展开事件（对 chunk-run 打包行布局无关）；接口 `GET /__dsh/session-rewind/list`、`GET /__dsh/session-rewind/inspect?id=<ID>`，均要求自定义头 `X-DSH-Plugin-Rewind: 1` 防 CSRF。配套 `tools/`：`rewind-session.mjs`（服务停机时离线原地截断，自动备份）、`apply-agentloop-guard.mjs`（给 dsh-agent-loop 工具派发入口加存在性检查，幂等）。安装：`--install-plugin plugins\dsh-session-rewind`，依赖 `@deepseek-ai/dsh-session@0.1.0-rc.6`。相关讨论 DeepSeek Harness #1959 / #1974。
+
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
 |------|------|

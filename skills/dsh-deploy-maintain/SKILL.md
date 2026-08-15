@@ -6,7 +6,7 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
 # DeepSeek Harness 绿色便携版 · 部署维护与插件开发
 
 > 版本日期：2026-08-15
-> 本 Skill 沉淀自 `DeepSeekHarnessLauncher` 项目（Python tkinter 一键启动器 + 内置 `dsh-archive-purge` / `dsh-file-browser` 插件）的全过程实测经验，含 42 条避坑记录。适用于：把 dsh 封装成"双击即用、绿色便携、可整目录拷走"的形态，以及开发 DSH 插件（宿主端路由 + WebUI 客户端入口）。
+> 本 Skill 沉淀自 `DeepSeekHarnessLauncher` 项目（Python tkinter 一键启动器 + 内置 `dsh-archive-purge` / `dsh-file-browser` / `dsh-session-rewind` 插件）的全过程实测经验，含 42 条避坑记录。适用于：把 dsh 封装成"双击即用、绿色便携、可整目录拷走"的形态，以及开发 DSH 插件（宿主端路由 + WebUI 客户端入口）。
 
 ## 一、适用场景
 
@@ -143,6 +143,15 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
 
 **发布 Release（含中文正文）的编码坑**：用 GitHub API（PowerShell）创建/更新 Release 时，即使 `ConvertTo-Json` + `[System.Text.Encoding]::UTF8.GetBytes()` + `-ContentType "application/json; charset=utf-8"`，正文中文仍可能全变 `?`——因为 **Windows PowerShell 5.1 会把"无 BOM 的 UTF-8 .ps1"按系统 ANSI（GBK）读取**，脚本里写的中文字符串字面量在内存里已乱码，后面怎么编码都救不回。**正确做法**：发布脚本保持**纯 ASCII**（不写一个中文字符），中文正文单独放一个 UTF-8 文本文件，脚本里 `[System.IO.File]::ReadAllText(路径, [System.Text.Encoding]::UTF8)` 显式按 UTF-8 读入再发送。校验也别用 PowerShell 的 `-match "中文"`（同样会被 ANSI 读乱），导出 body 到 UTF-8 文件后用 python 检查是否含关键中文且无 U+FFFD/`?`；资产下载 URL 用 `curl.exe -s -I -L` 验证 200。**本经验已同步至 `DEV_NOTES.md` 避坑 #43。**
 
+### 3.5 会话回退（dsh-session-rewind WebUI 插件，2026-08-15 加入内置）
+
+- **问题**：DSH 回合因工具运行时失效（`Cannot read properties of undefined (reading 'prepare')`）崩溃时，崩溃回合会在会话日志里留下**孤儿 `tool_calls`**（有调用、永远没有结果），之后每一轮对话都被 DeepSeek API 以 400 拒绝，会话**永久毒化**；DSH 0.1.0-rc.6 没有"删除失败消息"的界面功能。
+- **方案**：内置 `dsh-session-rewind` 插件在 WebUI 设置页新增「会话回退」页：列出全部会话 →「分析」任意会话（逐回合：用户问题/步骤数/工具调用数/错误码统计/是否完成）→ 在任意**已完成**回合点「回退到此」走官方 `session.fork`（`{sessionId, atSeq}`）从该回合之后**派生一个干净的续接会话**并自动打开；原会话保留不动（可再交「会话管理」清理）。
+- **为什么派生而非原地删消息**：服务运行时会话由持久化层在内存缓存，原地改写磁盘日志会被内存状态覆盖或造成 seq 断裂，不安全；官方 `session.fork` 正是为此设计的机制（与官方 UI 自带「分支」同源，官方只暴露末位回合，本插件放开到任意回合）。
+- **实现要点**：宿主端直接按磁盘扫描 `DSH_HOME/sessions/**/session.jsonl.zstd`（zstd 多帧，用官方 `@deepseek-ai/dsh-session` 的 `decodeStorageRecord` 展开事件，对 chunk-run 打包行布局无关）；回退动作走官方 `session.fork` + 客户端 `sessions.open`，与服务端持久化层一致。接口带自定义头 `X-DSH-Plugin-Rewind: 1` 防 CSRF。
+- **配套 tools/**：`rewind-session.mjs`（服务停止时的**离线原地回退**：直接把会话日志截断到最后一个完整回合，自动备份）；`apply-agentloop-guard.mjs`（给 `dsh-agent-loop` 工具派发入口加存在性检查，把晦涩报错变成明确的可操作提示，幂等、可反复执行，dsh 升级后重跑一次即可）。
+- **排查"会话突然全部 400"**：先看 `server.log` 有无该 bug 签名（`Cannot read properties of undefined (reading 'prepare')`）→ 用插件「分析」定位崩溃回合 → 在崩溃回合之前的**已完成**回合「回退到此」派生干净续接会话。
+
 ## 四、DSH 插件开发（双端加载 + 路由注册）
 
 ### 4.1 插件 = npm 包 + 双入口（最容易漏）
@@ -234,6 +243,7 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 | 装了插件在 WebUI 看不到任何东西（无 UI） | 查插件 `package.json` 有无 `dsh.client`——无则是宿主端工具/路由插件，靠 agent 按需调用（如 `find_dsh_plugin`）或 HTTP 路由验证，不是装坏了 |
 | `dsh --dump-config` 看不到自定义插件层 | 先 `$env:DSH_HOME=runtime\dsh-home` 再 dump（否则加载 `~/.dsh` 默认 home，只有内置 bundle） |
 | 双端插件"树里有、设置界面有、但工具/skill 不生效" | 查插件自身运行时前提：外部解释器版本（如 dsh-vision-toolkit 要 Python 3.11+）、下载型依赖（managed 环境是否已建）、API credential（`VISION_API_KEY` 是否配）→ 看 server.log 里插件 `ctx.logger.error` 的 "runtime not ready" 提示 |
+| 会话突然全部被 400 拒绝（`Cannot read properties of undefined (reading 'prepare')`，孤儿 `tool_calls` 毒化） | 用「设置 → 会话回退」插件：分析会话 → 定位崩溃回合 → 在崩溃回合之前的**已完成**回合点「回退到此」派生干净续接会话（`session.fork`）；服务停止时可用 `tools/rewind-session.mjs` 离线原地回退 |
 | 界面空白（GUI 布局） | `ttk.Panedwindow` 漏 `.add()`；滚动条被列宽挤成 1x1 |
 | 多次重启累积一堆相同 WebUI 标签页 | 查 `dist/index.html` 是否含 `dsh-launcher-ui-beacon` 标记（无则 `patch_frontend()` 没跑，多半是旧 exe/没重启）；有心跳仍开新页则查 3081 端口占用或 `runtime/ui-beacon.token` |
 | 「检查绿色版更新」查不到/报错 | 依次查：网络能否访问 api.github.com / 镜像 `mirror.nju.edu.cn/github-release`；Release 是否存在且 tag 带 `v` 前缀；资产名是否以 `DSH_Launcher_GreenPortable_Online_` 开头（否则 `green_find_zip_asset` 匹配不到） |
