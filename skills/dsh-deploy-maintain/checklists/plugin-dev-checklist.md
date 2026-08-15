@@ -25,6 +25,8 @@
 
 - [ ] 使用 `window.__ModuleLoader__.load({ id, factory })` 加载器契约
 - [ ] `apply(ctx)` 里 `ctx.slots.inject("settings.section", ...)` 注册设置区块
+- [ ] **插槽条目组件不要条件调用 props 传入的 hook**（`typeof useXxx === "function" ? useXxx() : null` 会触发 "Rendered more/fewer hooks" 被错误边界吞掉 → 组件不渲染）；读快照优先用 ownerProps 里的普通数据字段（如 InputZone 的 `input.draft`），hook 只能无条件调用
+- [ ] 改客户端源码后**强制刷新页面即可**（bundle 按请求重新生成、rev 变化），不必重启服务；改宿主端/加减插件才需重启
 - [ ] 组件内 fetch 调宿主路由时带自定义头
 - [ ] 加载/删除/刷新状态管理（busy/error/result）
 - [ ] 勾选列表 + 全选/全不选 + 批量操作按钮

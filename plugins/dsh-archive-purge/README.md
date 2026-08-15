@@ -1,10 +1,10 @@
 # dsh-archive-purge
 
-DeepSeek Harness 插件：在 **WebUI 设置**里加一个「清理归档」页面，可**列表勾选或清空全部**已归档（隐藏）的会话并永久删除。
+DeepSeek Harness 插件：在 **WebUI 设置**里加一个「清理归档」页面，**只读展示**已归档（隐藏）的会话列表。
 
 - 不修改任何官方文件 / 官方包（纯插件，装进 profile 的 node_modules）。
-- 删除内容：会话日志目录（`DSH_HOME/sessions/<工作区>/<会话ID>/`）+ 工作区注册表条目（`workspace.detachSession`）。
-- 正在运行的会话自动跳过。
+- **WebUI 侧只读**：实际启动服务时所有会话都处于"运行中"，WebUI 无法清理，故该页面只用于查看；永久删除请到**启动器 GUI** 操作（先停止服务 → 主窗口「数据维护」→「清理归档」→ 勾选后删除）。
+- 删除内容（由启动器 GUI / 命令行执行）：会话日志目录（`DSH_HOME/sessions/<工作区>/<会话ID>/`）+ 工作区注册表条目（`workspace.detachSession`）。
 - 数据**不可恢复**，操作前有确认框。
 
 ## 工作原理
@@ -12,7 +12,7 @@ DeepSeek Harness 插件：在 **WebUI 设置**里加一个「清理归档」页�
 | 端 | 文件 | 作用 |
 |---|---|---|
 | 宿主 | `lib/index.js` | 注册本地路由 `GET /__dsh/archive-purge`（列表）+ `POST /__dsh/archive-purge`（删除，带 `X-DSH-Plugin-Purge: 1` 头防跨站触发）。POST 请求体 `{"ids": ["会话A","会话B"]}` 仅删除所选，省略 `ids` 则删除全部。 |
-| 客户端 | `lib/client.js` | 在设置面板注册 `settings.section` 插槽（「清理归档」页），首次加载时 GET 列表，展示勾选列表 + 操作按钮 |
+| 客户端 | `lib/client.js` | 在设置面板注册 `settings.section` 插槽（「清理归档」页），首次加载时 GET 列表；**只读展示**——保留列表显示与勾选/全选交互，但移除「删除所选 / 清空全部」按钮，仅提供「刷新列表」，并提示到启动器 GUI 操作 |
 
 已知取舍：
 - dsh 官方没有「取消归档/删除归档 id」接口，摘除后 `storages/workspace.json` 的 `archivedSessionIds` 里会残留一个不再指向任何会话的 id，纯属隐藏标记，不影响功能。
@@ -41,11 +41,11 @@ python launcher.py --start      # 或手动重启服务
 ..\..\..\pnpm-home\pnpm.cmd add file:D:/DeepSeekHarnessLauncher/plugins/dsh-archive-purge
 ```
 
-重启后在 WebUI：左下角「设置」→ 左侧「清理归档」→ 勾选要删除的会话后点击按钮，或直接「清空全部」。
+重启后在 WebUI：左下角「设置」→ 左侧「清理归档」→ 可查看归档会话列表（勾选/全选交互仅作展示）。**删除请回启动器 GUI**：先「停止服务」→ 主窗口「数据维护」→「清理归档」→ 勾选要删除的会话后点「删除选中」。
 
-> 也可以不用 WebUI：启动器图形界面新增了「数据维护」区（**清理归档会话** /
-> **删除会话…** 可视化列表），命令行等价物是 `python launcher.py --purge-archived`
-> 与 `python launcher.py --purge-session <ID>`（数据维护需先停止服务）。
+> WebUI 只读展示、GUI 负责删除：因为实际启动服务时所有会话都处于"运行中"，WebUI 侧无法清理；而启动器「数据维护」区是在**停止服务后**直接操作本地数据文件，可彻底删除。
+>
+> 命令行等价物：`python launcher.py --purge-archived`（清全部归档）与 `python launcher.py --purge-session <ID>`（删指定会话，数据维护需先停止服务）。
 
 ## 卸载
 

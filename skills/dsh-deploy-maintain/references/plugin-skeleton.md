@@ -188,6 +188,9 @@ window.__ModuleLoader__.load({
 });
 ```
 
+> **⚠️ 插槽条目组件禁用"从 props 条件调用 hook"**：standard props 里的 hook（如输入框区域的 `useInput`）是外部传入的函数，身份/可用性在渲染间可能变化；写成 `typeof useInput === "function" ? useInput() : null` 会导致 React "Rendered more/fewer hooks" 被错误边界吞掉、组件不渲染（`data-slot-error` 空占位，控制台 `componentDidCatch`）。需要读快照数据时，优先用 ownerProps 里已有的普通字段——例如 `conversation.input.left` 的 ownerProps 直接带 `input: InputState`（`input.draft` 即当前草稿），`inputActions.setDraft(草稿+文本)` 可追加草稿。详见 `SKILL.md` 4.6 与根项目 `DEV_NOTES.md` 避坑 #42。
+> **改客户端源码无需重启服务**：客户端 bundle 按请求从 node_modules 重新生成（rev 哈希变化），强制刷新页面即可生效；只有宿主端改动 / 加减插件才需要重启。
+
 ## 数据目录参考
 
 ```

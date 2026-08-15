@@ -29,7 +29,7 @@ DeepSeekHarnessLauncher/
 │   ├── tmp/               # 临时文件
 │   ├── server.pid         # 服务进程号
 │   └── server.log         # 服务运行日志
-├── plugins/               # 内置插件源码（如 dsh-archive-purge）
+├── plugins/               # 内置插件源码（dsh-archive-purge 清理归档 / dsh-file-browser 文件浏览）
 ├── skills/                # 本项目的 DSH 经验 Skill（已安装到 TRAE 全局 skills）
 └── README.md
 ```
@@ -59,13 +59,20 @@ DeepSeekHarnessLauncher/
 | 按钮 | 作用 | 何时可用 |
 |------|------|----------|
 | 安装环境 | 下载便携 Node + 安装 dsh + 补齐内置 Python | 环境未安装 / 未运行服务时 |
-| 启动服务 | 拉起 dsh web 服务并自动开浏览器 | 环境已就绪且服务未运行 |
+| 启动服务 | 拉起 dsh web 服务并自动开浏览器（界面已在浏览器中打开则不重复开新页） | 环境已就绪且服务未运行 |
 | 停止服务 | 停止 dsh 服务 | 服务运行中 |
-| 打开界面 | 在浏览器打开 dsh 界面 | 服务运行中 |
+| 打开界面 | 在浏览器打开 dsh 界面（若已打开则不重复开新页） | 服务运行中 |
 | 检查更新 | 查询 npm 上 dsh 最新版本，有新版则弹窗让您选择是否更新；更新前自动备份旧版本到 `runtime/dsh-backup-<版本>`，不覆盖、可手动删除 | 环境已安装且服务未运行 |
+| 检查绿色版更新 | 查询本项目 GitHub 最新 Release（本绿色版外围：启动器/插件/文档等）；发现新版 → 下载到 `runtime/update/` 暂存 → 退出启动器 → 自动覆盖安装并重启。**不替换 `config.json`（你的设置）与 `runtime/`（你的数据）**，旧文件自动备份到 `runtime/update/backup/`，详见第六章 | 服务未运行 |
 | 插件管理 | 弹出插件管理窗口：查看已安装插件、搜索插件（npm 注册表 + GitHub 官方 `dsh-plugin` 话题页）、安装 / 移除插件（详见第五章） | 环境已就绪 |
-| 数据维护区 | 主窗口新增「数据维护」区（需先停止服务）：**清理归档会话**（永久删除全部已归档/隐藏会话）、**删除会话…**（可视化列表，可多选后永久删除），详见第六章 | 服务停止后 |
+| 数据维护区 | 主窗口「数据维护」区（需先停止服务）：**清理归档**按钮 → 弹出会话列表，**勾选（可全选/单选）**后永久删除已归档/指定的会话，详见第六章 | 服务停止后 |
 | 刷新状态 | 手动重新检测环境与服务状态 | 任何时候 |
+
+> **WebUI 单页面去重**：启动器会向 WebUI 页面注入心跳脚本，页面打开后每 15 秒向本地
+> 127.0.0.1:3081 上报一次；再次「启动服务 / 打开界面」时，若检测到界面已在浏览器中打开
+> （180 秒内有心跳），就**不再打开新页面**，避免多次重启累积一堆相同标签页。
+> 可在「设置」里取消勾选 *启动服务后自动打开浏览器*（对应 `config.json` 的
+> `auto_open_browser`，端口可用 `ui_beacon_port` 调整）。
 
 ### 停止
 - 点启动器里的【停止服务】，或双击 **stop.bat**
@@ -116,9 +123,9 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 ### 轻量分发 zip（精简在线版，约 8MB）
 > 相较"整目录迁移"，此 zip **不含 `runtime/`（不带已下载的环境与会话）**，新机联网后由启动器自动下载 Node / Python / dsh，体积小、适合放到 GitHub Release 分发。
 >
-> 打包内容（即项目根目录的"发货清单"）：`launcher.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`config.json`、`README.md`、`DEV_NOTES.md`、`.gitignore`、`plugins/dsh-archive-purge/`、`skills/dsh-deploy-maintain/`。
+> 打包内容（即项目根目录的"发货清单"）：`launcher.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`config.json`、`README.md`、`DEV_NOTES.md`、`.gitignore`、`plugins/dsh-archive-purge/`、`plugins/dsh-file-browser/`、`skills/dsh-deploy-maintain/`。
 
-- **最新下载**（GitHub Release，tag `v1.0.1`）：<https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
+- **最新下载**（GitHub Release，tag `v1.0.2`）：<https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
 - 仓库：<https://github.com/LiuJunheng/DeepSeekHarnessGreen>
 
 新机使用三步：
@@ -128,7 +135,7 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 
 重新生成该 zip（在项目根目录 PowerShell 执行）：
 ```powershell
-Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, config.json, README.md, DEV_NOTES.md, .gitignore, "plugins\dsh-archive-purge", "skills\dsh-deploy-maintain" -DestinationPath DSH_Launcher_GreenPortable_Online_<日期>.zip -CompressionLevel Optimal
+Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, config.json, README.md, DEV_NOTES.md, .gitignore, "plugins\dsh-archive-purge", "plugins\dsh-file-browser", "skills\dsh-deploy-maintain" -DestinationPath DSH_Launcher_GreenPortable_Online_<日期>.zip -CompressionLevel Optimal
 ```
 
 ## 五、插件管理
@@ -151,15 +158,19 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 - 首次使用插件管理时启动器会自动用便携 Node 安装 pnpm 到 `runtime/pnpm-home`。
 - GitHub 源的仓库未必是 npm 包，安装失败属正常，窗口会提示原因；可改用 npm 注册表里的同名包。
 
+### 内置插件：dsh-file-browser（WebUI 文件浏览 / 预览 / 右键添加到对话）
+启动器 `plugins/` 下自带 **`dsh-file-browser`** 插件：安装并重启服务后，WebUI 输入框工具行左侧出现「📁 文件」按钮，点击打开右侧浮层文件浏览器——目录列表（目录在前）、文本/代码与图片预览、路径输入跳转、返回上级/刷新；**右键文件或目录**弹出菜单，可把**路径**或**内容**（≤3000 字符，超出截断并注明）追加到输入框草稿（可编辑后再发送），或**复制路径**。它是纯插件（不修改任何官方文件），通过「插件管理 → 选择本地插件文件夹安装…」选择 `plugins/dsh-file-browser` 目录安装即可（命令行等价物：`python launcher.py --install-plugin plugins\dsh-file-browser`），详见 [plugins/dsh-file-browser/README.md](plugins/dsh-file-browser/README.md)。
+
+> 常见问题：安装后输入框看不到「文件」按钮 → 多为没重启服务 / 插件 `exports` 少了 `"./package.json"` / 改源码后没重新安装，详见插件 README 的「排查」一节。
+
 ## 六、数据维护（清理 / 删除会话）
 
 > dsh 官方**没有**"永久删除会话"功能：网页里的"归档"只是把会话**隐藏**（日志文件与注册表条目全部保留）。本启动器在**服务停止后**直接操作本地数据文件，做到彻底删除、**不可恢复**。
 
 | 操作 | 位置 | 说明 |
 |------|------|------|
-| 清理归档会话 | 主窗口「数据维护」区 | 永久删除**所有已归档（隐藏）**的会话（自动跳过运行中的） |
-| 删除会话… | 主窗口「数据维护」区 | 弹出可视化列表（标题 / 工作区 / 状态 / 有无日志），**可多选**后永久删除 |
-| 命令行 | `--purge-archived` / `--purge-session <ID>` | 等价操作 |
+| 清理归档 | 主窗口「数据维护」区 | 点击后弹出会话列表（标题 / 工作区 / 状态 / 有无日志），**可勾选（全选/全不选/单选）**后永久删除已归档或指定的会话 |
+| 命令行 | `--purge-archived` / `--purge-session <ID>` | 等价操作（前者清全部归档，后者删指定会话） |
 
 删除时会一并清理三个来源：
 1. 会话日志目录 `runtime/dsh-home/sessions/<工作区编码>/<会话ID>/`
@@ -172,11 +183,34 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 - 正在运行的会话不会被清理
 
 ### 配套：内置「清理归档」WebUI 插件
-启动器 `plugins/` 下自带 **`dsh-archive-purge`** 插件：安装并重启服务后，可在 WebUI「设置 → 清理归档」里**勾选要删除的归档会话**（支持全选/全不选）后点击「删除所选」，或直接点击「清空全部」一键清理所有归档会话，无需回到启动器。它是纯插件（不修改任何官方文件），通过「插件管理 → 选择本地插件文件夹安装…」选择 `plugins/dsh-archive-purge` 目录安装即可，详见 [plugins/dsh-archive-purge/README.md](plugins/dsh-archive-purge/README.md)。
+启动器 `plugins/` 下自带 **`dsh-archive-purge`** 插件：安装并重启服务后，可在 WebUI「设置 → 清理归档」里**查看**已归档会话列表（可勾选/全选交互保留）。由于实际启动服务时所有会话都处于"运行中"，WebUI 侧**无法直接删除**，因此该页面为**只读展示**——真正的永久删除请在启动器 GUI 完成：**先点「停止服务」→ 主窗口「数据维护」→「清理归档」→ 勾选要删除的会话后删除**。它是纯插件（不修改任何官方文件），通过「插件管理 → 选择本地插件文件夹安装…」选择 `plugins/dsh-archive-purge` 目录安装即可，详见 [plugins/dsh-archive-purge/README.md](plugins/dsh-archive-purge/README.md)。
 
 > 常见问题：安装后 WebUI 设置里看不到「清理归档」→ 多为插件 `package.json` 的 `exports` 少了 `"./package.json"`（或改源码后没重新安装），详见插件 README 的「排查」一节。
 
-## 七、内置 Python 与 exe 打包
+## 七、绿色版自更新（双通道更新）
+
+本绿色版支持**两条完全独立、互不干扰的更新通道**：
+
+| 通道 | 更新对象 | 入口 | 更新源 |
+|------|----------|------|--------|
+| 官方核心 | dsh 本体（`runtime/dsh/` 的 npm 包） | 「检查更新」 | 官方 npm / GitHub |
+| 绿色版外围 | 启动器 `launcher.py` / `DSH_Launcher.exe` / `plugins/` / 文档等 | 「检查绿色版更新」 | 本项目 GitHub Release |
+
+两条通道各自判断版本、各自下载、各自备份，**绝不互相触碰**：核心更新只动 `runtime/dsh/`，外围更新只动程序根目录（并跳过 `config.json` 与 `runtime/`），互不干扰、互不依赖。
+
+### 绿色版外围更新流程
+1. 点「检查绿色版更新」（需先停止服务）→ 查询 GitHub 最新 Release（官方 API 失败自动降级国内镜像）。
+2. 有新版则弹窗显示版本对比与更新说明 → 确认后下载分发 zip 到 `runtime/update/`（带进度、校验大小）。
+3. 自动解压并生成覆盖安装脚本（`runtime/update/update_apply.bat`）。
+4. 确认后**退出启动器**，由后台脚本自动完成：等待文件锁释放 → 备份旧文件到 `runtime/update/backup/` → 覆盖程序根目录（跳过 `config.json` / `runtime/` / `.git`）→ 自动重启新版启动器。
+
+### 安全与回退
+- **不替换** `config.json`（你自定义的端口/镜像设置）与 `runtime/`（你的会话数据 / 已装环境）。
+- 覆盖前旧文件自动备份到 `runtime/update/backup/`，新版有问题可手动复制回根目录回退。
+- 分发 zip 命名约定：`DSH_Launcher_GreenPortable_Online_<日期>_v<版本>.zip`，Release tag 为 `v<版本>`（当前 `v1.0.2`）。
+- 内置插件源码随绿色版更新，但**已安装**到 `runtime/dsh-home/profiles/web` 的插件副本是 pnpm 拷贝，需到「插件管理」重新安装本地插件才生效。
+
+## 八、内置 Python 与 exe 打包
 
 ### 为什么需要 Python / 内置 Python
 - **launcher.py 的工作**：这个启动器本身就是用 Python 写的，负责「自动下载便携 Node → 本地安装 dsh → 拉起服务 → 打开浏览器」，并提供 tkinter 图形界面。所以运行启动器**需要**一个 Python 解释器。
@@ -202,7 +236,7 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 `cpython-3.10.20+20260807-x86_64-pc-windows-msvc-install_only.tar.gz` 解压进 `runtime/python`，
 目录布局放 `runtime/python/python.exe` 或 `runtime/python/任意子目录/python.exe` 均可被识别。
 
-## 八、安全说明
+## 九、安全说明
 - 服务只绑定 `127.0.0.1`（本机回环），不会暴露到公网
 - 所有文件读写、命令执行都发生在你选择的**工作区**内
 - 首次在网页里操作时，遇到高危命令确认框请仔细看后再点允许
@@ -215,7 +249,7 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 - 已安装到 TRAE 全局 skills（`~/.trae-cn/skills/dsh-deploy-maintain/`），新会话可直接用。
 - 内容：绿色便携部署（便携 Node / 环境变量重定向 / 工作区 ACL 沙箱 / exe 打包）、日常维护（更新备份 / 插件管理 / 数据维护）、DSH 插件开发（双端加载 / `ctx.effect` 路由注册 / `exports` 坑）、34 条避坑浓缩为排查速查表。
 
-## 十、常见问题
+## 十一、常见问题
 
 | 问题 | 处理 |
 |------|------|

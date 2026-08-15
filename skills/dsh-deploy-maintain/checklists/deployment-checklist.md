@@ -16,6 +16,7 @@
 - [ ] `subprocess.Popen` 已设 `stdin=subprocess.PIPE`（防止 dsh 因 stdin EOF 静默退出）
 - [ ] PID 文件写 `runtime/server.pid`，冷启动有重复检测
 - [ ] 就绪检测用 socket 轮询端口，成功后 `webbrowser.open`
+- [ ] WebUI 单页面去重已生效：`dist/index.html` 含 `dsh-launcher-ui-beacon` 注入标记；心跳服务端口 3081 未被占用
 - [ ] 端口监听用 `grep -w 3080` 排查（`grep 3080` 会误匹配 `13080`）
 
 ## 更新
@@ -24,6 +25,18 @@
 - [ ] `update_dsh()` 顺序：查询 → 备份旧版到 `runtime/dsh-backup-<版本>` → 备份成功后才强制重装
 - [ ] 备份同名加时间戳后缀防覆盖
 - [ ] 安装代码抽成 `install_dsh()`，首装与更新共用
+
+## 绿色版自更新（双通道）
+
+- [ ] `GREEN_VERSION` 常量与 GitHub Release tag 一致（tag 带 `v` 前缀，本地去前缀比较）
+- [ ] Release 资产命名 `DSH_Launcher_GreenPortable_Online_<日期>_v<版本>.zip`（`green_find_zip_asset` 按此前缀匹配）
+- [ ] 官方 API 查询失败降级国内镜像（`mirror.nju.edu.cn/github-release/<owner>/<repo>/latest`）
+- [ ] 下载后校验文件大小，不符即删并报错
+- [ ] zip 安全解压（逐成员 normpath 拒绝 `..`/绝对路径，防 zip-slip）+ 内容根目录检测（兼容带/不带外层文件夹）
+- [ ] 覆盖安装 bat 跳过 `config.json`（用户配置）与 `runtime/`、`.git`（用户数据/仓库）
+- [ ] update_apply.bat 用「exe 文件锁轮询」等待启动器退出（不轮询 PID，防 PID 复用死循环）；DETACHED 模式下用 `ping -n` 睡眠替代 `timeout`，`goto` 只用顶层标签，`start` 前加 `if exist` 判断
+- [ ] bat 全文纯 ASCII + CRLF，避免 Windows cmd 编码问题
+- [ ] 旧文件备份到 `runtime/update/backup/`，供手动回退
 
 ## exe 打包
 
@@ -49,3 +62,4 @@
 - [ ] 数据维护 - 清理归档/删除会话功能正常
 - [ ] `--stop` 停止后端口关闭、PID 文件删除
 - [ ] 二次启动秒开（不重复下载/安装）
+- [ ] 多次重启服务/启动器后，浏览器不再累积重复 WebUI 标签页（已打开的标签页关掉后重启会正常重开）

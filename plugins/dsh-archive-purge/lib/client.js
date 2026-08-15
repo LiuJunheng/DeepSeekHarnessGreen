@@ -1,7 +1,8 @@
 // DeepSeek Harness 插件 (客户端): dsh-archive-purge
-// 在「设置」面板注册一个「清理归档」页面: 归档会话列表 (勾选) + 操作按钮。
-// GET  /__dsh/archive-purge 列出已归档会话;
-// POST /__dsh/archive-purge {"ids": [...]} 删除所选, 省略 ids 则清空全部。
+// 在「设置」面板注册一个「清理归档」页面: 只读展示归档会话列表。
+// 说明: 实际启动时会话处于"运行中", WebUI 无法清理;
+//       永久删除请在启动器 GUI 界面操作 (先停止服务 → 数据维护 → 清理归档)。
+// GET /__dsh/archive-purge 仅用于列出已归档会话供查看。
 // 这是加载器契约格式 (window.__ModuleLoader__.load), 与官方客户端插件一致。
 
 window.__ModuleLoader__.load({
@@ -19,11 +20,10 @@ window.__ModuleLoader__.load({
 
 		/** 设置页「清理归档」区块内容。 */
 		function PurgeSection() {
-			// 状态: sessions 列表, 勾选集合, 加载/执行/网络状态
+			// 状态: sessions 列表, 勾选集合, 加载/网络状态 (只读展示, 不执行删除)
 			const [sessions, setSessions] = react.useState(null);  // null = 加载中, [] = 无归档
 			const [selected, setSelected] = react.useState({});
 			const [busy, setBusy] = react.useState(false);
-			const [result, setResult] = react.useState(null);
 			const [error, setError] = react.useState(null);
 			// 是否已加载 (首次加载后不再自动刷新, 由用户操作触发)
 			const loadedRef = react.useRef(false);
@@ -32,7 +32,6 @@ window.__ModuleLoader__.load({
 			const loadList = react.useCallback(async () => {
 				setBusy(true);
 				setError(null);
-				setResult(null);
 				try {
 					const response = await fetch(ROUTE_PATH, {
 						method: "GET",
@@ -87,43 +86,8 @@ window.__ModuleLoader__.load({
 				}
 			};
 
-			// 删除操作: 有勾选时只删勾选, 无勾选时删全部 (需二次确认)
-			const runDelete = async (deleteAll) => {
-				const hasSelection = Object.keys(selected).length > 0;
-				const ids = hasSelection ? Object.keys(selected) : undefined;
-				const label = ids ? "所选" : "全部";
-				const msg = ids
-					? ("确定要永久删除" + label + "的 " + ids.length + " 个已归档会话吗？\n\n" +
-					   "会话日志文件与工作区注册表条目将一并删除, 不可恢复。\n" +
-					   "正在运行的会话会自动跳过。")
-					: ("确定要永久删除" + label + "已归档会话吗？\n\n" +
-					   "会话日志文件与工作区注册表条目将一并删除, 不可恢复。\n" +
-					   "正在运行的会话会自动跳过。");
-				if (!window.confirm(msg)) return;
-
-				setBusy(true);
-				setError(null);
-				setResult(null);
-				try {
-					const body = ids ? JSON.stringify({ ids: ids }) : "{}";
-					const response = await fetch(ROUTE_PATH, {
-						method: "POST",
-						headers: { [GUARD_HEADER]: "1", "content-type": "application/json" },
-						body: body
-					});
-					const payload = await response.json().catch(() => null);
-					if (!response.ok || payload === null || payload.ok !== true) {
-						throw new Error((payload && payload.error) || ("HTTP " + response.status));
-					}
-					setResult(payload);
-					// 删除成功后重新加载列表
-					await loadList();
-				} catch (err) {
-					setError("删除失败: " + String((err && err.message) || err));
-				} finally {
-					setBusy(false);
-				}
-			};
+			// 说明: WebUI 只读展示归档会话, 不提供删除 (实际启动时会话处于运行中无法清理)。
+			// 永久删除请在启动器 GUI 界面操作: 先停止服务 → 「数据维护」区 → 清理归档。
 
 			// 样式: 列表容器
 			const listStyle = {
@@ -171,8 +135,9 @@ window.__ModuleLoader__.load({
 				react.createElement(
 					"p",
 					{ style: { margin: 0, fontSize: 13, lineHeight: 1.5 } },
-					"永久删除已归档（隐藏）的会话：会话日志文件与工作区注册表条目一并清除, 不可恢复。" +
-					"正在运行的会话会自动跳过。勾选要删除的会话后点击「删除所选」, 或直接点击「清空全部」。"
+					"此页面仅用于查看已归档（隐藏）的会话。由于当前服务处于运行中, 归档会话无法在此直接删除。" +
+					"如需永久清理, 请在本机的启动器 GUI 界面操作：先点击「停止服务」, 再在「数据维护」区点击「清理归档」, " +
+					"勾选要删除的会话后永久删除（日志与注册表条目一并清除, 不可恢复）。"
 				),
 				// 加载中提示
 				sessions === null && !error && react.createElement(
@@ -242,58 +207,24 @@ window.__ModuleLoader__.load({
 					{ style: { color: "#888", margin: 0, fontSize: 13 } },
 					"没有已归档的会话。"
 				),
-				// 操作按钮行
-				Array.isArray(sessions) && react.createElement(
+				// 操作提示 + 刷新按钮 (仅查看, 不提供删除)
+				react.createElement(
 					"div",
-					{ style: { display: "flex", gap: 10, alignItems: "center" } },
+					{ style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
 					react.createElement(
-						"button",
-						{
-							type: "button",
-							disabled: busy || sessions.length === 0,
-							onClick: () => runDelete(false),
-							style: {
-								padding: "6px 16px",
-								cursor: (busy || sessions.length === 0) ? "default" : "pointer"
-							}
-						},
-						busy ? "删除中…" : (Object.keys(selected).length > 0
-							? "删除所选 (" + Object.keys(selected).length + ")"
-							: "清空全部")
+						"span",
+						{ style: { fontSize: 13, color: "#b8860b", background: "#fdf6e3", padding: "6px 12px", borderRadius: 4 } },
+						"删除功能已移至启动器 GUI：停止服务 → 「数据维护」→「清理归档」"
 					),
 					react.createElement(
 						"button",
 						{
 							type: "button",
-							disabled: busy || sessions.length === 0,
+							disabled: busy,
 							onClick: loadList,
-							style: {
-								padding: "6px 16px",
-								cursor: (busy || sessions.length === 0) ? "default" : "pointer"
-							}
+							style: { padding: "6px 16px", cursor: busy ? "default" : "pointer" }
 						},
-						"刷新列表"
-					)
-				),
-				// 结果摘要
-				result !== null && react.createElement(
-					"div",
-					{ style: { fontSize: 13, lineHeight: 1.6, background: "#eaf7ea", padding: "8px 12px", borderRadius: 4 } },
-					react.createElement(
-						"p",
-						{ style: { margin: "4px 0", color: "#27ae60" } },
-						"完成：共 " + result.total + " 个归档会话；已删除 " + result.deleted +
-						" 个，仅摘除记录 " + result.detachedOnly + " 个，跳过运行中 " +
-						result.skippedLive + " 个，错误 " + result.errors + " 个。"
-					),
-					Array.isArray(result.results) && result.results.length > 0 && react.createElement(
-						"ul",
-						{ style: { margin: "4px 0 0 0", paddingLeft: 18, maxHeight: 160, overflowY: "auto" } },
-						result.results.map((r) => react.createElement(
-							"li",
-							{ key: r.id },
-							r.id + " — " + r.status + (r.note ? "（" + r.note + "）" : "")
-						))
+						busy ? "刷新中…" : "刷新列表"
 					)
 				)
 			);
