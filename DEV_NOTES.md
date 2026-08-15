@@ -10,6 +10,12 @@
 3. 网络：用户选择 **镜像自动检测**（国内优先、失败回退官方）
 4. 所有运行时数据（Node、dsh、会话）放在程序目录内，**绿色便携**，可整目录拷走
 5. dsh 官方会持续发版，需要**检查更新**能力：GUI「检查更新」按钮 → 查询 npm 最新版 → 弹窗让用户选择更新/不更新 → 更新前**自动备份旧版本**到 `runtime/dsh-backup-<版本>`，不覆盖，备份由用户手动管理是否删除
+6. 需要**可视化插件管理**：GUI 主窗口第六个按钮「插件管理」弹出新窗口，可查看已安装插件、搜索插件（npm 注册表 + GitHub 官方 `dsh-plugin` 话题页）、安装 / 移除插件
+7. **数据维护需求（会话删除管理）**：dsh 官方没有"永久删除会话"功能，网页"归档"只是把会话**隐藏**（日志与注册表条目全部保留）。用户需要能**彻底删除**归档/指定会话的能力，于是：
+   - 启动器主窗口新增「数据维护」区（清理归档会话 / 删除会话…可视化列表），并配套命令行 `--purge-archived` / `--purge-session <ID>`
+   - 用 DSH 里的 AI 开发了 **`dsh-archive-purge`** 插件：在 WebUI「设置 → 清理归档」里一键清理归档会话（宿主端注册本地路由 + 客户端注入设置区块），并在插件管理里增加**「选择本地插件文件夹安装…」**按钮，方便安装本地插件
+8. **本地插件安装优化**：手动安装栏除了 npm 包名 / `github:owner/repo#commit` 外，还支持直接选择**本地插件文件夹**（含 `package.json`）安装；`--install-plugin` 命令行同样支持传本地目录
+9. **工作区不写死（自动检查解决 ACL 冲突）**：此前为解决"程序根目录工作区与 `runtime/tmp` 冲突"写死了 `workspace` 子目录；用户要求去掉写死——由启动器**自动检测**临时目录与工作区是否冲突并解析出安全的默认工作区（详见避坑 #31）
 
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
@@ -21,9 +27,14 @@
 | dsh 启动 | 直接调 `node <dsh>/node_modules/@deepseek-ai/dsh/lib/bin.js web --port 3080` |
 | 数据隔离 | 环境变量 `DSH_HOME=runtime/dsh-home`，会话/配置/存储全部落在程序目录 |
 | 绿色便携 | `build_env()` 把 npm 缓存/用户配置、pnpm home/store、TEMP/TMP 全部重定向到本地 `runtime/` 下（见下） |
+| 工作区自动解析 | **不写死工作目录**：`resolve_default_workspace()` 自动判定——`workspace_conflicts_with_tmp()` 用 `os.path.commonpath` 检测"临时目录是否为工作区子路径"；冲突（程序根目录内含 `runtime/tmp` 的绿色便携默认形态）时默认工作区取程序目录内 `workspace` 子目录（`DEFAULT_WORKSPACE_SUBDIR`），不冲突时直接用程序根目录本身；config.json 的 `default_workspace` 可显式覆盖（冲突则警告并回退）。`seed_default_workspace()` 按解析结果预置注册表记录（title=目录名），详见避坑 #31 |
 | 就绪检测 | 后台线程 socket 轮询端口，就绪后 `webbrowser.open` |
 | 进程管理 | Windows 下 `CREATE_NO_WINDOW` 隐藏服务控制台；PID 写 `runtime/server.pid` 供独立 `--stop` 使用；**stdin 用 `PIPE` 保持打开**（否则 dsh 读到 EOF 会退出，见避坑 #12）；`watch_server` 线程监听异常退出并记日志 |
 | 界面 | tkinter：状态栏 + 安装/启动/停止/打开界面/检查更新/刷新状态 + 设置(镜像/端口) + 运行日志框；关窗自动停服务 |
+| 插件管理 | 第六个按钮「插件管理」开新窗口；已装列表读 `runtime/dsh-home/profiles/<profile>/package.json` 的 `dependencies`；安装/移除走 `node bin.js plugin --profile <profile> add|remove`（内部转发 pnpm）；搜索源 = npm 注册表 API（国内镜像优先，结果经 `_is_dsh_plugin_package` 过滤只留 dsh 相关包）+ GitHub 官方话题页 `https://github.com/topics/dsh-plugin`；另有「加载推荐」按钮展示内置 `RECOMMENDED_PLUGINS`（npm 上已核实的 12 个 dsh 插件，无需网络也能看到可安装项）；GitHub 源插件安装规格 `github:owner/repo` |
+| 本地插件安装 | 手动安装栏新增「选择本地插件文件夹安装…」按钮（`filedialog.askdirectory` 选目录）；`install_plugin()` / `--install-plugin` 均支持：入参 `os.path.isdir(spec)` 为真时自动归一化为 `file:<绝对路径>`（`\`→`/`）交给 pnpm；pnpm 对 `file:` 本地路径默认**拷贝**而非软链，改源文件后需重新安装才同步 |
+| 数据维护 | 主窗口新增「数据维护」区（LabelFrame，需先停止服务，操作不可恢复）：`清理归档会话`= `purge_archived_sessions()`；`删除会话…` = 弹出 `list_sessions()` 的可视化 Treeview（标题/工作区/状态/有无日志），多选后逐个 `purge_session(session_id)`。三处数据源一并清理：① `sessions/<工作区编码>/<会话ID>/` 日志目录（`_delete_session_log_dir` 按 id 遍历查找，防路径穿越）② `storages/workspace.json` 的 `sessionIds`/`archivedSessionIds` ③ `storages/session_projcache.json` 缓存行（`_remove_session_from_registries` + `_atomic_write_json` 原子写回）。命令行等价：`--purge-archived` / `--purge-session <ID>`（服务运行时会校验并拒绝） |
+| 内置插件 dsh-archive-purge | `plugins/dsh-archive-purge/`：宿主端 `lib/index.js` 注册 `POST /__dsh/archive-purge`（带 `x-dsh-plugin-purge: 1` 自定义头防跨站触发，遍历 `workspaceRegistry.archivedSessionIds`，跳过运行中会话，删日志目录 + `detachSession` 摘除）；客户端 `lib/client.js` 用加载器契约 `window.__ModuleLoader__.load` 注入 `settings.section` 插槽（「清理归档」页）。安装方式：插件管理 → 选择本地插件文件夹安装 `plugins/dsh-archive-purge`（或用 `--install-plugin plugins\dsh-archive-purge`） |
 
 ### 绿色便携的环境变量重定向（build_env）
 | 环境变量 | 本地落点 | 作用 |
@@ -40,6 +51,8 @@
 - `python launcher.py` → GUI（推荐，start.bat 走这个；GUI 常驻 mainloop 保持服务 stdin 管道打开）
 - `python launcher.py --start` → 无界面**守护模式**：启动后保持进程存活（维持 stdin 管道，防止 dsh 退出），服务停止后本进程自动返回
 - `python launcher.py --stop` → 停止服务
+- `python launcher.py --purge-archived` / `--purge-session <ID>` → 数据维护（永久删除归档/指定会话，需先停止服务，见避坑 #29）
+- `python launcher.py --install-plugin <本地目录或npm包名>` / `--remove-plugin <包名>` → 插件安装/移除（本地目录自动转 `file:`，见避坑 #30）
 
 ## 三、规范细节（遵循项目用户规则）
 - `.bat` 文件：**纯 ASCII 编码 + Windows CRLF 换行符**（已用 `file` 命令校验）
@@ -96,6 +109,72 @@
     - **防误删**：备份目录不做自动清理，是否删除交给用户手动管理（GUI 弹窗里已明确提示备份位置）。
     - **代码复用**：把原 `prepare_dsh` 的安装主体抽成 `install_dsh()`，`prepare_dsh(force)` 只负责"缺失则装 / 强制重装"分支，首装与更新共用同一安装代码，避免双份逻辑漂移。
     - **UI 防重入**：「检查更新」与「更新执行」均走 `set_busy` 互斥；弹窗确认（`askyesno`）在查询线程结束后用 `root.after(0, ...)` 回主线程弹出，避免跨线程弹窗。
+23. **【插件管理】`dsh plugin` 依赖 pnpm 且必须用便携环境**：
+    - **机制**：`dsh plugin --profile <name> <pnpm 参数>` 会转发给 pnpm 管理该 profile 的依赖（`profiles/<name>/package.json` 的 `dependencies` + `node_modules`）。因此插件的"已安装清单"就是读 profile 的 `package.json`，无需调 dsh 查询接口。
+    - **pnpm 必须装进便携 runtime**：绿色版不内置 pnpm。`install_pnpm()` 用便携 node 的 npm `install -g pnpm --prefix runtime/pnpm-home`，并把 `runtime/pnpm-home` 加入 `build_env()` 的 PATH，`dsh plugin` 才能转发到便携 pnpm（否则报 pnpm not found / 误用系统 pnpm）。
+    - **`pnpm --version` 直接用会失败**（退出码 1）：pnpm.cmd 内部要调 node，必须在 `build_env()`（PATH 含便携 node）下运行才正常。GUI/CLI 一律走 `run_plugin_command()` 的统一环境，不裸跑 pnpm。
+    - **GitHub 官方话题页抓取正则**：`https://github.com/topics/dsh-plugin` 的仓库条目形如 `href="/owner/repo" ... class="Link text-bold wb-break-word">名字</a>`；实测能抓约 20 个热门仓库（按星标）。页面结构变化需用 `runtime/tmp/test_gh_topic.py` 回归验证。
+    - **GitHub 源插件安装规格**：搜索结果里 source=github 的项装成 `github:owner/repo`；GitHub 仓库未必是 npm 包，安装可能失败，属预期，界面会提示失败原因。
+    - **GUI 多窗口线程安全**：插件窗口内所有耗时操作（搜索/安装/移除）在 `threading.Thread` 中执行，结果用 `root.after(0, ...)` 回主线程刷新列表/弹窗；`plugin_busy` 用列表包装以便闭包赋值，忙时禁用全部操作按钮防重入。
+    - **GitHub topic 页的仓库 ≠ 插件本体**（2026-08-14 实测 `Anionex/agent-vision-toolkit`）：主仓库根目录往往没有 `package.json`（是跨 agent 的 Python 工具集 + skill + 文档），真正的 dsh 插件可能是**独立子仓库 + npm 包**（本例为 `@dsh-external/dsh-vision-toolkit`，官方 Profile Bundle，`dsh.bundle.patch` 指向 `cordis.patch.yml`，今天发布 v0.1.4）。判断标准仍是"根目录有无 package.json + `dsh.bundle`/入口"。已在 web profile 实测安装成功。
+24. **【插件管理】"已装列表空白 / 搜索不到可安装插件"的根因排查（2026-08-14）**：
+    - **数据链路本身是通的**：用 AST 抽取 `open_plugin_manager` 源码 + 真实 Tk 环境运行，左侧"已安装插件"Treeview 能正确插入 `@dsh-external/dsh-vision-toolkit`（`refresh_log.txt` 记录 `dependencies={'...': '^0.1.4'}` 且 `插入后 items='I001'`）；`list_installed_plugins` 读 `profiles/web/package.json` 的 `dependencies` 也返回正确。**界面空白不是代码 bug，而是用户跑的是旧版 `DSH_Launcher.exe`**（exe 比 launcher.py 旧 2 分钟，PyInstaller 打的是旧代码）。排查流程：对比 `Get-Item launcher.py, DSH_Launcher.exe` 的 `LastWriteTime`，发现 exe 旧 → 重新打包即可。
+    - **npm 搜索"搜不到"的真正原因**：npm 搜索接口 `/-/v1/search?text=dsh-plugin&size=100` 本身正常（实测返回 630 个结果），但**全量结果混入了大量不是 dsh 插件的普通 npm 包**（按"dsh-plugin"文本匹配到无关工具），用户看到的"能装的"很少。修复：`search_npm_plugins` 增加 `_is_dsh_plugin_package` 静态过滤器——包名/关键词/描述任一命中 `dsh`/`dsh-plugin`/`deepseek-harness` 才保留，`size` 提到 100 保证过滤后仍有货（实测过滤后仍 100 个全为 dsh 相关）。
+    - **`keywords:dsh-plugin` 限定查询在 npmmirror 返回 0**（实测）：镜像搜索索引对 keywords 限定支持不完整，别依赖它；用纯文本 `text=<关键词>` + 本地过滤最稳。
+    - **新增「加载推荐」按钮**：内置 `RECOMMENDED_PLUGINS` 常量（npm 上已核实的 12 个 dsh 插件，含 `@dsh-external/dsh-vision-toolkit`、dsh-find-plugin、dsh-remote、dsh-clawrouter、dsh-lark-bot、dsh-email 等），一键填充搜索结果，**不依赖网络/GitHub 也能看到可安装项**；来源列标"推荐"，安装规格仍是裸 npm 包名。
+    - **GUI 验证脚本**：`runtime/tmp/test_gui_plugin_final.py` 是端到端回归脚本（AST 抽取真实 `open_plugin_manager` 源码 → 点真实按钮「加载推荐」「搜索」→ 校验三个 Treeview），跑 `runtime\python\python\python.exe runtime\tmp\test_gui_plugin_final.py`。**避坑**：worker 线程用 `root.after` 回主线程，验证时主线程必须处于 `mainloop` 中，否则报 `RuntimeError: main thread is not in main loop`——测试脚本要用 `root.after(500, check)` + `root.mainloop()`，不能只用 `root.update()` 轮询。
+    - **Windows 幂等重建 exe**：`$env:PYTHONPATH = "D:\...\runtime\pyinstaller"; runtime\python\python\python.exe -m PyInstaller --onefile --windowed --noupx --noconfirm --name DSH_Launcher --distpath dist --workpath build --specpath build launcher.py` 再 `Copy-Item dist\DSH_Launcher.exe .`；`build_exe.bat` 已封装同样流程（末尾 `pause` 仅交互用，脚本化可直接跑上面命令）。
+25. **【插件管理】真正导致"中间两个面板全空白"的 bug：`ttk.Panedwindow` 必须显式 `.add()` 子控件（2026-08-14 晚）**：
+    - 前面 #24 误判为"用户跑旧 exe"，用户明确排除"没更新"方向后深挖，发现**真凶**：`middle = ttk.Panedwindow(top, orient="horizontal")` 之后只 `installed_frame = ttk.LabelFrame(middle, ...)` / `search_frame = ttk.LabelFrame(middle, ...)`，**漏了 `middle.add(installed_frame, weight=1)` 与 `middle.add(search_frame, weight=2)`**。`Panedwindow` 不像普通 Frame 那样由子控件的 `pack` 自动布局——子控件必须通过 `.add()` 注册，否则中间区域完全空白（截图只剩顶部工具栏和底部手动安装栏）。
+    - **教训**：用 `ttk.Panedwindow` 时，每个子面板都必须显式 `paned.add(child, weight=N)`，weight 控制左右比例；`weight` 越大占越宽。本次左侧 `weight=1`、右侧 `weight=2`。
+    - **回归验证要覆盖"布局存在性"**：`test_gui_plugin_final.py` 通过 `collect()` 递归收集 `Treeview / Button / Scrollbar`，若数量不符即可抓出"控件建了但没被布局/注册"这类问题（本轮加了 Scrollbar 收集后 `scroll_ok` 才为 True）。
+26. **【插件管理】左右列表加垂直滚动条 + 条目右键打开网页（2026-08-15）**：
+    - **滚动条布局**：Treeview 外面套一层 `ttk.Frame`（`installed_body` / `search_body`），`tree.pack(side="left", fill="both", expand=True)` + `scrollbar.pack(side="right", fill="y")`；`ttk.Scrollbar(orient="vertical", command=tree.yview)` 且 `tree.configure(yscrollcommand=scrollbar.set)` 双向联动。不要直接在 Treeview 上 `.pack` 滚动条（放不下，会挤掉列表）。
+    - **【大坑】列宽总和会把滚动条压缩成 1x1 不可见**：右面板"搜索结果"原本 4 列（插件名 210 + 来源 60 + 版本 70 + 描述 250 = **590px**），面板可用宽约 592px，Treeview 的 pack 先占满宽度后，**右侧 `fill="y"` 的滚动条得不到剩余横向空间，被 pack 压缩成 1x1、`winfo_viewable()=False`（在窗口里完全看不到，但代码存在、yview 也能滚）**。左面板"已安装"只有 2 列（250+90=340px）空间充足所以正常——这就是"只做了已安装的"表象。
+    - **修复**：把搜索结果列宽缩窄为 160+48+58+180（共 446px），并给描述列加 `stretch=True`（宽度不足时自动压缩），保证列宽总和明显小于面板宽度，滚动条才能正常显示。**教训：凡在固定宽度容器里 pack 滚动条，必须先确认内容(列宽/请求宽度)总和留足余量，否则滚动条静默消失。**
+    - **验证技巧**：不能只看 `winfo_children()` 里有没有 Scrollbar，必须 `sb.winfo_viewable()` / `sb.winfo_width()` 检查是否真可见；且测试要等窗口真实映射（`top.deiconify()+lift()+mainloop 后再查`），exec 出的 Toplevel 不强制显示时 `viewable` 恒为 False 会误判。
+    - **右键菜单实现**：用 `tk.Menu(top, tearoff=0)`，`tree.bind("<Button-3>", lambda e: on_plugin_right_click(tree, url_map, e))`；回调里 `tree.identify_row(event.y)` 取被点行 → `tree.selection_set(row_id)` 选中 → `menu.tk_popup(event.x_root, event.y_root)` → `menu.grab_release()`。**关键**：菜单命令用 `lambda u=url: webbrowser.open(u)` 绑定默认参数捕获循环变量，否则闭包会取最后一个值。
+    - **网址构造**：左侧"已安装"与右侧"搜索/推荐"各维护一个 `{item_id: info}` 映射（`installed_item_urls` / `search_item_urls`），刷新列表时同步 `clear()`+重建。`build_open_urls` 逻辑：github 来源 → 直接打开仓库地址 + npm 页面；npm/推荐来源 → npm 页面 + GitHub 搜索 `https://github.com/search?q=<包名>`（npm 搜索 API 的 `links` 在 npmmirror 实测为空，拿不到真实仓库地址，故用搜索兜底）。附加"复制包名"菜单项（`root.clipboard_append`）。
+    - **AST 抽取闭包函数单独验证**：`build_open_urls` 是 `open_plugin_manager` 内部闭包，测试脚本用 `ast.get_source_segment` 抽出该函数源码、`exec` 到独立 namespace（需注入 `urllib`）再纯逻辑校验，绕开"闭包无法从外部访问"的限制。
+    - 本次改动后回归全过：两滚动条 `winfo_viewable()` 均 True；exe 已重打包并启动实测无崩溃。
+27. **【插件安装】npm 包 package.json 带 UTF-8 BOM 导致 dsh JSON.parse 崩溃（2026-08-15）**：
+    - **现象**：`dsh plugin add` 执行成功（pnpm 正常下载安装），但 dsh 后续 reconcile 读已装包的 `package.json` 时 `JSON.parse` 报 `SyntaxError: Unexpected token '\ufeff'` — 这是 UTF-8 BOM（`EF BB BF`）被 Node 的 `JSON.parse` 直接拒绝。典型错误栈：`readProfileManifest → exportsPatch → reconcilePlugins`。
+    - **根因**：个别 npm 包（如 `dsh-tool-vision@0.1.0`）发布时 package.json 以 UTF-8 BOM 开头，pnpm 原样保存到 `node_modules` 和 pnpm store 中。dsh 的 `readProfileManifest` 用 `readFileSync(path, "utf8")` 读入 → `JSON.parse(raw)`，BOM 作为非法字符导致解析崩溃。
+    - **修复**：在 `run_plugin_command` 中新增 `strip_bom_from_profile_packages(profile)` 方法，在每次执行 dsh 命令前先遍历 profile 的 `node_modules` 下所有 `package.json`，检查前 3 字节是否为 `EF BB BF`，是则原地去 BOM 写回。命令失败后（pwd 为本次 pnpm 新装的包带 BOM）再清一次并重试一次（pnpm 幂等，不重复下载，很快完成）。
+    - **典型复现包**：`dsh-tool-vision`（`node_modules/dsh-tool-vision/package.json` 开头字节 `EF BB BF 7B 0A 20`）。
+    - **教训**：任何 npm 包的 `package.json` 都可能带 BOM，直接 `JSON.parse` 不安全。如果项目自定义了读 `package.json` 的逻辑，应在读入后 `JSON.parse(raw.replace(/^\uFEFF/, ""))` 或前置去 BOM 步骤。日志中看到 `Unexpected token '\ufeff'` 或 `'\uFEFF'` 时，100% 是 BOM 问题。
+28. **【插件开发】dsh 插件要同时声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + WebUI 双端加载（2026-08-15，用 DSH AI 开发 dsh-archive-purge 实测）**：
+    - **机制**：dsh 插件 = npm 包 + 两个入口。`package.json` 里：
+      - `dsh.bundle.patch` → 指向一个 `cordis.patch.yml`（声明把本插件作为一行插入 profile 插件树，`- insert: [{id, name}]`）；`dsh plugin add` reconcile 时据此把包加进 `dsh.profile.bundles`，服务启动时由 `@deepseek-ai/dsh-app-boot` 的 `loadProfile` 按顺序合成 bundle 补丁 → 用户层 `cordis.patch.yml` → `--patch` 覆盖层。
+      - `dsh.client` → 声明 WebUI 客户端入口（`inject` + `platform: "web"`），由 `dsh-client-modules` 扫描注入；宿主端则暴露 `lib/index.js`（导出 `name` / `inject` / `apply`）。
+      - `files` 数组**必须包含 `cordis.patch.yml`**，否则发布/安装后文件缺失，宿主端扫描不到该行（本次踩过：补了 bundle 声明却没把 yml 放进 files，装完 node_modules 里没这个文件）。
+    - **只声明 `dsh.client` 的插件不会进插件树**（这是最初"设置页看不到清理归档"的根因）；反过来只声明 bundle 没有 client 则宿主加载但 WebUI 无入口。
+    - **验证**：`dsh --profile web --dump-config` 看合成后的插件树里是否出现该行；服务日志无激活失败警告但路由/页面没上，先查 `files` 是否含 `cordis.patch.yml` 与 node_modules 里文件是否真的在。
+    - **入口格式**：宿主端 `apply(ctx)` 用 `ctx.webServer.register({kind, path, handler})` 注册 HTTP 路由，返回值用 `ctx.effect(disposer, ...)` 注册释放；`inject` 数组声明依赖的服务（如 `["webServer", "workspaceRegistry"]`），cordis 会在激活前注入。客户端用加载器契约 `window.__ModuleLoader__.load({id, factory})`，在 `apply(ctx)` 里 `ctx.slots.inject("settings.section", ...)` 注册设置区块。
+29. **【会话删除】dsh 没有"永久删除/取消归档"接口，归档(archive)只是把会话隐藏；彻底删除需在服务停止后直接操作数据文件（2026-08-15）**：
+    - **启动器侧（launcher.py）**：`purge_session` / `purge_archived_sessions` 三处一并清：① `sessions/<工作区编码>/<会话ID>/` 日志目录 ② `storages/workspace.json` 的 `sessionIds` / `archivedSessionIds` ③ `storages/session_projcache.json` 缓存行。注意 `_delete_session_log_dir` **只按会话 id 在工作区目录下遍历查找**（不拼接用户输入进路径，防路径穿越）；JSON 写回用 `_atomic_write_json`（同目录临时文件 + `os.replace`）保证原子性，避免半写损坏。
+    - **插件侧（dsh-archive-purge 宿主）**：`workspaceRegistry.archivedSessionIds` 遍历 + `entity.detachSession(id)`（对未挂载 id 幂等）；`ctx.get("sessions")` 判活跳过运行中会话。已知取舍：dsh 没有"删归档 id"接口，摘除后 `archivedSessionIds` 会残留一个不指向任何会话的 id（隐藏标记，无害）；`session_projcache.json` 旧缓存行也无害，留待 dsh 自行覆盖。
+    - **安全**：删除路由带自定义头 `x-dsh-plugin-purge: 1`（跨域请求无法带自定义头，会触发 CORS 预检且本服务不返回 CORS 头），防止外部网页对本地端口发起删除请求；路由只接受 POST。
+    - **窗口期**：数据维护操作要求服务已停止（GUI 弹窗提示、命令行 `is_server_running()` 校验），避免与运行中的 dsh 写文件竞争。
+30. **【本地插件安装】pnpm 对 `file:` 本地路径默认是拷贝不是软链（2026-08-15 实测）**：
+    - 用 `pnpm add file:D:/.../plugins/dsh-archive-purge` 安装本地插件后，`node_modules` 里是**拷贝**（不是 symlink），后续改 `plugins/` 下源文件**不会**自动同步到 `node_modules`，必须重新安装（`pnpm add file:...` 幂等重装很快）。
+    - 启动器 `install_plugin` / `--install-plugin` 用 `os.path.isdir(spec)` 识别本地目录并自动归一化为 `file:` 绝对路径（`\`→`/`），pnpm 才能识别；路径有中文/空格也 OK（pnpm 按 spec 处理）。
+    - **排查思路**：改插件源码后 WebUI 没变化 → 先确认是不是没重装（对比 `node_modules/<包>` 与 `plugins/<包>` 的修改时间），再查 `profiles/web/package.json` 里 dependencies 与 `dsh.profile.bundles` 是否都有该包。
+31. **【工作区】dsh 的 Windows ACL 沙箱要求临时根目录不能位于会话工作区内部；工作区归属记在会话 header，且工作区由用户在 GUI 选（2026-08-15 全量梳理）**：
+    - **现象**：当会话工作区 = 程序根目录 `D:\DeepSeekHarnessLauncher` 时，所有 shell 工具报 `Windows ACL temp root must be outside the workspace`。根因：绿色便携把 `TMP/TEMP` 指向 `runtime/tmp`，它位于程序根目录内 = 位于工作区内 → dsh 的 ACL 沙箱拒绝。
+    - **机制（三层概念要分清）**：
+      1) **会话的"工作区归属"记在该会话自己的日志头（header）里**：`runtime/dsh-home/sessions/<工作区路径编码>/<会话ID>/session.jsonl.zstd` 第一行有 `cwd` 字段（如 `D:\...\workspace`），**一经创建就固化不可改**——所以旧会话永远换不了工作区，只能归档/删除或开新会话。
+      2) **`storages/workspace.json` 只是"工作区注册表"**（展示/分组的平行台账）：只记每个工作区的 `{path, title, sessionIds, createdAt, updatedAt}`、全局 `archivedSessionIds`、显示顺序 `workspaceIds`。**它不是会话的配置**；真正权威的是会话 header 的 `cwd`，两者还会互相校验（挂会话进工作区要求 header.cwd 规范化后 === 工作区 path）。
+      3) **沙箱判定读 header.cwd**：`dsh-sandbox-policy` 里 `workspaceRoot = session.header.cwd`。cwd 是子目录的会话 ACL 检查通过，cwd 是程序根目录的老会话就报 temp 冲突。
+    - **新会话会不会自动建子工作区？不会**。工作区是用户在 WebUI 左侧手动选的（`session.create({workspaceId})` → 后端查注册表拿 path 当 cwd 写入 header → 会话 id 记进该工作区 sessionIds → 日志落 `sessions/<编码>/<会话ID>/`）。启动器不拦截用户选择，只负责预置一个可用的默认工作区。
+    - **修复 v1（写死）**：把默认工作区写死为 `BASE_DIR/workspace`（`WORKSPACE_DIR` 常量 + `seed_default_workspace()` 预置注册表记录）。缺点：写死了路径，若用户把 `tmp_dir` 配到程序目录外，程序根目录其实可安全用作工作区，仍会多建一个 workspace 子目录。
+    - **修复 v2（自动，本次）**：删除 `WORKSPACE_DIR` 写死，改 `DEFAULT_WORKSPACE_SUBDIR="workspace"` 仅作为子目录名 + 三个方法：
+      - `_tmp_dir()`：取生效临时根目录（config `tmp_dir` 优先）。
+      - `workspace_conflicts_with_tmp(path)`：`os.path.normcase/normpath/abspath` 归一化后用 `os.path.commonpath` 判"临时目录是否为工作区严格子路径"；不同盘符等 `ValueError` 按不冲突处理，不阻断启动。
+      - `resolve_default_workspace()`：优先级 = ① config `default_workspace` 显式值（与临时目录冲突则警告并回退）→ ② 程序根目录本身不冲突则用它 → ③ 冲突才取 `BASE_DIR/workspace` 子目录。
+      - `ensure_runtime_dirs()` / `seed_default_workspace()` 改走 `resolve_default_workspace()`（title 用目录 basename）。
+    - **实测验证**（Windows）：当前 `tmp_dir=runtime/tmp` 时 `resolve_default_workspace()` 正确返回 `D:\DeepSeekHarnessLauncher\workspace`（程序根目录判为冲突）；`E:\1\AI项目` 判为不冲突；config 覆盖 `E:/x/proj` 直接用、覆盖为程序根目录则警告回退。语法检查通过。
+    - **给用户的实操建议**：开新会话在 GUI 左侧工作区选择器选 **workspace**（`D:\DeepSeekHarnessLauncher\workspace`）或任何不含 `runtime/tmp` 的目录（如 `E:\1\AI项目`）再新建，shell 工具就能正常工作；旧工作区里已有的会话 shell 受限，不删除也不影响其它功能。
 
 ## 五、Windows 实机测试记录（2026-08-14，绿色便携验证）
 ### 测试环境
@@ -119,7 +198,7 @@
 - 独立 stop 时守护进程的"意外退出"提示为已知中性文案（避坑 #13），若体验要求可进一步优化为"端口关闭即视为主动停止"
 
 ## 六、后续建议
-- ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第五章。
+- ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验
 - Windows 实机验证：建议在目标 Windows 机器上跑一遍 start.bat 首启全流程（沙箱仅能验证 Linux 逻辑）
 - 待办：auto 镜像的"国内优先、失败回退"逻辑应扩展到 npm install 阶段（见避坑 #15）

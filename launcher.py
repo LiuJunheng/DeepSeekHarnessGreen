@@ -13,12 +13,17 @@ DeepSeek Harness 一键启动器 (Python 标准库实现, 无第三方依赖)
     python launcher.py           # 启动图形界面 (默认)
     python launcher.py --start   # 无界面模式: 准备环境 + 启动服务
     python launcher.py --stop    # 停止服务
+    python launcher.py --purge-session <会话ID>   # 永久删除一个会话 (需先停止服务)
+    python launcher.py --purge-archived           # 永久删除所有已归档会话 (需先停止服务)
+    python launcher.py --install-plugin <本地插件目录或npm包名>  # 安装插件 (重启服务后生效)
+    python launcher.py --remove-plugin <包名>     # 移除插件 (重启服务后生效)
 """
 
 import os
 import sys
 import json
 import time
+import re
 import shutil
 import socket
 import webbrowser
@@ -59,6 +64,12 @@ DEFAULT_CONFIG = {
     "python_release": "20260807",# python-build-standalone 发布标签(日期)
     "dsh_port": 3080,            # dsh web 服务端口
     "dsh_package": "@deepseek-ai/dsh",   # dsh 包名
+    # 临时目录: 空=默认(runtime/tmp, 绿色便携); 高级用户可自定义为任意绝对路径
+    # (注意: 若某会话的工作区包含该路径, dsh 的 Windows ACL 沙箱会拒绝)
+    "tmp_dir": "",
+    # 默认工作区: 空=自动解析(见 resolve_default_workspace, 不写死);
+    # 高级用户可自定义为任意绝对路径, 若与临时目录冲突会自动回退并警告
+    "default_workspace": "",
 }
 
 # 各平台 Node 压缩包的文件名规则 (node-v{version}-{platform}-{arch}.{ext})
@@ -93,6 +104,41 @@ DSH_BIN_JS = os.path.join("node_modules", "@deepseek-ai", "dsh", "lib", "bin.js"
 # 服务就绪检查的超时时间 (秒)
 SERVER_READY_TIMEOUT = 120
 
+# 默认 profile (插件管理的目标 profile, 对应 dsh --profile web)
+DEFAULT_PROFILE = "web"
+
+# GitHub 官方 dsh 插件话题页 (插件发现入口, 仅作辅助来源; 国内网络可能无法直连)
+GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
+
+# npm 上已核实的一批 dsh 插件 (供「加载推荐」一键展示, 保证即使搜索/网络异常也能看到可安装项)
+# version 留空表示安装时自动取 npm 最新版; 来源标记为 "推荐"
+RECOMMENDED_PLUGINS = [
+    {"name": "@dsh-external/dsh-vision-toolkit", "version": "", "source": "推荐",
+     "description": "视觉工具箱: 图片问答 / OCR / UI 截图测试等"},
+    {"name": "dsh-find-plugin", "version": "", "source": "推荐",
+     "description": "在 agent 内部查找 DeepSeek Harness 插件"},
+    {"name": "dsh-remote", "version": "", "source": "推荐",
+     "description": "远程工作助手: 通过 SSH / 隧道连接远程环境"},
+    {"name": "dsh-clawrouter", "version": "", "source": "推荐",
+     "description": "第二大脑: 智能路由工具调用的增强插件"},
+    {"name": "dsh-better-sidebar", "version": "", "source": "推荐",
+     "description": "web 插件: 类似 VSCode 的右侧边栏"},
+    {"name": "dsh-lark-bot", "version": "", "source": "推荐",
+     "description": "把 dsh 接入飞书 / Lark 机器人"},
+    {"name": "dsh-email", "version": "", "source": "推荐",
+     "description": "IMAP/SMTP 邮件工具: 收发邮件能力"},
+    {"name": "dsh-safe-delete", "version": "", "source": "推荐",
+     "description": "安全删除: 文件移入回收站而不是直接删除"},
+    {"name": "dsh-web-plugin-manager", "version": "", "source": "推荐",
+     "description": "在 Web 界面管理 dsh 插件"},
+    {"name": "dsh-tui", "version": "", "source": "推荐",
+     "description": "终端界面 (TUI) 客户端"},
+    {"name": "dsh-plugin-greeter", "version": "", "source": "推荐",
+     "description": "示例插件: 打招呼, 适合学习插件开发"},
+    {"name": "dsh-dynamic-island", "version": "", "source": "推荐",
+     "description": "灵动岛风格 UI 插件"},
+]
+
 # ---------------------------------------------------------------------------
 # 绿色便携: 所有缓存/配置/临时目录全部重定向到本程序 runtime 下,
 # 避免 npm/pnpm/临时文件写到用户主目录 (~/.npm, ~/.pnpm-store 等)
@@ -101,7 +147,11 @@ NPM_CACHE_DIR = os.path.join(RUNTIME_DIR, "npm-cache")      # npm 下载缓存
 NPM_USER_CONFIG = os.path.join(RUNTIME_DIR, "npm-userconfig")  # npm 用户配置文件(本地空文件)
 PNPM_HOME_DIR = os.path.join(RUNTIME_DIR, "pnpm-home")      # pnpm 全局 home (插件管理)
 PNPM_STORE_DIR = os.path.join(RUNTIME_DIR, "pnpm-store")    # pnpm 内容寻址存储
-TMP_DIR = os.path.join(RUNTIME_DIR, "tmp")                  # 本地临时目录
+TMP_DIR = os.path.join(RUNTIME_DIR, "tmp")
+# 默认工作区子目录名: 仅在"程序根目录包含临时目录"(绿色便携默认形态)冲突时,
+# 才把它作为默认工作区使用; 不冲突时默认工作区直接用程序根目录本身,
+# 由 resolve_default_workspace() 自动判定, 不再写死完整路径。
+DEFAULT_WORKSPACE_SUBDIR = "workspace"
 
 
 # ---------------------------------------------------------------------------
@@ -470,12 +520,17 @@ class Launcher:
             return "未知"
 
     def build_env(self):
-        """构造运行环境: 把便携 Node 的 bin 目录加入 PATH,
+        """构造运行环境: 把便携 Node 的 bin 目录与 pnpm 全局目录加入 PATH,
         并把 npm/pnpm/临时目录全部重定向到本地 runtime, 实现绿色便携"""
         env = dict(os.environ)
+        path_entries = []
         node_bin = self.node_bin_dir()
         if node_bin:
-            env["PATH"] = node_bin + os.pathsep + env.get("PATH", "")
+            path_entries.append(node_bin)
+        # pnpm 全局目录加入 PATH: dsh plugin 命令会用 shell 转发 pnpm,
+        # 必须能在 PATH 里找到便携 pnpm.cmd, 否则报 pnpm not found
+        path_entries.append(PNPM_HOME_DIR)
+        env["PATH"] = os.pathsep.join(path_entries) + os.pathsep + env.get("PATH", "")
         # 所有数据 (会话/配置/存储) 都放在程序目录内, 保证绿色便携
         env["DSH_HOME"] = DSH_HOME_DIR
         # npm: 缓存 / 用户配置 / 禁止全局安装 → 本地 (避免写用户主目录 ~/.npm 等)
@@ -487,24 +542,356 @@ class Launcher:
         # pnpm: 全局 home / 内容寻址存储 → 本地 (dsh 的插件管理基于 pnpm)
         env["PNPM_HOME"] = PNPM_HOME_DIR
         env["npm_config_store_dir"] = PNPM_STORE_DIR
-        # 临时目录 → 本地
-        env["TEMP"] = TMP_DIR
-        env["TMP"] = TMP_DIR
+        # 临时目录 → 本地 (绿色便携, 默认 runtime/tmp; config.json 的 tmp_dir 可覆盖)
+        tmp_dir = self.config.get("tmp_dir") or TMP_DIR
+        env["TEMP"] = tmp_dir
+        env["TMP"] = tmp_dir
         return env
 
     def ensure_runtime_dirs(self):
         """确保 runtime 下的所有目录与本地配置文件存在"""
+        tmp_dir = self.config.get("tmp_dir") or TMP_DIR
+        workspace_path = self.resolve_default_workspace()
         for directory in (RUNTIME_DIR, NPM_CACHE_DIR, PNPM_HOME_DIR,
-                          PNPM_STORE_DIR, TMP_DIR, DSH_HOME_DIR):
+                          PNPM_STORE_DIR, tmp_dir, DSH_HOME_DIR, workspace_path):
             os.makedirs(directory, exist_ok=True)
         # 本地 npm 用户配置文件: 空文件即可, 用于阻断对用户主目录 ~/.npmrc 的读写
         if not os.path.exists(NPM_USER_CONFIG):
             with open(NPM_USER_CONFIG, "w", encoding="utf-8") as file_handle:
                 file_handle.write("# local npm userconfig for DSH launcher\n")
 
+    # ---------- 工作区自动解析 (解决 Windows ACL 临时目录冲突) ----------
+    def _tmp_dir(self):
+        """当前生效的临时根目录 (config.json 的 tmp_dir 优先, 否则默认 runtime/tmp)。"""
+        return self.config.get("tmp_dir") or TMP_DIR
+
+    def workspace_conflicts_with_tmp(self, workspace_path, tmp_dir=None):
+        """判断某个工作区是否与临时根目录冲突。
+
+        dsh 的 Windows ACL 沙箱要求临时根目录不能位于会话工作区内部, 否则
+        该会话所有 shell 工具报: "Windows ACL temp root must be outside the workspace"。
+        冲突判定: 临时目录是工作区的子路径(严格包含, 不含两者同路径)。
+        路径无法归一化(如不同盘符)时按不冲突处理, 不阻断启动。
+        """
+        tmp_dir = tmp_dir or self._tmp_dir()
+        workspace_abs = os.path.normcase(os.path.normpath(os.path.abspath(workspace_path)))
+        tmp_abs = os.path.normcase(os.path.normpath(os.path.abspath(tmp_dir)))
+        try:
+            common = os.path.commonpath([workspace_abs, tmp_abs])
+        except ValueError:
+            return False   # 不同盘符等无法比较 → 视为不冲突
+        return common == workspace_abs and tmp_abs != workspace_abs
+
+    def resolve_default_workspace(self):
+        """自动解析一个与临时目录不冲突的默认工作区路径 (不写死)。
+
+        规则(按优先级):
+          1) 用户 config.json 显式配置了 default_workspace → 直接使用;
+             若它与临时目录冲突, 记警告并回退到自动解析结果。
+          2) 程序根目录 BASE_DIR 本身与临时目录不冲突 → 直接用程序根目录。
+          3) 冲突(即绿色便携默认形态: 程序根目录内含 runtime/tmp)
+             → 取程序目录内不包含临时目录的子目录 BASE_DIR/workspace。
+        返回: 解析出的工作区绝对路径。
+        """
+        configured = (self.config.get("default_workspace") or "").strip()
+        if configured:
+            if self.workspace_conflicts_with_tmp(configured):
+                self.log("警告: 配置的默认工作区包含临时目录(%s), 已回退到自动解析"
+                         % self._tmp_dir())
+            else:
+                return os.path.abspath(configured)
+        if self.workspace_conflicts_with_tmp(BASE_DIR):
+            return os.path.join(BASE_DIR, DEFAULT_WORKSPACE_SUBDIR)
+        return BASE_DIR
+
+    # ---------- 插件管理 (基于 dsh plugin 转发 pnpm) ----------
+    def find_pnpm_exe(self):
+        """返回便携 pnpm 的可执行文件路径 (Windows 为 pnpm.cmd, 其他平台为 pnpm)"""
+        if sys.platform == "win32":
+            return os.path.join(PNPM_HOME_DIR, "pnpm.cmd")
+        return os.path.join(PNPM_HOME_DIR, "pnpm")
+
+    def pnpm_installed(self):
+        """判断便携 pnpm 是否已安装"""
+        return os.path.isfile(self.find_pnpm_exe())
+
+    def install_pnpm(self):
+        """安装 pnpm 到便携 runtime (供 dsh plugin 命令转发使用)
+        已安装则直接返回; 需要便携 Node 已就绪"""
+        if self.pnpm_installed():
+            self.log("pnpm 已就绪: %s" % self.find_pnpm_exe())
+            return True
+        npm_cli = self.find_npm_cli()
+        node_exe = self.find_node_exe()
+        if npm_cli is None or node_exe is None:
+            raise RuntimeError("未找到便携 Node, 无法安装 pnpm (请先点击「安装环境」)")
+        self.ensure_runtime_dirs()
+        self.log("未检测到便携 pnpm, 开始自动安装 ...")
+        # 用便携 npm 全局安装 pnpm, --prefix 使其落在本地 runtime/pnpm-home
+        command = [node_exe, npm_cli, "install", "-g", "pnpm",
+                   "--prefix", PNPM_HOME_DIR,
+                   "--cache", NPM_CACHE_DIR,
+                   "--userconfig", NPM_USER_CONFIG,
+                   "--no-audit", "--no-fund"]
+        mirror, is_auto = self.resolve_mirror()
+        if not is_auto:
+            command.append("--registry=%s" % NPM_REGISTRY[mirror])
+            self.log("使用镜像源: %s" % NPM_REGISTRY[mirror])
+        result = subprocess.run(command, cwd=DSH_DIR, env=self.build_env(),
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, encoding="utf-8", errors="replace",
+                                timeout=300)
+        output = (result.stdout or "").strip()
+        for line in output.splitlines()[-15:]:          # 只展示最后 15 行, 避免刷屏
+            if line.strip():
+                self.log("npm: %s" % line.strip())
+        if result.returncode != 0 or not self.pnpm_installed():
+            raise RuntimeError("pnpm 安装失败, 请检查网络后重试 (详见上方 npm 输出)")
+        self.log("pnpm 安装成功: %s" % self.find_pnpm_exe())
+        return True
+
+    def strip_bom_from_profile_packages(self, profile):
+        """清除 profile 的 node_modules 下所有 package.json 开头的 UTF-8 BOM (U+FEFF).
+
+        背景: 个别 npm 包(如 dsh-tool-vision)发布时 package.json 带了 UTF-8 BOM,
+        dsh 内部用 JSON.parse 直接解析该文件时会报
+        "SyntaxError: Unexpected token '\ufeff'" 而崩溃, 导致插件安装/移除失败。
+        BOM 对 JSON 无任何语义, 剥掉后不影响任何 JSON 解析器。
+        """
+        profile_modules = os.path.join(DSH_HOME_DIR, "profiles", profile, "node_modules")
+        if not os.path.isdir(profile_modules):
+            return
+        stripped_count = 0
+        for root, _directories, files in os.walk(profile_modules):
+            if "package.json" not in files:
+                continue
+            package_json_path = os.path.join(root, "package.json")
+            try:
+                with open(package_json_path, "rb") as file_handle:
+                    head = file_handle.read(3)
+                if head != b"\xef\xbb\xbf":
+                    continue
+                with open(package_json_path, "rb") as file_handle:
+                    content = file_handle.read()
+                with open(package_json_path, "wb") as file_handle:
+                    file_handle.write(content[3:])
+                stripped_count += 1
+            except OSError:
+                # 个别文件被占用或只读时忽略, 不阻断整个命令
+                continue
+        if stripped_count > 0:
+            self.log("已清除 %d 个 package.json 的 UTF-8 BOM (修复 dsh JSON 解析崩溃)" % stripped_count)
+
+    def run_plugin_command(self, profile, arguments):
+        """执行 dsh plugin 命令 (转发给 profile 目录里的 pnpm), 返回 (退出码, 输出文本)
+        会自动确保 pnpm 就绪; 找不到 node/dsh 时抛异常。
+        特别处理: 个别 npm 包(package.json 带 UTF-8 BOM)会让 dsh 的 JSON.parse 崩溃,
+        本方法在命令前先清一遍存量 BOM, 失败后清理本次新装的 BOM 并重试一次
+        (见 strip_bom_from_profile_packages)。"""
+        node_exe = self.find_node_exe()
+        if node_exe is None:
+            raise RuntimeError("未找到便携 Node, 请先安装环境")
+        dsh_js = os.path.join(DSH_DIR, DSH_BIN_JS)
+        if not os.path.isfile(dsh_js):
+            raise RuntimeError("未找到 dsh 入口文件, 请先安装环境")
+        if not self.pnpm_installed():
+            self.install_pnpm()
+        command = [node_exe, dsh_js, "plugin", "--profile", profile] + list(arguments)
+
+        def execute_once():
+            """实际执行一次 dsh 插件命令, 返回 (退出码, 输出文本)"""
+            self.log("执行插件命令: dsh plugin --profile %s %s" % (profile, " ".join(arguments)))
+            try:
+                result = subprocess.run(command, cwd=BASE_DIR, env=self.build_env(),
+                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                        text=True, encoding="utf-8", errors="replace",
+                                        timeout=600)
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("插件命令执行超时 (超过 10 分钟), 请检查网络后重试")
+            output = (result.stdout or "").strip()
+            for line in output.splitlines()[-20:]:          # 只展示最后 20 行, 避免刷屏
+                if line.strip():
+                    self.log("plugin: %s" % line.strip())
+            return result.returncode, output
+
+        # 先清一遍存量 package.json 的 BOM (历史遗留或重装时可能带 BOM)
+        self.strip_bom_from_profile_packages(profile)
+        exit_code, output = execute_once()
+        if exit_code != 0:
+            # 本次 pnpm 刚下载的包可能带 BOM 导致 dsh JSON.parse 崩溃;
+            # 清掉 BOM 后重试一次 (pnpm 幂等, 不重复下载, 很快完成)
+            self.strip_bom_from_profile_packages(profile)
+            exit_code, output = execute_once()
+        return exit_code, output
+
+    def install_plugin(self, package_spec, profile=DEFAULT_PROFILE):
+        """安装插件到指定 profile (转发给 pnpm add), 失败抛异常"""
+        arguments = ["add", package_spec]
+        mirror, is_auto = self.resolve_mirror()
+        if not is_auto:
+            arguments.append("--registry=%s" % NPM_REGISTRY[mirror])
+        self.log("开始安装插件: %s (profile: %s) ..." % (package_spec, profile))
+        exit_code, _output = self.run_plugin_command(profile, arguments)
+        if exit_code != 0:
+            raise RuntimeError("插件安装失败 (退出码 %s), 请查看上方日志" % exit_code)
+        self.log("插件安装成功: %s" % package_spec)
+        return True
+
+    def remove_plugin(self, package_name, profile=DEFAULT_PROFILE):
+        """从指定 profile 移除插件 (转发给 pnpm remove), 失败抛异常"""
+        self.log("开始移除插件: %s (profile: %s) ..." % (package_name, profile))
+        exit_code, _output = self.run_plugin_command(profile, ["remove", package_name])
+        if exit_code != 0:
+            raise RuntimeError("插件移除失败 (退出码 %s), 请查看上方日志" % exit_code)
+        self.log("插件移除成功: %s" % package_name)
+        return True
+
+    def list_installed_plugins(self, profile=DEFAULT_PROFILE):
+        """读取 profile 的 package.json, 返回已安装插件字典 {包名: 版本}
+        注意: 这是 dsh plugin 命令实际维护的插件清单 (dependencies 字段)"""
+        package_json = os.path.join(DSH_HOME_DIR, "profiles", profile, "package.json")
+        dependencies = {}
+        if os.path.isfile(package_json):
+            try:
+                with open(package_json, "r", encoding="utf-8") as file_handle:
+                    manifest = json.load(file_handle)
+                dependencies = manifest.get("dependencies") or {}
+            except Exception as error:
+                self.log("读取 profile 插件清单失败: %s" % error)
+        return dependencies
+
+    @staticmethod
+    def _is_dsh_plugin_package(package):
+        """判断一个 npm 包是否像可安装的 dsh 插件 (过滤无关的普通 npm 包)
+        判断依据: 包名 / 关键词 / 描述 任一命中 dsh 相关特征"""
+        name = (package.get("name") or "").lower()
+        keywords = " ".join(package.get("keywords") or []).lower()
+        description = (package.get("description") or "").lower()
+        if "dsh" in name:
+            return True
+        if "dsh" in keywords or "dsh-plugin" in keywords or "deepseek-harness" in keywords:
+            return True
+        if "dsh" in description or "deepseek harness" in description \
+                or "deepseek-harness" in description:
+            return True
+        return False
+
+    def search_npm_plugins(self, keyword, size=100):
+        """通过 npm 注册表 (国内镜像优先) 搜索 dsh 插件, 返回列表
+        结果只保留与 dsh 相关的包 (见 _is_dsh_plugin_package), 每项:
+        {name, version, description, url, source='npm'}; 搜索失败抛异常"""
+        mirror, is_auto = self.resolve_mirror()
+        # auto 模式同样国内优先 (官方 registry 在国内访问很慢)
+        registry = NPM_REGISTRY["cn"] if mirror == "cn" or is_auto else NPM_REGISTRY["official"]
+        encoded_keyword = urllib.parse.quote(keyword)
+        url = "%s/-/v1/search?text=%s&size=%d" % (registry, encoded_keyword, size)
+        self.log("正在搜索插件: %s" % url)
+        request = urllib.request.Request(url, headers={"User-Agent": "DSH-Launcher/1.0"})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.load(response)
+        plugins = []
+        for item in payload.get("objects", []):
+            package = item.get("package", {})
+            if not self._is_dsh_plugin_package(package):
+                continue
+            plugins.append({
+                "name": package.get("name", ""),
+                "version": package.get("version", ""),
+                "description": (package.get("description") or "").strip(),
+                "url": package.get("links", {}).get("npm", ""),
+                "source": "npm",
+            })
+        self.log("搜索到 %d 个相关结果" % len(plugins))
+        return plugins
+
+    def fetch_github_topic_plugins(self, topic="dsh-plugin"):
+        """抓取 GitHub 官方话题页第一页热门仓库 (按星标排序, 约 20 个), 返回列表
+        每项: {name(owner/repo), version='GitHub', description, url, source='github'}
+        页面结构变化或网络失败时抛异常"""
+        url = "https://github.com/topics/%s" % topic
+        self.log("正在抓取 GitHub 官方话题页: %s" % url)
+        ssl_context = ssl.create_default_context()
+        request = urllib.request.Request(
+            url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        with urllib.request.urlopen(request, context=ssl_context, timeout=30) as response:
+            html = response.read().decode("utf-8", "ignore")
+        # 仓库条目链接形如 href="/owner/repo" 且 class 含 "Link text-bold wb-break-word"
+        pattern = re.compile(
+            r'href="/([^"/]+/[^"/]+)"[^>]*class="Link text-bold wb-break-word">([^<]+)</a>')
+        plugins = []
+        seen = set()
+        for owner_repo, repo_name in pattern.findall(html):
+            if owner_repo in seen:
+                continue
+            seen.add(owner_repo)
+            plugins.append({
+                "name": owner_repo,                       # 形如 owner/repo
+                "version": "GitHub",
+                "description": repo_name,
+                "url": "https://github.com/%s" % owner_repo,
+                "source": "github",
+            })
+        self.log("GitHub 官方话题页抓到 %d 个热门仓库" % len(plugins))
+        return plugins
+
+    def seed_default_workspace(self):
+        """把自动解析出的安全默认工作区预置为 dsh 工作区 (绿色便携, 不写死)。
+
+        背景: dsh 的 Windows ACL 沙箱要求临时根目录(runtime/tmp)不能位于
+        会话工作区内部。若工作区是程序根目录, runtime/tmp 落在其内部, 所有
+        shell 工具会报: "Windows ACL temp root must be outside the workspace"。
+        解决: 不写死路径, 由 resolve_default_workspace() 自动判定——临时目录
+        与程序根目录冲突时才预置程序目录内的 workspace 子目录, 不冲突时默认
+        工作区直接用程序根目录本身。所有数据仍在程序目录内, 保持绿色便携。
+
+        仅在服务未运行时调用(由 prepare_all 触发); 任何异常只记日志, 不阻断启动。
+        """
+        workspace_path = self.resolve_default_workspace()
+        workspace_title = os.path.basename(workspace_path) or "workspace"
+        storage_path = os.path.join(DSH_HOME_DIR, "storages", "workspace.json")
+        try:
+            if not os.path.isdir(workspace_path):
+                return
+            if not os.path.isfile(storage_path):
+                return   # dsh 尚未初始化工作区注册表, 不做干预
+            with open(storage_path, "r", encoding="utf-8") as file_handle:
+                data = json.load(file_handle)
+            tables = data.get("tables") if isinstance(data, dict) else None
+            workspaces = tables.get("workspaces") if isinstance(tables, dict) else None
+            if not isinstance(workspaces, dict):
+                return   # 结构不符, 不干预
+            target = os.path.normcase(os.path.normpath(workspace_path))
+            for record in workspaces.values():
+                if isinstance(record, dict) and \
+                        os.path.normcase(os.path.normpath(record.get("path") or "")) == target:
+                    return   # 已预置过
+            import uuid
+            new_id = str(uuid.uuid4())
+            now = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+            workspaces[new_id] = {
+                "path": workspace_path,
+                "title": workspace_title,
+                "sessionIds": [],
+                "createdAt": now,
+                "updatedAt": now,
+            }
+            global_state = data.setdefault("global", {})
+            if not isinstance(global_state, dict):
+                return
+            global_state.setdefault("workspaceIds", []).append(new_id)
+            # 原子写回 (同目录临时文件 + 替换, 避免写坏)
+            temp_path = storage_path + ".seed.tmp"
+            with open(temp_path, "w", encoding="utf-8") as file_handle:
+                json.dump(data, file_handle, ensure_ascii=False, indent=2)
+            os.replace(temp_path, storage_path)
+            self.log("已预置默认工作区: %s (在 dsh 界面左侧选择该工作区新建会话)" % workspace_path)
+        except Exception as error:
+            self.log("预置默认工作区失败(不影响启动): %s" % error)
+
     def prepare_all(self):
         """一键准备全部环境 (内置 Python + Node + dsh), 供启动前调用"""
         self.ensure_runtime_dirs()
+        self.seed_default_workspace()
         self.prepare_python()
         self.prepare_node()
         self.prepare_dsh()
@@ -683,6 +1070,219 @@ class Launcher:
             self.log("没有正在运行的服务")
         return stopped
 
+    def _delete_session_log_dir(self, session_id):
+        """删除一个会话的日志目录 (只在 sessions 根目录下按 id 查找, 防路径穿越)。
+        找到并删除返回 True, 未找到返回 False。"""
+        sessions_root = os.path.join(DSH_HOME_DIR, "sessions")
+        if not os.path.isdir(sessions_root):
+            return False
+        for entry in os.listdir(sessions_root):
+            workspace_dir = os.path.join(sessions_root, entry)
+            if not os.path.isdir(workspace_dir):
+                continue
+            candidate = os.path.join(workspace_dir, session_id)
+            if os.path.isdir(candidate):
+                shutil.rmtree(candidate)
+                return True
+        return False
+
+    def _atomic_write_json(self, path, data):
+        """原子写回 JSON (同目录临时文件 + os.replace)。"""
+        temp_path = path + ".tmp"
+        with open(temp_path, "w", encoding="utf-8") as file_handle:
+            json.dump(data, file_handle, ensure_ascii=False, indent=2)
+        os.replace(temp_path, path)
+
+    def _remove_session_from_registries(self, session_id):
+        """从 storages/workspace.json 与 session_projcache.json 中移除一个会话。
+        返回 (workspace_changed, projcache_changed); 失败抛异常由调用方处理。"""
+        workspace_storage = os.path.join(DSH_HOME_DIR, "storages", "workspace.json")
+        workspace_changed = False
+        if os.path.isfile(workspace_storage):
+            with open(workspace_storage, "r", encoding="utf-8") as file_handle:
+                data = json.load(file_handle)
+            tables = data.get("tables") if isinstance(data, dict) else None
+            workspaces = tables.get("workspaces") if isinstance(tables, dict) else None
+            if isinstance(workspaces, dict):
+                for record in workspaces.values():
+                    if not isinstance(record, dict):
+                        continue
+                    session_ids = record.get("sessionIds")
+                    if isinstance(session_ids, list) and session_id in session_ids:
+                        record["sessionIds"] = [sid for sid in session_ids if sid != session_id]
+                        workspace_changed = True
+            global_state = data.get("global") if isinstance(data, dict) else None
+            archived = global_state.get("archivedSessionIds") if isinstance(global_state, dict) else None
+            if isinstance(archived, list) and session_id in archived:
+                global_state["archivedSessionIds"] = [sid for sid in archived if sid != session_id]
+                workspace_changed = True
+            if workspace_changed:
+                self._atomic_write_json(workspace_storage, data)
+
+        projcache_storage = os.path.join(DSH_HOME_DIR, "storages", "session_projcache.json")
+        projcache_changed = False
+        if os.path.isfile(projcache_storage):
+            with open(projcache_storage, "r", encoding="utf-8") as file_handle:
+                data = json.load(file_handle)
+            tables = data.get("tables") if isinstance(data, dict) else None
+            sessions = tables.get("sessions") if isinstance(tables, dict) else None
+            if isinstance(sessions, dict) and session_id in sessions:
+                del sessions[session_id]
+                projcache_changed = True
+            if projcache_changed:
+                self._atomic_write_json(projcache_storage, data)
+        return workspace_changed, projcache_changed
+
+    def purge_session(self, session_id):
+        """永久删除一个会话 (需服务已停止)。
+
+        dsh 本身没有内置的"永久删除会话"功能: 归档(archive)只是把会话隐藏,
+        日志文件与注册表条目全部保留。本方法在服务停止后彻底删除:
+          1) 删除 sessions/<工作区编码>/<session-id>/ 会话日志目录
+          2) 从 storages/workspace.json 的 sessionIds / archivedSessionIds 中移除
+          3) 从 storages/session_projcache.json 中移除该会话的缓存条目
+        任何一步失败都会打印出来, 不静默吞掉。
+        """
+        # 1) 删除会话日志目录
+        if self._delete_session_log_dir(session_id):
+            self.log("已删除会话日志: %s" % session_id)
+        else:
+            self.log("未找到该会话的日志目录: %s" % session_id)
+
+        # 2) + 3) 清理注册表与投影缓存
+        try:
+            self._remove_session_from_registries(session_id)
+            self.log("已从注册表/缓存移除: %s" % session_id)
+        except Exception as error:
+            self.log("清理注册表/缓存失败: %s" % error)
+            return False
+
+        self.log("会话已永久删除: %s" % session_id)
+        return True
+
+    def purge_archived_sessions(self):
+        """永久删除所有已归档(隐藏)的会话 (需服务已停止)。
+
+        读取 storages/workspace.json 的 archivedSessionIds, 逐个删除日志目录,
+        并统一从 workspace.json 的 sessionIds/archivedSessionIds 与
+        session_projcache.json 中移除。返回 (删除数量, 跳过数量)。
+        """
+        workspace_storage = os.path.join(DSH_HOME_DIR, "storages", "workspace.json")
+        if not os.path.isfile(workspace_storage):
+            self.log("未找到工作区注册表, 没有可清理的归档会话")
+            return 0, 0
+        with open(workspace_storage, "r", encoding="utf-8") as file_handle:
+            data = json.load(file_handle)
+        global_state = data.get("global") if isinstance(data, dict) else None
+        archived = []
+        if isinstance(global_state, dict):
+            archived = [sid for sid in (global_state.get("archivedSessionIds") or [])
+                        if isinstance(sid, str) and sid]
+        if not archived:
+            self.log("没有已归档的会话")
+            return 0, 0
+
+        deleted = 0
+        missing = 0
+        for session_id in archived:
+            if self._delete_session_log_dir(session_id):
+                deleted += 1
+                self.log("已删除会话日志: %s" % session_id)
+            else:
+                missing += 1
+                self.log("未找到会话日志: %s" % session_id)
+
+        # 统一清理注册表与投影缓存
+        try:
+            for session_id in archived:
+                self._remove_session_from_registries(session_id)
+            self.log("已从注册表/缓存移除 %d 个会话" % len(archived))
+        except Exception as error:
+            self.log("清理注册表/缓存失败: %s" % error)
+            raise
+
+        self.log("归档会话清理完成: 删除 %d 个, 未找到日志 %d 个" % (deleted, missing))
+        return deleted, missing
+
+    def list_sessions(self):
+        """枚举本地会话列表 (供 GUI 可视化删除)。
+
+        服务停止后读取 workspace.json / session_projcache.json / sessions 目录,
+        合并出每条会话的 {id, title, workspace, archived, hasLog}。
+        任何文件缺失/损坏都不影响其它来源。
+        """
+        sessions = {}
+
+        def ensure(sid):
+            rec = sessions.get(sid)
+            if rec is None:
+                rec = {"id": sid, "title": None, "workspace": None,
+                       "archived": False, "hasLog": False}
+                sessions[sid] = rec
+            return rec
+
+        # 1) workspace.json → 工作区归属 + 归档标记
+        workspace_storage = os.path.join(DSH_HOME_DIR, "storages", "workspace.json")
+        if os.path.isfile(workspace_storage):
+            try:
+                with open(workspace_storage, "r", encoding="utf-8") as file_handle:
+                    data = json.load(file_handle)
+                tables = data.get("tables") if isinstance(data, dict) else None
+                workspaces = tables.get("workspaces") if isinstance(tables, dict) else None
+                global_state = data.get("global") if isinstance(data, dict) else None
+                archived = global_state.get("archivedSessionIds") if isinstance(global_state, dict) else None
+                if isinstance(workspaces, dict):
+                    for record in workspaces.values():
+                        if not isinstance(record, dict):
+                            continue
+                        wpath = record.get("path")
+                        for sid in record.get("sessionIds") or []:
+                            if isinstance(sid, str) and sid:
+                                ensure(sid)["workspace"] = wpath
+                for sid in archived or []:
+                    if isinstance(sid, str) and sid:
+                        ensure(sid)["archived"] = True
+            except Exception:
+                pass   # 读取失败不阻断
+
+        # 2) session_projcache.json → 标题
+        proj_storage = os.path.join(DSH_HOME_DIR, "storages", "session_projcache.json")
+        if os.path.isfile(proj_storage):
+            try:
+                with open(proj_storage, "r", encoding="utf-8") as file_handle:
+                    data = json.load(file_handle)
+                tables = data.get("tables") if isinstance(data, dict) else None
+                rows = tables.get("sessions") if isinstance(tables, dict) else None
+                if isinstance(rows, dict):
+                    for sid, row in rows.items():
+                        if not isinstance(row, dict):
+                            continue
+                        title_row = (row.get("rows") or {}).get("title") or {}
+                        title = title_row.get("val")
+                        if isinstance(title, str) and title:
+                            ensure(sid)["title"] = title
+            except Exception:
+                pass
+
+        # 3) sessions 目录 → 补齐孤儿会话 + 日志存在性
+        sessions_root = os.path.join(DSH_HOME_DIR, "sessions")
+        if os.path.isdir(sessions_root):
+            try:
+                for entry in os.listdir(sessions_root):
+                    workspace_dir = os.path.join(sessions_root, entry)
+                    if not os.path.isdir(workspace_dir):
+                        continue
+                    for sid in os.listdir(workspace_dir):
+                        if os.path.isdir(os.path.join(workspace_dir, sid)):
+                            ensure(sid)["hasLog"] = True
+            except Exception:
+                pass
+
+        result = list(sessions.values())
+        result.sort(key=lambda s: ((s["workspace"] or "").lower(),
+                                   0 if s["archived"] else 1, s["id"]))
+        return result
+
     def open_ui(self):
         """在浏览器中打开 dsh 界面"""
         port = int(self.config.get("dsh_port", 3080))
@@ -702,7 +1302,7 @@ def run_gui():
     """以 tkinter 图形界面方式运行"""
     try:
         import tkinter as tk
-        from tkinter import ttk, messagebox
+        from tkinter import ttk, messagebox, filedialog
     except ImportError:
         print("未找到 tkinter 支持, 请使用官方 python.org 安装的 Python。")
         print("无界面模式下请运行: python launcher.py --start")
@@ -756,6 +1356,8 @@ def run_gui():
         start_btn.config(state="normal" if env_ready and not server_running and not is_busy[0] else "disabled")
         stop_btn.config(state="normal" if server_running and not is_busy[0] else "disabled")
         update_btn.config(state="normal" if not server_running and not is_busy[0] else "disabled")
+        purge_btn.config(state="normal" if not server_running and not is_busy[0] else "disabled")
+        purge_one_btn.config(state="normal" if not server_running and not is_busy[0] else "disabled")
 
     # ---------- 状态栏 (顶部) ----------
     status_frame = ttk.Frame(root)
@@ -782,7 +1384,8 @@ def run_gui():
         """设置忙碌状态, 禁用/启用按钮"""
         is_busy[0] = busy
         # 忙碌时所有操作按钮都禁用, 仅刷新状态可用
-        for btn in (install_btn, start_btn, stop_btn, update_btn):
+        for btn in (install_btn, start_btn, stop_btn, update_btn,
+                    purge_btn, purge_one_btn):
             btn.config(state="disabled" if busy else "normal")
         if not busy:
             refresh_status()   # 恢复后重新刷新按钮状态
@@ -838,6 +1441,127 @@ def run_gui():
             finally:
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=worker, daemon=True).start()
+
+    def on_purge_archived():
+        """清理所有归档会话 (永久删除, 需服务已停止)"""
+        if is_busy[0]:
+            return
+        if app.is_server_running():
+            messagebox.showwarning("清理归档", "请先点击「停止服务」, 再执行清理。")
+            return
+        if not messagebox.askyesno(
+                "清理归档会话",
+                "将永久删除所有已归档(隐藏)的会话:\n"
+                "会话日志文件与工作区注册表条目一并删除, 不可恢复。\n\n"
+                "确定继续吗?"):
+            return
+        set_busy(True)
+        status_text.set("正在清理归档会话 ...")
+        status_indicator.itemconfig(dot, fill="#f59e0b")
+        append_log("--- 开始清理归档会话 ---")
+        def worker():
+            try:
+                deleted, missing = app.purge_archived_sessions()
+                root.after(0, lambda: (append_log("--- 清理完成 ---"),
+                                       messagebox.showinfo(
+                                           "清理归档",
+                                           "清理完成:\n已删除 %d 个, 未找到日志 %d 个。" % (deleted, missing))))
+            except Exception as error:
+                root.after(0, lambda: messagebox.showerror("清理失败", str(error)))
+            finally:
+                root.after(0, lambda: set_busy(False))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_purge_one():
+        """删除指定会话: 弹出可视化会话列表, 勾选(可多选)后永久删除"""
+        if is_busy[0]:
+            return
+        if app.is_server_running():
+            messagebox.showwarning("删除会话", "请先点击「停止服务」, 再执行删除。")
+            return
+        open_session_list()
+
+    def open_session_list():
+        """可视化会话列表窗口: 显示标题/工作区/状态, 支持多选后永久删除。"""
+        top = tk.Toplevel(root)
+        top.title("删除指定会话 (可多选)")
+        top.geometry("920x540")
+        top.minsize(720, 380)
+        top.transient(root)
+
+        tree = ttk.Treeview(top, columns=("id", "title", "workspace", "status", "log"),
+                            show="headings", selectmode="extended")
+        tree.heading("id", text="会话 ID")
+        tree.column("id", width=270)
+        tree.heading("title", text="标题")
+        tree.column("title", width=200)
+        tree.heading("workspace", text="工作区")
+        tree.column("workspace", width=280)
+        tree.heading("status", text="状态")
+        tree.column("status", width=70, anchor="center")
+        tree.heading("log", text="日志")
+        tree.column("log", width=50, anchor="center")
+        tree.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+
+        def refresh():
+            tree.delete(*tree.get_children())
+            try:
+                items = app.list_sessions()
+            except Exception as error:
+                messagebox.showerror("读取会话失败", str(error), parent=top)
+                count_label.config(text="读取失败")
+                return
+            if not items:
+                tree.insert("", "end", iid="__none__",
+                            values=("(没有找到任何会话)", "", "", "", ""))
+            for rec in items:
+                tree.insert("", "end", iid=rec["id"], values=(
+                    rec["id"],
+                    rec["title"] or "(无标题)",
+                    rec["workspace"] or "(未归属)",
+                    "已归档" if rec["archived"] else "正常",
+                    "有" if rec["hasLog"] else "无",
+                ))
+            count_label.config(text="共 %d 个会话" % len(items))
+
+        def on_delete():
+            selected = tree.selection()
+            ids = [sid for sid in selected if sid != "__none__"]
+            if not ids:
+                messagebox.showinfo("删除会话", "请先选中要删除的会话(可按住 Ctrl 多选)。",
+                                    parent=top)
+                return
+            preview = "\n".join(ids[:8]) + ("\n…" if len(ids) > 8 else "")
+            if not messagebox.askyesno(
+                    "删除会话",
+                    "确定要永久删除选中的 %d 个会话吗?\n\n%s\n\n不可恢复。" % (len(ids), preview),
+                    parent=top):
+                return
+            delete_btn.config(state="disabled")
+            try:
+                for sid in ids:
+                    app.purge_session(sid)
+                refresh()
+                messagebox.showinfo("删除完成", "已删除 %d 个会话。" % len(ids), parent=top)
+            except Exception as error:
+                messagebox.showerror("删除失败", str(error), parent=top)
+            finally:
+                delete_btn.config(state="normal")
+
+        bottom = ttk.Frame(top)
+        bottom.pack(fill="x", padx=8, pady=(0, 8))
+        count_label = ttk.Label(bottom, text="")
+        count_label.pack(side="left")
+        ttk.Label(bottom, text="需先停止服务; 删除不可恢复",
+                  foreground="#a04040").pack(side="left", padx=(10, 0))
+        close_btn = ttk.Button(bottom, text="关闭", command=top.destroy)
+        close_btn.pack(side="right", padx=(6, 0))
+        refresh_btn = ttk.Button(bottom, text="刷新", command=refresh)
+        refresh_btn.pack(side="right", padx=(6, 0))
+        delete_btn = ttk.Button(bottom, text="删除选中会话", command=on_delete)
+        delete_btn.pack(side="right", padx=(6, 0))
+
+        refresh()
 
     def on_open():
         """在浏览器中打开 dsh 界面"""
@@ -900,7 +1624,368 @@ def run_gui():
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=update_worker, daemon=True).start()
 
-    # 六个按钮: 安装环境 / 启动服务 / 停止服务 / 打开界面 / 检查更新 / 刷新状态
+    def on_plugin_manager():
+        """打开插件管理新窗口 (需环境就绪)"""
+        if is_busy[0]:
+            return
+        if not check_environment_ready():
+            messagebox.showinfo("插件管理", "请先点击「安装环境」准备环境 (需要 Node + dsh)。")
+            return
+        open_plugin_manager()
+
+    def open_plugin_manager():
+        """插件管理窗口: 查看已安装 / 搜索 (npm + GitHub 官方话题页) / 安装 / 移除插件
+        所有耗时操作都在后台线程执行, 通过 root.after 回主线程更新界面"""
+        top = tk.Toplevel(root)
+        top.title("插件管理")
+        top.geometry("900x600")
+        top.minsize(760, 520)
+
+        profile = DEFAULT_PROFILE
+        plugin_busy = [False]   # 本窗口忙碌标志, 防止重复操作
+        # 记录列表条目 -> 插件信息, 供右键菜单打开对应网页使用
+        installed_item_urls = {}   # 左侧已安装: item_id -> 包名
+        search_item_urls = {}      # 右侧搜索:  item_id -> {name, source, url}
+
+        # ---------- 操作函数 (先全部定义, 再创建控件; 函数体内对控件的引用在调用时才解析) ----------
+        def set_plugin_busy(busy):
+            """设置本窗口忙碌状态, 统一禁用/恢复操作按钮"""
+            plugin_busy[0] = busy
+            button_state = "disabled" if busy else "normal"
+            for button in (search_btn, load_github_btn, github_btn, load_rec_btn,
+                           remove_btn, install_btn, manual_btn, local_install_btn):
+                button.config(state=button_state)
+            if not busy:
+                plugin_status.set("就绪")
+
+        def refresh_installed():
+            """读取已安装插件并刷新左侧列表"""
+            installed_tree.delete(*installed_tree.get_children())
+            installed_item_urls.clear()
+            dependencies = app.list_installed_plugins(profile)
+            if not dependencies:
+                installed_tree.insert("", "end", text="(暂无已安装插件)", values=("",))
+                return
+            for package_name, version in sorted(dependencies.items()):
+                item_id = installed_tree.insert("", "end", text=package_name, values=(version,))
+                # 记录每个条目对应的网址, 供右键菜单打开页面使用
+                installed_item_urls[item_id] = package_name
+
+        def on_refresh_installed():
+            """刷新已安装列表 (本地读取, 不耗时)"""
+            refresh_installed()
+
+        def show_search_results(plugins, default_source):
+            """把搜索结果填入右侧列表; default_source 为 'npm' 或 'github'"""
+            search_tree.delete(*search_tree.get_children())
+            search_item_urls.clear()
+            if not plugins:
+                search_tree.insert("", "end", text="(无结果)", values=(default_source, "", ""))
+                plugin_status.set("没有搜索到结果")
+                return
+            for plugin in plugins:
+                item_source = plugin.get("source", default_source)
+                item_id = search_tree.insert("", "end",
+                                             text=plugin["name"],
+                                             values=(item_source, plugin.get("version", ""),
+                                                     plugin.get("description", "")))
+                # 记录每个条目对应的网址, 供右键菜单打开页面使用
+                search_item_urls[item_id] = {
+                    "name": plugin["name"],
+                    "source": item_source,
+                    "url": plugin.get("url", ""),
+                }
+            plugin_status.set("共 %d 条结果" % len(plugins))
+
+        def do_search():
+            """搜索插件 (npm 注册表, 国内镜像优先)"""
+            if plugin_busy[0]:
+                return
+            keyword = keyword_var.get().strip() or "dsh-plugin"
+            set_plugin_busy(True)
+            plugin_status.set("正在搜索: %s ..." % keyword)
+            def worker():
+                try:
+                    plugins = app.search_npm_plugins(keyword)
+                    root.after(0, lambda: show_search_results(plugins, "npm"))
+                except Exception as error:
+                    root.after(0, lambda: (messagebox.showerror("搜索失败", str(error), parent=top),
+                                           plugin_status.set("搜索失败")))
+                finally:
+                    root.after(0, lambda: set_plugin_busy(False))
+            threading.Thread(target=worker, daemon=True).start()
+
+        def do_load_github():
+            """抓取 GitHub 官方话题页热门仓库并填入搜索结果"""
+            if plugin_busy[0]:
+                return
+            set_plugin_busy(True)
+            plugin_status.set("正在加载 GitHub 官方话题页 ...")
+            def worker():
+                try:
+                    plugins = app.fetch_github_topic_plugins()
+                    root.after(0, lambda: show_search_results(plugins, "github"))
+                except Exception as error:
+                    root.after(0, lambda: (messagebox.showerror("加载失败", str(error), parent=top),
+                                           plugin_status.set("加载失败")))
+                finally:
+                    root.after(0, lambda: set_plugin_busy(False))
+            threading.Thread(target=worker, daemon=True).start()
+
+        def do_load_recommended():
+            """加载内置推荐插件列表 (npm 上已核实的 dsh 插件, 无需网络搜索)"""
+            if plugin_busy[0]:
+                return
+            show_search_results(list(RECOMMENDED_PLUGINS), "推荐")
+            plugin_status.set("已加载 %d 个推荐插件 (来源: npm 推荐)" % len(RECOMMENDED_PLUGINS))
+
+        def do_open_github_topic():
+            """在浏览器打开 GitHub 官方话题页 (完整入口, 可翻页浏览更多)"""
+            webbrowser.open(GITHUB_TOPIC_URL)
+
+        def build_open_urls(item_info):
+            """根据条目信息构造可打开的网址列表
+            返回 [(显示名, url), ...]; github 来源用仓库地址, 其余用 npm 页面 + GitHub 搜索兜底"""
+            name = item_info["name"]
+            source = item_info.get("source", "")
+            raw_url = item_info.get("url", "")
+            url_list = []
+            # GitHub 来源: 直接打开仓库地址
+            if source == "github":
+                url_list.append(("打开 GitHub 仓库", raw_url or "https://github.com/%s" % name))
+                url_list.append(("打开 npm 页面",
+                                 "https://www.npmjs.com/package/%s" % urllib.parse.quote(name)))
+            else:
+                # npm / 推荐来源: 打开 npm 页面, 以及 GitHub 搜索
+                url_list.append(("打开 npm 页面",
+                                 "https://www.npmjs.com/package/%s" % urllib.parse.quote(name)))
+                url_list.append(("打开 GitHub 搜索",
+                                 "https://github.com/search?q=%s" % urllib.parse.quote(name)))
+            return url_list
+
+        def on_plugin_right_click(tree, item_urls, event):
+            """Treeview 右键菜单: 打开对应网页 (npm / GitHub)
+            tree 为被点击的 Treeview, item_urls 为条目映射表, event 为鼠标事件"""
+            row_id = tree.identify_row(event.y)
+            if not row_id:
+                return
+            tree.selection_set(row_id)
+            info = item_urls.get(row_id)
+            if info is None:
+                return
+            context_menu = tk.Menu(top, tearoff=0)
+            for label, url in build_open_urls(info):
+                context_menu.add_command(label=label, command=lambda u=url: webbrowser.open(u))
+            context_menu.add_separator()
+            context_menu.add_command(label="复制包名",
+                                     command=lambda: root.clipboard_append(info["name"]))
+            context_menu.tk_popup(event.x_root, event.y_root)
+            context_menu.grab_release()
+
+        def resolve_selected_spec():
+            """取搜索结果选中项的安装规格与显示名
+            返回 (安装规格, 显示名); 未选中或空条目返回 (None, None)"""
+            selection = search_tree.selection()
+            if not selection:
+                return None, None
+            package_name = search_tree.item(selection[0], "text")
+            if package_name.startswith("("):
+                return None, None
+            item_source = search_tree.item(selection[0], "values")[0]
+            if item_source == "github":
+                return "github:%s" % package_name, package_name
+            return package_name, package_name
+
+        def on_install_selected():
+            """安装搜索结果中选中的插件"""
+            if plugin_busy[0]:
+                return
+            spec, display_name = resolve_selected_spec()
+            if spec is None:
+                messagebox.showinfo("插件管理", "请先在右侧选中要安装的插件。", parent=top)
+                return
+            do_install(spec, display_name)
+
+        def on_manual_install():
+            """手动输入安装规格并安装"""
+            if plugin_busy[0]:
+                return
+            spec = manual_var.get().strip()
+            if not spec:
+                messagebox.showinfo("插件管理",
+                                    "请先输入要安装的插件规格, 如 dsh-advisor 或 github:用户/仓库#提交号。",
+                                    parent=top)
+                return
+            do_install(spec, spec)
+
+        def on_install_local():
+            """选择本地插件文件夹 (含 package.json) 并安装, 重启服务后生效"""
+            if plugin_busy[0]:
+                return
+            folder = filedialog.askdirectory(
+                title="选择本地插件目录 (目录内需含 package.json)",
+                parent=top)
+            if not folder:
+                return
+            if not messagebox.askyesno(
+                    "安装本地插件",
+                    "将安装本地插件目录:\n%s\n\n安装后需重启服务生效。\n继续吗?" % folder,
+                    parent=top):
+                return
+            spec = "file:" + os.path.abspath(folder).replace("\\", "/")
+            do_install(spec, os.path.basename(folder))
+
+        def do_install(spec, display_name):
+            """后台线程执行插件安装"""
+            set_plugin_busy(True)
+            plugin_status.set("正在安装: %s ..." % display_name)
+            def worker():
+                try:
+                    app.install_plugin(spec, profile)
+                    root.after(0, lambda: (refresh_installed(),
+                                           plugin_status.set("已安装: %s" % display_name)))
+                except Exception as error:
+                    root.after(0, lambda: (messagebox.showerror("安装失败", str(error), parent=top),
+                                           plugin_status.set("安装失败")))
+                finally:
+                    root.after(0, lambda: set_plugin_busy(False))
+            threading.Thread(target=worker, daemon=True).start()
+
+        def on_remove():
+            """移除左侧选中的已安装插件"""
+            if plugin_busy[0]:
+                return
+            selection = installed_tree.selection()
+            if not selection:
+                messagebox.showinfo("插件管理", "请先在左侧选中要移除的插件。", parent=top)
+                return
+            package_name = installed_tree.item(selection[0], "text")
+            if package_name.startswith("("):
+                return
+            if not messagebox.askyesno("移除插件", "确定要移除插件「%s」吗?" % package_name, parent=top):
+                return
+            set_plugin_busy(True)
+            plugin_status.set("正在移除: %s ..." % package_name)
+            def worker():
+                try:
+                    app.remove_plugin(package_name, profile)
+                    root.after(0, lambda: (refresh_installed(),
+                                           plugin_status.set("已移除: %s" % package_name)))
+                except Exception as error:
+                    root.after(0, lambda: (messagebox.showerror("移除失败", str(error), parent=top),
+                                           plugin_status.set("移除失败")))
+                finally:
+                    root.after(0, lambda: set_plugin_busy(False))
+            threading.Thread(target=worker, daemon=True).start()
+
+        # ---------- 顶部工具栏 ----------
+        toolbar = ttk.Frame(top)
+        toolbar.pack(fill="x", padx=10, pady=(10, 6))
+
+        ttk.Label(toolbar, text="搜索插件:").pack(side="left")
+        keyword_var = tk.StringVar(value="dsh-plugin")
+        keyword_entry = ttk.Entry(toolbar, textvariable=keyword_var, width=28)
+        keyword_entry.pack(side="left", padx=(6, 6))
+
+        ttk.Label(toolbar, text="  ").pack(side="left")
+
+        ttk.Label(toolbar, text="GitHub 官方入口:").pack(side="left")
+        github_btn = ttk.Button(toolbar, text="打开官方话题页", command=do_open_github_topic)
+        github_btn.pack(side="left", padx=(6, 0))
+
+        # ---------- 中间: 左右两个面板 ----------
+        middle = ttk.Panedwindow(top, orient="horizontal")
+        middle.pack(fill="both", expand=True, padx=10, pady=6)
+
+        # 左侧: 已安装插件
+        installed_frame = ttk.LabelFrame(middle, text="已安装插件 (profile: %s)" % profile)
+        middle.add(installed_frame, weight=1)
+        # 列表区: 左 Treeview + 右垂直滚动条 (方便上下滑动)
+        installed_body = ttk.Frame(installed_frame)
+        installed_body.pack(fill="both", expand=True, padx=6, pady=6)
+        installed_tree = ttk.Treeview(installed_body, columns=("version",), show="tree headings")
+        installed_tree.heading("#0", text="插件名")
+        installed_tree.heading("version", text="版本")
+        installed_tree.column("#0", width=250)
+        installed_tree.column("version", width=90, anchor="center")
+        installed_scrollbar = ttk.Scrollbar(installed_body, orient="vertical",
+                                            command=installed_tree.yview)
+        installed_tree.configure(yscrollcommand=installed_scrollbar.set)
+        installed_tree.pack(side="left", fill="both", expand=True)
+        installed_scrollbar.pack(side="right", fill="y")
+
+        installed_buttons = ttk.Frame(installed_frame)
+        installed_buttons.pack(fill="x", padx=6, pady=(0, 6))
+        remove_btn = ttk.Button(installed_buttons, text="移除选中插件", command=on_remove)
+        remove_btn.pack(side="left")
+        ttk.Button(installed_buttons, text="刷新", command=on_refresh_installed).pack(side="left", padx=(6, 0))
+
+        # 右侧: 搜索结果
+        search_frame = ttk.LabelFrame(middle, text="搜索结果")
+        middle.add(search_frame, weight=2)
+        # 列表区: 左 Treeview + 右垂直滚动条 (方便上下滑动)
+        search_body = ttk.Frame(search_frame)
+        search_body.pack(fill="both", expand=True, padx=6, pady=6)
+        search_tree = ttk.Treeview(search_body, columns=("source", "version", "description"), show="tree headings")
+        search_tree.heading("#0", text="插件名")
+        search_tree.heading("source", text="来源")
+        search_tree.heading("version", text="版本")
+        search_tree.heading("description", text="描述")
+        # 列宽留足余量: 总和需明显小于面板宽度, 否则 pack 会把右侧滚动条压缩成 1x1
+        search_tree.column("#0", width=160)
+        search_tree.column("source", width=48, anchor="center")
+        search_tree.column("version", width=58, anchor="center")
+        search_tree.column("description", width=180, stretch=True)
+        search_scrollbar = ttk.Scrollbar(search_body, orient="vertical",
+                                         command=search_tree.yview)
+        search_tree.configure(yscrollcommand=search_scrollbar.set)
+        search_tree.pack(side="left", fill="both", expand=True)
+        search_scrollbar.pack(side="right", fill="y")
+
+        search_buttons = ttk.Frame(search_frame)
+        search_buttons.pack(fill="x", padx=6, pady=(0, 6))
+        search_btn = ttk.Button(search_buttons, text="搜索", command=do_search)
+        search_btn.pack(side="left")
+        load_rec_btn = ttk.Button(search_buttons, text="加载推荐", command=do_load_recommended)
+        load_rec_btn.pack(side="left", padx=(6, 0))
+        load_github_btn = ttk.Button(search_buttons, text="加载 GitHub 热门", command=do_load_github)
+        load_github_btn.pack(side="left", padx=(6, 0))
+        install_btn = ttk.Button(search_buttons, text="安装选中插件", command=on_install_selected)
+        install_btn.pack(side="left", padx=(6, 0))
+
+        # ---------- 手动安装栏 ----------
+        manual_frame = ttk.Frame(top)
+        manual_frame.pack(fill="x", padx=10, pady=(0, 6))
+        ttk.Label(manual_frame, text="手动安装 (支持 npm 包名 或 github:用户/仓库#提交号):").pack(side="left")
+        manual_var = tk.StringVar()
+        manual_entry = ttk.Entry(manual_frame, textvariable=manual_var, width=48)
+        manual_entry.pack(side="left", padx=(6, 6))
+        manual_btn = ttk.Button(manual_frame, text="安装", command=on_manual_install)
+        manual_btn.pack(side="left")
+        local_install_btn = ttk.Button(manual_frame, text="选择本地插件文件夹安装…",
+                                       command=on_install_local)
+        local_install_btn.pack(side="left", padx=(8, 0))
+        ttk.Label(manual_frame, text="(本地插件: 重启服务后生效)",
+                  foreground="#666666").pack(side="left", padx=(8, 0))
+
+        # ---------- 底部状态栏 ----------
+        plugin_status = tk.StringVar(value="就绪")
+        ttk.Label(top, textvariable=plugin_status, font=("Microsoft YaHei", 9),
+                  foreground="#555555").pack(side="bottom", fill="x", padx=10, pady=(0, 8), anchor="w")
+
+        # 右键菜单: 在列表条目上右键可打开对应网页 (npm / GitHub) 或复制包名
+        installed_tree.bind("<Button-3>",
+                            lambda event: on_plugin_right_click(installed_tree,
+                                                                installed_item_urls, event))
+        search_tree.bind("<Button-3>",
+                         lambda event: on_plugin_right_click(search_tree,
+                                                             search_item_urls, event))
+
+        # 初始刷新已安装列表; 回车触发搜索
+        refresh_installed()
+        keyword_entry.bind("<Return>", lambda event: do_search())
+
+    # 七个按钮: 安装环境 / 启动服务 / 停止服务 / 打开界面 / 检查更新 / 插件管理 / 刷新状态
     install_btn = ttk.Button(button_frame, text="安装环境", command=on_install)
     install_btn.pack(side="left", padx=(0, 8))
 
@@ -915,7 +2000,20 @@ def run_gui():
     update_btn = ttk.Button(button_frame, text="检查更新", command=on_check_update)
     update_btn.pack(side="left", padx=8)
 
+    plugin_btn = ttk.Button(button_frame, text="插件管理", command=on_plugin_manager)
+    plugin_btn.pack(side="left", padx=8)
+
     ttk.Button(button_frame, text="刷新状态", command=refresh_status).pack(side="left", padx=8)
+
+    # ---------- 数据维护区 (需先停止服务) ----------
+    maintenance_frame = ttk.LabelFrame(root, text="数据维护 (需先停止服务, 操作不可恢复)")
+    maintenance_frame.pack(fill="x", padx=14, pady=(0, 8))
+    purge_btn = ttk.Button(maintenance_frame, text="清理归档会话", command=on_purge_archived)
+    purge_btn.pack(side="left", padx=8, pady=6)
+    purge_one_btn = ttk.Button(maintenance_frame, text="删除会话…", command=on_purge_one)
+    purge_one_btn.pack(side="left", padx=8, pady=6)
+    ttk.Label(maintenance_frame, text="永久删除已归档/指定的会话(日志+注册表条目), 删除前有确认提示",
+              foreground="#a04040").pack(side="left", padx=(12, 8))
 
     # 初始刷新状态
     refresh_status()
@@ -1003,6 +2101,70 @@ def main():
             return 0
         except Exception as error:
             print("启动失败: %s" % error)
+            return 1
+    if "--purge-session" in args:
+        app = Launcher()
+        app.on_log = lambda message: print(message)   # 命令行模式把日志打印到终端
+        try:
+            index = args.index("--purge-session")
+            session_id = args[index + 1] if index + 1 < len(args) else ""
+            session_id = (session_id or "").strip()
+            if not session_id:
+                print("用法: python launcher.py --purge-session <会话ID>")
+                return 2
+            if app.is_server_running():
+                print("服务正在运行, 请先停止服务: python launcher.py --stop")
+                return 1
+            return 0 if app.purge_session(session_id) else 1
+        except Exception as error:
+            print("永久删除失败: %s" % error)
+            return 1
+    if "--purge-archived" in args:
+        app = Launcher()
+        app.on_log = lambda message: print(message)   # 命令行模式把日志打印到终端
+        try:
+            if app.is_server_running():
+                print("服务正在运行, 请先停止服务: python launcher.py --stop")
+                return 1
+            deleted, missing = app.purge_archived_sessions()
+            print("归档会话清理完成: 删除 %d 个, 未找到日志 %d 个" % (deleted, missing))
+            return 0
+        except Exception as error:
+            print("清理归档失败: %s" % error)
+            return 1
+    if "--install-plugin" in args or "--remove-plugin" in args:
+        app = Launcher()
+        app.on_log = lambda message: print(message)   # 命令行模式把日志打印到终端
+        try:
+            if "--install-plugin" in args:
+                index = args.index("--install-plugin")
+                spec = args[index + 1] if index + 1 < len(args) else ""
+                spec = (spec or "").strip()
+                if not spec:
+                    print("用法: python launcher.py --install-plugin <本地插件目录或npm包名>")
+                    return 2
+                if app.is_server_running():
+                    print("提示: 服务正在运行, 插件将在重启服务后生效。")
+                # 本地目录: 归一化为 file: 形式的绝对路径 (pnpm 可识别), 不改动目录本身
+                if os.path.isdir(spec):
+                    spec = "file:" + os.path.abspath(spec).replace("\\", "/")
+                app.install_plugin(spec)
+                print("插件已安装: %s (重启服务后生效)" % spec)
+                return 0
+            else:
+                index = args.index("--remove-plugin")
+                package_name = args[index + 1] if index + 1 < len(args) else ""
+                package_name = (package_name or "").strip()
+                if not package_name:
+                    print("用法: python launcher.py --remove-plugin <包名>")
+                    return 2
+                if app.is_server_running():
+                    print("提示: 服务正在运行, 插件移除将在重启服务后生效。")
+                app.remove_plugin(package_name)
+                print("插件已移除: %s" % package_name)
+                return 0
+        except Exception as error:
+            print("插件操作失败: %s" % error)
             return 1
     # 默认: 图形界面
     run_gui()
