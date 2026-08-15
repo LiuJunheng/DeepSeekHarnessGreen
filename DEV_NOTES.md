@@ -293,6 +293,13 @@
     - **排查方法**：客户端组件不渲染时，看浏览器控制台有没有 `componentDidCatch` / "Rendered more hooks"/"Rendered fewer hooks" 报错；用 SSR（react-dom/server renderToString + 真实 React）单测能排除组件本身逻辑问题，但**无法复现 props-hook 身份漂移**——真实环境优先怀疑"从 props 拿 hook 并条件调用"。
     - **教训**：插槽条目的 standard props 里，**hook（`useXxx`）只能无条件调用且不依赖其身份稳定性**；若需要读快照数据，优先用 ownerProps 里已有的普通数据字段，而不是通过 props hook 现取。改客户端源码后 bundle 按请求重新生成（rev 变化），**强制刷新页面即可生效，不必重启服务**。**本经验已同步至 `skills/dsh-deploy-maintain/`（SKILL.md 4.6 + 速查表 + plugin-dev-checklist + plugin-skeleton 警告），并重建 `Skill-dsh-deploy-maintain.zip`。**
 
+43. **【发布流程】Windows PowerShell 5.1 按 ANSI 读"无 BOM 的 UTF-8 .ps1"→ 脚本里中文常量乱码 → GitHub Release 正文中文变 `?`（2026-08-15）**：
+    - **现象**：首次创建 v1.0.2 Release 时，发布脚本 `_release_tmp.ps1` 里写了中文正文，即使按避坑 #32 用 `[System.Text.Encoding]::UTF8.GetBytes()` + `-ContentType "application/json; charset=utf-8"` 发送，GitHub 收到后正文中文仍全部变 `?`（`body -match "更新内容"` 为 False、`body -match "\?"` 为 True）。
+    - **根因**：Windows PowerShell 5.1 读取 `.ps1` 脚本文件时，**无 BOM 的 UTF-8 文件会被当作系统 ANSI（中文系统 = GBK）解码** → 脚本里的中文字符串字面量在内存里就已经是乱码 → 后续再怎么 `UTF8.GetBytes` 也救不回来。避坑 #32 只解决了"发送端按 UTF-8 编码"，没解决"脚本文件本身被按 GBK 读"这一层。
+    - **修复**：**发布脚本保持纯 ASCII（一个中文字符都不写）**，中文 Release 正文单独放到一个 UTF-8 文本文件（如 `_release_body_tmp.md`，用编辑器/工具按 UTF-8 保存），脚本里 `[System.IO.File]::ReadAllText(路径, [System.Text.Encoding]::UTF8)` 显式按 UTF-8 读入，再 `ConvertTo-Json` + `UTF8.GetBytes` 发送。修复后（用 PATCH `/releases/{id}` 改 body）验证通过。
+    - **验证**：`Invoke-RestMethod` GET release → `ConvertTo-Json` → `UTF8.GetBytes` 存成 UTF-8 文件 → 用 **python** 检查 body 含"更新内容"且无 U+FFFD / `?`（不要用 PowerShell 的 `-match "中文"` 校验——校验脚本里写中文同样会被 ANSI 读乱）；资产下载 URL 用 `curl.exe -s -I -L -o NUL -w "%{http_code}"` 验证返回 200。
+    - **教训**：Windows PowerShell 里"脚本内含中文常量"一律按坑处理：要么把 `.ps1` 存成 **UTF-8 with BOM**，要么**脚本纯 ASCII + 中文拆到独立 UTF-8 文件显式读取**；任何中文校验也走 python/外部工具，别在 PowerShell 里写中文断言。
+
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验

@@ -37,6 +37,7 @@
 - [ ] update_apply.bat 用「exe 文件锁轮询」等待启动器退出（不轮询 PID，防 PID 复用死循环）；DETACHED 模式下用 `ping -n` 睡眠替代 `timeout`，`goto` 只用顶层标签，`start` 前加 `if exist` 判断
 - [ ] bat 全文纯 ASCII + CRLF，避免 Windows cmd 编码问题
 - [ ] 旧文件备份到 `runtime/update/backup/`，供手动回退
+- [ ] 发布 Release 正文含中文时：发布脚本保持纯 ASCII，中文拆到独立 UTF-8 文件用 `[System.IO.File]::ReadAllText(路径, UTF8)` 显式读取（PS 5.1 会把无 BOM 的 UTF-8 .ps1 按 ANSI 读，正文中文变 `?`，见 DEV_NOTES 避坑 #43）；校验用 python 而非 PowerShell 中文 `-match`
 
 ## exe 打包
 
