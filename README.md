@@ -116,9 +116,9 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 ### 轻量分发 zip（精简在线版，约 8MB）
 > 相较"整目录迁移"，此 zip **不含 `runtime/`（不带已下载的环境与会话）**，新机联网后由启动器自动下载 Node / Python / dsh，体积小、适合放到 GitHub Release 分发。
 >
-> 打包内容（即项目根目录的"发货清单"）：`launcher.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`config.json`、`README.md`、`DEV_NOTES.md`、`.gitignore`、`plugins/dsh-archive-purge/`。
+> 打包内容（即项目根目录的"发货清单"）：`launcher.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`config.json`、`README.md`、`DEV_NOTES.md`、`.gitignore`、`plugins/dsh-archive-purge/`、`skills/dsh-deploy-maintain/`。
 
-- **最新下载**（GitHub Release，tag `v1.0.0`）：<https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
+- **最新下载**（GitHub Release，tag `v1.0.1`）：<https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
 - 仓库：<https://github.com/LiuJunheng/DeepSeekHarnessGreen>
 
 新机使用三步：
@@ -128,7 +128,7 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 
 重新生成该 zip（在项目根目录 PowerShell 执行）：
 ```powershell
-Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, config.json, README.md, DEV_NOTES.md, .gitignore, "plugins\dsh-archive-purge" -DestinationPath DSH_Launcher_GreenPortable_Online_<日期>.zip -CompressionLevel Optimal
+Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, config.json, README.md, DEV_NOTES.md, .gitignore, "plugins\dsh-archive-purge", "skills\dsh-deploy-maintain" -DestinationPath DSH_Launcher_GreenPortable_Online_<日期>.zip -CompressionLevel Optimal
 ```
 
 ## 五、插件管理
