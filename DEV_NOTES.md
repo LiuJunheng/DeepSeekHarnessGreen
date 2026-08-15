@@ -233,6 +233,12 @@
     - **修复**：目标已存在时改用 `Copy-Item -Path "源\*" -Destination "目标\" -Recurse -Force`（通配符展开内容），或先删空目标再整目录复制。
     - **教训**：复制目录到可能已存在的目标前，先确认目标是否为空；Skill 安装后必须 `Get-ChildItem -Recurse` 核对结构（`SKILL.md` 应在技能根目录，不能套一层同名子目录，否则 TRAE 识别不到）。同时 Skill 目录应**先在项目内写好**（编辑工具限制在工作目录内，无法直接写 `~/.trae-cn/skills`），再复制安装。
 
+36. **【发布流程】Skill 打包 zip 也发到 GitHub Release、不进仓库（2026-08-15）**：
+    - **约定**：与分发 zip `DSH_Launcher_*.zip` 一致，Skill 打包产物 `DSH_Skill_*.zip` 同样只作为 Release 资产（发到 GitHub Releases 供下载/安装），**不提交进 git 仓库**。`.gitignore` 已把 `DSH_Skill_*.zip` 一并忽略，避免 git status 常年显示未跟踪文件。
+    - **命名**：`DSH_Skill_<skill名>_<YYYYMMDD>.zip`；内容为 skill 目录本身（含 `SKILL.md` 在根，不能套一层同名子目录，见避坑 #35）。分发 zip 命名 `DSH_Launcher_GreenPortable_Online_<YYYYMMDD>_v<tag>.zip`。
+    - **发布步骤**：提交并 push 代码 → 打 tag（`git tag vX.Y.Z` + `git push origin vX.Y.Z`）→ 用 GitHub API 创建/更新 release 并上传两个 zip（中文 body 必须走 `[System.Text.Encoding]::UTF8.GetBytes()` 字节流，见避坑 #32）。
+    - **教训**：上传 Release 资产前先核对 zip 内的 `launcher.py`/`DSH_Launcher.exe` 等文件长度与本地一致（`Compress-Archive` 后可能有旧缓存），并用 `Invoke-WebRequest -Method Head` 验证下载 URL 返回 200。
+
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验
