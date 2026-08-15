@@ -47,6 +47,8 @@
 
 19. **发布 v1.0.3（2026-08-15）**：会话管理与会话回退两大功能齐活后打包发布。内容：`GREEN_VERSION` 升至 `"1.0.3"`（`GREEN_VERSION_DATE = "2026年08月15日"`）、README 更新（目录结构/CLI `--restore-session`/新增「配套：内置会话回退 WebUI 插件」章节/最新下载 tag v1.0.3）、DEV_NOTES 记录需求 #18、Skill 同步（SKILL.md 新增 3.5 会话回退 + 速查表一行 + deployment-checklist 会话回退项）。发布流程：重建 `DSH_Launcher.exe`（build_exe.bat）→ 打包 `DSH_Launcher_GreenPortable_Online_20260815_v1.0.3.zip`（含 plugins/dsh-session-rewind）与 `DSH_Skill_dsh-deploy-maintain_20260815.zip` → 提交（`8418084`）→ push master + tag `v1.0.3` → GitHub API 建 Release 上传两个 zip（正文走避坑 #43 的 UTF-8 文件方案，脚本纯 ASCII）→ 验证正文中文无乱码（python 断言含"会话回退/恢复"、无 U+FFFD/乱码 `?`）+ 资产下载 200。**本次发布踩到新坑见避坑 #46（`powershell -File` 下字符串管道到原生命令失效）。**
 
+20. **【v1.0.3 自更新 BUG】本地版本号恒为旧值，反复提示更新（2026-08-16 修复）**：发布 v1.0.3 后，本地启动器「检查绿色版更新」仍显示自己是 **1.0.1** 并提示可更新。根因：`DEFAULT_CONFIG` 里残留 `"green_version": "1.0.1"` 默认值（只改了 `GREEN_VERSION` 常量到 1.0.3），而 `green_local_version()` 是 **config 优先**（`self.config.get("green_version")`），config 加载时 `dict(DEFAULT_CONFIG)` + `update(saved)` 合并，用户 config.json 没写 green_version 就落回默认值 1.0.1 → 版本比较 `1.0.3 > 1.0.1` 恒成立 → 永远提示更新（哪怕已装到 1.0.3 也不会停）。**修复**：① 从 `DEFAULT_CONFIG` 删除 `green_version`（消除"双来源不同步"陷阱，`GREEN_VERSION` 常量成为唯一版本来源）；② `green_local_version()` 改为**直接读原始 config.json** 判断是否显式覆盖（读原始文件不读合并默认值），无覆盖则返回 `GREEN_VERSION`。验证：config.json 无 green_version → 本地版本号 = 1.0.3，`1.0.3 > 1.0.3` = False → 不再提示。**发布教训：凡版本号相关的默认值不要散落在多处，单一来源 + 覆盖逻辑必须读原始配置文件；改 launcher.py 后要同步重打 exe + 绿色 zip 并替换 Release 资产（先删旧资产再传，否则 422）。**
+
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
 |------|------|

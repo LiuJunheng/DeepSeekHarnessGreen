@@ -126,7 +126,8 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
 
 **互不干扰的三个保证**：① 数据/环境各自隔离——核心只动 `runtime/dsh`，外围只动根目录；② 外围覆盖**跳过 `config.json`（用户配置）与 `runtime/`（用户数据 + 已装环境）**，绝不碰 dsh 环境；③ 两套独立查询接口与按钮，互不触发。
 
-**版本追踪**：`GREEN_VERSION` 常量（发布时手动更新）+ `config.json` 的 `green_version` 可覆盖（`green_local_version()` 优先读 config）。GitHub Release tag 用 `v1.0.1` 形式，本地去 v 前缀后按**数字分段**比较 `_green_version_greater()`（`1.0.10 > 1.0.9` 成立，不依赖字符串长度）。
+**版本追踪**：`GREEN_VERSION` 常量为**唯一来源**（发布时手动更新）；`green_local_version()` 只在该用户 `config.json` **显式写了 `green_version` 字段**时才覆盖（直接读原始配置文件判断，不读合并默认值）。GitHub Release tag 用 `v1.0.1` 形式，本地去 v 前缀后按**数字分段**比较 `_green_version_greater()`（`1.0.10 > 1.0.9` 成立，不依赖字符串长度）。
+> **坑（v1.0.3 实测，详见 DEV_NOTES 需求 #20）**：版本号默认值**绝不能**写进 `DEFAULT_CONFIG`——曾留 `"green_version": "1.0.1"` 默认值 + `green_local_version()` 走 `config.get()`，config 合并后本地恒显示 1.0.1，导致 1.0.3 也反复提示更新（装上了也停不下来）。**教训**：版本相关默认值单点存放（GREEN_VERSION 常量），覆盖逻辑必须读原始 config.json；改 launcher.py 后要重打 exe + 绿色 zip 并替换 Release 资产（先删旧资产再传，否则 422）。
 
 **查询与下载**：`green_latest_release()` 先 `api.github.com/repos/<owner>/<repo>/releases/latest`，失败降级国内镜像 `mirror.nju.edu.cn/github-release/<owner>/<repo>/latest`，只读返回 release_info；`green_find_zip_asset()` 按前缀 `DSH_Launcher_GreenPortable_Online_` + `.zip` 匹配资产；`download_green_update()` 下载到 `runtime/update/`（带进度），下载后**校验文件大小**，不符即删并抛异常。
 

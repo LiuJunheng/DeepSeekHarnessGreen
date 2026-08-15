@@ -80,9 +80,10 @@ DEFAULT_CONFIG = {
     # 默认工作区: 空=自动解析(见 resolve_default_workspace, 不写死);
     # 高级用户可自定义为任意绝对路径, 若与临时目录冲突会自动回退并警告
     "default_workspace": "",
-    # 绿色版版本号 (自更新比较基准, 与 GitHub Release tag 一致, 不含 v 前缀;
-    # 发布新版本时需同步更新下方 GREEN_VERSION 常量)
-    "green_version": "1.0.1",
+    # 注: 绿色版版本号统一以 GREEN_VERSION 常量为准 (唯一来源, 见 green_local_version)。
+    # 曾把 "green_version" 默认值写在这里, 发布新版本时与常量不同步,
+    # 导致本地一直显示旧版本号并反复提示更新 (见 DEV_NOTES 需求 #20)。
+    # 用户如需特殊覆盖, 可直接在 config.json 里显式写 "green_version" 字段。
 }
 
 # 各平台 Node 压缩包的文件名规则 (node-v{version}-{platform}-{arch}.{ext})
@@ -620,8 +621,16 @@ class Launcher:
         return self._green_version_tuple(left) > self._green_version_tuple(right)
 
     def green_local_version(self):
-        """当前绿色版本地版本号 (config.json 的 green_version 优先, 否则用 GREEN_VERSION 常量)"""
-        configured = self.config.get("green_version") or ""
+        """当前绿色版本地版本号: 以 GREEN_VERSION 常量为准 (唯一来源)。
+
+        仅当用户在 config.json 里显式写了 "green_version" 字段时才覆盖
+        (直接读原始配置文件判断, 不读合并后的默认值, 避免默认值干扰版本比较)"""
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as file_handle:
+                saved_config = json.load(file_handle)
+            configured = saved_config.get("green_version") or ""
+        except Exception:
+            configured = ""
         if configured and str(configured).strip():
             return str(configured).strip()
         return GREEN_VERSION
