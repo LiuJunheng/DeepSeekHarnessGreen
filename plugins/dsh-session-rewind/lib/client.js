@@ -45,7 +45,8 @@ window.__ModuleLoader__.load({
 				codes.map((c) =>
 					react.createElement("span", {
 						key: c,
-						style: { fontSize: 11, color: "#c0392b", background: "#fdecea", borderRadius: 3, padding: "1px 6px", whiteSpace: "nowrap" }
+						title: c + "×" + errors[c],
+						style: { fontSize: 11, color: "#c0392b", background: "#fdecea", borderRadius: 3, padding: "1px 6px", whiteSpace: "nowrap", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }
 					}, c + "×" + errors[c])
 				)
 			);
@@ -147,9 +148,10 @@ window.__ModuleLoader__.load({
 			const titleStyle = { margin: 0, fontSize: 14, fontWeight: 600 };
 			const descStyle = { margin: 0, fontSize: 13, lineHeight: 1.6, color: "#555" };
 			const tableStyle = { border: "1px solid #ddd", borderRadius: 4, fontSize: 13, background: "#fff", overflow: "hidden" };
-			const thStyle = { padding: "8px 12px", background: "#f5f5f5", borderBottom: "1px solid #ddd", fontWeight: 600, fontSize: 12, color: "#444" };
-			const tdStyle = { padding: "8px 12px", borderBottom: "1px solid #eee", verticalAlign: "top" };
-			const btn = { padding: "5px 14px", cursor: "pointer", fontSize: 12 };
+			// 单元格内边距: 左右仅 10px, 把宽度让给内容
+			const thStyle = { padding: "8px 10px", background: "#f5f5f5", borderBottom: "1px solid #ddd", fontWeight: 600, fontSize: 12, color: "#444" };
+			const tdStyle = { padding: "8px 10px", borderBottom: "1px solid #eee", verticalAlign: "top" };
+			const btn = { padding: "4px 10px", cursor: "pointer", fontSize: 12 };
 			const badgeLive = { fontSize: 11, color: "#e67e22", marginLeft: 6 };
 			const monoStyle = { fontFamily: "Consolas, Menlo, monospace", fontSize: 11, color: "#999" };
 
@@ -166,18 +168,18 @@ window.__ModuleLoader__.load({
 					error !== null && react.createElement("p", { style: { color: "#c0392b", margin: 0, fontSize: 13 } }, error),
 					sessions === null && !error && react.createElement("p", { style: { color: "#888", margin: 0, fontSize: 13 } }, busy ? "加载中…" : "加载中…"),
 					Array.isArray(sessions) && react.createElement("div", { style: tableStyle },
-						// 表头: 标题(4) 工作区(2) 创建时间(150) 状态(90) 操作(90)
+						// 表头: 标题/ID(flex7) 工作区(flex1.5) 创建时间(104) 状态(52) 操作(60)
 						react.createElement("div", { style: { display: "flex", alignItems: "center" } },
-							react.createElement("span", { style: { flex: 4, ...thStyle } }, "标题 (含完整会话 ID)"),
-							react.createElement("span", { style: { flex: 2, ...thStyle } }, "工作区"),
-							react.createElement("span", { style: { width: 150, ...thStyle } }, "创建时间"),
-							react.createElement("span", { style: { width: 90, ...thStyle } }, "状态"),
-							react.createElement("span", { style: { width: 90, ...thStyle, textAlign: "right" } }, "操作")
+							react.createElement("span", { style: { flex: 7, ...thStyle } }, "标题 / 会话 ID"),
+							react.createElement("span", { style: { flex: 1.5, ...thStyle } }, "工作区"),
+							react.createElement("span", { style: { width: 104, ...thStyle } }, "创建时间"),
+							react.createElement("span", { style: { width: 52, ...thStyle } }, "状态"),
+							react.createElement("span", { style: { width: 60, ...thStyle, textAlign: "right" } }, "操作")
 						),
 						sessions.length === 0 && react.createElement("div", { style: { padding: 12, color: "#888" } }, "没有找到任何会话。"),
 						sessions.map((s) => react.createElement("div", { key: s.id, style: { display: "flex", alignItems: "flex-start" } },
 							// 标题单元格: 标题可换行(最多2行) + 完整会话 ID 单独一行
-							react.createElement("div", { style: { flex: 4, ...tdStyle, minWidth: 0 } },
+							react.createElement("div", { style: { flex: 7, ...tdStyle, minWidth: 0 } },
 								react.createElement("div", {
 									style: { fontSize: 13, fontWeight: 600, lineHeight: 1.45, ...clampStyle(2) },
 									title: s.title || "(无标题)"
@@ -185,14 +187,14 @@ window.__ModuleLoader__.load({
 								react.createElement("div", { style: { ...monoStyle, marginTop: 3, wordBreak: "break-all", lineHeight: 1.4 } }, s.id),
 								s.live && react.createElement("span", { style: badgeLive }, "运行中")
 							),
-							react.createElement("div", { style: { flex: 2, ...tdStyle, minWidth: 0, fontSize: 12, color: "#666", ...clampStyle(2) }, title: (s.workspace && s.workspace.path) || s.workspaceKey || "" },
+							react.createElement("div", { style: { flex: 1.5, ...tdStyle, minWidth: 0, fontSize: 12, color: "#666", ...clampStyle(2) }, title: (s.workspace && s.workspace.path) || s.workspaceKey || "" },
 								(s.workspace && s.workspace.title) || s.workspaceKey || "—"
 							),
-							react.createElement("div", { style: { width: 150, ...tdStyle, fontSize: 12, color: "#888" } }, fmtTime(s.createdAt)),
-							react.createElement("div", { style: { width: 90, ...tdStyle, fontSize: 12 } },
+							react.createElement("div", { style: { width: 104, ...tdStyle, fontSize: 11, color: "#888", whiteSpace: "nowrap" } }, fmtTime(s.createdAt)),
+							react.createElement("div", { style: { width: 52, ...tdStyle, fontSize: 12 } },
 								s.live ? react.createElement("span", { style: { color: "#e67e22", fontWeight: 600 } }, "运行中") : react.createElement("span", { style: { color: "#999" } }, "空闲")
 							),
-							react.createElement("div", { style: { width: 90, ...tdStyle, textAlign: "right" } },
+							react.createElement("div", { style: { width: 60, ...tdStyle, textAlign: "right" } },
 								react.createElement("button", {
 									type: "button",
 									disabled: busy || working,
@@ -249,31 +251,28 @@ window.__ModuleLoader__.load({
 							: "该会话没有任何已完成回合。")
 					),
 					react.createElement("div", { style: tableStyle },
-						// 表头: 回合(64) 用户问题(4) 步骤(56) 调用(64) 错误(2) 状态(90) 操作(100)
+						// 表头: 回合(40) 用户问题(flex7) 步骤(34) 调用(38) 错误(flex3, 含未完成标记) 操作(80)
 						react.createElement("div", { style: { display: "flex", alignItems: "center" } },
-							react.createElement("span", { style: { width: 64, ...thStyle } }, "回合"),
-							react.createElement("span", { style: { flex: 4, ...thStyle } }, "用户问题 / 摘要"),
-							react.createElement("span", { style: { width: 56, ...thStyle } }, "步骤"),
-							react.createElement("span", { style: { width: 64, ...thStyle } }, "调用"),
-							react.createElement("span", { style: { flex: 2, ...thStyle } }, "错误"),
-							react.createElement("span", { style: { width: 90, ...thStyle } }, "状态"),
-							react.createElement("span", { style: { width: 100, ...thStyle, textAlign: "right" } }, "操作")
+							react.createElement("span", { style: { width: 40, ...thStyle } }, "回合"),
+							react.createElement("span", { style: { flex: 7, ...thStyle } }, "用户问题 / 摘要"),
+							react.createElement("span", { style: { width: 34, ...thStyle } }, "步骤"),
+							react.createElement("span", { style: { width: 38, ...thStyle } }, "调用"),
+							react.createElement("span", { style: { flex: 3, ...thStyle } }, "错误 / 未完成标记"),
+							react.createElement("span", { style: { width: 80, ...thStyle, textAlign: "right" } }, "操作")
 						),
 						turns.length === 0 && react.createElement("div", { style: { padding: 12, color: "#888" } }, "该会话还没有任何回合。"),
 						turns.map((t) => react.createElement("div", { key: t.turn, style: { display: "flex", alignItems: "flex-start" } },
-							react.createElement("div", { style: { width: 64, ...tdStyle, fontSize: 12, fontWeight: 600 } }, "#" + t.turn),
-							react.createElement("div", { style: { flex: 4, ...tdStyle, minWidth: 0, fontSize: 12, color: "#333", ...clampStyle(2) }, title: t.userText || "" },
+							react.createElement("div", { style: { width: 40, ...tdStyle, padding: "8px 6px", fontSize: 12, fontWeight: 600, color: t.complete ? "#333" : "#c0392b" } }, "#" + t.turn),
+							react.createElement("div", { style: { flex: 7, ...tdStyle, minWidth: 0, fontSize: 12, color: "#333", ...clampStyle(2) }, title: t.userText || "" },
 								t.userText || "(无用户消息)"
 							),
-							react.createElement("div", { style: { width: 56, ...tdStyle, fontSize: 12 } }, t.steps),
-							react.createElement("div", { style: { width: 64, ...tdStyle, fontSize: 12 } }, t.toolCalls),
-							react.createElement("div", { style: { flex: 2, ...tdStyle, minWidth: 0 } }, errorBadge(t.errors)),
-							react.createElement("div", { style: { width: 90, ...tdStyle, fontSize: 12 } },
-								t.complete
-									? react.createElement("span", { style: { color: "#27ae60", fontWeight: 600 } }, "已完成")
-									: react.createElement("span", { style: { color: "#c0392b", fontWeight: 600 } }, "未完成")
+							react.createElement("div", { style: { width: 34, ...tdStyle, padding: "8px 6px", fontSize: 12 } }, t.steps),
+							react.createElement("div", { style: { width: 38, ...tdStyle, padding: "8px 6px", fontSize: 12 } }, t.toolCalls),
+							react.createElement("div", { style: { flex: 3, ...tdStyle, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" } },
+								!t.complete && react.createElement("span", { style: { fontSize: 11, color: "#c0392b", background: "#fdecea", borderRadius: 3, padding: "1px 6px", whiteSpace: "nowrap", fontWeight: 600, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" } }, "⚠ 未完成"),
+								errorBadge(t.errors)
 							),
-							react.createElement("div", { style: { width: 100, ...tdStyle, textAlign: "right" } },
+							react.createElement("div", { style: { width: 80, ...tdStyle, textAlign: "right" } },
 								t.complete && react.createElement("button", {
 									type: "button",
 									disabled: working,
