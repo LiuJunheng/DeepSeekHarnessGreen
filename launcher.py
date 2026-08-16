@@ -138,6 +138,8 @@ DEFAULT_CONFIG = {
     "python_version": "3.10.20", # 内置便携 Python 版本号 (python-build-standalone)
     "python_release": "20260807",# python-build-standalone 发布标签(日期)
     "dsh_port": 3080,            # dsh web 服务端口
+    "dsh_host": "127.0.0.1",     # dsh web 服务绑定地址: "127.0.0.1"=仅本机 / "0.0.0.0"=局域网可访问
+    "trusted_hosts": [],         # 受信任主机列表 (host 或 host:port), 追加到 --trusted-host
     "dsh_package": "@deepseek-ai/dsh",   # dsh 包名
     # 启动服务后是否自动打开 WebUI 浏览器页面 (False 则只启动服务, 需手动点「打开界面」)
     "auto_open_browser": True,
@@ -530,6 +532,47 @@ class Launcher:
             with tarfile.open(archive_path, "r:gz") as tar_handle:
                 tar_handle.extractall(target_dir)
 
+    def _stream_subprocess(self, command, cwd, env, timeout=None, log_prefix=""):
+        """以"实时逐行输出"方式运行子进程, 避免长时间无提示被误认为卡死.
+
+        相比 subprocess.run 的一次性捕获 (装完才显示最后几行), 本方法在子进程
+        运行时逐行把输出打到日志 (GUI 日志框 / 命令行终端), 让 npm/pnpm 安装
+        与插件命令执行的进度实时可见, 也便于确认进程没有卡住或报错。
+        返回 (退出码, 完整输出文本);
+        timeout 超时则终止进程并抛 subprocess.TimeoutExpired (与 subprocess.run 一致)。
+        log_prefix: 每行日志前附加的来源前缀, 如 "npm: " / "plugin: "。
+        """
+        process = subprocess.Popen(
+            command, cwd=cwd, env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace")
+        collected_lines = []
+        read_errors = []
+
+        def read_output():
+            """后台线程持续读取子进程输出: 逐行写日志并收集, 防止管道写满阻塞"""
+            try:
+                for line in process.stdout:
+                    text = line.rstrip("\r\n")
+                    if text.strip():
+                        collected_lines.append(text)
+                        self.log("%s%s" % (log_prefix, text))
+            except Exception as error:
+                read_errors.append(error)
+
+        reader_thread = threading.Thread(target=read_output, daemon=True)
+        reader_thread.start()
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            raise
+        # 极少数情况: 子进程派生的孙进程仍持有输出管道句柄, 导致管道未到 EOF,
+        # 读取线程会一直阻塞; 这里限时等待, 不阻塞主流程 (输出内容已完整收集)。
+        reader_thread.join(timeout=5)
+        return process.returncode, "\n".join(collected_lines)
+
     def install_dsh(self):
         """执行 dsh 的 npm 安装 (仅负责安装, 不判断是否已存在)
         返回 True 表示安装成功; 供 prepare_dsh 首次安装与 update_dsh 更新时复用"""
@@ -564,20 +607,16 @@ class Launcher:
             self.log("使用镜像源: %s" % registry)
 
         env = self.build_env()
-        self.log("正在安装 dsh (首次安装可能需要几分钟, 请耐心等待) ...")
-        result = subprocess.run(command, cwd=DSH_DIR, env=env,
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, encoding="utf-8", errors="replace")
-        output = (result.stdout or "").strip()
-        for line in output.splitlines()[-15:]:          # 只展示最后 15 行, 避免刷屏
-            if line.strip():
-                self.log("npm: %s" % line.strip())
+        self.log("正在安装 dsh (首次安装可能需要几分钟, 请耐心等待; npm 输出会实时显示, 请留意进度) ...")
+        return_code, _output = self._stream_subprocess(
+            command, cwd=DSH_DIR, env=env, log_prefix="npm: ")
 
-        if result.returncode != 0 or not self.dsh_installed():
+        if return_code != 0 or not self.dsh_installed():
             raise RuntimeError("dsh 安装失败, 请检查网络后重试 (详见上方 npm 输出)")
 
         self.log("dsh 安装成功 (版本: %s)" % self.dsh_version())
         self.patch_frontend()   # 安装/升级后注入 WebUI 心跳脚本 (单页面去重)
+        self.patch_web_startup()  # 安装/升级后补丁 startup.js, 放开 --host 0.0.0.0 (局域网访问)
         return True
 
     def prepare_dsh(self, force=False):
@@ -1087,15 +1126,10 @@ class Launcher:
         if not is_auto:
             command.append("--registry=%s" % NPM_REGISTRY[mirror])
             self.log("使用镜像源: %s" % NPM_REGISTRY[mirror])
-        result = subprocess.run(command, cwd=DSH_DIR, env=self.build_env(),
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, encoding="utf-8", errors="replace",
-                                timeout=300)
-        output = (result.stdout or "").strip()
-        for line in output.splitlines()[-15:]:          # 只展示最后 15 行, 避免刷屏
-            if line.strip():
-                self.log("npm: %s" % line.strip())
-        if result.returncode != 0 or not self.pnpm_installed():
+        return_code, _output = self._stream_subprocess(
+            command, cwd=DSH_DIR, env=self.build_env(),
+            timeout=300, log_prefix="npm: ")
+        if return_code != 0 or not self.pnpm_installed():
             raise RuntimeError("pnpm 安装失败, 请检查网络后重试 (详见上方 npm 输出)")
         self.log("pnpm 安装成功: %s" % self.find_pnpm_exe())
         return True
@@ -1152,17 +1186,11 @@ class Launcher:
             """实际执行一次 dsh 插件命令, 返回 (退出码, 输出文本)"""
             self.log("执行插件命令: dsh plugin --profile %s %s" % (profile, " ".join(arguments)))
             try:
-                result = subprocess.run(command, cwd=BASE_DIR, env=self.build_env(),
-                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                        text=True, encoding="utf-8", errors="replace",
-                                        timeout=600)
+                return self._stream_subprocess(
+                    command, cwd=BASE_DIR, env=self.build_env(),
+                    timeout=600, log_prefix="plugin: ")
             except subprocess.TimeoutExpired:
                 raise RuntimeError("插件命令执行超时 (超过 10 分钟), 请检查网络后重试")
-            output = (result.stdout or "").strip()
-            for line in output.splitlines()[-20:]:          # 只展示最后 20 行, 避免刷屏
-                if line.strip():
-                    self.log("plugin: %s" % line.strip())
-            return result.returncode, output
 
         # 先清一遍存量 package.json 的 BOM (历史遗留或重装时可能带 BOM)
         self.strip_bom_from_profile_packages(profile)
@@ -1505,7 +1533,58 @@ class Launcher:
         if not os.path.isfile(dsh_js):
             raise RuntimeError("未找到 dsh 入口文件: %s" % dsh_js)
         port = int(self.config.get("dsh_port", 3080))
-        return [node_exe, dsh_js, "web", "--port", str(port)]
+        command = [node_exe, dsh_js, "web", "--port", str(port)]
+        # 绑定地址: 默认 127.0.0.1 (仅本机); 局域网模式为 0.0.0.0 (需 startup.js 补丁放开)
+        dsh_host = str(self.config.get("dsh_host", "127.0.0.1")).strip()
+        if dsh_host:
+            command.extend(["--host", dsh_host])
+        # 受信任主机: 逐条追加 --trusted-host (用于信任非 IP 主机名/代理场景;
+        # 绑定 0.0.0.0 时 dsh 会自动信任全部局域网 IP, 一般无需填写)
+        for trusted_host in self.config.get("trusted_hosts", []) or []:
+            trusted_host = str(trusted_host).strip()
+            if trusted_host:
+                command.extend(["--trusted-host", trusted_host])
+        return command
+
+    def patch_web_startup(self):
+        """补丁 dsh web 启动器: 放开 --host 0.0.0.0 (局域网远程访问用, 幂等可重复)。
+        官方默认拒绝 0.0.0.0 (会向局域网暴露远程工具执行能力); 本启动器仅在用户
+        显式选择「局域网」绑定且了解风险后启用。dsh 升级重装后由 install_dsh()
+        自动重新补丁。返回 True 表示就绪(或已是最新)。"""
+        startup_path = os.path.join(DSH_DIR, "node_modules", "@deepseek-ai",
+                                    "dsh-web-app", "lib", "startup.js")
+        if not os.path.isfile(startup_path):
+            return False
+        marker = 'options.host === "0.0.0.0"'
+        try:
+            with open(startup_path, "r", encoding="utf-8") as file_handle:
+                text = file_handle.read()
+        except OSError:
+            return False
+        if marker not in text:
+            return True
+        new_text = text.replace(
+            marker, 'false /* dsh-launcher: 已放开 0.0.0.0 以支持局域网访问 */')
+        try:
+            with open(startup_path, "w", encoding="utf-8") as file_handle:
+                file_handle.write(new_text)
+        except OSError:
+            return False
+        self.log("已补丁 dsh web 启动器: 放开 --host 0.0.0.0 (局域网访问)")
+        return True
+
+    def lan_addresses(self):
+        """枚举本机非内网 IPv4 地址列表 (绑定 0.0.0.0 时用于提示局域网访问地址)。
+        仅作提示用途, 不保证覆盖所有网卡; 出错时静默返回空列表"""
+        result = []
+        try:
+            for addresses in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+                ip = addresses[4][0]
+                if not ip.startswith("127.") and ip not in result:
+                    result.append(ip)
+        except OSError:
+            pass
+        return result
 
     # ---------- WebUI 单页面去重 (心跳检测) ----------
     def _ui_beacon_token(self):
@@ -1530,19 +1609,21 @@ class Launcher:
 
     def _ensure_ui_beacon_server(self):
         """确保 WebUI 心跳接收服务已启动 (幂等, 失败不阻断主流程)。
-        绑定 127.0.0.1:<ui_beacon_port>, 端口被占用时仅记日志并禁用去重"""
+        绑定地址随 dsh_host: 本机模式绑 127.0.0.1, 局域网模式绑 0.0.0.0 (远程浏览器也能上报)。
+        端口被占用时仅记日志并禁用去重"""
         if self._beacon_server is not None:
             return True
         port = int(self.config.get("ui_beacon_port", UI_BEACON_PORT))
+        bind_host = "0.0.0.0" if self.config.get("dsh_host", "127.0.0.1") == "0.0.0.0" else "127.0.0.1"
         try:
             handler_class = UiBeaconHandler
             handler_class.token = self._ui_beacon_token()
             handler_class.on_ping = self._record_ui_ping
-            server = http.server.ThreadingHTTPServer(("127.0.0.1", port), handler_class)
+            server = http.server.ThreadingHTTPServer((bind_host, port), handler_class)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             self._beacon_server = server
-            self.log("WebUI 心跳服务已启动 (127.0.0.1:%d), 用于检测界面是否已打开" % port)
+            self.log("WebUI 心跳服务已启动 (%s:%d), 用于检测界面是否已打开" % (bind_host, port))
             return True
         except OSError as error:
             self.log("WebUI 心跳服务启动失败 (端口 %d 可能被占用), 本次不启用去重: %s"
@@ -1576,7 +1657,7 @@ class Launcher:
             "<script>\n"
             "(function () {\n"
             "  try {\n"
-            "    var endpoint = \"http://127.0.0.1:%d%s?t=%s\";\n"
+            "    var endpoint = \"http://\" + location.hostname + \":%d%s?t=%s\";\n"
             "    function ping() { try { fetch(endpoint, { mode: \"no-cors\" }).catch(function () {}); } catch (e) {} }\n"
             "    ping(); setInterval(ping, %d);\n"
             "  } catch (e) {}\n"
@@ -1624,6 +1705,7 @@ class Launcher:
         self.log("正在准备环境 ...")
         self.prepare_all()
         self.patch_frontend()             # 确保前端已注入心跳脚本 (dsh 升级重装后自动补齐)
+        self.patch_web_startup()          # 确保 startup.js 已补丁 (dsh 升级重装后自动补齐, 局域网绑定用)
 
         command = self.build_server_command()
         self.log("启动命令: %s" % " ".join(command))
@@ -1683,6 +1765,10 @@ class Launcher:
         url = "http://127.0.0.1:%d" % port
         if self.wait_ready(port):
             self.log("服务已就绪: %s" % url)
+            # 局域网模式: 提示可被其他电脑远程访问的地址
+            if self.config.get("dsh_host", "127.0.0.1") == "0.0.0.0":
+                for lan_ip in self.lan_addresses():
+                    self.log("局域网访问地址: http://%s:%d (其他电脑浏览器打开)" % (lan_ip, port))
             if open_browser:
                 if self.ui_is_open():
                     self.log("检测到 WebUI 已在浏览器中打开, 不再重复打开新页面 (可点「打开界面」手动打开)")
@@ -2338,8 +2424,8 @@ def run_gui():
 
     root = tk.Tk()
     root.title(WINDOW_TITLE)
-    root.geometry("920x720")
-    root.minsize(760, 600)
+    root.geometry("920x780")
+    root.minsize(760, 660)
 
     # ---------- 窗口图标 (2026-08-16): 自定义 DSH 绿色小鲸鱼图标, 缺失时静默降级 ----------
     icon_path = get_icon_path()
@@ -2416,14 +2502,14 @@ def run_gui():
         about_window = tk.Toplevel(root)
         about_window.title("关于")
         about_window.resizable(False, False)
-        about_window.geometry("480x330")
+        about_window.geometry("480x500")
         about_window.transient(root)    # 依附主窗口
         about_window.grab_set()         # 模态, 关闭前不能操作主窗口
 
         # 主标题
         ttk.Label(about_window, text="DeepSeek Harness 一键启动器",
                   font=("Microsoft YaHei", 13, "bold")).pack(pady=(18, 4))
-        ttk.Label(about_window, text="绿色便携版 · 全部数据在本目录 runtime/ 下",
+        ttk.Label(about_window, text="绿色便携版 · 所有文件与依赖全部本地化",
                   font=("Microsoft YaHei", 9), foreground="#666666").pack(pady=(0, 12))
 
         # 信息表 (左标签 / 右取值)
@@ -2442,6 +2528,23 @@ def run_gui():
                       foreground="#666666").grid(row=row_index, column=0, sticky="w", pady=2, padx=(0, 14))
             ttk.Label(info_frame, text=value, font=("Microsoft YaHei", 9)).grid(
                 row=row_index, column=1, sticky="w", pady=2)
+
+        # 绿色便携·本地化说明区块 (2026-08-16 补充: 强调所有文件与依赖全部本地化)
+        local_frame = ttk.Frame(about_window)
+        local_frame.pack(fill="x", padx=24, pady=(12, 0))
+        ttk.Label(local_frame, text="绿色便携 · 本地化特点", font=("Microsoft YaHei", 9, "bold"),
+                  foreground="#2f6f2f").pack(anchor="w")
+        local_points = [
+            "· 双击即用，无需安装、无需手动配置环境",
+            "· 运行时依赖全部在程序根目录 runtime/ 下：便携 Node.js / 内置 Python /",
+            "  dsh 本体 / npm-pnpm 缓存 / 会话数据 / 临时文件",
+            "· 不写用户主目录、不修改系统环境变量、不占用 C 盘默认路径",
+            "· 整目录拷贝即用（可拷到其他位置或其他电脑，随拷随用）",
+            "· 更新只更新启动器自身，不覆盖 config.json（你的设置）与你的数据",
+        ]
+        for point in local_points:
+            ttk.Label(local_frame, text=point, font=("Microsoft YaHei", 9),
+                      foreground="#444444").pack(anchor="w", pady=1)
 
         # 按钮行
         def open_link(url):
@@ -3413,6 +3516,31 @@ def run_gui():
     # 初始刷新状态
     refresh_status()
 
+    # ---------- 网络设置区 (局域网远程访问) ----------
+    network_frame = ttk.LabelFrame(root, text="网络设置 (局域网远程访问)")
+    network_frame.pack(fill="x", padx=14, pady=(0, 8))
+
+    ttk.Label(network_frame, text="服务绑定:").grid(row=0, column=0, padx=8, pady=6, sticky="w")
+    bind_var = tk.StringVar(value=("局域网 (允许局域网访问 0.0.0.0)"
+                                   if app.config.get("dsh_host", "127.0.0.1") == "0.0.0.0"
+                                   else "本机 (仅本机访问 127.0.0.1)"))
+    bind_choices = ["本机 (仅本机访问 127.0.0.1)", "局域网 (允许局域网访问 0.0.0.0)"]
+    bind_combo = ttk.Combobox(network_frame, textvariable=bind_var,
+                              values=bind_choices, state="readonly", width=30)
+    bind_combo.grid(row=0, column=1, padx=8, pady=6, sticky="w")
+
+    ttk.Label(network_frame, text="受信任主机:").grid(row=1, column=0, padx=8, pady=6, sticky="w")
+    trusted_var = tk.StringVar(
+        value=", ".join(str(host) for host in app.config.get("trusted_hosts", [])))
+    trusted_entry = ttk.Entry(network_frame, textvariable=trusted_var, width=30)
+    trusted_entry.grid(row=1, column=1, padx=8, pady=6, sticky="w")
+
+    ttk.Label(network_frame,
+              text="受信任主机: 可空, 逗号分隔的 host 或 host:port。服务绑定=局域网时 dsh 会自动信任全部局域网 IP,"
+                   " 一般无需填写; 用于信任非 IP 主机名/代理场景。",
+              foreground="#606060").grid(row=2, column=0, columnspan=2,
+                                          padx=8, pady=(0, 6), sticky="w")
+
     # ---------- 设置区 ----------
     settings_frame = ttk.LabelFrame(root, text="设置")
     settings_frame.pack(fill="x", padx=14, pady=(0, 8))
@@ -3448,6 +3576,15 @@ def run_gui():
         app.config["auto_open_browser"] = bool(auto_open_var.get())
         raw = mirror_var.get()
         app.config["mirror"] = "cn" if "国内" in raw else ("official" if "官方" in raw else "auto")
+        # 网络设置: 服务绑定 (仅允许 127.0.0.1 / 0.0.0.0) + 受信任主机 (逗号/空白分隔, 去空)
+        raw_bind = bind_var.get()
+        app.config["dsh_host"] = "0.0.0.0" if "局域网" in raw_bind else "127.0.0.1"
+        trusted_list = []
+        for item in trusted_var.get().replace("，", ",").split(","):
+            item = item.strip()
+            if item:
+                trusted_list.append(item)
+        app.config["trusted_hosts"] = trusted_list
         app.save_config()
         messagebox.showinfo("设置已保存", "配置已保存。下次启动服务时生效。")
 
@@ -3516,6 +3653,9 @@ def main():
             port = int(app.config.get("dsh_port", 3080))
             if app.wait_ready(port):
                 print("服务已就绪: http://127.0.0.1:%d" % port)
+                if app.config.get("dsh_host", "127.0.0.1") == "0.0.0.0":
+                    for lan_ip in app.lan_addresses():
+                        print("局域网访问地址: http://%s:%d (其他电脑浏览器打开)" % (lan_ip, port))
                 if app.config.get("auto_open_browser", True):
                     if app.ui_is_open():
                         print("检测到 WebUI 已在浏览器中打开, 不再重复打开新页面")

@@ -27,16 +27,22 @@ window.__ModuleLoader__.load({
 		const ROUTE_LIST = "/__dsh/usage-stats/list";
 		const ROUTE_DETAIL = "/__dsh/usage-stats/detail";
 		const GUARD_HEADER = "X-DSH-Usage-Stats";
-		const PRICES_KEY = "dsh.usageStats.prices.v1";
+		const PRICES_KEY = "dsh.usageStats.prices.v2";
 
-		/** 默认价格表 (单位: 元 / 每百万 tokens)。仅作占位示例, 请按实际价格修改。 */
+		/**
+		 * 默认价格表 (单位: 元 / 每百万 tokens)。
+		 * 参考 DeepSeek 官方定价 (api-docs.deepseek.com/zh-cn/quick_start/pricing/, 2026-08-16 抓取):
+		 *   deepseek-v4-flash: 输入命中缓存 0.02 / 未命中 1 / 输出 2
+		 *   deepseek-v4-pro:   输入命中缓存 0.025 / 未命中 3 / 输出 6
+		 * 注: 2026-08-17 00:00 起官方改为峰谷定价 (高峰 9:00-12:00/14:00-18:00 为低谷 2 倍),
+		 * 本表为当前生效价, 用户可自行按实际价格/时段修改。字段: miss=输入未命中缓存, hit=输入命中缓存, out=输出。
+		 */
 		const DEFAULT_PRICES = {
 			models: {
-				"deepseek-v4-flash": { in: 2.0, cache: 0.5, out: 8.0 },
-				"deepseek-chat": { in: 2.0, cache: 0.5, out: 8.0 },
-				"deepseek-reasoner": { in: 4.0, cache: 1.0, out: 16.0 },
+				"deepseek-v4-flash": { miss: 1.0, hit: 0.02, out: 2.0 },
+				"deepseek-v4-pro": { miss: 3.0, hit: 0.025, out: 6.0 },
 			},
-			fallback: { in: 2.0, cache: 0.5, out: 8.0 },
+			fallback: { miss: 1.0, hit: 0.02, out: 2.0 },
 		};
 
 		// ---- 工具 ----
@@ -95,8 +101,8 @@ window.__ModuleLoader__.load({
 		function priceOf(prices, model) {
 			const p = prices.models[model] || prices.fallback;
 			return {
-				in: num(p.in),
-				cache: num(p.cache),
+				miss: num(p.miss),
+				hit: num(p.hit),
 				out: num(p.out),
 			};
 		}
@@ -106,13 +112,18 @@ window.__ModuleLoader__.load({
 			return Number.isFinite(n) && n >= 0 ? n : 0;
 		}
 
-		/** 按单价估算一次用量的费用 */
+		/**
+		 * 按单价估算一次用量的费用 (对齐 DeepSeek 官方计费口径):
+		 *   费用 = 输入(未命中缓存) × 未命中单价 + 输入(命中缓存) × 命中单价 + 输出 × 输出单价
+		 *   其中输入未命中 = inputTokens + cacheWriteTokens (首次写入缓存的输入按未命中价计费);
+		 *   思考(reasoning) token 已计入 outputTokens, 不重复计费。
+		 */
 		function costOf(usage, prices, model) {
 			if (!usage) return 0;
 			const p = priceOf(prices, model);
 			return (
-				(num(usage.inputTokens) / 1e6) * p.in +
-				((num(usage.cacheReadTokens) + num(usage.cacheWriteTokens)) / 1e6) * p.cache +
+				((num(usage.inputTokens) + num(usage.cacheWriteTokens)) / 1e6) * p.miss +
+				(num(usage.cacheReadTokens) / 1e6) * p.hit +
 				(num(usage.outputTokens) / 1e6) * p.out
 			);
 		}
@@ -147,8 +158,8 @@ window.__ModuleLoader__.load({
 		function PriceEditor({ prices, setPrices, onChange }) {
 			const [draft, setDraft] = react.useState(prices);
 			const [newName, setNewName] = react.useState("");
-			const [newIn, setNewIn] = react.useState("");
-			const [newCache, setNewCache] = react.useState("");
+			const [newMiss, setNewMiss] = react.useState("");
+			const [newHit, setNewHit] = react.useState("");
 			const [newOut, setNewOut] = react.useState("");
 
 			const setRow = (model, field, value) => {
@@ -164,10 +175,10 @@ window.__ModuleLoader__.load({
 			const save = () => {
 				const next = {
 					models: {},
-					fallback: { in: num(draft.fallback.in), cache: num(draft.fallback.cache), out: num(draft.fallback.out) },
+					fallback: { miss: num(draft.fallback.miss), hit: num(draft.fallback.hit), out: num(draft.fallback.out) },
 				};
 				for (const model of Object.keys(draft.models)) {
-					next.models[model] = { in: num(draft.models[model].in), cache: num(draft.models[model].cache), out: num(draft.models[model].out) };
+					next.models[model] = { miss: num(draft.models[model].miss), hit: num(draft.models[model].hit), out: num(draft.models[model].out) };
 				}
 				savePrices(next);
 				setPrices(next);
@@ -179,11 +190,11 @@ window.__ModuleLoader__.load({
 				if (!name) return;
 				setDraft((prev) => ({
 					...prev,
-					models: { ...prev.models, [name]: { in: num(newIn), cache: num(newCache), out: num(newOut) } },
+					models: { ...prev.models, [name]: { miss: num(newMiss), hit: num(newHit), out: num(newOut) } },
 				}));
 				setNewName("");
-				setNewIn("");
-				setNewCache("");
+				setNewMiss("");
+				setNewHit("");
 				setNewOut("");
 			};
 
@@ -219,8 +230,8 @@ window.__ModuleLoader__.load({
 					react.createElement("thead", { key: "h" },
 						react.createElement("tr", { key: "r" },
 							react.createElement("th", { style: th }, "模型"),
-							react.createElement("th", { style: { ...th, textAlign: "right" } }, "输入 ¥/M"),
-							react.createElement("th", { style: { ...th, textAlign: "right" } }, "缓存 ¥/M"),
+							react.createElement("th", { style: { ...th, textAlign: "right" } }, "输入(未命中) ¥/M"),
+							react.createElement("th", { style: { ...th, textAlign: "right" } }, "输入(命中缓存) ¥/M"),
 							react.createElement("th", { style: { ...th, textAlign: "right" } }, "输出 ¥/M"),
 							react.createElement("th", { style: { ...th, width: 40 } }, "")
 						)
@@ -230,10 +241,10 @@ window.__ModuleLoader__.load({
 							react.createElement("tr", { key: model },
 								react.createElement("td", { style: { ...td, fontFamily: "Consolas, Menlo, monospace" } }, model),
 								react.createElement("td", { style: td },
-									react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: draft.models[model].in, onChange: (e) => setRow(model, "in", e.target.value) })
+									react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: draft.models[model].miss, onChange: (e) => setRow(model, "miss", e.target.value) })
 								),
 								react.createElement("td", { style: td },
-									react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: draft.models[model].cache, onChange: (e) => setRow(model, "cache", e.target.value) })
+									react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: draft.models[model].hit, onChange: (e) => setRow(model, "hit", e.target.value) })
 								),
 								react.createElement("td", { style: td },
 									react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: draft.models[model].out, onChange: (e) => setRow(model, "out", e.target.value) })
@@ -246,10 +257,10 @@ window.__ModuleLoader__.load({
 						react.createElement("tr", { key: "__fallback__" },
 							react.createElement("td", { style: { ...td, fontWeight: 600 } }, "其他模型（兜底）"),
 							react.createElement("td", { style: td },
-								react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: draft.fallback.in, onChange: (e) => setFallback("in", e.target.value) })
+								react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: draft.fallback.miss, onChange: (e) => setFallback("miss", e.target.value) })
 							),
 							react.createElement("td", { style: td },
-								react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: draft.fallback.cache, onChange: (e) => setFallback("cache", e.target.value) })
+								react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: draft.fallback.hit, onChange: (e) => setFallback("hit", e.target.value) })
 							),
 							react.createElement("td", { style: td },
 								react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: draft.fallback.out, onChange: (e) => setFallback("out", e.target.value) })
@@ -260,8 +271,8 @@ window.__ModuleLoader__.load({
 							react.createElement("td", { style: td },
 								react.createElement("input", { type: "text", placeholder: "新模型名", style: { ...inputStyle, width: 140, textAlign: "left" }, value: newName, onChange: (e) => setNewName(e.target.value) })
 							),
-							react.createElement("td", { style: td }, react.createElement("input", { type: "number", min: 0, step: "0.01", placeholder: "输入", style: inputStyle, value: newIn, onChange: (e) => setNewIn(e.target.value) })),
-							react.createElement("td", { style: td }, react.createElement("input", { type: "number", min: 0, step: "0.01", placeholder: "缓存", style: inputStyle, value: newCache, onChange: (e) => setNewCache(e.target.value) })),
+							react.createElement("td", { style: td }, react.createElement("input", { type: "number", min: 0, step: "0.01", placeholder: "未命中", style: inputStyle, value: newMiss, onChange: (e) => setNewMiss(e.target.value) })),
+							react.createElement("td", { style: td }, react.createElement("input", { type: "number", min: 0, step: "0.01", placeholder: "命中", style: inputStyle, value: newHit, onChange: (e) => setNewHit(e.target.value) })),
 							react.createElement("td", { style: td }, react.createElement("input", { type: "number", min: 0, step: "0.01", placeholder: "输出", style: inputStyle, value: newOut, onChange: (e) => setNewOut(e.target.value) })),
 							react.createElement("td", { style: td },
 								react.createElement("button", { type: "button", style: { fontSize: 11, cursor: "pointer" }, onClick: addModel }, "添加")
@@ -272,7 +283,9 @@ window.__ModuleLoader__.load({
 				react.createElement("div", { key: "btns", style: { display: "flex", gap: 8, flexWrap: "wrap" } }, [
 					react.createElement("button", { key: "save", type: "button", style: { padding: "4px 14px", cursor: "pointer", fontSize: 12 }, onClick: save }, "保存价格"),
 					react.createElement("button", { key: "reset", type: "button", style: { padding: "4px 14px", cursor: "pointer", fontSize: 12 }, onClick: reset }, "恢复默认"),
-					react.createElement("span", { key: "tip", style: { fontSize: 11, color: "#999", alignSelf: "center" } }, "单价 = 元 / 每百万 tokens；费用为估算值，请按实际价格修改"),
+					react.createElement("span", { key: "tip", style: { fontSize: 11, color: "#999", alignSelf: "center" } },
+						"单价 = 元 / 每百万 tokens；费用 = 输入(未命中)×单价 + 输入(命中)×单价 + 输出×单价，思考 token 已计入输出不重复计费；默认参考 DeepSeek 官方定价（2026-08-17 起官方改为峰谷定价，请按实际价格修改）"
+					),
 				]),
 			]);
 		}
@@ -601,7 +614,8 @@ window.__ModuleLoader__.load({
 				react.createElement("p", { key: "title", style: titleStyle }, "用量统计"),
 				react.createElement("p", { key: "desc", style: descStyle },
 					"扫描本机全部会话日志，按模型汇总每次模型调用的 token 用量（输入 / 输出 / 缓存读取 / 缓存写入 / 思考推理）。" +
-					"费用 = 各 token 数 ÷ 1e6 × 单价，价格表可在下方编辑并保存（仅存于本浏览器，默认值为占位示例）。" +
+					"费用按 DeepSeek 官方计费口径估算：输入（未命中缓存）+ 输入（命中缓存）+ 输出，各自 ÷1e6 × 单价；思考 token 已计入输出、不重复计费。" +
+					"价格表可在下方编辑并保存（仅存于本浏览器，默认值为官方当前价，请按实际价格/时段修改）。" +
 					"当前服务运行中的会话可能仍在写入，统计为截至刷新时的数据。"
 				),
 
@@ -697,20 +711,23 @@ window.__ModuleLoader__.load({
 			const usage = sumTurnUsage(snapshot, turnNum);
 			if (!usage.found) return null;
 
-			// 拼装展示项: 输入 / 输出 / 缓存 / 思考 (有数据才显示)
+			// 拼装展示项 (按官方计费口径分类): 输入(未命中缓存) / 输入(命中缓存) / 输出 / 思考
+			//   输入未命中 = inputTokens + cacheWriteTokens (首次写入缓存的输入按未命中计费);
+			//   思考(reasoning) 已计入输出, 不重复计费, 仅作参考展示。
 			const parts = [];
-			const inStr = fmtTokens(usage.inputTokens);
+			const missTotal = usage.inputTokens + usage.cacheWriteTokens;
+			const missStr = fmtTokens(missTotal);
+			const hitStr = fmtTokens(usage.cacheReadTokens);
 			const outStr = fmtTokens(usage.outputTokens);
-			const cacheSum = usage.cacheReadTokens + usage.cacheWriteTokens;
-			const cacheStr = fmtTokens(cacheSum);
 			const reasonStr = fmtTokens(usage.reasoningTokens);
-			if (inStr) parts.push("输入 " + inStr);
+			if (missStr && missTotal > 0) parts.push("输入(未命中) " + missStr);
+			if (hitStr && usage.cacheReadTokens > 0) parts.push("输入(命中缓存) " + hitStr);
 			if (outStr) parts.push("输出 " + outStr);
-			if (cacheStr && cacheSum > 0) parts.push("缓存 " + cacheStr);
 			if (reasonStr && usage.reasoningTokens > 0) parts.push("思考 " + reasonStr);
 			if (parts.length === 0) return null;
 
 			return react.createElement("div", {
+				title: "该回合实际消耗的 token（按 DeepSeek 官方计费口径分类：输入分未命中/命中缓存；思考(reasoning) 已计入输出、不重复计费）",
 				style: {
 					display: "flex",
 					justifyContent: "flex-end",

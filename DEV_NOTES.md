@@ -63,6 +63,7 @@
    - 版本号显示 `"v" + GREEN_VERSION`（带 v 前缀更友好）、版本日期直接取 `GREEN_VERSION_DATE` 常量——与自更新版本号同源，避免再次出现"双来源不同步"（见需求 #20）；
    - 「打开本仓库 / 打开官方仓库」按钮用 `webbrowser.open()` 打开链接；链接地址与 `GITHUB_REPO` 常量一致（此处因弹窗需要完整 URL 而显式写出，后续若仓库迁移需一并同步）。
    - **验证**：`runtime/tmp/smoke_about.py` 冒烟测试通过（真实启动 GUI → monkey-patch `tk.Tk.mainloop` 自动点击「关于」→ 校验弹窗含全部关键文本与 3 个按钮 → 自动关闭）。注意：**不能 monkey-patch `tk.Toplevel`**（会破坏 `tkinter.filedialog`/`simpledialog` 里 `class Dialog(Toplevel)` 的类继承，报 `TypeError: function() argument 'code' must be code`），改用 `winfo children .` + `nametowidget` 枚举顶层窗口。
+   - **2026-08-16 扩充「绿色便携·本地化」说明**：用户希望关于弹窗更详细地说明绿色版特点，特别是**所有文件与依赖全部本地化**。做法：子标题改为「绿色便携版 · 所有文件与依赖全部本地化」，信息表下方新增 `local_frame` 区块（绿色粗标题「绿色便携 · 本地化特点」+ 6 条要点 Label，`wraplength` 用默认整行、逐行 `anchor="w"` 排列），内容涵盖：双击即用免安装、运行时依赖全在根目录 `runtime/` 下（便携 Node / 内置 Python / dsh / npm-pnpm 缓存 / 会话数据 / 临时文件）、不写用户主目录 / 不改系统环境变量 / 不占 C 盘默认路径、整目录拷贝即用、更新不覆盖 `config.json` 与用户数据。弹窗高度 `480x330 → 480x500`。**验证**：`runtime/tmp/smoke_about_localized.py`（复用 monkey-patch mainloop 自动点击方案）PASS，6 项关键词全命中。注意冒烟测试前**先确认无残留进程持有单实例互斥量**（`runtime/tmp/probe_mutex_state.py` 检查），否则 run_gui 的单实例检测会走"激活旧窗口"分支直接 return、根本进不了 mainloop。
 23. **本地插件安装默认目录指向本仓库 plugins/（2026-08-16）**：用户反馈插件管理里「选择本地插件文件夹安装…」每次打开默认落在 **C 盘**（tkinter `askdirectory` 未指定 `initialdir` 时用系统记忆的上次位置/默认目录）。修复：`on_install_local()` 里给 `filedialog.askdirectory` 加 `initialdir=os.path.join(BASE_DIR, "plugins")`（`BASE_DIR` 为程序根目录，frozen 取 exe 所在目录）；若该目录不存在则回退 `BASE_DIR`，确保始终停在本地仓库内、可一键选内置插件源码。配套说明已同步 README（手动安装栏）与 SKILL.md（3.x 插件管理）。
 24. **X 关闭二次确认 + 最小化到系统托盘（2026-08-16）**：用户担心误点右上角 X 直接退出，且希望最小化后**从任务栏消失、缩到系统托盘后台运行**。实现：
     - **X 二次确认**：`on_close(confirm=True)` 在退出前弹 `messagebox.askyesno("确认关闭", "确定要退出启动器吗?\n\n退出会同时停止 dsh 服务。")`；绿色版自更新流程调用 `on_close(False)` 跳过重复询问（此前已确认过）。确认后先 `tray_icon.dispose()`（移除托盘图标 + 还原窗口过程）再停服务销毁窗口。
@@ -93,7 +94,7 @@
         - **避坑**：`--add-data` 的源路径按 **spec 目录**（`--specpath build`）解析，必须写绝对路径 `%~dp0...`，否则报 `Unable to find '...\build\DSH_Launcher.ico'`；而 `--icon` 按当前目录解析可直接写相对路径。
     - **验证**：`verify_icon.py`（不开 GUI）——ICO 文件头 `00000100` 合法；`shell32.ExtractIconExW(exe, 0, ...)` 数出 exe 内嵌 1 个图标；`launcher.get_icon_path()` 返回正确路径且 `LoadImageW` 拿到有效 HICON。注意 **`ExtractIconExW` 在 shell32.dll**（不在 user32）。已重打 `DSH_Launcher.exe`（9.2MB，含图标）。
     - 相关经验已同步 `skills/python-tkinter-desktop-dev.zip`（6.10 自定义 .ico 小节 + 检查清单 + 新模板）+ `skills/dsh-deploy-maintain/SKILL.md`（3.x 启动器 GUI 增强）。
-27. **内置插件 dsh-usage-stats（用量统计，2026-08-16，另一 AI 开发）**：用户希望知道每个对话实际消耗了多少 token。插件在 WebUI 设置页新增「用量统计」面板，并提供消息行 token 显示（见 #28）。**宿主端** `lib/index.js` 复用 session-rewind 的扫描解码机制（`DSH_HOME/sessions/**/session.jsonl.zstd` zstd 多帧 + 官方 `decodeStorageRecord`），对每条 `assistant/message` 事件的 `usage`（`inputTokens`/`outputTokens`/`cacheReadTokens`/`cacheWriteTokens`/`reasoningTokens`）按模型聚合，模型名取 `message.source.model`；路由 `GET /__dsh/usage-stats/list`（全会话汇总）+ `GET /__dsh/usage-stats/detail?id=`（逐回合明细），均要求自定义头 `X-DSH-Usage-Stats: 1` 防跨站。**费用估算在客户端**：日志不含费用，前端价格表（元/每百万 tokens，localStorage 键 `dsh.usageStats.prices.v1` 持久化，可编辑增删模型、恢复默认）按 `token数 ÷ 1e6 × 单价` 估算。**客户端** `lib/client.js` 设置页布局迭代两次：初版横向表格（列宽固定）→ 用户反馈「标题格子太窄、只显示半个字」→ **重设计为卡片式纵向布局**：会话卡片（标题独占整行可换行 + ID + 元信息 chips 自动换行）+ 逐回合卡片（用户消息独占整行完整可读，下方回合号/步骤/工具调用/输出 tk/估算/模型/状态）。
+27. **内置插件 dsh-usage-stats（用量统计，2026-08-16，另一 AI 开发）**：用户希望知道每个对话实际消耗了多少 token。插件在 WebUI 设置页新增「用量统计」面板，并提供消息行 token 显示（见 #28）。**宿主端** `lib/index.js` 复用 session-rewind 的扫描解码机制（`DSH_HOME/sessions/**/session.jsonl.zstd` zstd 多帧 + 官方 `decodeStorageRecord`），对每条 `assistant/message` 事件的 `usage`（`inputTokens`/`outputTokens`/`cacheReadTokens`/`cacheWriteTokens`/`reasoningTokens`）按模型聚合，模型名取 `message.source.model`；路由 `GET /__dsh/usage-stats/list`（全会话汇总）+ `GET /__dsh/usage-stats/detail?id=`（逐回合明细），均要求自定义头 `X-DSH-Usage-Stats: 1` 防跨站。**费用估算在客户端**：日志不含费用，前端价格表（元/每百万 tokens，localStorage 键 `dsh.usageStats.prices.v2` 持久化，可编辑增删模型、恢复默认）按**官方计费口径**估算——`费用 = 输入(未命中缓存) × 未命中单价 + 输入(命中缓存) × 命中单价 + 输出 × 输出单价`（字段映射：`inputTokens + cacheWriteTokens` 写入缓存的输入按未命中价 → 未命中列、`cacheReadTokens` → 命中列、`outputTokens` → 输出列、`reasoningTokens` 已计入输出不重复计费）；**默认价格取自 DeepSeek 官方定价页**（2026-08-16 无头浏览器抓取：v4-flash 命中 0.02/未命中 1/输出 2，v4-pro 0.025/3/6，单位元/百万 tokens；2026-08-17 00:00 起官方改为峰谷定价——高峰 9:00-12:00/14:00-18:00 为低谷 2 倍，默认价未含时段系数，UI 有提示按实际修改）。**客户端** `lib/client.js` 设置页布局迭代两次：初版横向表格（列宽固定）→ 用户反馈「标题格子太窄、只显示半个字」→ **重设计为卡片式纵向布局**：会话卡片（标题独占整行可换行 + ID + 元信息 chips 自动换行）+ 逐回合卡片（用户消息独占整行完整可读，下方回合号/步骤/工具调用/输出 tk/估算/模型/状态）。
 28. **消息行「本次token」显示 + 插件合并（2026-08-16）**：用户希望对话框里能看到每回合具体 token 数字（官方悬停只显示用时/首token/速率）。先做独立插件 `dsh-turn-tokens`：走官方链式插槽 `conversation.chat.turnTail`（操作行上方内容区，`select` 返回 `{turn, seq}`，组件用 `useSession` 读快照，把本回合所有 `assistant` 节点的 `usage` 求和），右对齐常驻显示。用户随后要求**与用量统计合并成一个插件统一安装/卸载**——`dsh-turn-tokens` 的功能并入 `dsh-usage-stats`（v0.2.0，一个插件 = 设置面板 + 消息行显示），并删除独立插件；同时消息行显示加「**本次token：**」前缀（否则旁人看不出是 token 数字）。**另记 `dsh-message-actions`（消息操作增强）的完整生命周期**：先做「重新生成 + 复制含思考」→ 安装后**服务启动即退出**（缺宿主端 `lib/index.js`，见避坑 #49）→ 补文件后功能正常 → 用户实测「重新生成」语义 = fork 到上一回合结束 + 手动重发提示词（并非原地覆盖，dsh 架构不支持），**价值有限**（复制官方已有、删除/回退被 `dsh-session-rewind` 与启动器会话管理覆盖）→ 用户决定废弃，已卸载并删除源码。教训：**给官方已有能力做"重复插件"前先确认扩展点覆盖了什么**；本项目的价值插件是"官方没有的"（清理/回退/统计）。
 29. **单实例检测（2026-08-16）**：用户反馈可能多次打开 DSH 启动器，重复起服务浪费资源。实现**命名互斥量 + 旧窗口激活**机制：
     - **互斥量**：`CreateMutexW` 创建命名互斥量 `DSH_Launcher_GreenPortable_SingleInstance`（`kernel32`），`GetLastError` 返回 `ERROR_ALREADY_EXISTS`(183) 即表示已有实例在运行。
@@ -107,13 +108,31 @@
     - 验证：`verify_single_instance.py`（互斥量创建/释放幂等）+ `verify_activate_window.py`（真实窗口三种状态激活）。已重打 `DSH_Launcher.exe`（9.2MB）。
     - 相关经验已同步 `skills/dsh-deploy-maintain/SKILL.md`（3.8 小节）+ 代码设定表。
 
+30. **安装进度实时显示：npm/pnpm/插件命令改为流式逐行输出（2026-08-16）**：用户反馈首次安装环境时 dsh 用 npm 安装要等很久（沙箱实测约 3 分钟、587 个包），界面全程无输出（原实现用 `subprocess.run` 一次性捕获，装完才回显最后 15 行），看起来像"卡死/报错"。改造：
+    - **新增 `Launcher._stream_subprocess(command, cwd, env, timeout=None, log_prefix="")`**：改用 `subprocess.Popen` + 管道逐行读取，每行非空输出**实时**打到日志（GUI 日志框 / CLI 终端），返回 `(退出码, 完整输出文本)`。
+      - **后台读取线程**：读取循环放 daemon 线程（`for line in process.stdout`），防止管道写满阻塞子进程；线程读到的每行调 `self.log("%s%s" % (log_prefix, text))`。
+      - **超时保持兼容**：`process.wait(timeout=...)` 超时后 `process.kill()` 再抛 `subprocess.TimeoutExpired`（与原 `subprocess.run(timeout=...)` 行为一致）；读取线程用 `join(timeout=5)` 限时等待，避免子进程派生的孙进程仍持有管道句柄导致 join 永久阻塞（输出内容已完整收集，不影响返回）。
+      - **行前缀**：`log_prefix` 区分来源（dsh/pnpm 用 `"npm: "`，插件命令用 `"plugin: "`）。
+    - **三处接入**：`install_dsh()`（首次装 dsh）、`install_pnpm()`（装 pnpm，保留 timeout=300）、`run_plugin_command.execute_once()`（插件安装/移除/启停，保留 timeout=600，返回 `(退出码, 输出文本)` 契约不变）。
+    - **注意**：npm 在 stdout 非 TTY（管道）时不会输出花哨进度条，而是逐行 `npm notice`/`added N packages` 文本——所以逐行显示即能看到进度与耗时。
+    - 验证：`runtime/tmp/test_stream_subprocess.py`（模拟 5 行间隔输出 + stderr + 退出码 3）PASS——逐行实时收到（约 1.0s 全程）、前缀正确、退出码与完整输出正确。
+31. **局域网远程访问 WebUI（2026-08-16）**：用户希望服务端部署在一台电脑，WebUI 从局域网内其它电脑的浏览器远程打开（未来还可能用 WebUI 连不同地址的服务器）。已确认决策：**直接绑定 `0.0.0.0`**（推荐）+ **GUI「网络设置」区 + config.json** 双配置入口 + **整个局域网开放**（信任围栏自动信任全网段 IP，属预期权衡）。改动：
+    - **配置项**：`DEFAULT_CONFIG` 新增 `dsh_host`（默认 `127.0.0.1`；`"0.0.0.0"`=局域网可访问）与 `trusted_hosts`（list，默认空；host 或 host:port，追加到 `--trusted-host`，用于信任非 IP 主机名/代理场景）。
+    - **启动命令**：`build_server_command()` 从 config 读 `dsh_host` / `trusted_hosts`，追加 `--host` / 多个 `--trusted-host` 参数（值 strip 后非空才传）。
+    - **放开 0.0.0.0 补丁**：dsh 官方 `startup.js` 显式 `if (options.host === "0.0.0.0") program.error(...)` 拒绝绑定 0.0.0.0（防向局域网暴露远程工具执行能力），**唯一需要补丁的点**（schema 本身允许 0.0.0.0）。新增幂等方法 `patch_web_startup()`：把该条件替换为 `false /* dsh-launcher: 已放开 0.0.0.0 以支持局域网访问 */`（marker 已替换则直接返回 True）。两个调用点：`install_dsh()` 末尾（升级重装后自动重打）+ `start_server()` 启动前兜底。
+    - **心跳适配局域网**：`patch_frontend()` 注入的心跳脚本由硬编码 `http://127.0.0.1:<port>` 改为 `"http://" + location.hostname + ":<port>..."`（页面自动用其所在主机名上报，远程浏览器也能上报）；心跳服务 `_ensure_ui_beacon_server()` 绑定地址随 `dsh_host` 变化——`0.0.0.0` 时绑 `0.0.0.0`，否则 `127.0.0.1`（远程页面可访问）。
+    - **GUI「网络设置」区**（设置在「设置」LabelFrame 上方新增独立 `network_frame`）：第 0 行「服务绑定」只读下拉（`本机 (仅本机访问 127.0.0.1)` / `局域网 (允许局域网访问 0.0.0.0)`，初始值按 `dsh_host`）；第 1 行「受信任主机」文本框（逗号分隔，初始值按 `trusted_hosts` 逗号拼接）；第 2 行说明文字（绑定局域网时自动信任所有局域网 IP，一般无需填写受信任主机；用于信任非 IP 主机名）；第 3 行「保存网络设置」并入 `on_save`（解析绑定→`dsh_host`，按逗号/空白拆分 strip 去空→`trusted_hosts`，保存后提示下次启动服务时生效）。
+    - **就绪日志显示局域网地址**：新增 `lan_addresses()`（`socket.getaddrinfo` 枚举本机非 127. 的 IPv4，仅提示用途、错误静默）；服务就绪日志在 `dsh_host == "0.0.0.0"` 时追加 `http://<本机IP>:<端口>` 局域网访问地址行供分享。
+    - **安全边界（预期行为）**：绑定 0.0.0.0 时 dsh 的信任围栏（`resolveLanTrust`）**自动把全部非内网 IPv4 加入 trustedHosts** → 局域网浏览器可访问 `/api` 正常聊天/用工具；但 `PRIVILEGED_METHODS`（settings/credentials/host.pickDirectory 等特权方法）**仍仅回环可调** → 远程浏览器不能改设置与凭据（安全保护）。
+    - 验证：单元冒烟（`patch_web_startup()` 幂等 + `build_server_command()` 传参正确）→ 本机回归（默认 127.0.0.1 行为不变）→ LAN 实测（本机 127.0.0.1 与局域网 `<服务器IP>:3080` 均可打开、聊天/工具正常、远端改设置返回 403）。**已同步 `skills/dsh-deploy-maintain/SKILL.md`（3.x 局域网访问小节）并重建 `Skill-dsh-deploy-maintain.zip`。**
+
 
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
 |------|------|
 | 依赖 | 仅 Python 标准库（tkinter / urllib / subprocess / zipfile / tarfile / webbrowser / socket），零第三方依赖 |
 | 便携 Node | 自动下载 `node-v22.20.0` 到 `runtime/node`；国内 `registry.npmmirror.com/-/binary/node/...`，官方 `nodejs.org/dist/...`；zip（win）或 tar.gz（linux） |
-| dsh 安装 | 优先 `node.exe npm-cli.js install --prefix runtime/dsh @deepseek-ai/dsh`（用便携 Node 自带 npm），按镜像附 `--registry`；`install_dsh()` 只负责安装，`prepare_dsh(force)` 负责"缺失则装/强制重装" |
+| dsh 安装 | 优先 `node.exe npm-cli.js install --prefix runtime/dsh @deepseek-ai/dsh`（用便携 Node 自带 npm），按镜像附 `--registry`；`install_dsh()` 只负责安装，`prepare_dsh(force)` 负责"缺失则装/强制重装"；输出经 `_stream_subprocess()` **实时逐行**显示进度（需求 #30） |
 | dsh 更新 | `dsh_latest_version()` 用 `npm view @deepseek-ai/dsh version` 只读查最新版；`backup_dsh()` 把旧版拷到 `runtime/dsh-backup-<版本>`（同名加时间戳后缀）；`update_dsh()` = 查询→备份→强制重装，备份失败即中止避免数据丢失 |
 | dsh 启动 | 直接调 `node <dsh>/node_modules/@deepseek-ai/dsh/lib/bin.js web --port 3080` |
 | 数据隔离 | 环境变量 `DSH_HOME=runtime/dsh-home`，会话/配置/存储全部落在程序目录 |
@@ -166,7 +185,7 @@
 4. **npm 镜像二进制下载路径**：Node 二进制走 `registry.npmmirror.com/-/binary/node/...`，npm 包注册表走 `registry.npmmirror.com`，两者路径不同。
 5. **Python 官方 embeddable 版不含 tkinter**：给用户说明必须装完整版 python.org 安装包，否则 GUI 起不来（launcher 已做了 ImportError 兜底提示）。
 6. **CLI 模式后台线程陷阱**：`wait_and_open` 是 daemon 线程，`--start` 主进程退出后线程会消失，所以 CLI 模式要**同步** `wait_ready()` 再开浏览器；GUI 模式则用线程即可。
-7. **首次 npm install dsh 较慢**（沙箱实测约 3 分钟、587 个包），界面提示"请耐心等待"，只回显 npm 输出最后 15 行避免刷屏。
+7. **首次 npm install dsh 较慢**（沙箱实测约 3 分钟、587 个包），界面提示"请耐心等待"。原实现只回显最后 15 行（用户看不到进度），**已改为实时逐行输出**（需求 #30）：npm 每行信息（`npm notice`/`added N packages`）会立即出现在日志框，用户可看到进度确认未卡住。
 8. **冷启动重复检测**：再次 `--start` 时通过 PID 文件 + 进程存在性判断"已在运行"，避免重复起服务。
 9. **便携 Node 里 npm 的位置分平台**：Linux/Mac 的 tar.gz 里 npm 在 `lib/node_modules/npm/bin/npm-cli.js`，Windows 的 zip 里在 `node_modules/npm/bin/npm-cli.js`。`find_npm_cli()` 必须两个路径都探测，否则会误退回系统 npm（已实测修复：现在日志显示"使用便携 Node 自带的 npm"）。
 10. **npm 缓存默认写 `~/.npm`**：要让 npm 真正绿色，必须在 `install` 命令带 `--cache runtime/npm-cache`，并在环境变量设 `npm_config_cache`（实测重定向后缓存约 196MB 落在本地 runtime/npm-cache，HOME 下 `~/.npm`/`~/.pnpm-store`/`~/.local/share/pnpm` 均未产生）。
@@ -432,6 +451,13 @@
     - **读文本用 textContent 而非 innerText**：innerText 会把 flex 项当块级插入换行（"本次token：值"被拆成两行误判），`el.textContent` 才是真实拼接。
     - **清理**：无头 Edge 的 `--user-data-dir` 会留在 `runtime/tmp/dsh-cdp-*`，跑完要删；`taskkill /F /IM msedge.exe` 兜底清进程。
     - **教训**：服务端 bundle/路由都对、浏览器看不到 → 十有八九是**页面缓存**（强制刷新 Ctrl+Shift+R）或组件运行时问题；先用无头复现拿控制台异常，再对症下药。
+52. **【局域网访问】dsh 官方拒绝 `--host 0.0.0.0`，必须补丁 startup.js；且 dsh 升级重装会还原补丁（2026-08-16）**：
+    - **现象**：直接在启动器里给 dsh 传 `--host 0.0.0.0` 启动，进程立即报错退出（`error: --host 0.0.0.0 is intentionally not supported yet for safety...`）。这是**官方刻意为之**——dsh 担心把远程工具执行能力暴露到局域网，`dsh-web-app/lib/startup.js` 里 `if (options.host === "0.0.0.0") program.error(...)` 显式拒绝（虽然后端 schema 本身允许 0.0.0.0）。
+    - **修复（幂等补丁）**：`patch_web_startup()` 把该条件替换为 `false /* dsh-launcher: 已放开 0.0.0.0 以支持局域网访问 */`（保留其余代码，最小改动；marker 已替换则直接返回 True）。**关键避坑：dsh 升级 = 重装 `runtime/dsh`，会覆盖 startup.js 把补丁还原** → 必须在 `install_dsh()` 末尾 + `start_server()` 启动前各调一次补丁兜底，否则局域网模式升级后静默失效（进程又报错退出）。
+    - **信任围栏与特权方法**：绑定 0.0.0.0 时，`dsh-web-app` 的 `resolveLanTrust` 会把**全部非内网 IPv4 自动加入 trustedHosts**（浏览器信任围栏只拦"非回环且非信任"的来源），所以**整个局域网网段自动放行**，无需手动填受信主机；`trusted_hosts` 配置用于信任**非 IP 主机名**/代理场景。同时 `PRIVILEGED_METHODS`（settings/credentials/host.pickDirectory 等）**即使 LAN 部署也仅回环可调**——远程浏览器能聊天/用工具，但不能改设置与凭据（预期行为，安全保护，远程实测返回 403）。
+    - **心跳脚本必须适配局域网**：原 `patch_frontend()` 注入的心跳脚本硬编码 `http://127.0.0.1:<port>`——局域网远程页面拿到的是远端 IP，心跳永远上不去（自动打开界面会误判"已打开"或无法去重）。改为 `"http://" + location.hostname + ":<port>..."`（页面自动用其所在主机名上报）；且心跳服务 `_ensure_ui_beacon_server()` 绑定地址必须随 `dsh_host` 变化——`0.0.0.0` 模式绑 `0.0.0.0`，否则远端浏览器也连不上心跳端口。
+    - **本机模式回归**：`dsh_host` 默认 `127.0.0.1` 时行为与升级前完全一致（命令多传一个 `--host 127.0.0.1` 无害），心跳绑定 `127.0.0.1`。
+    - **教训**：① 官方为安全刻意禁用的能力（0.0.0.0）要改成"补丁 + 两个调用点兜底"，并记住**任何改 `node_modules` 内官方文件的补丁都会在升级重装后被还原**；② 前端脚本里凡硬编码 `127.0.0.1` 的都要排查是否需要 `location.hostname` 适配；③ 后端小服务（心跳/其它监听端口）的绑定地址要跟随主服务 host 配置联动。**本经验已同步至 `skills/dsh-deploy-maintain/`（SKILL.md 3.x）并重建 `Skill-dsh-deploy-maintain.zip`。**
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。

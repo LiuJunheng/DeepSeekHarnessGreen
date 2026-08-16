@@ -45,7 +45,7 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
   - Linux/Mac tar.gz：`lib/node_modules/npm/bin/npm-cli.js`（node 在 `bin/` 子目录下）。
 - **dsh bin 入口**：不是顶层 `bin/`，而是 `node_modules/@deepseek-ai/dsh/lib/bin.js`（package.json 的 `bin.dsh` 指向它）。**启动/插件管理必须用便携 `node.exe` + 此 `lib/bin.js` 直接调用**，不要依赖 `node_modules/.bin/dsh.cmd`（npm 生成的 .cmd 回退分支会调 PATH 里的系统 node，把便携和系统搞混）。
 - **镜像附 `--registry`**：`resolve_mirror()` 返回 `("cn", True)` 时，`prepare_dsh()` 里只有非 auto 模式才附加 `--registry`；auto 模式下 npm 会走默认官方源，国内很慢甚至卡住——需要时把 `config.json` 的 `mirror` 改为 `"cn"`，或把 auto 的"国内优先、失败回退"逻辑扩展到 npm install 阶段。
-- **首次 install 较慢**（约 3 分钟 / 587 包），界面应提示"请耐心等待"，只回显输出最后 15 行。
+- **首次 install 较慢**（约 3 分钟 / 587 包），界面提示"请耐心等待"，并用**流式实时输出**展示进度（`Launcher._stream_subprocess`：`subprocess.Popen` + 后台线程逐行读管道 + `self.log` 逐行打日志 + 行前缀 `"npm: "`；超时兼容 `process.wait(timeout)`、读取线程 `join(timeout=5)` 防孙进程持管道阻塞；返回 `(退出码, 完整输出)`）。npm 在 stdout 非 TTY（管道）时输出逐行 `npm notice`/`added N packages` 文本，逐行显示即可确认"没卡住/没报错"。三处接入：`install_dsh` / `install_pnpm` / `run_plugin_command`。
 
 ### 2.3 环境变量重定向（build_env，绿色便携的命根子）
 
@@ -192,8 +192,8 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
 
 ### 3.8 用量统计 + 消息行「本次token」（dsh-usage-stats 插件，2026-08-16 加入内置，v0.2.0 合并）
 
-- **功能**：一个插件两个功能面、统一安装/卸载——①「设置 → 用量统计」面板：扫描全部会话日志按模型汇总 token 用量 + 费用估算（价格表可编辑）；② 对话消息行上方常驻显示 `本次token：输入 X · 输出 Y · 缓存 Z · 思考 R`（该回合所有 `assistant/message` 的 `usage` 求和，k/M 缩写）。
-- **数据链路**：宿主端复用 session-rewind 的扫描解码机制（`DSH_HOME/sessions/**/session.jsonl.zstd` zstd 多帧 + 官方 `decodeStorageRecord`）；`assistant/message` 事件的 `usage`（`inputTokens`/`outputTokens`/`cacheReadTokens`/`cacheWriteTokens`/`reasoningTokens`）即模型实际报告用量，模型名取 `message.source.model`；**费用不在日志里**，客户端按价格表估算（`token数 ÷ 1e6 × 单价`）。
+- **功能**：一个插件两个功能面、统一安装/卸载——①「设置 → 用量统计」面板：扫描全部会话日志按模型汇总 token 用量 + 费用估算（价格表可编辑）；② 对话消息行上方常驻显示 `本次token：输入(未命中) X · 输入(命中缓存) Y · 输出 Z · 思考 R`（与价格表同口径：输入未命中 = inputTokens+cacheWriteTokens、输入命中缓存 = cacheReadTokens、思考已计入输出不重复计费；该回合所有 `assistant/message` 的 `usage` 求和，k/M 缩写）。
+- **数据链路**：宿主端复用 session-rewind 的扫描解码机制（`DSH_HOME/sessions/**/session.jsonl.zstd` zstd 多帧 + 官方 `decodeStorageRecord`）；`assistant/message` 事件的 `usage`（`inputTokens`/`outputTokens`/`cacheReadTokens`/`cacheWriteTokens`/`reasoningTokens`）即模型实际报告用量，模型名取 `message.source.model`；**费用不在日志里**，客户端按官方计费口径估算——`费用 = 输入(未命中缓存)×未命中单价 + 输入(命中缓存)×命中单价 + 输出×输出单价`（`inputTokens+cacheWriteTokens`→未命中列、`cacheReadTokens`→命中列、`outputTokens`→输出列，`reasoningTokens` 已计入输出不重复计费）；**默认价格取官方定价页**（无头 Edge 渲染抓取，v4-flash/v4-pro；2026-08-17 起官方改峰谷定价，默认价未含时段系数，UI 有提示）。
 - **界面布局教训（卡片式而非表格）**：固定列宽的横向表格在窄面板下标题只显示半个字——改成**卡片式纵向流**：标题/用户消息**独占整行**（`wordBreak: break-word`）、元信息用 `flex-wrap` chips 自动换行、明细在卡片内展开。
 - **消息行显示实现**：走官方链式插槽 `conversation.chat.turnTail`（操作行**上方**内容区）——`ctx.slots.register({ name: "conversation.chat.turnTail", priority: -10, select: (owner) => ({ turn: owner.turn, seq: owner.seq }) }, 组件)`，组件拿 `matched` + `useSession`，从 `snapshot.nodes`（`kind==="assistant"` 且 `turn` 匹配）求和 `usage`；无数据静默不渲染。
 - **验证**：`node --check` 语法 + 无头 Edge CDP 实测（见 4.9 / DEV_NOTES 避坑 #51）。
@@ -210,6 +210,21 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
   - **窗口标题常量化**：`root.title(...)` 的标题提取为模块级 `WINDOW_TITLE`，查找与创建共用同一字符串，避免硬编码不一致找不到窗口。
 - **CLI 不拦截**：`--start` 等命令模式不创建互斥量，保持"启动(或复用已运行)服务"原语义。
 - **验证**：`verify_single_instance.py`（互斥量创建/释放幂等）+ `verify_activate_window.py`（真实窗口三种状态：正常/最小化 `IsIconic=TRUE`/托盘隐藏 `IsWindowVisible=FALSE` → 激活后均恢复可见）。详见 DEV_NOTES 需求 #29。
+- **冒烟/自动化测试 run_gui 前先查残留互斥量（2026-08-16 实测）**：测试进程异常退出/被杀可能残留命名互斥量，导致后续 `run_gui()` 的单实例检测误判"已有实例" → 走「激活旧窗口→找不到→弹 warning→return」分支，**根本进不了 mainloop**（表现为 GUI 自动化脚本里 fake_mainloop 完全不触发）。先用 `probe_mutex_state.py`（`CreateMutexW` + `ctypes.get_last_error()==183` 判占用）检查，有残留就 `tasklist`/`Stop-Process` 清掉对应 python/DSH 进程再测。
+
+### 3.10 局域网远程访问 WebUI（2026-08-16）
+
+- **需求**：服务端部署在一台电脑，WebUI 从局域网内其它电脑的浏览器远程打开（未来还可能用 WebUI 连不同地址的服务器）。
+- **实现方式 = 直接绑定 `0.0.0.0`**（用户选定）+ GUI「网络设置」区 + `config.json`（`dsh_host` / `trusted_hosts`）+ **整个局域网开放**（信任围栏自动信任全网段 IP，属预期权衡）。
+- **三个必须一起改的点**（漏一个远程都连不上/心跳失效）：
+  1. **放开 0.0.0.0 补丁**：dsh 官方 `dsh-web-app/lib/startup.js` 有 `if (options.host === "0.0.0.0") program.error(...)` **刻意拒绝**绑定 0.0.0.0（防把远程工具执行能力暴露到局域网）——这是**唯一需要补丁的点**（后端 schema 本身允许 0.0.0.0）。启动器 `patch_web_startup()` 把该条件替换为 `false /* dsh-launcher: 已放开 0.0.0.0 以支持局域网访问 */`（幂等，marker 已替换则直接返回 True）。**关键避坑：dsh 升级 = 重装 `runtime/dsh` 会覆盖 startup.js 还原补丁** → 必须在 `install_dsh()` 末尾 + `start_server()` 启动前各调一次兜底。
+  2. **心跳脚本适配**：`patch_frontend()` 注入的心跳脚本原硬编码 `http://127.0.0.1:<port>`，远程页面拿不到 → 改 `"http://" + location.hostname + ":<port>..."`（页面自动用其所在主机名上报）。
+  3. **心跳服务绑定联动**：`_ensure_ui_beacon_server()` 绑定地址随 `dsh_host` 变化——`0.0.0.0` 模式绑 `0.0.0.0`（远端浏览器才能上报），否则 `127.0.0.1`。
+- **信任围栏与特权方法**：绑定 0.0.0.0 时 dsh 的 `resolveLanTrust` 把**全部非内网 IPv4 自动加入 trustedHosts** → 整个局域网网段自动放行，无需手动填受信主机；`trusted_hosts` 配置用于信任**非 IP 主机名**/代理场景。`PRIVILEGED_METHODS`（settings/credentials/host.pickDirectory 等）**即使 LAN 部署也仅回环可调** → 远程浏览器能聊天/用工具，但**不能改设置与凭据**（远程返回 403，官方安全保护）。
+- **启动命令**：`build_server_command()` 从 config 追加 `--host <dsh_host>` + 多个 `--trusted-host <host>`；默认 `127.0.0.1` 时行为与升级前一致（多传 `--host 127.0.0.1` 无害）。
+- **GUI**：「网络设置 (局域网远程访问)」区（「设置」LabelFrame 上方）——「服务绑定」只读下拉（本机 / 局域网）+「受信任主机」文本框（逗号分隔）+ 说明文字 + 并入 on_save；就绪日志在 `dsh_host=="0.0.0.0"` 时用 `lan_addresses()`（`socket.getaddrinfo` 枚举非 127. IPv4）追加 `局域网访问地址: http://<本机IP>:3080` 供分享。
+- **验证**：`patch_web_startup()` 幂等（两次结果一致、marker 已替换）→ `build_server_command()` 传参正确 → 本机回归（默认 127.0.0.1 行为不变）→ LAN 实测（本机 `127.0.0.1:3080` 与局域网 `<服务器IP>:3080` 均可打开、聊天/工具正常、远端改设置返回 403）。
+- **教训**：① 官方为安全刻意禁用的能力（0.0.0.0）用"补丁 + 两个调用点兜底"，并记住**任何改 `node_modules` 内官方文件的补丁都会在升级重装后被还原**；② 前端脚本里凡硬编码 `127.0.0.1` 的都要排查是否需要 `location.hostname` 适配；③ 后端小服务（心跳等）绑定地址要跟随主服务 host 联动。详见 DEV_NOTES 需求 #31 / 避坑 #52。
 
 ## 四、DSH 插件开发（双端加载 + 路由注册）
 
@@ -320,6 +335,11 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 | 多次重启累积一堆相同 WebUI 标签页 | 查 `dist/index.html` 是否含 `dsh-launcher-ui-beacon` 标记（无则 `patch_frontend()` 没跑，多半是旧 exe/没重启）；有心跳仍开新页则查 3081 端口占用或 `runtime/ui-beacon.token` |
 | 「检查绿色版更新」查不到/报错 | 依次查：网络能否访问 api.github.com / 镜像 `mirror.nju.edu.cn/github-release`；Release 是否存在且 tag 带 `v` 前缀；资产名是否以 `DSH_Launcher_GreenPortable_Online_` 开头（否则 `green_find_zip_asset` 匹配不到） |
 | 绿色版更新后启动器没被替换 | 查 `runtime/update/backup/` 有无备份、`runtime/update/update_apply.bat` 是否被执行过；bat 卡在 `start` 说明目标文件缺失未加 `if exist` 判断 |
+| 远程浏览器打不开 WebUI / 启动后进程立即报错退出 | 查 `dsh_host` 是否为 `0.0.0.0` → 查 `startup.js` 补丁是否生效（`dsh-web-app/lib/startup.js` 里 `options.host === "0.0.0.0"` 是否已替换为 `false`）→ 查 `install_dsh()` 后是否调了 `patch_web_startup()`（dsh 升级重装会还原补丁） |
+| 远程浏览器打不开 WebUI（进程正常） | 服务端命令行查 `--host` 是否为 `0.0.0.0` → 远程电脑 `telnet <服务器IP> 3080` 测端口连通性 → 查防火墙 / 路由器 |
+| 远程浏览器能打开但心跳不上报（自动打开界面失效） | 查 `patch_frontend()` 注入的心跳脚本是否从 `127.0.0.1` 改为 `location.hostname`（`dist/index.html` 里 `dsh-launcher-ui-beacon` 块）；查心跳服务绑定地址是否随 `dsh_host` 联动为 `0.0.0.0`（否则远端连不上 3081 端口） |
+| 远程浏览器能聊天但改设置报 403 | 正常行为——dsh 的 `PRIVILEGED_METHODS`（settings/credentials/host.pickDirectory）即使 LAN 部署也仅回环可调，为官方安全保护，非 bug |
+| 手动填了受信任主机但没生效 | 查 `trusted_hosts` 值为逗号分隔字符串而非数组（`config.json` 里应为 `["192.168.1.10:3080"]` 而非 `"192.168.1.10:3080"`）→ 查 `build_server_command()` 是否生成对应的 `--trusted-host` 参数 |
 | 点最小化窗口却进了任务栏、没进系统托盘 | ①钩子只装在 `add()` 没在 `__init__`（第一次最小化时托盘图标还没出现→漏拦截）→ 移到 `__init__`；②`winfo_id()` 拿到的是 `TkChild` 子窗口、或窗口未 realize 导致 `GetAncestor` 拿错窗口 → 先 `update_idletasks()` 再 `GetAncestor(GA_ROOT)`；③WndProc 里直接调 `after`/`withdraw` 重入 Tcl 崩溃或 `--windowed` 下 `stderr=None` 输出崩 → 改用「WndProc 只置标志位 + `after(80,...)` 轮询 `poll()`」；恢复后再最小化又失效则 `remove()` 误还原了窗口过程（应只删图标，退出才 `dispose()` 还原） |
 
 ## 六、工作流建议（一键启动器开发顺序）
