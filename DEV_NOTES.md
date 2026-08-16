@@ -481,6 +481,12 @@
     - **心跳脚本必须适配局域网**：原 `patch_frontend()` 注入的心跳脚本硬编码 `http://127.0.0.1:<port>`——局域网远程页面拿到的是远端 IP，心跳永远上不去（自动打开界面会误判"已打开"或无法去重）。改为 `"http://" + location.hostname + ":<port>..."`（页面自动用其所在主机名上报）；且心跳服务 `_ensure_ui_beacon_server()` 绑定地址必须随 `dsh_host` 变化——`0.0.0.0` 模式绑 `0.0.0.0`，否则远端浏览器也连不上心跳端口。
     - **本机模式回归**：`dsh_host` 默认 `127.0.0.1` 时行为与升级前完全一致（命令多传一个 `--host 127.0.0.1` 无害），心跳绑定 `127.0.0.1`。
     - **教训**：① 官方为安全刻意禁用的能力（0.0.0.0）要改成"补丁 + 两个调用点兜底"，并记住**任何改 `node_modules` 内官方文件的补丁都会在升级重装后被还原**；② 前端脚本里凡硬编码 `127.0.0.1` 的都要排查是否需要 `location.hostname` 适配；③ 后端小服务（心跳/其它监听端口）的绑定地址要跟随主服务 host 配置联动。**本经验已同步至 `skills/dsh-deploy-maintain/`（SKILL.md 3.x）并重建 `Skill-dsh-deploy-maintain.zip`。**
+53. **【代码托管】Gitee 镜像仓库创建与历史全量推送（2026-08-17）**：
+    - **需求**：在 `https://gitee.com/liujunheng` 下创建仓库，把本地所有提交（含历史）全部推上去，作为 GitHub 之外的国内镜像备份。
+    - **Gitee API 建仓**：`POST https://gitee.com/api/v5/user/repos`（access_token = 用户 PAT，需 `repos` 权限），请求体 JSON 用**文件传参**（`curl --data-binary "@create_gitee_repo.json"`）避免命令行内嵌 JSON 的引号转义问题。关键参数：`name=DeepSeekHarnessGreen`、`private=false`、`auto_init=false`（不自动初始化，避免与本地历史冲突）。响应 `html_url=https://gitee.com/liujunheng/DeepSeekHarnessGreen`。
+    - **推送（关键避坑）**：① 建仓后 `git remote add gitee https://<user>:<PAT>@gitee.com/<user>/<repo>.git` 一次性带 PAT 推送，**推送成功后立即 `git remote set-url` 去掉 URL 里的 PAT**，避免明文凭据常驻 `.git/config`；② 分别 `git push gitee --all`（分支）与 `git push gitee --tags`（标签），**历史提交随分支一起全量过去**（不是增量同步）；③ PowerShell 下 git 把进度写到 stderr，`2>&1` 会显示成 `git : remote: Powered by GITEE.COM` 的红色"错误"，**那是正常输出不是报错**（exit code 0，有 `* [new branch]` / `* [new tag]` 即成功）；④ 验证一致性用 `git ls-remote gitee` 对比 `HEAD`/`refs/heads/master`/`refs/tags/*` 的 SHA 与本地 `git rev-parse HEAD` 完全一致。
+    - **结果**：Gitee 仓库 `DeepSeekHarnessGreen` 的 master 指向 `f61ce72`（与 GitHub 完全同步），标签 v1.0.0~v1.0.6 全部推送。
+    - **教训**：① 建仓 API 的 `auto_init=false` 可避免远端首条空提交与本地历史打架；② 任何把令牌写进 remote URL 的操作，完成后都要清回干净 URL；③ PowerShell 里 git 的 stderr 输出不要误判为失败，以 exit code 和 `[new branch]`/`[new tag]` 为准。
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
