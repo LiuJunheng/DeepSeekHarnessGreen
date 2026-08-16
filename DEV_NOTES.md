@@ -57,6 +57,12 @@
    - **① 发布侧（治本）**：README 的打包命令改为传**目录名** `"plugins"` / `"skills"`，zip 内保留前缀；打包后 `tar -tf` 确认 zip 根下有 `plugins/`、`skills/`。
    - **② 更新侧（容错）**：`launcher.py` 新增 `_normalize_update_structure(content_root)`——解压后把内容根下错位的已知插件/skill 目录**归位**到 `plugins/` / `skills/`（正确位置已存在则跳过，以 zip 内正确结构为准）；`update_apply.bat` 新增**第 2.5 步**清理程序根目录的错位残留（`if exist ... rmdir /s /q`，只删这 4 个已知旧目录，绝不碰用户数据/config/runtime）。
    - **验证**：`runtime/tmp/test_normalize_update_structure.py` 3 个用例全过（旧版错位归位 / 新版正确结构不动 / 新旧混合正确位置优先）。详见避坑 #47。
+22. **启动器右上角「关于」入口（2026-08-16）**：用户要求主窗口右上角加「关于」按钮，弹出弹窗展示：作者（刘俊亨）、本仓库地址、引用的官方 dsh（`@deepseek-ai/dsh`，即 DeepSeek Harness）与其官方仓库（`github.com/deepseek-ai/deepseek-harness`）、版本号、版本日期。实现要点：
+   - 按钮放在**状态栏 `status_frame`** 最右侧（`side="right"`，其余控件均为 `side="left"`，pack 先左后右不重叠）；
+   - 弹窗用 `tk.Toplevel` + `transient(root)` + `grab_set()` 做模态，信息用两列 `grid`（灰色标签 / 黑色取值）；
+   - 版本号显示 `"v" + GREEN_VERSION`（带 v 前缀更友好）、版本日期直接取 `GREEN_VERSION_DATE` 常量——与自更新版本号同源，避免再次出现"双来源不同步"（见需求 #20）；
+   - 「打开本仓库 / 打开官方仓库」按钮用 `webbrowser.open()` 打开链接；链接地址与 `GITHUB_REPO` 常量一致（此处因弹窗需要完整 URL 而显式写出，后续若仓库迁移需一并同步）。
+   - **验证**：`runtime/tmp/smoke_about.py` 冒烟测试通过（真实启动 GUI → monkey-patch `tk.Tk.mainloop` 自动点击「关于」→ 校验弹窗含全部关键文本与 3 个按钮 → 自动关闭）。注意：**不能 monkey-patch `tk.Toplevel`**（会破坏 `tkinter.filedialog`/`simpledialog` 里 `class Dialog(Toplevel)` 的类继承，报 `TypeError: function() argument 'code' must be code`），改用 `winfo children .` + `nametowidget` 枚举顶层窗口。
 
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
@@ -352,6 +358,17 @@
     - **修复（双保险）**：① 发布侧打包命令改传**目录名** `"plugins"` / `"skills"`（README 已修正），zip 内保留前缀；② 更新侧 `launcher.py` 新增 `_normalize_update_structure(content_root)`：解压后把内容根下错位的已知插件/skill 目录归位到 `plugins/` / `skills/`（正确位置已存在则跳过），且 `update_apply.bat` 新增第 2.5 步清理程序根目录的错位残留（`if exist "%BASE_DIR%\dsh-archive-purge" rmdir /s /q ...`，只删这 4 个已知旧目录，不碰用户数据/config/runtime）。
     - **验证**：`runtime/tmp/test_normalize_update_structure.py` 3 用例全过——①旧版错位 zip 结构正确归位到 plugins/skills；②新版正确 zip 结构不动；③新旧混合时正确位置优先、根目录错位保留由 bat 清理。测试类名是 `Launcher`（不是 `DSHLauncher`）。
     - **教训**：用 `Compress-Archive` 打 zip 时，**想让目录带父级前缀，`-Path` 必须传目录名本身**；传子路径会丢前缀。发布前一定 `tar -tf` 核对 zip 根结构。**本经验已同步至 `skills/dsh-deploy-maintain/`（SKILL.md 3.4 + deployment-checklist）并重建 `Skill-dsh-deploy-maintain.zip`。**
+48. **【DSH 插件管理】"包装上了但没生效"根因 = pnpm 非 0 退出码跳过官方 reconcile；新增启动器兜底自动写 bundles + 启用/停用开关（2026-08-16）**：
+    - **现象**：用户通过启动器 GUI 安装 `@linxin666/dsh-web-ui-all`（全家桶聚合包）后重启服务，WebUI 里看不到任何新入口（SSH/任务看板/宠物等都不出现）。检查发现包已进 `node_modules` 与 `dependencies`，但 `profiles/web/package.json` 的 **`dsh.profile.bundles` 没有该包** → 它的 `cordis.patch.yml`（10 个插件行）从未被编排应用。
+    - **根因（两层）**：① **pnpm 7+ 的 `ERR_PNPM_IGNORED_BUILDS`**：安装含原生模块/构建脚本的依赖（本插件依赖 ssh2/cpu-features/node-pty/cloudflared/protobufjs）时，pnpm 默认忽略构建脚本并**以退出码 1 结束**（警告而非失败，包其实已写入依赖）。② **`dsh plugin` 命令的 reconcile 只在 `exitCode === 0` 时执行**（`plugin-9h8shc4d.js` 的 `if (exitCode === 0) reconcilePlugins(before, dir)`）→ 退出码 1 时跳过 → `dsh.profile.bundles` 没被写入 → "包装上了但编排层没有"。实测复现：`dsh plugin --profile web add @linxin666/dsh-web-ui-all` 返回 exit=1、`package.json UNCHANGED`，输出正是 `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: ...`。
+    - **修复（launcher.py 兜底，不依赖 dsh 内部行为）**：
+      - 新增 `reconcile_bundles(profile, removed=None)`：扫描 `dependencies`，把声明 `dsh.bundle.patch` 且未停用的包自动写进 `dsh.profile.bundles`；从编排层清除本次移除/已停用/不再声明 bundle 的包。**内置 bundle（`@deepseek-ai/dsh-base` / `dsh-web-app`）不在 dependencies 里，永不触碰**（与官方 reconcile 一致，防止误删）。
+      - `install_plugin` 容忍 pnpm 非 0：比较安装前后 `dependencies`，只要有新包写入就视为成功并 `reconcile_bundles`，不再抛"安装失败"。
+      - `run_plugin_command` 每次命令后都兜底 `reconcile_bundles`（覆盖"官方只在 exit 0 时 reconcile、且不识别停用列表"两个缺口）。
+      - `remove_plugin` 传 `removed=[包名]` 强制从 bundles 清除。
+    - **新功能：插件管理窗口启用/停用开关**：左侧"已安装插件"列表新增**状态列**（启用/停用/—）+「启用选中」「停用选中」按钮；停用状态持久化在 `dsh.profile.disabled` 数组（launcher 维护，官方 reconcile 不识别 → 由 launcher 每次命令后重新应用）；`set_plugin_enabled()` / `get_plugin_state()` 实现读写；启停后需重启服务生效（GUI 有提示）。
+    - **验证**：① `py_compile` 通过；② 隔离测试 6 断言全过（幂等 reconcile 不删内置 bundle / 停用从 bundles 移除且 disabled 记录 / 停用后 reconcile 不被加回 / 启用恢复 / 模拟移除清除 / 最终恢复）；③ 端到端模拟 GUI 安装本地 bundle 包：pnpm 触发 `ERR_PNPM_IGNORED_BUILDS`（exit 1）后**仍自动写入 bundles** ✓、移除后自动清除 ✓；④ `dsh --profile web --dump-config`（设 DSH_HOME）确认全家桶 10 个插件行全部合成进树；⑤ 重新 PyInstaller 打包 `DSH_Launcher.exe` 成功（新 exe 另存 `DSH_Launcher_new.exe` 供替换）。
+    - **教训**：① 排查"装了插件没生效"先看 `dsh.profile.bundles` 是否含包（不是看 dependencies/node_modules）；② **任何调 pnpm 的插件命令，绝不能假设退出码 0 才成功**——`ERR_PNPM_IGNORED_BUILDS` 会让 pnpm 以 1 结束但安装实际成功，启动器必须自己兜底同步编排层；③ 停用状态必须由启动器自己持久化并在每次命令后重放，因为官方 reconcile 只认 `dsh.profile.bundles`，会无视 disabled 把停用的包加回。**本经验已同步至 `skills/dsh-deploy-maintain/`（SKILL.md 3.2 + plugin-dev-checklist）并重建 `Skill-dsh-deploy-maintain.zip`。**
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。

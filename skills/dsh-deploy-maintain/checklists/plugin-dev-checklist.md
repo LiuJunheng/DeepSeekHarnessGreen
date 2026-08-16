@@ -37,8 +37,9 @@
 ## 安装与验证
 
 - [ ] 已通过 `--install-plugin <本地目录>` 或插件管理安装到 profile
+- [ ] **安装后 `dsh.profile.bundles` 已含该包**（pnpm 可能因 `ERR_PNPM_IGNORED_BUILDS` 以退出码 1 结束，启动器 `reconcile_bundles` 兜底写入；若绕开启动器手动 pnpm，需自查）
 - [ ] 重启服务后验证
-- [ ] `--dump-config` 确认插件树已合成该插件
+- [ ] `--dump-config`（**设 `$env:DSH_HOME=runtime\dsh-home`**）确认插件树已合成该插件
 - [ ] 首页 `window.__DSH_BOOT__.entries` 确认含该插件模块
 - [ ] `node -e "require.resolve('<插件>/package.json')"` 不抛错
 - [ ] 宿主路由 GET 返回 200 + 正确数据
@@ -46,6 +47,14 @@
 - [ ] 不带自定义头的请求返回 403
 - [ ] 不存在的会话/不含 ids 的 POST 正确处理
 - [ ] 运行中的会话自动跳过
+
+## 启用 / 停用（2026-08-16 新增）
+
+- [ ] 插件管理窗口已安装列表显示状态列（启用/停用/—）
+- [ ] 停用选中 → 从 `dsh.profile.bundles` 移除 + 写入 `dsh.profile.disabled`；启用选中反向
+- [ ] 停用后任何插件命令执行完，状态不被官方 reconcile 加回（launcher `reconcile_bundles` 重放 disabled）
+- [ ] 内置 bundle（`@deepseek-ai/dsh-base` / `dsh-web-app`）不在 dependencies 里，`reconcile_bundles` 永不触碰
+- [ ] 启停后重启服务才生效（GUI 有提示）
 
 ## 移出与清理
 

@@ -1102,28 +1102,176 @@ class Launcher:
             # 清掉 BOM 后重试一次 (pnpm 幂等, 不重复下载, 很快完成)
             self.strip_bom_from_profile_packages(profile)
             exit_code, output = execute_once()
+        # 无论 pnpm 退出码如何, 只要命令执行完就同步一次编排层:
+        # 官方 reconcile 只在 pnpm exit 0 时运行, 且不识别 disabled 列表,
+        # 这里兜底保证 bundles 始终与已安装依赖 + 停用状态一致。
+        try:
+            self.reconcile_bundles(profile)
+        except Exception as error:
+            self.log("同步编排层失败 (不影响插件命令结果): %s" % error)
         return exit_code, output
 
+    # ---------- profile 编排层 (dsh.profile.bundles) 同步 ----------
+    # 背景: dsh plugin 命令内部会在 pnpm 成功 (退出码 0) 后自动把声明 dsh.bundle 的
+    # 包写进 dsh.profile.bundles; 但 pnpm 遇到 ERR_PNPM_IGNORED_BUILDS (构建脚本被
+    # 忽略的警告) 时以退出码 1 结束, 该 reconcile 会被跳过, 导致"包装上了但没生效"。
+    # 这里由启动器兜底: 任何安装/移除/启停操作后都强制把 bundles 与已安装依赖对齐。
+    def read_profile_manifest(self, profile=DEFAULT_PROFILE):
+        """读取 profile 的 package.json, 不存在或解析失败返回 None"""
+        package_json = os.path.join(DSH_HOME_DIR, "profiles", profile, "package.json")
+        if not os.path.isfile(package_json):
+            return None
+        try:
+            with open(package_json, "r", encoding="utf-8") as file_handle:
+                return json.load(file_handle)
+        except Exception as error:
+            self.log("读取 profile 配置失败: %s" % error)
+            return None
+
+    def write_profile_manifest(self, profile, manifest):
+        """写回 profile 的 package.json, 返回是否成功"""
+        package_json = os.path.join(DSH_HOME_DIR, "profiles", profile, "package.json")
+        try:
+            with open(package_json, "w", encoding="utf-8") as file_handle:
+                json.dump(manifest, file_handle, ensure_ascii=False, indent=2)
+                file_handle.write("\n")
+            return True
+        except Exception as error:
+            self.log("写回 profile 配置失败: %s" % error)
+            return False
+
+    def package_declares_bundle(self, package_name, profile=DEFAULT_PROFILE):
+        """判断已安装的包是否声明了 dsh.bundle (即会成为 profile 编排层)。
+        读取 node_modules 下该包的 package.json 的 dsh.bundle.patch 字段。"""
+        module_dir = os.path.join(DSH_HOME_DIR, "profiles", profile,
+                                  "node_modules", package_name)
+        package_json = os.path.join(module_dir, "package.json")
+        if not os.path.isfile(package_json):
+            return False
+        try:
+            with open(package_json, "r", encoding="utf-8") as file_handle:
+                manifest = json.load(file_handle)
+            bundle = (manifest.get("dsh") or {}).get("bundle") or {}
+            return bool(bundle.get("patch"))
+        except Exception:
+            return False
+
+    def reconcile_bundles(self, profile=DEFAULT_PROFILE, removed=None):
+        """把 dependencies 中声明 dsh.bundle 且未停用的包同步进 dsh.profile.bundles;
+        停用的依赖包从 bundles 移除; removed 中列出的包 (本次移除操作的目标) 强制清除。
+        内置 bundle (如 @deepseek-ai/dsh-base / dsh-web-app) 不在 dependencies 中,
+        与官方 reconcile 一致永不触碰。
+        返回 (是否有变更, 当前 bundles 列表)。"""
+        manifest = self.read_profile_manifest(profile)
+        if manifest is None:
+            return False, []
+        dependencies = manifest.get("dependencies") or {}
+        profile_section = manifest.setdefault("dsh", {}).setdefault("profile", {})
+        bundles = profile_section.get("bundles") or []
+        disabled = set(profile_section.get("disabled") or [])
+        removed = set(removed or [])
+        changed = False
+        # 新增/恢复: 声明 dsh.bundle 且未停用的依赖包
+        for package_name in dependencies:
+            if package_name in disabled:
+                continue
+            if package_name not in bundles and self.package_declares_bundle(package_name, profile):
+                bundles.append(package_name)
+                changed = True
+        # 移除: 本次操作明确移除的包; 或仍在依赖中但已停用的包;
+        # 或依赖中不再声明 bundle 的包 (更新后丢了声明)。内置 bundle 不在
+        # dependencies 里, 不受影响。
+        for package_name in list(bundles):
+            in_dependencies = package_name in dependencies
+            if package_name in removed:
+                bundles.remove(package_name)
+                changed = True
+            elif in_dependencies and package_name in disabled:
+                bundles.remove(package_name)
+                changed = True
+            elif in_dependencies and not self.package_declares_bundle(package_name, profile):
+                bundles.remove(package_name)
+                changed = True
+        profile_section["bundles"] = bundles
+        if changed:
+            self.write_profile_manifest(profile, manifest)
+        return changed, list(bundles)
+
+    def get_plugin_state(self, package_name, profile=DEFAULT_PROFILE):
+        """返回插件当前状态: enabled / disabled / plain (非 bundle 依赖) / missing"""
+        manifest = self.read_profile_manifest(profile)
+        if manifest is None or package_name not in (manifest.get("dependencies") or {}):
+            return "missing"
+        if not self.package_declares_bundle(package_name, profile):
+            return "plain"
+        bundles = (manifest.get("dsh") or {}).get("profile", {}).get("bundles") or []
+        disabled = (manifest.get("dsh") or {}).get("profile", {}).get("disabled") or []
+        if package_name in bundles and package_name not in disabled:
+            return "enabled"
+        return "disabled"
+
+    def set_plugin_enabled(self, package_name, profile=DEFAULT_PROFILE, enabled=True):
+        """启用/停用一个已安装的 bundle 插件: 修改 dsh.profile.bundles 与停用列表。
+        返回 True 表示成功; False 表示该包不是可启停的 bundle 插件。"""
+        manifest = self.read_profile_manifest(profile)
+        if manifest is None:
+            return False
+        if not self.package_declares_bundle(package_name, profile):
+            return False
+        profile_section = manifest.setdefault("dsh", {}).setdefault("profile", {})
+        bundles = profile_section.get("bundles") or []
+        disabled = profile_section.get("disabled") or []
+        if enabled:
+            if package_name in disabled:
+                disabled.remove(package_name)
+            if package_name not in bundles:
+                bundles.append(package_name)
+        else:
+            if package_name in bundles:
+                bundles.remove(package_name)
+            if package_name not in disabled:
+                disabled.append(package_name)
+        profile_section["bundles"] = bundles
+        profile_section["disabled"] = disabled
+        return self.write_profile_manifest(profile, manifest)
+
     def install_plugin(self, package_spec, profile=DEFAULT_PROFILE):
-        """安装插件到指定 profile (转发给 pnpm add), 失败抛异常"""
+        """安装插件到指定 profile (转发给 pnpm add), 失败抛异常。
+        安装成功后自动把声明 dsh.bundle 的包同步进 dsh.profile.bundles,
+        无需手动编辑 package.json。"""
         arguments = ["add", package_spec]
         mirror, is_auto = self.resolve_mirror()
         if not is_auto:
             arguments.append("--registry=%s" % NPM_REGISTRY[mirror])
         self.log("开始安装插件: %s (profile: %s) ..." % (package_spec, profile))
+        before = self.list_installed_plugins(profile)
         exit_code, _output = self.run_plugin_command(profile, arguments)
-        if exit_code != 0:
+        after = self.list_installed_plugins(profile)
+        added = [name for name in after if name not in before]
+        if exit_code != 0 and not added:
+            # pnpm 非 0 且没有任何新依赖写入 -> 真失败
             raise RuntimeError("插件安装失败 (退出码 %s), 请查看上方日志" % exit_code)
+        if exit_code != 0 and added:
+            # pnpm 因 ERR_PNPM_IGNORED_BUILDS 等警告以非 0 退出, 但包实际已写入依赖
+            self.log("pnpm 返回非 0 (可能是构建脚本忽略警告), 但已写入依赖: %s"
+                     % ", ".join(added))
+        changed, bundles = self.reconcile_bundles(profile)
         self.log("插件安装成功: %s" % package_spec)
+        if changed:
+            self.log("已自动同步编排层 (dsh.profile.bundles): %s" % ", ".join(bundles))
         return True
 
     def remove_plugin(self, package_name, profile=DEFAULT_PROFILE):
-        """从指定 profile 移除插件 (转发给 pnpm remove), 失败抛异常"""
+        """从指定 profile 移除插件 (转发给 pnpm remove), 失败抛异常。
+        移除后同步编排层, 把已卸载的包从 dsh.profile.bundles 清掉。"""
         self.log("开始移除插件: %s (profile: %s) ..." % (package_name, profile))
         exit_code, _output = self.run_plugin_command(profile, ["remove", package_name])
         if exit_code != 0:
             raise RuntimeError("插件移除失败 (退出码 %s), 请查看上方日志" % exit_code)
+        changed, bundles = self.reconcile_bundles(profile, removed=[package_name])
         self.log("插件移除成功: %s" % package_name)
+        if changed:
+            self.log("已同步编排层 (dsh.profile.bundles): %s" % ", ".join(bundles))
         return True
 
     def list_installed_plugins(self, profile=DEFAULT_PROFILE):
@@ -1902,6 +2050,54 @@ def run_gui():
     ttk.Label(status_frame, textvariable=detail_text,
               font=("Microsoft YaHei", 9), foreground="#666666").pack(side="left", padx=(12, 0))
 
+    # ---------- 关于入口 (右上角) ----------
+    def show_about():
+        """弹出「关于」对话框: 作者 / 版本 / 本仓库 / 官方 dsh 引用 (2026-08-16)"""
+        about_window = tk.Toplevel(root)
+        about_window.title("关于")
+        about_window.resizable(False, False)
+        about_window.geometry("480x330")
+        about_window.transient(root)    # 依附主窗口
+        about_window.grab_set()         # 模态, 关闭前不能操作主窗口
+
+        # 主标题
+        ttk.Label(about_window, text="DeepSeek Harness 一键启动器",
+                  font=("Microsoft YaHei", 13, "bold")).pack(pady=(18, 4))
+        ttk.Label(about_window, text="绿色便携版 · 全部数据在本目录 runtime/ 下",
+                  font=("Microsoft YaHei", 9), foreground="#666666").pack(pady=(0, 12))
+
+        # 信息表 (左标签 / 右取值)
+        info_items = [
+            ("作者", "刘俊亨"),
+            ("版本号", "v" + GREEN_VERSION),
+            ("版本日期", GREEN_VERSION_DATE),
+            ("本仓库", "https://github.com/LiuJunheng/DeepSeekHarnessGreen"),
+            ("官方 dsh", "@deepseek-ai/dsh (DeepSeek Harness)"),
+            ("官方仓库", "https://github.com/deepseek-ai/deepseek-harness"),
+        ]
+        info_frame = ttk.Frame(about_window)
+        info_frame.pack(fill="x", padx=24, pady=4)
+        for row_index, (label, value) in enumerate(info_items):
+            ttk.Label(info_frame, text=label, font=("Microsoft YaHei", 9),
+                      foreground="#666666").grid(row=row_index, column=0, sticky="w", pady=2, padx=(0, 14))
+            ttk.Label(info_frame, text=value, font=("Microsoft YaHei", 9)).grid(
+                row=row_index, column=1, sticky="w", pady=2)
+
+        # 按钮行
+        def open_link(url):
+            """用系统默认浏览器打开链接"""
+            webbrowser.open(url)
+        button_row = ttk.Frame(about_window)
+        button_row.pack(pady=14)
+        ttk.Button(button_row, text="打开本仓库", command=lambda: open_link(
+            "https://github.com/LiuJunheng/DeepSeekHarnessGreen")).pack(side="left", padx=4)
+        ttk.Button(button_row, text="打开官方仓库", command=lambda: open_link(
+            "https://github.com/deepseek-ai/deepseek-harness")).pack(side="left", padx=4)
+        ttk.Button(button_row, text="关闭", command=about_window.destroy).pack(side="left", padx=4)
+
+    about_btn = ttk.Button(status_frame, text="关于", command=show_about)
+    about_btn.pack(side="right", padx=(10, 0))
+
     # ---------- 按钮区 ----------
     button_frame = ttk.Frame(root)
     button_frame.pack(fill="x", padx=14, pady=10)
@@ -2399,7 +2595,8 @@ def run_gui():
             plugin_busy[0] = busy
             button_state = "disabled" if busy else "normal"
             for button in (search_btn, load_github_btn, github_btn, load_rec_btn,
-                           remove_btn, install_btn, manual_btn, local_install_btn):
+                           remove_btn, install_btn, manual_btn, local_install_btn,
+                           enable_btn, disable_btn):
                 button.config(state=button_state)
             if not busy:
                 plugin_status.set("就绪")
@@ -2410,10 +2607,14 @@ def run_gui():
             installed_item_urls.clear()
             dependencies = app.list_installed_plugins(profile)
             if not dependencies:
-                installed_tree.insert("", "end", text="(暂无已安装插件)", values=("",))
+                installed_tree.insert("", "end", text="(暂无已安装插件)", values=("", "", ""))
                 return
             for package_name, version in sorted(dependencies.items()):
-                item_id = installed_tree.insert("", "end", text=package_name, values=(version,))
+                state = app.get_plugin_state(package_name, profile)
+                state_label = {"enabled": "启用", "disabled": "停用",
+                               "plain": "—", "missing": "—"}.get(state, "—")
+                item_id = installed_tree.insert("", "end", text=package_name,
+                                                values=(version, state_label))
                 # 记录每个条目对应的网址, 供右键菜单打开页面使用
                 installed_item_urls[item_id] = package_name
 
@@ -2624,6 +2825,35 @@ def run_gui():
                     root.after(0, lambda: set_plugin_busy(False))
             threading.Thread(target=worker, daemon=True).start()
 
+        def on_toggle(enable):
+            """启用/停用左侧选中的插件 (改 dsh.profile.bundles + disabled 列表)"""
+            if plugin_busy[0]:
+                return
+            selection = installed_tree.selection()
+            if not selection:
+                messagebox.showinfo("插件管理", "请先在左侧选中要启停的插件。", parent=top)
+                return
+            package_name = installed_tree.item(selection[0], "text")
+            if package_name.startswith("("):
+                return
+            action = "启用" if enable else "停用"
+            if not messagebox.askyesno(action + "插件",
+                                       "确定要%s插件「%s」吗?\n\n%s后需重启服务才生效。" % (action, package_name, action),
+                                       parent=top):
+                return
+            try:
+                ok = app.set_plugin_enabled(package_name, profile, enabled=enable)
+            except Exception as error:
+                messagebox.showerror(action + "失败", str(error), parent=top)
+                return
+            if not ok:
+                messagebox.showinfo("插件管理",
+                                    "「%s」不是可启停的 bundle 插件 (未声明 dsh.bundle), 无需启停。" % package_name,
+                                    parent=top)
+                return
+            refresh_installed()
+            plugin_status.set("已%s: %s (重启服务后生效)" % (action, package_name))
+
         # ---------- 顶部工具栏 ----------
         toolbar = ttk.Frame(top)
         toolbar.pack(fill="x", padx=10, pady=(10, 6))
@@ -2649,11 +2879,13 @@ def run_gui():
         # 列表区: 左 Treeview + 右垂直滚动条 (方便上下滑动)
         installed_body = ttk.Frame(installed_frame)
         installed_body.pack(fill="both", expand=True, padx=6, pady=6)
-        installed_tree = ttk.Treeview(installed_body, columns=("version",), show="tree headings")
+        installed_tree = ttk.Treeview(installed_body, columns=("version", "state"), show="tree headings")
         installed_tree.heading("#0", text="插件名")
         installed_tree.heading("version", text="版本")
-        installed_tree.column("#0", width=250)
-        installed_tree.column("version", width=90, anchor="center")
+        installed_tree.heading("state", text="状态")
+        installed_tree.column("#0", width=240)
+        installed_tree.column("version", width=80, anchor="center")
+        installed_tree.column("state", width=56, anchor="center")
         installed_scrollbar = ttk.Scrollbar(installed_body, orient="vertical",
                                             command=installed_tree.yview)
         installed_tree.configure(yscrollcommand=installed_scrollbar.set)
@@ -2664,7 +2896,13 @@ def run_gui():
         installed_buttons.pack(fill="x", padx=6, pady=(0, 6))
         remove_btn = ttk.Button(installed_buttons, text="移除选中插件", command=on_remove)
         remove_btn.pack(side="left")
+        enable_btn = ttk.Button(installed_buttons, text="启用选中", command=lambda: on_toggle(True))
+        enable_btn.pack(side="left", padx=(6, 0))
+        disable_btn = ttk.Button(installed_buttons, text="停用选中", command=lambda: on_toggle(False))
+        disable_btn.pack(side="left", padx=(6, 0))
         ttk.Button(installed_buttons, text="刷新", command=on_refresh_installed).pack(side="left", padx=(6, 0))
+        ttk.Label(installed_buttons, text="(启停后需重启服务生效)",
+                  foreground="#666666").pack(side="left", padx=(8, 0))
 
         # 右侧: 搜索结果
         search_frame = ttk.LabelFrame(middle, text="搜索结果")
