@@ -147,7 +147,7 @@ You can also change the mirror and port in the launcher UI 【Settings】(networ
 ### Lightweight Distribution Zip (slim online edition, ≈8 MB)
 > Compared to whole-folder migration, this zip **does NOT contain `runtime/` (no pre-downloaded environment or sessions)**; on a new machine the launcher auto-downloads Node / Python / dsh after connecting to the network. Small size, ideal for GitHub Release distribution.
 >
-> Packed contents (the project root "shipping list"): `launcher.py`, `start.bat`, `stop.bat`, `build_exe.bat`, `DSH_Launcher.exe`, `config.json`, `README.md`, `README_EN.md`, `DEV_NOTES.md`, `.gitignore`, `plugins/dsh-archive-purge/`, `plugins/dsh-session-rewind/`, `plugins/dsh-file-browser/`, `plugins/dsh-usage-stats/`, `skills/dsh-deploy-maintain/`.
+> Packed contents (the project root "shipping list"): `launcher.py`, `start.bat`, `stop.bat`, `build_exe.bat`, `DSH_Launcher.exe`, `config.json`, `README.md`, `README_EN.md`, `DEV_NOTES.md`, `LICENSE`, `.gitignore`, `plugins/dsh-archive-purge/`, `plugins/dsh-session-rewind/`, `plugins/dsh-file-browser/`, `plugins/dsh-usage-stats/`, `skills/dsh-deploy-maintain/`.
 
 - **Latest download** (GitHub Release, tag `v1.0.6`): <https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
 - Repository: <https://github.com/LiuJunheng/DeepSeekHarnessGreen>
@@ -159,7 +159,7 @@ Three steps on a new machine:
 
 To regenerate this zip (run in the project root in PowerShell):
 ```powershell
-Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, config.json, README.md, README_EN.md, DEV_NOTES.md, .gitignore, "plugins", "skills" -DestinationPath DSH_Launcher_GreenPortable_Online_<date>.zip -CompressionLevel Optimal
+Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, config.json, README.md, README_EN.md, DEV_NOTES.md, LICENSE, .gitignore, "plugins", "skills" -DestinationPath DSH_Launcher_GreenPortable_Online_<date>.zip -CompressionLevel Optimal
 ```
 > **Important (zip structure)**: for plugins/skills you MUST pass the **directory names** `"plugins"` / `"skills"` (keeping the `plugins/`, `skills/` prefixes inside the zip). **Do NOT** pass sub-paths like `"plugins\dsh-archive-purge"` — `Compress-Archive` would put that directory at the zip root and **drop the `plugins/` prefix**, so an update would copy the plugin into the program root by mistake (see DEV_NOTES requirement #21). After packing, confirm with `tar -tf xxx.zip` (or File Explorer) that the zip root contains `plugins/`, `skills/` folders and files like `launcher.py`.
 >
@@ -307,3 +307,15 @@ The deployment / maintenance / plugin-development experience accumulated in this
 | dsh web page won't open | Check `runtime/server.log`; make sure the firewall isn't blocking 127.0.0.1 |
 | `EPERM: rename denied` when setting API Key | Occasional; it's a concurrency conflict between security software (e.g., Huorong) real-time scanning and file writes. Retry once to save successfully; if frequent, add the `DeepSeekHarnessLauncher` directory to the security software whitelist |
 | `SyntaxError: Unexpected token '\ufeff'` in plugin install logs | That npm package's `package.json` carries a UTF-8 BOM (the publisher's encoding issue), which crashes dsh's JSON parsing. Built-in fix: the launcher auto-strips these BOMs before the plugin command and retries; a normal retry installs it successfully |
+
+## 12. Open Source License
+
+This project is licensed under the **Apache License 2.0** (see [LICENSE](LICENSE) in the repo root; the green-edition zip ships a copy of the license).
+
+- **Main project** (launcher.py, the green shell, and built-in plugins dsh-archive-purge / dsh-file-browser / dsh-usage-stats, etc.): `Copyright (c) 2026 LiuJunheng`, released under the Apache License 2.0.
+- **Built-in plugin dsh-session-rewind**: separately released under the **MIT License** (see [plugins/dsh-session-rewind/LICENSE](plugins/dsh-session-rewind/LICENSE)); MIT is compatible with Apache 2.0 and its original license text is preserved in the package.
+- **Runtime dependencies** (`@deepseek-ai/dsh`, Node.js, portable Python, etc.) keep their own third-party licenses; the green edition only installs them inside its local runtime directory and does not ship their sources.
+
+Apache License 2.0 requires: any redistribution (including the green-edition zip / exe) must retain this LICENSE copy and copyright notice; modified files must be marked; no trademark license is granted; the work is provided "AS IS" without any warranty.
+
+> **Compliance note for packaging**: the `Compress-Archive` command **MUST include `LICENSE`** (see "Lightweight Distribution Zip" above), otherwise the distributed zip has no license copy, violating Apache 2.0 §4's redistribution clause.

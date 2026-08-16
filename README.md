@@ -148,7 +148,7 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 ### 轻量分发 zip（精简在线版，约 8MB）
 > 相较"整目录迁移"，此 zip **不含 `runtime/`（不带已下载的环境与会话）**，新机联网后由启动器自动下载 Node / Python / dsh，体积小、适合放到 GitHub Release 分发。
 >
-> 打包内容（即项目根目录的"发货清单"）：`launcher.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`config.json`、`README.md`、`README_EN.md`、`DEV_NOTES.md`、`.gitignore`、`plugins/dsh-archive-purge/`、`plugins/dsh-session-rewind/`、`plugins/dsh-file-browser/`、`plugins/dsh-usage-stats/`、`skills/dsh-deploy-maintain/`。
+> 打包内容（即项目根目录的"发货清单"）：`launcher.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`config.json`、`README.md`、`README_EN.md`、`DEV_NOTES.md`、`LICENSE`、`.gitignore`、`plugins/dsh-archive-purge/`、`plugins/dsh-session-rewind/`、`plugins/dsh-file-browser/`、`plugins/dsh-usage-stats/`、`skills/dsh-deploy-maintain/`。
 
 - **最新下载**（GitHub Release，tag `v1.0.6`）：<https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
 - 仓库：<https://github.com/LiuJunheng/DeepSeekHarnessGreen>
@@ -160,7 +160,7 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 
 重新生成该 zip（在项目根目录 PowerShell 执行）：
 ```powershell
-Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, config.json, README.md, DEV_NOTES.md, .gitignore, "plugins", "skills" -DestinationPath DSH_Launcher_GreenPortable_Online_<日期>.zip -CompressionLevel Optimal
+Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, config.json, README.md, README_EN.md, DEV_NOTES.md, LICENSE, .gitignore, "plugins", "skills" -DestinationPath DSH_Launcher_GreenPortable_Online_<日期>.zip -CompressionLevel Optimal
 ```
 > **重要（zip 目录结构）**：`-Path` 里的插件/skill 必须传**目录名** `"plugins"` / `"skills"`（zip 内保留 `plugins/`、`skills/` 前缀）。**不能**传 `"plugins\dsh-archive-purge"` 这种子路径——`Compress-Archive` 会把该目录直接打在 zip 根、**丢掉 `plugins/` 前缀**，更新覆盖时会把插件错位拷到程序根目录（详见 DEV_NOTES 需求 #21）。打包后建议用 `tar -tf xxx.zip`（或资源管理器打开）确认 zip 根下有 `plugins/`、`skills/` 文件夹且 `launcher.py` 等文件。
 >
@@ -310,3 +310,15 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 | dsh 网页打不开 | 看 `runtime/server.log`；确认防火墙没拦 127.0.0.1 |
 | 设置 API Key 时报 `EPERM: rename denied` | 偶发，属安全软件（如火绒）实时扫描与写文件并发冲突。重试一次即可保存成功；若频繁出现，把 `DeepSeekHarnessLauncher` 目录加入安全软件白名单 |
 | 安装插件时日志报 `SyntaxError: Unexpected token '\ufeff'` | 该 npm 包的 `package.json` 带了 UTF-8 BOM（发布者的编码问题），dsh 的 JSON 解析会崩溃。已内置修复：启动器会在插件命令前自动清除这些 BOM 并重试，正常重试后即可装成功 |
+
+## 十二、开源协议
+
+本项目采用 **Apache License 2.0** 开源协议（详见仓库根目录 [LICENSE](LICENSE)，绿色版 zip 已随包附带协议副本）。
+
+- **主项目**（启动器 launcher.py、绿色版外壳、内置插件 dsh-archive-purge / dsh-file-browser / dsh-usage-stats 等）：`Copyright (c) 2026 LiuJunheng`，以 Apache License 2.0 发布。
+- **内置插件 dsh-session-rewind**：另以 **MIT License** 发布（见 [plugins/dsh-session-rewind/LICENSE](plugins/dsh-session-rewind/LICENSE)），MIT 与 Apache 2.0 兼容，随包保留其原始许可证文本。
+- **运行时依赖**（`@deepseek-ai/dsh`、Node.js、便携 Python 等）为各第三方项目自己的许可证，绿色版仅在其本地运行时目录内安装使用，不随源码分发。
+
+Apache License 2.0 要求：再分发（含绿色版 zip / exe）必须保留本 LICENSE 副本与版权声明；修改文件须标注变更；不授予商标许可；按 "AS IS" 提供、无任何担保。
+
+> **对绿色版打包的合规提醒**：`Compress-Archive` 打包命令里**必须包含 `LICENSE`**（见上文"轻量分发 zip"），否则分发的 zip 不含协议副本、违反 Apache 2.0 §4 的再分发条款。

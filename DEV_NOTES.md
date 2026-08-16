@@ -487,6 +487,11 @@
     - **推送（关键避坑）**：① 建仓后 `git remote add gitee https://<user>:<PAT>@gitee.com/<user>/<repo>.git` 一次性带 PAT 推送，**推送成功后立即 `git remote set-url` 去掉 URL 里的 PAT**，避免明文凭据常驻 `.git/config`；② 分别 `git push gitee --all`（分支）与 `git push gitee --tags`（标签），**历史提交随分支一起全量过去**（不是增量同步）；③ PowerShell 下 git 把进度写到 stderr，`2>&1` 会显示成 `git : remote: Powered by GITEE.COM` 的红色"错误"，**那是正常输出不是报错**（exit code 0，有 `* [new branch]` / `* [new tag]` 即成功）；④ 验证一致性用 `git ls-remote gitee` 对比 `HEAD`/`refs/heads/master`/`refs/tags/*` 的 SHA 与本地 `git rev-parse HEAD` 完全一致。
     - **结果**：Gitee 仓库 `DeepSeekHarnessGreen` 的 master 指向 `f61ce72`（与 GitHub 完全同步），标签 v1.0.0~v1.0.6 全部推送。
     - **教训**：① 建仓 API 的 `auto_init=false` 可避免远端首条空提交与本地历史打架；② 任何把令牌写进 remote URL 的操作，完成后都要清回干净 URL；③ PowerShell 里 git 的 stderr 输出不要误判为失败，以 exit code 和 `[new branch]`/`[new tag]` 为准。
+54. **【开源合规】Apache 2.0 协议落地与绿色版再分发合规（2026-08-17）**：
+    - **背景**：用户在 GitHub 上通过 "Create LICENSE" 创建了标准 Apache License 2.0 全文（`LICENSE`，201 行官方模板）。评估后发现两个合规缺口：① GitHub 模板未填写版权行（附录 `Copyright [yyyy] [name of copyright owner]` 是占位符）；② **绿色版 zip 打包清单（README 的 `Compress-Archive` 命令）没有包含 `LICENSE`**——Apache 2.0 §4 Redistribution 要求"再分发必须给接受者一份本协议副本"，缺 LICENSE 的 zip/exe 分发即违约。
+    - **修复**：① `LICENSE` 顶部补版权行 `Copyright 2026 LiuJunheng`（官方模板允许在文件开头声明版权），附录占位符同步替换为实际版权行；② README.md / README_EN.md 的 zip 打包命令与"发货清单"都加上 `LICENSE`；③ README/README_EN 新增「开源协议 / Open Source License」章节：主项目（launcher.py + 绿色版外壳 + 内置插件 dsh-archive-purge/dsh-file-browser/dsh-usage-stats）以 Apache 2.0 发布、`dsh-session-rewind` 单独以 MIT 发布（随包保留其 LICENSE，见避坑记录）、运行时依赖（dsh/Node/便携 Python）为第三方各自许可、再分发须保留 LICENSE 副本与版权声明。
+    - **验证**：重新打包 `DSH_Launcher_GreenPortable_Online_20260817_v1.0.6.zip`，用 `[System.IO.Compression.ZipFile]::OpenRead` 核对 zip 根含 `LICENSE`（plugins/dsh-session-rewind/LICENSE 也保留）。**旧资产 20260816_v1.0.6.zip 不含根 LICENSE，保持已发布原样不破坏；本合规 zip 为新增件**（未上传 Release，供下次发布或手动替换时使用）。
+    - **教训**：① GitHub "Create LICENSE" 模板只有协议正文、**版权行要自己补**（README 的打包命令/发货清单/README_EN 三处都要同步）；② 只要走"绿色版 zip/exe"再分发，**打包清单必须含 LICENSE**，否则 Apache 2.0 §4 违约；③ 内嵌子组件（如 dsh-session-rewind）若用不同协议（MIT），要在主 LICENSE 之外随包保留其许可证文本并在 README 说明。
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
