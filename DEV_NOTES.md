@@ -1,4 +1,4 @@
-# DeepSeek Harness 一键启动器 · 开发记录（需求 / 设定 / 规范 / 避坑）
+# DeepSeek Harness 绿色整合版启动器 · 开发记录（需求 / 设定 / 规范 / 避坑）
 
 > 本文档按项目约定持续更新，记录需求内容、代码设定、规范细节与避坑经验。
 
@@ -8,7 +8,7 @@
    - 自动完成：便携 Node 准备 → dsh 安装 → 服务启动 → 自动打开浏览器
 2. 形态选型：用户选择 **Python GUI 启动器**（tkinter），配套 `.bat` 一键入口
 3. 网络：用户选择 **镜像自动检测**（国内优先、失败回退官方）
-4. 所有运行时数据（Node、dsh、会话）放在程序目录内，**绿色便携**，可整目录拷走
+4. 所有运行时数据（Node、dsh、会话）放在程序目录内，**绿色整合**，可整目录拷走
 5. dsh 官方会持续发版，需要**检查更新**能力：GUI「检查更新」按钮 → 查询 npm 最新版 → 弹窗让用户选择更新/不更新 → 更新前**自动备份旧版本**到 `runtime/dsh-backup-<版本>`，不覆盖，备份由用户手动管理是否删除
 6. 需要**可视化插件管理**：GUI 主窗口第六个按钮「插件管理」弹出新窗口，可查看已安装插件、搜索插件（npm 注册表 + GitHub 官方 `dsh-plugin` 话题页）、安装 / 移除插件
 7. **数据维护需求（会话删除管理）**：dsh 官方没有"永久删除会话"功能，网页"归档"只是把会话**隐藏**（日志与注册表条目全部保留）。用户需要能**彻底删除**归档/指定会话的能力，于是：
@@ -63,7 +63,7 @@
    - 版本号显示 `"v" + GREEN_VERSION`（带 v 前缀更友好）、版本日期直接取 `GREEN_VERSION_DATE` 常量——与自更新版本号同源，避免再次出现"双来源不同步"（见需求 #20）；
    - 「打开本仓库 / 打开官方仓库」按钮用 `webbrowser.open()` 打开链接；链接地址与 `GITHUB_REPO` 常量一致（此处因弹窗需要完整 URL 而显式写出，后续若仓库迁移需一并同步）。
    - **验证**：`runtime/tmp/smoke_about.py` 冒烟测试通过（真实启动 GUI → monkey-patch `tk.Tk.mainloop` 自动点击「关于」→ 校验弹窗含全部关键文本与 3 个按钮 → 自动关闭）。注意：**不能 monkey-patch `tk.Toplevel`**（会破坏 `tkinter.filedialog`/`simpledialog` 里 `class Dialog(Toplevel)` 的类继承，报 `TypeError: function() argument 'code' must be code`），改用 `winfo children .` + `nametowidget` 枚举顶层窗口。
-   - **2026-08-16 扩充「绿色便携·本地化」说明**：用户希望关于弹窗更详细地说明绿色版特点，特别是**所有文件与依赖全部本地化**。做法：子标题改为「绿色便携版 · 所有文件与依赖全部本地化」，信息表下方新增 `local_frame` 区块（绿色粗标题「绿色便携 · 本地化特点」+ 6 条要点 Label，`wraplength` 用默认整行、逐行 `anchor="w"` 排列），内容涵盖：双击即用免安装、运行时依赖全在根目录 `runtime/` 下（便携 Node / 内置 Python / dsh / npm-pnpm 缓存 / 会话数据 / 临时文件）、不写用户主目录 / 不改系统环境变量 / 不占 C 盘默认路径、整目录拷贝即用、更新不覆盖 `config.json` 与用户数据。弹窗高度 `480x330 → 480x500`。**验证**：`runtime/tmp/smoke_about_localized.py`（复用 monkey-patch mainloop 自动点击方案）PASS，6 项关键词全命中。注意冒烟测试前**先确认无残留进程持有单实例互斥量**（`runtime/tmp/probe_mutex_state.py` 检查），否则 run_gui 的单实例检测会走"激活旧窗口"分支直接 return、根本进不了 mainloop。
+   - **2026-08-16 扩充「绿色整合·本地化」说明**：用户希望关于弹窗更详细地说明绿色版特点，特别是**所有文件与依赖全部本地化**。做法：子标题改为「绿色整合版 · 所有文件与依赖全部本地化」，信息表下方新增 `local_frame` 区块（绿色粗标题「绿色整合 · 本地化特点」+ 6 条要点 Label，`wraplength` 用默认整行、逐行 `anchor="w"` 排列），内容涵盖：双击即用免安装、运行时依赖全在根目录 `runtime/` 下（便携 Node / 内置 Python / dsh / npm-pnpm 缓存 / 会话数据 / 临时文件）、不写用户主目录 / 不改系统环境变量 / 不占 C 盘默认路径、整目录拷贝即用、更新不覆盖 `config.json` 与用户数据。弹窗高度 `480x330 → 480x500`。**验证**：`runtime/tmp/smoke_about_localized.py`（复用 monkey-patch mainloop 自动点击方案）PASS，6 项关键词全命中。注意冒烟测试前**先确认无残留进程持有单实例互斥量**（`runtime/tmp/probe_mutex_state.py` 检查），否则 run_gui 的单实例检测会走"激活旧窗口"分支直接 return、根本进不了 mainloop。
 23. **本地插件安装默认目录指向本仓库 plugins/（2026-08-16）**：用户反馈插件管理里「选择本地插件文件夹安装…」每次打开默认落在 **C 盘**（tkinter `askdirectory` 未指定 `initialdir` 时用系统记忆的上次位置/默认目录）。修复：`on_install_local()` 里给 `filedialog.askdirectory` 加 `initialdir=os.path.join(BASE_DIR, "plugins")`（`BASE_DIR` 为程序根目录，frozen 取 exe 所在目录）；若该目录不存在则回退 `BASE_DIR`，确保始终停在本地仓库内、可一键选内置插件源码。配套说明已同步 README（手动安装栏）与 SKILL.md（3.x 插件管理）。
 24. **X 关闭二次确认 + 最小化到系统托盘（2026-08-16）**：用户担心误点右上角 X 直接退出，且希望最小化后**从任务栏消失、缩到系统托盘后台运行**。实现：
     - **X 二次确认**：`on_close(confirm=True)` 在退出前弹 `messagebox.askyesno("确认关闭", "确定要退出启动器吗?\n\n退出会同时停止 dsh 服务。")`；绿色版自更新流程调用 `on_close(False)` 跳过重复询问（此前已确认过）。确认后先 `tray_icon.dispose()`（移除托盘图标 + 还原窗口过程）再停服务销毁窗口。
@@ -127,6 +127,28 @@
     - **安全边界（预期行为）**：`trusted_hosts` 为空且绑定 0.0.0.0 时，dsh 的信任围栏（`resolveLanTrust`）**自动把全部非内网 IPv4 加入 trustedHosts** → 局域网浏览器可访问 `/api` 正常聊天/用工具；`trusted_hosts` 非空时（补丁后）只信任显式填写的地址。无论哪种，`PRIVILEGED_METHODS`（settings/credentials/host.pickDirectory 等特权方法）**仍仅回环可调** → 远程浏览器不能改设置与凭据（安全保护）。
     - 验证：单元冒烟（`patch_web_startup()` 幂等 + `build_server_command()` 传参正确）→ 本机回归（默认 127.0.0.1 行为不变）→ LAN 实测（本机 127.0.0.1 与局域网 `<服务器IP>:3080` 均可打开、聊天/工具正常、远端改设置返回 403）；精确语义用 `runtime/tmp/smoke_lan_trust.py`（8 项：`patch_lan_trust()` 幂等 + node 执行补丁后逻辑——空=含局域网、非空=只含填写项、本机模式=只含填写项 + 传参正确）PASS。**已同步 `skills/dsh-deploy-maintain/SKILL.md`（3.x 局域网访问小节）并重建 `Skill-dsh-deploy-maintain.zip`。**
 
+32. **任务栏 + 托盘图标双常驻；产品名改为「绿色整合版」（2026-08-16）**：用户实测发现——最小化后**任务栏图标消失**（旧逻辑 `root.withdraw()` 隐藏窗口，任务栏自然没图标）、展开后**托盘图标又消失**（旧逻辑 `restore_from_tray()` 里 `tray_icon.remove()`），一来一回"任务栏没了、托盘也没了"，用户容易误以为程序退出了。改法：
+    - **最小化只进任务栏、不再隐藏**：`minimize_to_tray()` 由 `root.withdraw()` 改为 `root.iconify()`（最小化到任务栏，**任务栏图标保留**）；托盘 `tray_icon.add()` 保持幂等调用。WndProc 拦截 `SC_MINIMIZE` 只置标志位的机制不变（`poll_tray_loop()` 轮询后在正常 Tk 上下文执行 `iconify()`）。
+    - **托盘图标从启动就常驻**：`SysTrayIcon` 构造成功后立即 `tray_icon.add()`（启动即显示托盘图标）；`add()` 幂等、失败不抛异常（Shell_NotifyIconW 返回 false 则返回 False），若启动时失败，最小化时会再次尝试。**点托盘图标恢复只 `deiconify()`，不再 `remove()`**——托盘图标不再消失。
+    - **产品中文名「绿色便携版」→「绿色整合版」**（多加"整合"二字）：改 launcher.py 三处（关于弹窗子标题「绿色整合版 · 所有文件与依赖全部本地化」、本地化区块标题「绿色整合 · 本地化特点」、托盘 tooltip「(绿色整合版)」）+ README.md + DEV_NOTES.md + `skills/dsh-deploy-maintain/SKILL.md` 与 README 全部「绿色便携」字样统一替换（`Edit` 工具 `replace_all`）。
+    - **验证**：`python -m py_compile launcher.py` 语法通过；实际行为待 DSH_Launcher.exe 重打包后人工确认——启动即有托盘图标、最小化到任务栏（任务栏图标在）、点托盘或任务栏恢复后托盘图标仍在、点 X 退出后托盘图标移除。
+
+33. **图标鲸鱼放大、去外围绿色圈（2026-08-16）**：用户反馈 `DSH_Launcher.ico`（需求 #26 产物）**周围一圈绿色太多、本体绿色鲸鱼图案太小**，要求"把中间鲸鱼弄大点、去掉外围那圈颜色、最大化利用空间、增加识别度"。用 `runtime/tmp/icon_design/whale_v3.py` 重新制作：
+    - **主体定位**：先按颜色阈值（亮绿 G>160 且 R<150、黄色闪电 R>200）标出主体像素，再**行列密度过滤**（保留计数 ≥ 最大列/行计数的 5% 的列/行）剔除孤立边角像素（鲸鱼鳍、边缘水印），得到更紧的**主体包围盒**（比单纯连通域更稳）。
+    - **最大化铺满**：以主体中心扩成正方形裁剪区，边距 `MARGIN_RATIO=0.01`（收紧到最小），主体几乎铺满画布；裁剪越界时自动平移修正仍保持正方形居中。
+    - **去外围色**：主体之外像素统一处理——正式版 `DSH_Launcher.ico` 用**透明背景**（非主体像素全置透明），备选 `DSH_Launcher_bg.ico` 用深绿背景 `(0,83,41)`。
+    - **结果**：`verify_v3.py` 实测——主体不透明像素 23365（35.7%），不透明包围盒 `[2,24]-[253,230]` 252×207，**占画布 98% × 81%**（鲸鱼放大铺满、外围绿色圈已去除，识别度明显提升）。
+    - **验证**：`verify_icon.py`——ICO 文件头 `00000100`、62317 字节；重打 `DSH_Launcher.exe` 后 `ExtractIconExW` 数出 exe 内嵌 1 个图标、`LoadImageW` 拿到有效 HICON。已同步 `skills/dsh-deploy-maintain/SKILL.md`（3.7 自定义图标小节补充放大/去圈经验）。
+
+34. **产品名「一键启动器」→「绿色整合版启动器」（2026-08-16）**：用户进一步要求把**程序标题**与**关于弹窗**里的"一键启动器"改为"绿色整合版启动器"（与上一轮「绿色便携版→绿色整合版」呼应，产品名统一为「DeepSeek Harness 绿色整合版启动器」）。改 launcher.py 五处——①模块 docstring、②`WINDOW_TITLE` 常量（主窗口标题 `root.title(WINDOW_TITLE)` 与单实例查找 `_activate_existing_launcher` 共用，一处改全联动）、③关于弹窗主标题、④托盘 tooltip、⑤启动日志文案；并同步 README.md / DEV_NOTES.md / `skills/dsh-deploy-maintain/SKILL.md` 与 README 的产品名描述（DEV_NOTES 历史验证快照里引用的旧标题保留不改）。重打 `DSH_Launcher.exe` + 重建 `Skill-dsh-deploy-maintain.zip`；`smoke_about_localized.py` 增加主标题「DeepSeek Harness 绿色整合版启动器」检查。
+
+35. **英文版 README_EN.md（2026-08-16）**：用户要求默认维护中文 README，只在版本上传时翻译一份英文版给外国人看。做法：
+    - 创建 `README_EN.md`，忠实翻译当前中文 README（英文版编号连续，内容与结构一致），随版本更新翻译一次。
+    - 中文 README.md 顶部增加语言切换指引行：`> **其他语言**：English — [README_EN.md](README_EN.md)（随版本更新翻译一次，供国际用户参考；本文为准）。`
+    - 目录结构与发货清单中补充 `README_EN.md` 引用。
+    - 绿色分发 zip 打包时包含 `README_EN.md`（`-Path` 显式加入）。
+    - 版本号升至 v1.0.6，Release 时同步发布含英文 README 的绿色分发 zip。
+
 
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
@@ -137,8 +159,8 @@
 | dsh 更新 | `dsh_latest_version()` 用 `npm view @deepseek-ai/dsh version` 只读查最新版；`backup_dsh()` 把旧版拷到 `runtime/dsh-backup-<版本>`（同名加时间戳后缀）；`update_dsh()` = 查询→备份→强制重装，备份失败即中止避免数据丢失 |
 | dsh 启动 | 直接调 `node <dsh>/node_modules/@deepseek-ai/dsh/lib/bin.js web --port 3080` |
 | 数据隔离 | 环境变量 `DSH_HOME=runtime/dsh-home`，会话/配置/存储全部落在程序目录 |
-| 绿色便携 | `build_env()` 把 npm 缓存/用户配置、pnpm home/store、TEMP/TMP 全部重定向到本地 `runtime/` 下（见下） |
-| 工作区自动解析 | **不写死工作目录**：`resolve_default_workspace()` 自动判定——`workspace_conflicts_with_tmp()` 用 `os.path.commonpath` 检测"临时目录是否为工作区子路径"；冲突（程序根目录内含 `runtime/tmp` 的绿色便携默认形态）时默认工作区取程序目录内 `workspace` 子目录（`DEFAULT_WORKSPACE_SUBDIR`），不冲突时直接用程序根目录本身；config.json 的 `default_workspace` 可显式覆盖（冲突则警告并回退）。`seed_default_workspace()` 按解析结果预置注册表记录（title=目录名），详见避坑 #31 |
+| 绿色整合 | `build_env()` 把 npm 缓存/用户配置、pnpm home/store、TEMP/TMP 全部重定向到本地 `runtime/` 下（见下） |
+| 工作区自动解析 | **不写死工作目录**：`resolve_default_workspace()` 自动判定——`workspace_conflicts_with_tmp()` 用 `os.path.commonpath` 检测"临时目录是否为工作区子路径"；冲突（程序根目录内含 `runtime/tmp` 的绿色整合默认形态）时默认工作区取程序目录内 `workspace` 子目录（`DEFAULT_WORKSPACE_SUBDIR`），不冲突时直接用程序根目录本身；config.json 的 `default_workspace` 可显式覆盖（冲突则警告并回退）。`seed_default_workspace()` 按解析结果预置注册表记录（title=目录名），详见避坑 #31 |
 | 就绪检测 | 后台线程 socket 轮询端口，就绪后 `webbrowser.open` |
 | WebUI 单页面去重 | 本地心跳服务（`http.server.ThreadingHTTPServer` 绑定 127.0.0.1:3081，daemon 线程）+ 前端 `index.html` 注入心跳脚本（`patch_frontend()` 幂等，`install_dsh()` 与 `start_server()` 自动补齐）：页面每 15 秒 `fetch` 一次 `http://127.0.0.1:3081/__dsh_ui_alive?t=<令牌>`（no-cors）；`ui_is_open()` 以最近 180 秒内有无心跳判定"界面已打开"，**自动打开**（`wait_and_open()`/`open_ui(force=False)`/CLI `--start`）打开浏览器前先查此判定，已打开则跳过并记日志；**手动打开（GUI「打开界面」按钮 → `open_ui(force=True)`）必定打开新页面，不受去重限制**。令牌存 `runtime/ui-beacon.token`（`secrets.token_hex(8)`，读写失败退化为固定值仅影响防伪造）。配置项：`auto_open_browser`（默认 True，False 则启动不自动开浏览器）、`ui_beacon_port`（默认 3081，被占用时仅记日志并禁用去重）。 |
 | 进程管理 | Windows 下 `CREATE_NO_WINDOW` 隐藏服务控制台；PID 写 `runtime/server.pid` 供独立 `--stop` 使用；**stdin 用 `PIPE` 保持打开**（否则 dsh 读到 EOF 会退出，见避坑 #12）；`watch_server` 线程监听异常退出并记日志 |
@@ -153,7 +175,7 @@
 | 内置插件 dsh-file-browser | `plugins/dsh-file-browser/`（v0.2.0）：宿主端 `lib/index.js` 注册 `GET /__dsh/file-browser/home` + `POST /__dsh/file-browser/list` + `POST /__dsh/file-browser/read`（均要求 `x-dsh-file-browser: 1` 自定义头防跨站；走 `ctx.get('fs')` 复用 dsh 文件系统服务；文本预览上限 200KB、图片 4MB、单目录 1000 项）。客户端 `lib/client.js`：`conversation.input.left` 注册「文件」开关按钮（经 standard-kit 拿到 `useInput`/`inputActions`），`shell.overlay` 注册右侧面板（列目录/预览/右键菜单）；「插入到输入框」由面板 `queueInsert` 排队、按钮组件用 `inputActions.setDraft` 追加草稿。安装：`--install-plugin plugins\dsh-file-browser`，重启生效 |
 | 绿色版自更新 | **常量**：`GREEN_VERSION`（当前 `1.0.2`，与 GitHub Release tag 一致、不含 `v` 前缀，发布新版时手动同步）、`GREEN_VERSION_DATE`、`GITHUB_REPO`（`LiuJunheng/DeepSeekHarnessGreen`）、`GREEN_RELEASE_API`（`api.github.com/repos/.../releases/latest`）、`GREEN_RELEASE_MIRROR`（`mirror.nju.edu.cn/github-release/.../latest` 国内降级）、`GREEN_ZIP_PREFIX`（`DSH_Launcher_GreenPortable_Online_`，分发 zip 资产名前缀）、`GREEN_UPDATE_DIR`（`runtime/update/` 暂存：zip/解压/备份/bat）。**方法**：`green_latest_release()`（官方→镜像逐试，只读）；`green_find_zip_asset()`（匹配前缀资产）；`download_green_update()`（复用 `download_with_progress` + 大小校验）；`prepare_green_update()`（解压 `_safe_extract_zip` 防路径穿越 → `_detect_zip_content_root` 兼容带/不带一层外层文件夹 → `_write_update_bat` 生成纯 ASCII+CRLF 的 `update_apply.bat`）；`launch_update_script()`（`DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP` 分离进程启动 bat，传入 exe/脚本模式的重启标志，随后启动器退出，bat 存活完成覆盖）。**GUI**：`on_check_green_update` → `confirm_green_update`（无 Release/已最新/发现新版确认下载）→ `ask_apply_green_update`（下载就绪确认退出覆盖），按钮「检查绿色版更新」排在「检查更新」右侧，服务运行中或忙碌时置灰。**覆盖脚本核心逻辑**（见避坑 #38）：等 exe 锁释放 → 备份被覆盖文件到 `runtime/update/backup/` → `robocopy /E`（`/XF config.json` 保留用户配置、`/XD runtime .git` 保护用户数据/仓库）→ 重启新版。版本比较 `_green_version_tuple`/`_green_version_greater`（数字分段，兼容 `v1.0.1`/长短版本），本地版本取 config `green_version` 优先否则常量 |
 
-### 绿色便携的环境变量重定向（build_env）
+### 绿色整合的环境变量重定向（build_env）
 | 环境变量 | 本地落点 | 作用 |
 |----------|----------|------|
 | `DSH_HOME` | `runtime/dsh-home` | dsh 会话/配置/存储 |
@@ -182,7 +204,7 @@
 ## 四、避坑经验（实测于 Linux 沙箱，Windows 逻辑已按此编写）
 1. **dsh 的 bin 入口不是顶层 bin/，而是** `node_modules/@deepseek-ai/dsh/lib/bin.js`（package.json 里 `bin.dsh` 指向它）。
 2. **不要在 Windows 上依赖 `node_modules/.bin/dsh.cmd`**：npm 生成的 `.cmd` 回退分支用 PATH 里的 `node`，会把便携 Node 和系统 Node 搞混。必须用便携 `node.exe` + `lib/bin.js` 直接调用。
-3. **DSH_HOME 一定要设置**：不设置时 dsh 会把会话/配置写到用户主目录，破坏"绿色便携"；设为 `runtime/dsh-home` 后所有数据落程序目录。
+3. **DSH_HOME 一定要设置**：不设置时 dsh 会把会话/配置写到用户主目录，破坏"绿色整合"；设为 `runtime/dsh-home` 后所有数据落程序目录。
 4. **npm 镜像二进制下载路径**：Node 二进制走 `registry.npmmirror.com/-/binary/node/...`，npm 包注册表走 `registry.npmmirror.com`，两者路径不同。
 5. **Python 官方 embeddable 版不含 tkinter**：给用户说明必须装完整版 python.org 安装包，否则 GUI 起不来（launcher 已做了 ImportError 兜底提示）。
 6. **CLI 模式后台线程陷阱**：`wait_and_open` 是 daemon 线程，`--start` 主进程退出后线程会消失，所以 CLI 模式要**同步** `wait_ready()` 再开浏览器；GUI 模式则用线程即可。
@@ -280,7 +302,7 @@
     - 启动器 `install_plugin` / `--install-plugin` 用 `os.path.isdir(spec)` 识别本地目录并自动归一化为 `file:` 绝对路径（`\`→`/`），pnpm 才能识别；路径有中文/空格也 OK（pnpm 按 spec 处理）。
     - **排查思路**：改插件源码后 WebUI 没变化 → 先确认是不是没重装（对比 `node_modules/<包>` 与 `plugins/<包>` 的修改时间），再查 `profiles/web/package.json` 里 dependencies 与 `dsh.profile.bundles` 是否都有该包。
 31. **【工作区】dsh 的 Windows ACL 沙箱要求临时根目录不能位于会话工作区内部；工作区归属记在会话 header，且工作区由用户在 GUI 选（2026-08-15 全量梳理）**：
-    - **现象**：当会话工作区 = 程序根目录 `D:\DeepSeekHarnessLauncher` 时，所有 shell 工具报 `Windows ACL temp root must be outside the workspace`。根因：绿色便携把 `TMP/TEMP` 指向 `runtime/tmp`，它位于程序根目录内 = 位于工作区内 → dsh 的 ACL 沙箱拒绝。
+    - **现象**：当会话工作区 = 程序根目录 `D:\DeepSeekHarnessLauncher` 时，所有 shell 工具报 `Windows ACL temp root must be outside the workspace`。根因：绿色整合把 `TMP/TEMP` 指向 `runtime/tmp`，它位于程序根目录内 = 位于工作区内 → dsh 的 ACL 沙箱拒绝。
     - **机制（三层概念要分清）**：
       1) **会话的"工作区归属"记在该会话自己的日志头（header）里**：`runtime/dsh-home/sessions/<工作区路径编码>/<会话ID>/session.jsonl.zstd` 第一行有 `cwd` 字段（如 `D:\...\workspace`），**一经创建就固化不可改**——所以旧会话永远换不了工作区，只能归档/删除或开新会话。
       2) **`storages/workspace.json` 只是"工作区注册表"**（展示/分组的平行台账）：只记每个工作区的 `{path, title, sessionIds, createdAt, updatedAt}`、全局 `archivedSessionIds`、显示顺序 `workspaceIds`。**它不是会话的配置**；真正权威的是会话 header 的 `cwd`，两者还会互相校验（挂会话进工作区要求 header.cwd 规范化后 === 工作区 path）。
@@ -295,7 +317,7 @@
     - **实测验证**（Windows）：当前 `tmp_dir=runtime/tmp` 时 `resolve_default_workspace()` 正确返回 `D:\DeepSeekHarnessLauncher\workspace`（程序根目录判为冲突）；`E:\1\AI项目` 判为不冲突；config 覆盖 `E:/x/proj` 直接用、覆盖为程序根目录则警告回退。语法检查通过。
     - **给用户的实操建议**：开新会话在 GUI 左侧工作区选择器选 **workspace**（`D:\DeepSeekHarnessLauncher\workspace`）或任何不含 `runtime/tmp` 的目录（如 `E:\1\AI项目`）再新建，shell 工具就能正常工作；旧工作区里已有的会话 shell 受限，不删除也不影响其它功能。
 
-## 五、Windows 实机测试记录（2026-08-14，绿色便携验证）
+## 五、Windows 实机测试记录（2026-08-14，绿色整合验证）
 ### 测试环境
 - 系统：Windows（PowerShell），Python 3.10.11（含 tkinter），便携 Node v22.20.0 + npm 10.9.3
 - 测试命令：`python launcher.py --start`（守护）/ `python launcher.py --stop` / `python launcher.py`（GUI）
@@ -309,7 +331,7 @@
 | 服务停止 | ✅ `--stop` 停止，node 进程退出、PID 文件删除、端口 3080 关闭 |
 | 二次启动 | ✅ 秒开（环境已就绪，不重复下载/安装） |
 | GUI 启动 | ✅ 窗口 "DeepSeek Harness 一键启动器" 正常创建、响应正常 |
-| 绿色便携 | ✅ 用户主目录零残留（`~/.npm`、`~/.pnpm-store`、`~/.local/share/pnpm`、`AppData/Local/pnpm`、`~/.config` 均未产生）；dsh 会话数据全在 `runtime/dsh-home`（profiles/storages/settings.yaml） |
+| 绿色整合 | ✅ 用户主目录零残留（`~/.npm`、`~/.pnpm-store`、`~/.local/share/pnpm`、`AppData/Local/pnpm`、`~/.config` 均未产生）；dsh 会话数据全在 `runtime/dsh-home`（profiles/storages/settings.yaml） |
 | runtime 体积 | ✅ 约 528MB（Node + dsh 包 + npm 缓存 175MB + 会话数据） |
 
 ### 待办 / 建议
@@ -411,7 +433,7 @@
     - **现象**：用户经插件管理器装上 dsh-vision-toolkit 后想确认是否生效。检查发现：插件树已合成（`dsh --dump-config` 设 DSH_HOME 后有 `# == @dsh-external/dsh-vision-toolkit` / `- id: vision-toolkit` 层）、双端声明齐全（`dsh.bundle.patch` + `dsh.client` 注入 client-runtime/ui-tool/ui-settings/locale）、16 个 peer 依赖全部可解析、`runtime/requirements.lock` 与 vendor 上游快照都在——**但实际不会真正生效**。
     - **根因（双硬门槛）**：① **运行时未就绪**：插件默认 `runtime.mode: managed`，首次启动必须找到一个 **Python 3.11+** 解释器，用 `uv`（或 venv+pip）自动建隔离环境并按 `runtime/requirements.lock`（Pillow/numpy/vtracer 等）装依赖。本机只有 **Python 3.10 / 3.8**（`py -0p` 确认），`resolveBootstrapPython` 探测 `python`(=3.10)、`py -3`(=3.10.11)、`python3`(不存在) 全部失败 → `manager.initialize()` 抛错 → `lib/index.js` 明确 log **"runtime not ready; the vision-tools skill, activation bootstrap, and Agent-scoped visual tools are NOT registered. Settings remain available for repair."** —— 即**只有设置界面可用，10 个视觉工具 + vision-tools skill + 激活引导全都不注册**。旁证：`DSH_HOME/cache/dsh-vision-toolkit/` 下只有 `artifact-access.key`，**没有 `python/` 运行时目录**（从未成功创建）。② **API 凭据未配置**：默认 provider `https://api.inferera.com/v1`、credential 引用 `VISION_API_KEY`、model `gemini-3.6-flash`，但 `.credentials.yaml` 里无此 key——即使运行时修好，工具调用也需先配 key。
     - **排查顺序（第三方"装了没完全生效"通用）**：① `package.json` 的 dependencies + bundles 是否含包 → ② **设 DSH_HOME** 后 dump-config 看插件层 → ③ 看插件 `package.json` 有无 `dsh.client`（双端才有 UI）→ ④ **看插件自身的"外部运行时要求"**（本插件：Python 3.11+ / API key / managed 环境）——这是最容易被忽略的一层 → ⑤ 服务重启后看 server.log 里插件自己打的 error（如 "runtime not ready"）。
-    - **修复方向（绿色便携原则）**：把便携 Python 3.12+ 装进 `runtime/python`（或复用启动器已有的便携 Python，但它目前是 3.10），并在插件的 Web Settings（vision-toolkit 命名空间）里把 `runtime.python` 指向该 3.11+ 可执行文件、`provider.credential` 配好 key，然后重启服务；客户端验证 = WebUI 设置出现 vision-toolkit 区块 + server.log 出现 "dsh-vision-toolkit ... ready"。
+    - **修复方向（绿色整合原则）**：把便携 Python 3.12+ 装进 `runtime/python`（或复用启动器已有的便携 Python，但它目前是 3.10），并在插件的 Web Settings（vision-toolkit 命名空间）里把 `runtime.python` 指向该 3.11+ 可执行文件、`provider.credential` 配好 key，然后重启服务；客户端验证 = WebUI 设置出现 vision-toolkit 区块 + server.log 出现 "dsh-vision-toolkit ... ready"。
     - **教训**：双端插件"树里有、UI 有、但能力不生效"时，先查插件自己的**运行时/凭据前提**（外部解释器版本、下载型依赖、API key），server.log 里插件用 `ctx.logger.error` 打印的降级提示是最直接的诊断入口。
 46. **【绿色版自更新】分离进程的睡眠延迟别用 ping/timeout/choice，用 wscript + sleep_helper.vbs（2026-08-16）**：
     - **现象**：v1.0.3 自动更新下载没问题，手动退出启动器后，`update_apply.bat` 等待循环里**不断弹出 ping 命令窗口**（一闪一退），弹了几次后报 **"ping.exe application error，无法正常启动（0xc0000142）"**，覆盖安装始终没完成。

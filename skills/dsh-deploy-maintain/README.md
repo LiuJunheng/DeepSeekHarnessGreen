@@ -1,6 +1,6 @@
 # dsh-deploy-maintain
 
-DeepSeek Harness 绿色便携版（一键启动器）的部署、维护与插件开发经验 Skill。
+DeepSeek Harness 绿色整合版启动器的部署、维护与插件开发经验 Skill。
 
 ## 内容
 
@@ -30,4 +30,4 @@ dsh-deploy-maintain/
 
 ## 来源
 
-沉淀自 `DeepSeekHarnessLauncher` 项目（Python tkinter 一键启动器 + 内置 `dsh-archive-purge` / `dsh-file-browser` / `dsh-session-rewind` / `dsh-usage-stats` 插件）的全过程实测，含 51 条避坑记录（2026-08-16 更新）。
+沉淀自 `DeepSeekHarnessLauncher` 项目（Python tkinter 绿色整合版启动器 + 内置 `dsh-archive-purge` / `dsh-file-browser` / `dsh-session-rewind` / `dsh-usage-stats` 插件）的全过程实测，含 51 条避坑记录（2026-08-16 更新）。

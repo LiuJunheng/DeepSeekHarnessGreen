@@ -1,32 +1,32 @@
 ---
 name: dsh-deploy-maintain
-description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、日常维护、插件开发与避坑经验。覆盖便携 Node/dsh 安装、环境变量重定向、工作区 ACL 沙箱、更新备份、插件管理与 dsh 插件双端加载/路由注册等全套实操知识。"
+description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护、插件开发与避坑经验。覆盖便携 Node/dsh 安装、环境变量重定向、工作区 ACL 沙箱、更新备份、插件管理与 dsh 插件双端加载/路由注册等全套实操知识。"
 ---
 
-# DeepSeek Harness 绿色便携版 · 部署维护与插件开发
+# DeepSeek Harness 绿色整合版 · 部署维护与插件开发
 
 > 版本日期：2026-08-15
-> 本 Skill 沉淀自 `DeepSeekHarnessLauncher` 项目（Python tkinter 一键启动器 + 内置 `dsh-archive-purge` / `dsh-file-browser` / `dsh-session-rewind` / `dsh-usage-stats` 插件）的全过程实测经验，含 51 条避坑记录。适用于：把 dsh 封装成"双击即用、绿色便携、可整目录拷走"的形态，以及开发 DSH 插件（宿主端路由 + WebUI 客户端入口）。
+> 本 Skill 沉淀自 `DeepSeekHarnessLauncher` 项目（Python tkinter 绿色整合版启动器 + 内置 `dsh-archive-purge` / `dsh-file-browser` / `dsh-session-rewind` / `dsh-usage-stats` 插件）的全过程实测经验，含 51 条避坑记录。适用于：把 dsh 封装成"双击即用、绿色整合、可整目录拷走"的形态，以及开发 DSH 插件（宿主端路由 + WebUI 客户端入口）。
 
 ## 一、适用场景
 
-- **部署**：在任意 Windows/Linux 机器上搭建 dsh（DeepSeek Harness）绿色便携运行环境——便携 Node + 本地安装 dsh + 数据全部落程序目录，不污染用户主目录。
+- **部署**：在任意 Windows/Linux 机器上搭建 dsh（DeepSeek Harness）绿色整合运行环境——便携 Node + 本地安装 dsh + 数据全部落程序目录，不污染用户主目录。
 - **维护**：检查/更新 dsh 版本（先备份后重装）、可视化插件管理（搜索/安装/移除/本地文件夹安装）、数据维护（永久删除归档会话，dsh 官方没有该能力）。
 - **插件开发**：开发同时被宿主端与 WebUI 双端加载的 dsh 插件（如「清理归档」会话管理插件），并排查"服务端在、客户端不显示 / 路由 404/405"等经典故障。
 - 本 Skill 与 `python-tkinter-desktop-dev`（tkinter GUI 通用规范）、`trae-skill-creation`（Skill 打包规范）配套使用。
 
-## 二、绿色便携部署核心机制
+## 二、绿色整合部署核心机制
 
 ### 2.1 总体架构
 
 ```
-程序根目录（BASE_DIR，绿色便携，可整目录拷走）
-├── launcher.py            # Python 一键启动器（GUI/CLI）
+程序根目录（BASE_DIR，绿色整合，可整目录拷走）
+├── launcher.py            # Python 绿色整合版启动器（GUI/CLI）
 ├── start.bat / stop.bat   # ASCII + CRLF 编码的 .bat 入口
 ├── build_exe.bat          # PyInstaller 打包 DSH_Launcher.exe
 ├── config.json            # 镜像/端口/default_workspace 等配置
 ├── plugins/               # 内置插件源码（如 dsh-archive-purge、dsh-usage-stats）
-└── runtime/               # 全部运行时数据（绿色便携核心）
+└── runtime/               # 全部运行时数据（绿色整合核心）
     ├── node/              # 便携 Node（node-v22.20.0）
     ├── dsh/               # @deepseek-ai/dsh 本体
     ├── dsh-home/          # DSH_HOME：会话/配置/存储
@@ -47,7 +47,7 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
 - **镜像附 `--registry`**：`resolve_mirror()` 返回 `("cn", True)` 时，`prepare_dsh()` 里只有非 auto 模式才附加 `--registry`；auto 模式下 npm 会走默认官方源，国内很慢甚至卡住——需要时把 `config.json` 的 `mirror` 改为 `"cn"`，或把 auto 的"国内优先、失败回退"逻辑扩展到 npm install 阶段。
 - **首次 install 较慢**（约 3 分钟 / 587 包），界面提示"请耐心等待"，并用**流式实时输出**展示进度（`Launcher._stream_subprocess`：`subprocess.Popen` + 后台线程逐行读管道 + `self.log` 逐行打日志 + 行前缀 `"npm: "`；超时兼容 `process.wait(timeout)`、读取线程 `join(timeout=5)` 防孙进程持管道阻塞；返回 `(退出码, 完整输出)`）。npm 在 stdout 非 TTY（管道）时输出逐行 `npm notice`/`added N packages` 文本，逐行显示即可确认"没卡住/没报错"。三处接入：`install_dsh` / `install_pnpm` / `run_plugin_command`。
 
-### 2.3 环境变量重定向（build_env，绿色便携的命根子）
+### 2.3 环境变量重定向（build_env，绿色整合的命根子）
 
 | 环境变量 | 本地落点 | 作用 |
 |----------|----------|------|
@@ -148,6 +148,8 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
 - bat 全文**纯 ASCII + CRLF**（写文件用 `encoding="ascii", newline=""`，行以 `\r\n` 连接），避免 Windows cmd 编码问题。
 
 **发布 Release（含中文正文）的编码坑**：用 GitHub API（PowerShell）创建/更新 Release 时，即使 `ConvertTo-Json` + `[System.Text.Encoding]::UTF8.GetBytes()` + `-ContentType "application/json; charset=utf-8"`，正文中文仍可能全变 `?`——因为 **Windows PowerShell 5.1 会把"无 BOM 的 UTF-8 .ps1"按系统 ANSI（GBK）读取**，脚本里写的中文字符串字面量在内存里已乱码，后面怎么编码都救不回。**正确做法**：发布脚本保持**纯 ASCII**（不写一个中文字符），中文正文单独放一个 UTF-8 文本文件，脚本里 `[System.IO.File]::ReadAllText(路径, [System.Text.Encoding]::UTF8)` 显式按 UTF-8 读入再发送。校验也别用 PowerShell 的 `-match "中文"`（同样会被 ANSI 读乱），导出 body 到 UTF-8 文件后用 python 检查是否含关键中文且无 U+FFFD/`?`；资产下载 URL 用 `curl.exe -s -I -L` 验证 200。**本经验已同步至 `DEV_NOTES.md` 避坑 #43。**
+
+**英文 README（README_EN.md，2026-08-16 约定）**：中文 README 是唯一维护主体，英文版**只在发布新版本时翻译更新一次**（供国际用户参考，中文为准）。打包绿色分发 zip 时**必须显式把 `README_EN.md` 加入 `-Path`**，并同步更新中文 README 顶部的语言切换指引行。
 > **追加坑（v1.0.3 发布，避坑 #46）**：`powershell -File script.ps1` 执行时，`$str | git credential fill` 这类"字符串管道到原生命令"会**静默失效**（交互式 PowerShell 正常，`-File` 模式报 `missing protocol field`）。取 git 凭据别用这条管道——先在交互终端把 token 存 `$env:GH_TOKEN`，脚本 `if ($env:GH_TOKEN) { $token = $env:GH_TOKEN.Trim() }` 读取（原逻辑作兜底）最稳。
 >
 > **追加坑（v1.0.3 实测，避坑 #47）**：分离进程里千万别用 `ping -n` 做等待延迟——实测下载没问题、退出启动器后 `update_apply.bat` 等待循环**不断弹 ping 窗口一闪一退**，且弹了几次后报 **"ping.exe application error（0xc0000142 = DLL 初始化失败）"**，安装永远不完成（系统 ping.exe 损坏 + 无控制台进程调控制台程序会新建窗口闪烁）。**全部延迟改用 `wscript.exe "%~dp0sleep_helper.vbs" <毫秒>`**（GUI 子系统不闪窗、Windows 全自带），详见 DEV_NOTES 需求 #19 / 避坑 #46。
@@ -163,11 +165,15 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
 
 ### 3.6 启动器 GUI 增强：X 关闭二次确认 + 最小化到系统托盘（2026-08-16）
 
-- **需求**：误点右上角 X 直接退出难受 → 加**二次确认**；希望最小化后**从任务栏消失、缩到系统托盘后台**。
+- **需求**：误点右上角 X 直接退出难受 → 加**二次确认**；最小化希望"不打扰"（首版：缩到系统托盘、任务栏消失）。
 - **X 二次确认**：`root.protocol("WM_DELETE_WINDOW", on_close)`，`on_close` 里 `messagebox.askyesno` 确认后才停服务销毁窗口；绿色版自更新流程传 `confirm=False` 跳过重复询问。
+- **【演进 2026-08-16 双常驻】最小化不再隐藏窗口、托盘从启动就常驻**：首版"最小化→`root.withdraw()` 隐藏进托盘（任务栏没图标）、恢复→`remove()` 删托盘图标（托盘又没了）"，一来一回两头都看不见，用户实测反馈"容易误以为程序退出了"。改为**任务栏 + 托盘双入口始终可见**：
+  - **最小化只进任务栏**：`minimize_to_tray()` 由 `root.withdraw()` 改为 `root.iconify()`（最小化到任务栏，**任务栏图标保留**）；托盘 `tray_icon.add()` 保持幂等调用（已常驻则直接返回 True）。
+  - **托盘从启动就常驻**：`SysTrayIcon` 构造成功后立即 `tray_icon.add()`（启动即显示托盘图标，失败不抛异常）；点托盘恢复 `restore_from_tray()` 只 `root.deiconify()`，**不再 `remove()` 托盘图标**。
+  - **效果**：任务栏图标 + 托盘图标同时常驻，任一点击都能恢复窗口，不会让用户误判程序退出。
 - **最小化到托盘（纯 ctypes + Win32，零第三方依赖）**：
   - `Shell_NotifyIconW` 加/删托盘图标（`_NOTIFYICONDATAW` 结构，Vista+ 版）；图标取 `WM_GETICON` → 类图标 → 兜底 `LoadIconW(IDI_APPLICATION)`。
-  - `SetWindowLongPtrW` 子类化窗口过程（`WINFUNCTYPE` 回调 + `ctypes.cast(回调, c_void_p).value` 取地址）拦截：`WM_SYSCOMMAND/SC_MINIMIZE`（点最小化 → `add()` 托盘图标 + `root.withdraw()` 隐藏）与自定义 `WM_TRAY_CALLBACK`（左/右键单击图标都恢复窗口）；其余消息必须 `CallWindowProcW` 放行。
+  - `SetWindowLongPtrW` 子类化窗口过程（`WINFUNCTYPE` 回调 + `ctypes.cast(回调, c_void_p).value` 取地址）拦截：`WM_SYSCOMMAND/SC_MINIMIZE`（点最小化 → `add()` 托盘图标，**窗口本身交给 `root.iconify()` 缩到任务栏，不再 `withdraw()` 隐藏**）与自定义 `WM_TRAY_CALLBACK`（左/右键单击图标都恢复窗口）；其余消息必须 `CallWindowProcW` 放行。
 - **避坑（实测定点，见 DEV_NOTES 需求 #24/#25）**：
   - **窗口过程挂钩必须在 `__init__` 里装，不能放 `add()`**——否则第一次点最小化时托盘图标还没出现 → 漏拦截 → 窗口进任务栏而非托盘。
   - **`remove()` 只删托盘图标，不能还原窗口过程**——还原窗口后再次最小化要靠挂钩保持；退出前才用 `dispose()`（`remove()` + `_unhook_wndproc()`）还原，避免窗口销毁后回调对象悬空。
@@ -176,6 +182,7 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
   - **`--windowed` exe 下 `sys.stderr=None`**：WndProc 里任何输出都会抛异常被 ctypes 吞掉 → 消息被"吃掉"却无动作。回调内不输出 + 全程 try/except，异常一律放行给原窗口过程。
   - ctypes 必须显式设 `argtypes`/`restype`（`c_ssize_t` 等），否则 64 位下句柄/指针被截断；`Shell_NotifyIconW`/`SetWindowLongPtrW` 要传整数指针，不能直接传 `WINFUNCTYPE` 回调对象。
 - **验证**：`runtime/tmp/smoke_tray.py`（加/删幂等）、`smoke_tray2.py`（第一次最小化进托盘 + 恢复后再最小化仍进托盘）、`smoke_gui3.py`（端到端 `run_gui`）、`probe_tray_real.py` / `probe_tray_roundtrip.py` / `probe_tray_exe.py`（外部起真实 GUI/exe + PostMessage SC_MINIMIZE，判定 C 即 `IsWindowVisible=0` 为托盘成功；判定 A `IsIconic=TRUE`=钩子没拦到；判定 B 可见非图标=拦截了但 add/隐藏没生效）。
+  - **【双常驻新标准 2026-08-16】不再要求窗口隐藏**：双常驻下最小化后窗口只是 `IsIconic=TRUE`（任务栏图标在、窗口缩小），**`IsWindowVisible` 仍为 1**；托盘图标常驻（启动即有、恢复不删）。验证改为：最小化后 `IsIconic=TRUE` 且托盘图标仍在；托盘恢复后 `IsIconic=FALSE` 且托盘图标仍常驻。
 
 ### 3.7 启动器自定义图标（窗口 + 托盘 + exe 三处统一，2026-08-16）
 
@@ -188,6 +195,7 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
   - **exe**：`build_exe.bat` 加 `--icon "%~dp0DSH_Launcher.ico"` + `--add-data "%~dp0DSH_Launcher.ico;."`。
 - **避坑（build_exe.bat 实测）**：`--add-data` 的源路径按 **spec 目录**（`--specpath build`）解析，**必须写绝对路径 `%~dp0...`**，否则报 `Unable to find '...\build\DSH_Launcher.ico'`；而 `--icon` 按当前目录解析可直接写相对路径。
 - **验证**（不开 GUI，`runtime/tmp/icon_design/verify_icon.py`）：ICO 文件头 `00000100`；`shell32.ExtractIconExW(exe, 0, ...)` 数 exe 内嵌图标 > 0；`launcher.get_icon_path()` + `LoadImageW` 拿到有效 HICON。注意 **`ExtractIconExW` 在 shell32.dll**（不在 user32）。详见 DEV_NOTES 需求 #26。
+- **【鲸鱼放大/去圈 2026-08-16】图标主体最大化**：用户反馈 v1 图标"外围一圈绿色太多、鲸鱼图案太小"。用 `runtime/tmp/icon_design/whale_v3.py` 重做——**颜色阈值标主体**（亮绿 G>160 且 R<150、黄闪 R>200）→ **行列密度过滤**（保留 ≥ 最大列/行计数的 5% 的列/行）剔孤立边角像素（鳍/水印）得**紧主体包围盒** → 以中心扩正方形、边距 `MARGIN_RATIO=0.01` 收紧到最小、主体铺满画布 → **主体外像素置透明**（正式版 `DSH_Launcher.ico`）/深绿底 `(0,83,41)`（备选 `DSH_Launcher_bg.ico`）。实测**主体包围盒 98%×81%**（占画布）、不透明像素 35.7%，识别度明显提升；`verify_v3.py` 输出各小尺寸放大拼图检查可读性。详见 DEV_NOTES 需求 #33。
 - 通用 tkinter 图标经验已同步 `skills/python-tkinter-desktop-dev.zip`（6.10 自定义 .ico + 检查清单 + `tray_icon_template.py` 模板）。
 
 ### 3.8 用量统计 + 消息行「本次token」（dsh-usage-stats 插件，2026-08-16 加入内置，v0.2.0 合并）
@@ -300,7 +308,7 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 - **根因①（运行时版本门槛）**：默认 `runtime.mode: managed`，首次启动必须找到 **Python 3.11+** 自动建隔离 venv 装依赖。本机只有 Python 3.10/3.8 → `resolveBootstrapPython` 探测 `python`/`py -3`/`python3` 全失败 → `manager.initialize()` 抛错 → 插件 `ctx.logger.error` 明确打印 **"runtime not ready; the vision-tools skill, activation bootstrap, and Agent-scoped visual tools are NOT registered. Settings remain available for repair."**。旁证：`DSH_HOME/cache/dsh-vision-toolkit/` 下只有 `artifact-access.key`、没有 `python/` 运行时目录。
 - **根因②（API 凭据）**：默认 provider `https://api.inferera.com/v1`、credential 引用 `VISION_API_KEY`，`.credentials.yaml` 无此 key——运行时修好也需先配 key。
 - **排查"装了但没完全生效"顺序**：① dependencies + bundles 是否含包 → ② 设 DSH_HOME 后 dump-config 看插件层 → ③ 有无 `dsh.client`（双端才有 UI）→ ④ **插件自身的外部运行时要求**（外部解释器版本 / 下载型依赖 / API key）——最容易被忽略 → ⑤ 重启服务后看 `server.log` 里插件自己 `ctx.logger.error` 的降级提示。
-- **修复（绿色便携）**：便携 Python 3.11+ 进 `runtime/python`，在插件 Web Settings（如 vision-toolkit 命名空间）把 `runtime.python` 指向它、配好 credential，重启服务；成功标志 = server.log 出现 "dsh-vision-toolkit ... ready"。
+- **修复（绿色整合）**：便携 Python 3.11+ 进 `runtime/python`，在插件 Web Settings（如 vision-toolkit 命名空间）把 `runtime.python` 指向它、配好 credential，重启服务；成功标志 = server.log 出现 "dsh-vision-toolkit ... ready"。
 
 ### 4.9 纯客户端插件也必须带宿主端 `lib/index.js`（空 apply）→ 缺失则服务启动即退出；消息行扩展点盘点（2026-08-16，dsh-message-actions 实测）
 
@@ -344,9 +352,9 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 | 填了受信任主机却仍整个局域网都能访问 | dsh 官方行为（`resolveLanTrust` 无条件 `[...lanAddresses, ...extra]` 自动全局域网放行），非 bug——需要"只信任填写的"语义必须应用 `patch_lan_trust()` 补丁（改 `node_modules` 内官方文件，升级重装会还原，`install_dsh`/`start_server` 会自动重打） |
 | 点最小化窗口却进了任务栏、没进系统托盘 | ①钩子只装在 `add()` 没在 `__init__`（第一次最小化时托盘图标还没出现→漏拦截）→ 移到 `__init__`；②`winfo_id()` 拿到的是 `TkChild` 子窗口、或窗口未 realize 导致 `GetAncestor` 拿错窗口 → 先 `update_idletasks()` 再 `GetAncestor(GA_ROOT)`；③WndProc 里直接调 `after`/`withdraw` 重入 Tcl 崩溃或 `--windowed` 下 `stderr=None` 输出崩 → 改用「WndProc 只置标志位 + `after(80,...)` 轮询 `poll()`」；恢复后再最小化又失效则 `remove()` 误还原了窗口过程（应只删图标，退出才 `dispose()` 还原） |
 
-## 六、工作流建议（一键启动器开发顺序）
+## 六、工作流建议（绿色整合版启动器开发顺序）
 
-1. **先理数据目录**：确认 `DSH_HOME` / `runtime/` 全部重定向到程序目录，明确"绿色便携"边界。
+1. **先理数据目录**：确认 `DSH_HOME` / `runtime/` 全部重定向到程序目录，明确"绿色整合"边界。
 2. **再搭启动**：便携 Node → `lib/bin.js` 启动 → `stdin=PIPE` → 就绪检测 → 自动开浏览器。
 3. **后做维护**：检查更新（备份优先）→ 插件管理（pnpm 便携化）→ 数据维护（会话删除）→ 绿色版自更新（双通道，见 3.4）。
 4. **最后开发插件**：先写宿主 `index.js`（路由），再写客户端 `client.js`（设置区块），双端声明齐全 → `--dump-config` 验证插件树 → 抓 `__DSH_BOOT__` 验证客户端 → 实测路由。

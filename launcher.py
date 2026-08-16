@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-DeepSeek Harness 一键启动器 (Python 标准库实现, 无第三方依赖)
+DeepSeek Harness 绿色整合版启动器 (Python 标准库实现, 无第三方依赖)
 
 作用:
     1. 自动检测 / 下载便携版 Node.js 到 runtime/node
@@ -79,7 +79,7 @@ def get_icon_path():
 
 
 # 主窗口标题 (单实例检测时按此标题查找已运行窗口, 与 run_gui 中 root.title 保持一致)
-WINDOW_TITLE = "DeepSeek Harness 一键启动器"
+WINDOW_TITLE = "DeepSeek Harness 绿色整合版启动器"
 # 单实例互斥量名称 (exe 版与源码版共用同名, 保证全局只允许一个启动器实例)
 SINGLE_INSTANCE_MUTEX = "DSH_Launcher_GreenPortable_SingleInstance"
 ERROR_ALREADY_EXISTS = 183              # CreateMutexW 返回该错误码表示互斥量已存在
@@ -112,8 +112,8 @@ def _acquire_single_instance(mutex_name=SINGLE_INSTANCE_MUTEX):
 
 def _activate_existing_launcher(window_title=WINDOW_TITLE):
     """把已运行的启动器窗口调到前台并恢复显示 (2026-08-16):
-    覆盖三种状态: 正常显示 / 最小化到任务栏 / 隐藏到系统托盘 (Tk withdraw)。
-    返回是否找到并激活成功。新实例是当前前台进程, 可合法将前台让给旧窗口,
+    覆盖两种状态: 正常显示 (被遮挡/最小化到任务栏/托盘图标在但窗口最小化)。
+    新实例是当前前台进程, 可合法将前台让给旧窗口,
     故 SetForegroundWindow 通常有效, 再以 BringWindowToTop 兜底。"""
     user32 = ctypes.windll.user32
     user32.FindWindowW.restype = wintypes.HWND
@@ -139,7 +139,7 @@ DEFAULT_CONFIG = {
     "python_release": "20260807",# python-build-standalone 发布标签(日期)
     "dsh_port": 3080,            # dsh web 服务端口
     "dsh_host": "127.0.0.1",     # dsh web 服务绑定地址: "127.0.0.1"=仅本机 / "0.0.0.0"=局域网可访问
-    "trusted_hosts": [],         # 受信任主机列表 (host 或 host:port), 追加到 --trusted-host
+    "trusted_hosts": [],         # 受信任主机列表 (host 或 host:port); 空=局域网模式自动信任全部局域网, 非空=只信任填写的
     "dsh_package": "@deepseek-ai/dsh",   # dsh 包名
     # 启动服务后是否自动打开 WebUI 浏览器页面 (False 则只启动服务, 需手动点「打开界面」)
     "auto_open_browser": True,
@@ -220,7 +220,7 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # 发布流程: 打 tag v{GREEN_VERSION} + Release 资产 DSH_Launcher_GreenPortable_Online_<日期>_v<tag>.zip
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
-GREEN_VERSION = "1.0.5"                            # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
+GREEN_VERSION = "1.0.6"                            # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
 GREEN_VERSION_DATE = "2026年08月16日"               # 绿色版版本日期
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
@@ -617,6 +617,7 @@ class Launcher:
         self.log("dsh 安装成功 (版本: %s)" % self.dsh_version())
         self.patch_frontend()   # 安装/升级后注入 WebUI 心跳脚本 (单页面去重)
         self.patch_web_startup()  # 安装/升级后补丁 startup.js, 放开 --host 0.0.0.0 (局域网访问)
+        self.patch_lan_trust()    # 安装/升级后补丁 resolveLanTrust, 支持「只信任填写的主机」
         return True
 
     def prepare_dsh(self, force=False):
@@ -1538,8 +1539,9 @@ class Launcher:
         dsh_host = str(self.config.get("dsh_host", "127.0.0.1")).strip()
         if dsh_host:
             command.extend(["--host", dsh_host])
-        # 受信任主机: 逐条追加 --trusted-host (用于信任非 IP 主机名/代理场景;
-        # 绑定 0.0.0.0 时 dsh 会自动信任全部局域网 IP, 一般无需填写)
+        # 受信任主机: 逐条追加 --trusted-host。
+        # 语义 (patch_lan_trust 已配合): 不填=绑定 0.0.0.0 时自动信任全部局域网;
+        # 填了任意一个=只信任显式填写的地址(host 或 host:port), 不再自动全局域网放行。
         for trusted_host in self.config.get("trusted_hosts", []) or []:
             trusted_host = str(trusted_host).strip()
             if trusted_host:
@@ -1571,6 +1573,37 @@ class Launcher:
         except OSError:
             return False
         self.log("已补丁 dsh web 启动器: 放开 --host 0.0.0.0 (局域网访问)")
+        return True
+
+    def patch_lan_trust(self):
+        """补丁 dsh web 的 resolveLanTrust: 实现「受信任主机」的精确语义 (幂等可重复)。
+        官方实现绑定 0.0.0.0 时无条件把全部局域网 IPv4 加入信任列表 (trustedHosts =
+        [...lanAddresses, ...extra]), 导致用户填写了 trusted_hosts 后仍全局域网放行,
+        "填了也白填"。本补丁改为: trusted_hosts 为空时保持默认(自动信任全部局域网);
+        trusted_hosts 非空时不再自动信任局域网, 只信任用户显式填写的地址(host 或 host:port)。
+        dsh 升级重装后由 install_dsh() 自动重新补丁。返回 True 表示就绪(或已是最新)。"""
+        index_path = os.path.join(DSH_DIR, "node_modules", "@deepseek-ai",
+                                  "dsh-web-app", "lib", "index.js")
+        if not os.path.isfile(index_path):
+            return False
+        marker = 'trustedHosts: [...lanAddresses, ...extra]'
+        try:
+            with open(index_path, "r", encoding="utf-8") as file_handle:
+                text = file_handle.read()
+        except OSError:
+            return False
+        if marker not in text:
+            return True
+        replacement = ('trustedHosts: extra.length === 0 '
+                       '? [...lanAddresses, ...extra] '
+                       ': [...extra] /* dsh-launcher: 填了信任主机则只信任显式填写的 */')
+        new_text = text.replace(marker, replacement)
+        try:
+            with open(index_path, "w", encoding="utf-8") as file_handle:
+                file_handle.write(new_text)
+        except OSError:
+            return False
+        self.log("已补丁 dsh web 信任围栏: 受信任主机非空时只信任显式填写的地址")
         return True
 
     def lan_addresses(self):
@@ -1706,6 +1739,7 @@ class Launcher:
         self.prepare_all()
         self.patch_frontend()             # 确保前端已注入心跳脚本 (dsh 升级重装后自动补齐)
         self.patch_web_startup()          # 确保 startup.js 已补丁 (dsh 升级重装后自动补齐, 局域网绑定用)
+        self.patch_lan_trust()            # 确保 resolveLanTrust 已补丁 (受信任主机精确语义)
 
         command = self.build_server_command()
         self.log("启动命令: %s" % " ".join(command))
@@ -2128,7 +2162,7 @@ class Launcher:
 # Windows 系统托盘图标 (用 ctypes 调用 Win32 API, 零额外依赖)
 # ---------------------------------------------------------------------------
 class SysTrayIcon:
-    """Windows 系统托盘图标, 用于最小化到后台而非任务栏 (2026-08-16)"""
+    """Windows 系统托盘图标: 启动即常驻, 不随最小化/恢复而消失 (2026-08-16)"""
 
     # Windows 常量
     NIM_ADD = 0x00000000
@@ -2507,9 +2541,9 @@ def run_gui():
         about_window.grab_set()         # 模态, 关闭前不能操作主窗口
 
         # 主标题
-        ttk.Label(about_window, text="DeepSeek Harness 一键启动器",
+        ttk.Label(about_window, text="DeepSeek Harness 绿色整合版启动器",
                   font=("Microsoft YaHei", 13, "bold")).pack(pady=(18, 4))
-        ttk.Label(about_window, text="绿色便携版 · 所有文件与依赖全部本地化",
+        ttk.Label(about_window, text="绿色整合版 · 所有文件与依赖全部本地化",
                   font=("Microsoft YaHei", 9), foreground="#666666").pack(pady=(0, 12))
 
         # 信息表 (左标签 / 右取值)
@@ -2532,7 +2566,7 @@ def run_gui():
         # 绿色便携·本地化说明区块 (2026-08-16 补充: 强调所有文件与依赖全部本地化)
         local_frame = ttk.Frame(about_window)
         local_frame.pack(fill="x", padx=24, pady=(12, 0))
-        ttk.Label(local_frame, text="绿色便携 · 本地化特点", font=("Microsoft YaHei", 9, "bold"),
+        ttk.Label(local_frame, text="绿色整合 · 本地化特点", font=("Microsoft YaHei", 9, "bold"),
                   foreground="#2f6f2f").pack(anchor="w")
         local_points = [
             "· 双击即用，无需安装、无需手动配置环境",
@@ -2561,20 +2595,22 @@ def run_gui():
     about_btn = ttk.Button(status_frame, text="关于", command=show_about)
     about_btn.pack(side="right", padx=(10, 0))
 
-    # ---------- 最小化到系统托盘 (后台运行, 不占任务栏) ----------
+    # ---------- 最小化: 任务栏 + 托盘图标都保持常驻 (2026-08-16) ----------
+    # 设计说明: 旧逻辑是"最小化 → 隐藏窗口进托盘; 恢复 → 移除托盘图标",
+    # 导致最小化后任务栏消失、展开后托盘消失, 用户容易误以为程序退出了。
+    # 现在改为: 最小化只把窗口缩到任务栏 (任务栏图标保留), 托盘图标从启动
+    # 就常驻不消失; 点任务栏或托盘图标都能恢复窗口, 双入口始终可见。
     def minimize_to_tray():
-        """点击最小化按钮时: 隐藏主窗口, 缩到系统托盘"""
-        added = tray_icon.add()
+        """点击最小化按钮时: 最小化到任务栏 (任务栏图标保留), 托盘图标保持常驻"""
+        added = tray_icon.add()   # 幂等: 已常驻则直接返回 True
+        root.iconify()            # 最小化到任务栏, 不隐藏窗口 (任务栏图标不消失)
         if added:
-            root.withdraw()   # 托盘图标添加成功才隐藏窗口
-            append_log("已最小化到系统托盘, 点击托盘图标可恢复窗口。")
+            append_log("已最小化到任务栏, 托盘图标常驻, 点任务栏或托盘图标可恢复窗口。")
         else:
-            # 托盘添加失败 (罕见): 退回系统默认最小化到任务栏, 避免窗口无反应
-            root.iconify()
+            append_log("已最小化到任务栏, 点任务栏图标可恢复窗口。")
 
     def restore_from_tray():
-        """点击托盘图标时: 恢复显示主窗口"""
-        tray_icon.remove()
+        """点击托盘图标时: 恢复显示主窗口 (托盘图标保持常驻, 不删除)"""
         root.deiconify()
         root.lift()
         root.focus_force()
@@ -2599,8 +2635,13 @@ def run_gui():
             tk_root=root,
             on_click_restore=restore_from_tray,
             on_minimize=minimize_to_tray,
-            tooltip="DeepSeek Harness 一键启动器 (绿色便携版)",
+            tooltip="DeepSeek Harness 绿色整合版启动器",
         )
+        # 启动即添加托盘图标并常驻 (2026-08-16): 无论是否最小化, 托盘图标都显示,
+        # 避免"展开后托盘消失"让用户误以为程序退出了。add() 幂等且失败不抛异常,
+        # 若启动时添加失败, 最小化时会再次尝试。
+        if tray_icon.add():
+            append_log("托盘图标已常驻, 关闭窗口时请点 [退出] 或点 X 确认。")
     except Exception as error:
         # 托盘初始化失败 (如窗口环境异常) 时降级: 退回普通最小化, 不拖垮整个 GUI
         tray_icon = _NoTray()
@@ -3536,8 +3577,8 @@ def run_gui():
     trusted_entry.grid(row=1, column=1, padx=8, pady=6, sticky="w")
 
     ttk.Label(network_frame,
-              text="受信任主机: 可空, 逗号分隔的 host 或 host:port。服务绑定=局域网时 dsh 会自动信任全部局域网 IP,"
-                   " 一般无需填写; 用于信任非 IP 主机名/代理场景。",
+              text="受信任主机: 可空, 逗号分隔的 host 或 host:port。不填=绑定局域网时自动信任全部局域网 IP;"
+                   " 填了任意一个=只信任填写的地址, 不再自动全局域网放行。",
               foreground="#606060").grid(row=2, column=0, columnspan=2,
                                           padx=8, pady=(0, 6), sticky="w")
 
@@ -3630,7 +3671,7 @@ def run_gui():
         root.after(80, poll_tray_loop)
     root.after(80, poll_tray_loop)
 
-    append_log("DeepSeek Harness 一键启动器已启动, 点击 [安装环境] 或直接 [启动服务] 开始。")
+    append_log("DeepSeek Harness 绿色整合版启动器已启动, 点击 [安装环境] 或直接 [启动服务] 开始。")
     root.mainloop()
 
 

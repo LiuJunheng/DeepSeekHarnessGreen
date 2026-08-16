@@ -37,9 +37,9 @@ if not exist "%PYINSTALLER_DIR%" (
 )
 
 rem 3. Build single-file windowed exe (no UPX to reduce AV false positives)
-rem    --icon: exe 图标 (绿色小鲸鱼); --add-data: 把图标打进 onefile 临时目录,
-rem    供运行时窗口图标/托盘图标加载 (源码模式则直接用程序根目录的 DSH_Launcher.ico)
-rem    注意: --add-data 的源路径按 spec 目录(build\)解析, 必须用 %~dp0 绝对路径
+rem    --icon: exe ?? (?????); --add-data: ????? onefile ????,
+rem    ????????/?????? (?????????????? DSH_Launcher.ico)
+rem    ??: --add-data ????? spec ??(build\)??, ??? %~dp0 ????
 set "PYTHONPATH=%PYINSTALLER_DIR%;%PYTHONPATH%"
 echo [INFO] Building DSH_Launcher.exe ...
 "%PYTHON_CMD%" -m PyInstaller --onefile --windowed --noupx --name DSH_Launcher --icon "%~dp0DSH_Launcher.ico" --add-data "%~dp0DSH_Launcher.ico;." --distpath dist --workpath build --specpath build "%~dp0launcher.py"

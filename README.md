@@ -1,8 +1,10 @@
-# DeepSeek Harness 一键启动器（绿色便携版）
+# DeepSeek Harness 绿色整合版启动器
 
 把 DeepSeek Harness（`dsh`）封装成**双击即用**的本地启动器：
-不用手动敲安装命令、不用手动开浏览器。**绿色便携**：Node、dsh、npm/pnpm 缓存、会话数据、临时文件
+不用手动敲安装命令、不用手动开浏览器。**绿色整合**：Node、dsh、npm/pnpm 缓存、会话数据、临时文件
 全部只在本目录 `runtime/` 下存取，**不写用户主目录、不装系统环境**，整目录拷走即用。
+
+> **其他语言**：English — [README_EN.md](README_EN.md)（随版本更新翻译一次，供国际用户参考；本文为准）。
 
 ---
 
@@ -17,7 +19,7 @@ DeepSeekHarnessLauncher/
 ├── DSH_Launcher.ico       # 启动器专属图标（绿色小鲸鱼，窗口/托盘/exe 三处统一）
 ├── build_exe.bat          # 将 launcher.py 打包为 exe 的工具
 ├── config.json            # 配置（镜像源 / 端口 / Node / Python 版本）
-├── runtime/               # ★ 首次运行自动生成，全部本地数据都在这（绿色便携）
+├── runtime/               # ★ 首次运行自动生成，全部本地数据都在这（绿色整合）
 │   ├── node/              # 便携版 Node.js（自动下载）
 │   ├── dsh/               # 本地安装的 @deepseek-ai/dsh 包
 │   ├── dsh-home/          # dsh 数据（会话/配置/存储）
@@ -32,7 +34,7 @@ DeepSeekHarnessLauncher/
 │   └── server.log         # 服务运行日志
 ├── plugins/               # 内置插件源码（dsh-archive-purge 清理归档 / dsh-session-rewind 会话回退 / dsh-file-browser 文件浏览 / dsh-usage-stats 用量统计）
 ├── skills/                # 本项目的 DSH 经验 Skill（已安装到 TRAE 全局 skills）
-└── README.md
+└── README.md / README_EN.md  # 中文说明（维护主体）/ 英文说明（随版本更新翻译一次）
 ```
 
 ## 二、使用步骤
@@ -68,10 +70,10 @@ DeepSeekHarnessLauncher/
 | 插件管理 | 弹出插件管理窗口：查看已安装插件、搜索插件（npm 注册表 + GitHub 官方 `dsh-plugin` 话题页）、安装 / 移除插件（详见第五章） | 环境已就绪 |
 | 数据维护区 | 主窗口「数据维护」区（需先停止服务）：**会话管理**按钮 → 弹出会话列表，**勾选（可全选/单选）**后可**恢复（取消归档）**或**永久删除**选中的会话，详见第六章 | 服务停止后 |
 | 刷新状态 | 手动重新检测环境与服务状态 | 任何时候 |
-| 关于（右上角） | 弹出「关于」弹窗：作者、版本号、版本日期、本仓库与官方 dsh 仓库链接（可点击打开），并附**绿色便携·本地化特点**说明（所有文件与依赖全部本地化） | 任何时候 |
-| 最小化按钮 | 缩到系统托盘后台运行（任务栏不显示，主窗口隐藏），点托盘图标恢复显示 | 任何时候 |
+| 关于（右上角） | 弹出「关于」弹窗：作者、版本号、版本日期、本仓库与官方 dsh 仓库链接（可点击打开），并附**绿色整合·本地化特点**说明（所有文件与依赖全部本地化） | 任何时候 |
+| 最小化按钮 | 最小化到任务栏（任务栏图标保留），**托盘图标从启动起常驻**，点任务栏或托盘图标都能恢复窗口 | 任何时候 |
 | 右上角 X 关闭 | 先弹二次确认（避免误关），确认后自动停止 dsh 服务并退出 | 任何时候 |
-| 防重复启动 | 若启动器已在运行（含最小化到任务栏 / 隐藏到系统托盘），再次打开时不会重复启动服务，而是直接把已运行的窗口调到前台 | 任何时候 |
+| 防重复启动 | 若启动器已在运行（含最小化到任务栏 / 托盘后台运行），再次打开时不会重复启动服务，而是直接把已运行的窗口调到前台 | 任何时候 |
 
 > **专属图标**：启动器使用自定义 **绿色小鲸鱼** 图标（`DSH_Launcher.ico`），任务栏 / 系统托盘 /
 > exe 文件三处统一，一眼区分这是 DSH 绿色版（不再是 PyInstaller 默认图标）。
@@ -109,7 +111,7 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 | `python_release` | python-build-standalone 发布标签（日期） | `20260807` |
 | `dsh_port` | 服务端口 | `3080` |
 | `dsh_package` | dsh 包名 | `@deepseek-ai/dsh` |
-| `tmp_dir` | 临时目录（空 = 默认 `runtime/tmp`，绿色便携；可自定义为任意绝对路径） | 空 |
+| `tmp_dir` | 临时目录（空 = 默认 `runtime/tmp`，绿色整合；可自定义为任意绝对路径） | 空 |
 | `default_workspace` | 默认工作区（空 = 自动解析：不冲突时用程序根目录，冲突时自动用程序目录内 `workspace` 子目录；可自定义绝对路径，与临时目录冲突会自动回退并警告） | 空 |
 | `dsh_host` | dsh web 服务绑定地址：`127.0.0.1`=仅本机访问 / `0.0.0.0`=局域网内其它电脑可远程打开 WebUI | `127.0.0.1` |
 | `trusted_hosts` | 受信任主机列表（数组，元素为 host 或 host:port）。**不填（默认）= 绑定局域网时自动信任全部局域网 IP；填了任意一个 = 只信任填写的地址，不再自动全局域网放行** | `[]` |
@@ -125,7 +127,7 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 - **安全边界（请知悉）**：选择局域网模式且不填受信任主机 = **整个局域网网段开放**，任何能连到本机局域网 IP 的设备都能打开并操作 WebUI（可用工具执行）；填了受信任主机则只对填写的主机开放。dsh 的**设置 / 凭据（API Key）类特权操作仍仅本机可改**（远程浏览器访问会返回 403），属官方安全保护。本机模式（默认 `127.0.0.1`）则与以往完全一致，仅本机可访问。
 - 命令行/配置文件等价设置：`config.json` 的 `dsh_host`（`127.0.0.1` / `0.0.0.0`）与 `trusted_hosts`（数组）。
 
-## 四、绿色便携说明
+## 四、绿色整合说明
 - **全部本地化**：便携 Node、dsh 包、npm 缓存、pnpm 存储、会话数据、临时文件，全部在 `runtime/` 下，不写用户主目录（`~/.npm`、`~/.pnpm-store` 等都不会产生）
 - **不污染系统**：不装全局 npm 包、不改 PATH、不写注册表
 - **整目录迁移**：把整个文件夹复制到任意位置 / 另一台电脑，双击 start.bat 即可继续使用（会话记录跟着走）
@@ -146,9 +148,9 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 ### 轻量分发 zip（精简在线版，约 8MB）
 > 相较"整目录迁移"，此 zip **不含 `runtime/`（不带已下载的环境与会话）**，新机联网后由启动器自动下载 Node / Python / dsh，体积小、适合放到 GitHub Release 分发。
 >
-> 打包内容（即项目根目录的"发货清单"）：`launcher.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`config.json`、`README.md`、`DEV_NOTES.md`、`.gitignore`、`plugins/dsh-archive-purge/`、`plugins/dsh-session-rewind/`、`plugins/dsh-file-browser/`、`plugins/dsh-usage-stats/`、`skills/dsh-deploy-maintain/`。
+> 打包内容（即项目根目录的"发货清单"）：`launcher.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`config.json`、`README.md`、`README_EN.md`、`DEV_NOTES.md`、`.gitignore`、`plugins/dsh-archive-purge/`、`plugins/dsh-session-rewind/`、`plugins/dsh-file-browser/`、`plugins/dsh-usage-stats/`、`skills/dsh-deploy-maintain/`。
 
-- **最新下载**（GitHub Release，tag `v1.0.3`）：<https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
+- **最新下载**（GitHub Release，tag `v1.0.6`）：<https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
 - 仓库：<https://github.com/LiuJunheng/DeepSeekHarnessGreen>
 
 新机使用三步：
@@ -180,7 +182,7 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 - 底部状态栏实时显示"正在安装 / 安装成功 / 共 N 条结果"等进度。
 
 ### 说明
-- 插件实际安装在 `runtime/dsh-home/profiles/web/`（profile 的 `node_modules` 与 `package.json`），走 `dsh plugin`（内部转发 pnpm），**绿色便携**：pnpm 及其存储都在 `runtime/` 下，不写用户主目录。
+- 插件实际安装在 `runtime/dsh-home/profiles/web/`（profile 的 `node_modules` 与 `package.json`），走 `dsh plugin`（内部转发 pnpm），**绿色整合**：pnpm 及其存储都在 `runtime/` 下，不写用户主目录。
 - **安装后自动生效编排层**：任何插件安装 / 移除 / 启停后，启动器自动把声明 `dsh.bundle.patch` 的依赖写进 profile 的 `dsh.profile.bundles`（即使 pnpm 因构建脚本警告 `ERR_PNPM_IGNORED_BUILDS` 以退出码 1 结束，也会兜底同步，**无需手动编辑 package.json**）；重启服务后插件即加载。
 - **启用 / 停用开关**：对已安装插件可一键停用（从编排层移除、保留依赖，状态记在 `dsh.profile.disabled`）或重新启用；重启服务后生效。
 - 首次使用插件管理时启动器会自动用便携 Node 安装 pnpm 到 `runtime/pnpm-home`。
@@ -252,7 +254,7 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 ### 安全与回退
 - **不替换** `config.json`（你自定义的端口/镜像设置）与 `runtime/`（你的会话数据 / 已装环境）。
 - 覆盖前旧文件自动备份到 `runtime/update/backup/`，新版有问题可手动复制回根目录回退。
-- 分发 zip 命名约定：`DSH_Launcher_GreenPortable_Online_<日期>_v<版本>.zip`，Release tag 为 `v<版本>`（当前 `v1.0.5`）。
+- 分发 zip 命名约定：`DSH_Launcher_GreenPortable_Online_<日期>_v<版本>.zip`，Release tag 为 `v<版本>`（当前 `v1.0.6`）。
 - 内置插件源码随绿色版更新，但**已安装**到 `runtime/dsh-home/profiles/web` 的插件副本是 pnpm 拷贝，需到「插件管理」重新安装本地插件才生效。
 
 ## 八、内置 Python 与 exe 打包
@@ -292,7 +294,7 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 
 - 源文件在项目 `skills/dsh-deploy-maintain/`（主文档 `SKILL.md` + `checklists/` 检查清单 + `references/` 插件骨架与数据目录详解）。
 - 已安装到 TRAE 全局 skills（`~/.trae-cn/skills/dsh-deploy-maintain/`），新会话可直接用。
-- 内容：绿色便携部署（便携 Node / 环境变量重定向 / 工作区 ACL 沙箱 / exe 打包）、日常维护（更新备份 / 插件管理 / 数据维护）、DSH 插件开发（双端加载 / `ctx.effect` 路由注册 / `exports` 坑）、51 条避坑浓缩为排查速查表。
+- 内容：绿色整合部署（便携 Node / 环境变量重定向 / 工作区 ACL 沙箱 / exe 打包）、日常维护（更新备份 / 插件管理 / 数据维护）、DSH 插件开发（双端加载 / `ctx.effect` 路由注册 / `exports` 坑）、51 条避坑浓缩为排查速查表。
 
 ## 十一、常见问题
 
@@ -304,7 +306,7 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 | 端口被占用 | 设置里改端口（如 3090）后保存，重新启动 |
 | 想彻底卸载 | 直接删掉整个文件夹即可（不写注册表、不留系统残留） |
 | 网页报 "Failed to fetch" / 一直转圈 | 通常不是网络问题，而是**服务进程退出了**（早期版本 bug：dsh 在 stdin 关闭时会静默退出）。已修复：启动器保持服务 stdin 管道打开并常驻守护。若仍遇到，看 `runtime/server.log` 与启动器日志，确认服务是否存活 |
-| shell 工具报 `Windows ACL temp root must be outside the workspace` | 该会话的工作区包含了 `runtime/tmp`（典型：工作区选了程序根目录）。绿色便携把临时目录放在程序目录内，dsh 的 ACL 沙箱要求临时目录必须在工作区**外部**。解决：开新会话时在工作区选择器里选 **workspace**（`…\workspace`，启动器会自动解析并预置）或任何不含 `runtime/tmp` 的目录；旧会话无法改工作区，只能归档/删除或开新会话 |
+| shell 工具报 `Windows ACL temp root must be outside the workspace` | 该会话的工作区包含了 `runtime/tmp`（典型：工作区选了程序根目录）。绿色整合把临时目录放在程序目录内，dsh 的 ACL 沙箱要求临时目录必须在工作区**外部**。解决：开新会话时在工作区选择器里选 **workspace**（`…\workspace`，启动器会自动解析并预置）或任何不含 `runtime/tmp` 的目录；旧会话无法改工作区，只能归档/删除或开新会话 |
 | dsh 网页打不开 | 看 `runtime/server.log`；确认防火墙没拦 127.0.0.1 |
 | 设置 API Key 时报 `EPERM: rename denied` | 偶发，属安全软件（如火绒）实时扫描与写文件并发冲突。重试一次即可保存成功；若频繁出现，把 `DeepSeekHarnessLauncher` 目录加入安全软件白名单 |
 | 安装插件时日志报 `SyntaxError: Unexpected token '\ufeff'` | 该 npm 包的 `package.json` 带了 UTF-8 BOM（发布者的编码问题），dsh 的 JSON 解析会崩溃。已内置修复：启动器会在插件命令前自动清除这些 BOM 并重试，正常重试后即可装成功 |
