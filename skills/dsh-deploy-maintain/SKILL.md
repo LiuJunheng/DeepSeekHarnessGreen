@@ -198,6 +198,19 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
 - **消息行显示实现**：走官方链式插槽 `conversation.chat.turnTail`（操作行**上方**内容区）——`ctx.slots.register({ name: "conversation.chat.turnTail", priority: -10, select: (owner) => ({ turn: owner.turn, seq: owner.seq }) }, 组件)`，组件拿 `matched` + `useSession`，从 `snapshot.nodes`（`kind==="assistant"` 且 `turn` 匹配）求和 `usage`；无数据静默不渲染。
 - **验证**：`node --check` 语法 + 无头 Edge CDP 实测（见 4.9 / DEV_NOTES 避坑 #51）。
 
+### 3.9 启动器单实例（防重复启动，2026-08-16）
+
+- **需求**：用户可能多次打开启动器，每次都会尝试起服务、浪费资源。要求第二次打开时把已运行的窗口调到前台、自身退出。
+- **实现 = 命名互斥量 + 旧窗口激活**（纯 Win32，零依赖）：
+  - **互斥量**：`kernel32.CreateMutexW(None, False, "DSH_Launcher_GreenPortable_SingleInstance")`，`GetLastError()==183(ERROR_ALREADY_EXISTS)` 即已有实例。
+  - **关键避坑**：互斥量句柄必须由实例**整个生命周期持有**（存模块级变量），否则 Python GC 释放句柄后互斥量消失，之后再开的实例误判为第一个 → 单实例形同虚设。创建失败（句柄 0）降级放行。
+  - **旧窗口激活**：`user32.FindWindowW(None, WINDOW_TITLE)` → `ShowWindow(hwnd, SW_RESTORE=9)`（同时恢复最小化+隐藏）→ `SetForegroundWindow` → `BringWindowToTop` 兜底。新实例是当前前台进程，合法让位，`SetForegroundWindow` 通常有效。
+  - **插入位置**：`run_gui()` 开头、`tk.Tk()` 创建主窗口之前（在 `Launcher()` 实例化之后即可），避免重复初始化再退。
+  - **降级重试**：互斥量在但 `FindWindow` 找不到窗口（旧实例仍在初始化）→ 重试 10 次（0.3s）→ 仍失败弹 warning 让用户处理残留进程。
+  - **窗口标题常量化**：`root.title(...)` 的标题提取为模块级 `WINDOW_TITLE`，查找与创建共用同一字符串，避免硬编码不一致找不到窗口。
+- **CLI 不拦截**：`--start` 等命令模式不创建互斥量，保持"启动(或复用已运行)服务"原语义。
+- **验证**：`verify_single_instance.py`（互斥量创建/释放幂等）+ `verify_activate_window.py`（真实窗口三种状态：正常/最小化 `IsIconic=TRUE`/托盘隐藏 `IsWindowVisible=FALSE` → 激活后均恢复可见）。详见 DEV_NOTES 需求 #29。
+
 ## 四、DSH 插件开发（双端加载 + 路由注册）
 
 ### 4.1 插件 = npm 包 + 双入口（最容易漏）

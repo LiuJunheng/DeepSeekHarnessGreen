@@ -71,6 +71,7 @@ DeepSeekHarnessLauncher/
 | 关于（右上角） | 弹出「关于」弹窗：作者、版本号、版本日期、本仓库与官方 dsh 仓库链接（可点击打开） | 任何时候 |
 | 最小化按钮 | 缩到系统托盘后台运行（任务栏不显示，主窗口隐藏），点托盘图标恢复显示 | 任何时候 |
 | 右上角 X 关闭 | 先弹二次确认（避免误关），确认后自动停止 dsh 服务并退出 | 任何时候 |
+| 防重复启动 | 若启动器已在运行（含最小化到任务栏 / 隐藏到系统托盘），再次打开时不会重复启动服务，而是直接把已运行的窗口调到前台 | 任何时候 |
 
 > **专属图标**：启动器使用自定义 **绿色小鲸鱼** 图标（`DSH_Launcher.ico`），任务栏 / 系统托盘 /
 > exe 文件三处统一，一眼区分这是 DSH 绿色版（不再是 PyInstaller 默认图标）。
@@ -240,7 +241,7 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 ### 安全与回退
 - **不替换** `config.json`（你自定义的端口/镜像设置）与 `runtime/`（你的会话数据 / 已装环境）。
 - 覆盖前旧文件自动备份到 `runtime/update/backup/`，新版有问题可手动复制回根目录回退。
-- 分发 zip 命名约定：`DSH_Launcher_GreenPortable_Online_<日期>_v<版本>.zip`，Release tag 为 `v<版本>`（当前 `v1.0.4`）。
+- 分发 zip 命名约定：`DSH_Launcher_GreenPortable_Online_<日期>_v<版本>.zip`，Release tag 为 `v<版本>`（当前 `v1.0.5`）。
 - 内置插件源码随绿色版更新，但**已安装**到 `runtime/dsh-home/profiles/web` 的插件副本是 pnpm 拷贝，需到「插件管理」重新安装本地插件才生效。
 
 ## 八、内置 Python 与 exe 打包

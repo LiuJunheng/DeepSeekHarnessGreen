@@ -77,6 +77,60 @@ def get_icon_path():
     candidate = os.path.join(BASE_DIR, "DSH_Launcher.ico")
     return candidate if os.path.exists(candidate) else None
 
+
+# 主窗口标题 (单实例检测时按此标题查找已运行窗口, 与 run_gui 中 root.title 保持一致)
+WINDOW_TITLE = "DeepSeek Harness 一键启动器"
+# 单实例互斥量名称 (exe 版与源码版共用同名, 保证全局只允许一个启动器实例)
+SINGLE_INSTANCE_MUTEX = "DSH_Launcher_GreenPortable_SingleInstance"
+ERROR_ALREADY_EXISTS = 183              # CreateMutexW 返回该错误码表示互斥量已存在
+_SINGLE_INSTANCE_MUTEX_HANDLE = None    # 模块级持有互斥量句柄, 防止被 GC 提前释放
+
+
+def _acquire_single_instance(mutex_name=SINGLE_INSTANCE_MUTEX):
+    """创建命名互斥量实现单实例 (2026-08-16):
+    返回 (句柄, is_new_instance)。
+    - is_new_instance=True  : 本实例是第一个, 应继续正常启动;
+    - is_new_instance=False : 已有实例在运行, 调用方应激活旧窗口后退出。
+    句柄必须由调用方在程序整个生命周期内持有 (存到模块级
+    _SINGLE_INSTANCE_MUTEX_HANDLE), 否则 Python 释放句柄后互斥量对象
+    消失, 之后再开的实例会误判为第一个, 单实例形同虚设。
+    创建失败(句柄为 0, 极罕见)时降级放行, 仅失去单实例保证, 不影响启动。"""
+    kernel32 = ctypes.windll.kernel32
+    # 显式设置函数签名, 避免 64 位系统下句柄/返回值被 ctypes 截断
+    kernel32.CreateMutexW.restype = wintypes.HANDLE
+    kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel32.GetLastError.restype = ctypes.c_ulong
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel32.CreateMutexW(None, False, mutex_name)   # 默认安全属性 + 不初始占有
+    if not handle:
+        return None, True   # 创建失败(罕见), 降级放行
+    error_code = kernel32.GetLastError()
+    if error_code == ERROR_ALREADY_EXISTS:
+        return handle, False   # 已有实例在运行
+    return handle, True        # 本实例是第一个
+
+
+def _activate_existing_launcher(window_title=WINDOW_TITLE):
+    """把已运行的启动器窗口调到前台并恢复显示 (2026-08-16):
+    覆盖三种状态: 正常显示 / 最小化到任务栏 / 隐藏到系统托盘 (Tk withdraw)。
+    返回是否找到并激活成功。新实例是当前前台进程, 可合法将前台让给旧窗口,
+    故 SetForegroundWindow 通常有效, 再以 BringWindowToTop 兜底。"""
+    user32 = ctypes.windll.user32
+    user32.FindWindowW.restype = wintypes.HWND
+    user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    user32.ShowWindow.restype = wintypes.BOOL
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.SetForegroundWindow.restype = wintypes.BOOL
+    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.BringWindowToTop.argtypes = [wintypes.HWND]
+    hwnd = user32.FindWindowW(None, window_title)
+    if not hwnd:
+        return False
+    user32.ShowWindow(hwnd, 9)   # SW_RESTORE=9: 同时恢复最小化与隐藏(withdraw)状态
+    user32.SetForegroundWindow(hwnd)
+    user32.BringWindowToTop(hwnd)
+    return True
+
 # 默认配置 (用户可在 config.json 中覆盖)
 DEFAULT_CONFIG = {
     "mirror": "auto",            # 镜像: auto=自动检测 / cn=国内 / official=官方
@@ -164,7 +218,7 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # 发布流程: 打 tag v{GREEN_VERSION} + Release 资产 DSH_Launcher_GreenPortable_Online_<日期>_v<tag>.zip
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
-GREEN_VERSION = "1.0.4"                            # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
+GREEN_VERSION = "1.0.5"                            # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
 GREEN_VERSION_DATE = "2026年08月16日"               # 绿色版版本日期
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
@@ -2251,8 +2305,39 @@ def run_gui():
     app = Launcher()
     is_busy = [False]   # 用列表包装, 闭包内可赋值
 
+    # ---------- 单实例检测 (2026-08-16): 已有一个启动器时, 激活旧窗口并退出本实例 ----------
+    # 放在创建主窗口之前, 避免重复起服务/重复初始化占用资源
+    mutex_handle, is_new_instance = _acquire_single_instance()
+    if not is_new_instance:
+        # 已有实例在运行: 把旧窗口调到前台 (托盘隐藏态也一并恢复显示)
+        if _activate_existing_launcher():
+            if mutex_handle:
+                ctypes.windll.kernel32.CloseHandle(mutex_handle)
+            return   # 激活成功, 本实例直接退出, 不再创建窗口
+        # 旧实例可能还在初始化(窗口未创建), 短等待后重试几次
+        for _ in range(10):
+            time.sleep(0.3)
+            if _activate_existing_launcher():
+                if mutex_handle:
+                    ctypes.windll.kernel32.CloseHandle(mutex_handle)
+                return
+        # 互斥量存在但找不到窗口: 提示用户后退出
+        root_tmp = tk.Tk()
+        root_tmp.withdraw()
+        messagebox.showwarning(
+            "DSH 启动器",
+            "启动器已在后台运行, 但找不到其窗口。\n"
+            "请查看任务栏或系统托盘; 若存在异常残留进程,\n"
+            "可在任务管理器结束 DSH_Launcher.exe 后重新打开。",
+            parent=root_tmp)
+        root_tmp.destroy()
+        return
+    # 本实例是第一个: 模块级持有互斥量句柄, 防止 GC 提前释放导致单实例失效
+    global _SINGLE_INSTANCE_MUTEX_HANDLE
+    _SINGLE_INSTANCE_MUTEX_HANDLE = mutex_handle
+
     root = tk.Tk()
-    root.title("DeepSeek Harness 一键启动器")
+    root.title(WINDOW_TITLE)
     root.geometry("920x720")
     root.minsize(760, 600)
 
