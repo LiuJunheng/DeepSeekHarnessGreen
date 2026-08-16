@@ -1,9 +1,11 @@
 // DeepSeek Harness 插件 (客户端): dsh-session-rewind
-// 在「设置」面板注册一个「会话回退」页面:
-//   1) 列出全部会话 (标题/工作区/是否运行中/创建时间);
-//   2) 「分析」某个会话: 展示逐回合信息 (用户问题/步骤/工具错误/是否完成);
-//   3) 在任意已完成回合上点「回退到此」: 调用官方 session.fork 从该回合之后
-//      派生一个干净的续接会话, 并自动打开它继续对话 (原会话保留)。
+// 在「设置」面板注册一个「会话回退」页面 (卡片式布局, 与 dsh-usage-stats 同风格):
+//   1) 会话列表: 每会话一张卡片 —— 标题独占整行完整换行, 下方会话 ID, 再下方元信息 chips
+//      (工作区 / 创建时间 / 状态), 右侧「分析」按钮;
+//   2) 「分析」视图: 每回合一张卡片 —— 用户问题描述独占整行完整可读, 下方
+//      回合号/步骤/工具调用/错误/未完成标记, 已完成回合提供「回退到此」;
+//   3) 「回退到此」: 调用官方 session.fork 从该回合之后派生一个干净的续接会话,
+//      并自动打开它继续对话 (原会话保留)。
 // 原理: 服务运行中无法原地改写会话文件 (持久化层有内存缓存), 官方机制就是
 //       "派生 (fork)": 新会话携带截至选定回合的历史, 等效于移除失败消息。
 // 这是加载器契约格式 (window.__ModuleLoader__.load), 与官方客户端插件一致。
@@ -29,15 +31,26 @@ window.__ModuleLoader__.load({
 			return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
 		};
 
-		// 多行文本 (最多 n 行, 超出省略) 的公共样式
-		const clampStyle = (n) => ({
-			display: "-webkit-box",
-			WebkitLineClamp: n,
-			WebkitBoxOrient: "vertical",
-			overflow: "hidden",
-			wordBreak: "break-word"
-		});
+		/** 元信息小标签 (label + value, 自动换行, 与用量统计面板同风格) */
+		function MetaChip({ label, value, valueStyle }) {
+			return react.createElement("span", {
+				style: {
+					display: "inline-flex",
+					alignItems: "baseline",
+					gap: 4,
+					background: "#f5f5f5",
+					borderRadius: 4,
+					padding: "2px 8px",
+					fontSize: 12,
+					whiteSpace: "nowrap",
+				},
+			}, [
+				react.createElement("span", { key: "l", style: { color: "#888" } }, label),
+				react.createElement("span", { key: "v", style: { fontWeight: 500, color: "#333", ...(valueStyle || {}) } }, value),
+			]);
+		}
 
+		/** 错误码徽标组 (红色小胶囊, 可换行) */
 		const errorBadge = (errors) => {
 			const codes = Object.keys(errors || {});
 			if (codes.length === 0) return null;
@@ -51,6 +64,120 @@ window.__ModuleLoader__.load({
 				)
 			);
 		};
+
+		/** 会话卡片 (标题独占整行 + ID + 元信息 chips + 分析按钮) */
+		function SessionCard({ s, busy, working, inspecting, onAnalyze }) {
+			const cardStyle = {
+				border: "1px solid #ddd",
+				borderRadius: 8,
+				padding: "10px 12px",
+				background: "#fff",
+				marginBottom: 10,
+			};
+			const titleStyle = {
+				flex: 1,
+				minWidth: 0,
+				fontSize: 13,
+				fontWeight: 600,
+				color: "#1f2329",
+				lineHeight: 1.5,
+				wordBreak: "break-word",
+				overflowWrap: "break-word",
+			};
+			const idStyle = {
+				marginTop: 2,
+				fontFamily: "Consolas, Menlo, monospace",
+				fontSize: 11,
+				color: "#999",
+				overflow: "hidden",
+				textOverflow: "ellipsis",
+				whiteSpace: "nowrap",
+			};
+			const chipRowStyle = {
+				display: "flex",
+				flexWrap: "wrap",
+				gap: 6,
+				marginTop: 8,
+				alignItems: "center",
+			};
+
+			return react.createElement("div", { style: cardStyle }, [
+				// 第一行: 标题(独占整行剩余宽度) + 运行中徽标 + 分析按钮
+				react.createElement("div", { key: "h", style: { display: "flex", alignItems: "center", gap: 8 } }, [
+					react.createElement("span", { key: "t", style: titleStyle, title: s.title || s.id },
+						s.title || "(无标题)"
+					),
+					s.live && react.createElement("span", { key: "live", style: { flex: "none", fontSize: 11, color: "#e67e22", background: "#fdf3e3", borderRadius: 999, padding: "1px 7px", whiteSpace: "nowrap" } }, "运行中"),
+					react.createElement("button", {
+						key: "btn",
+						type: "button",
+						disabled: busy || working,
+						style: { flex: "none", padding: "3px 12px", cursor: busy || working ? "default" : "pointer", fontSize: 12, borderRadius: 4 },
+						onClick: () => onAnalyze(s.id),
+					}, inspecting === s.id ? "分析中…" : "分析"),
+				]),
+				// 第二行: 会话 ID (整行, 超长省略, 悬停可见完整)
+				react.createElement("div", { key: "id", style: idStyle, title: s.id }, s.id),
+				// 第三行: 元信息 chips (自动换行)
+				react.createElement("div", { key: "m", style: chipRowStyle }, [
+					react.createElement(MetaChip, { key: "ws", label: "工作区", value: (s.workspace && s.workspace.title) || s.workspaceKey || "—" }),
+					react.createElement(MetaChip, { key: "ct", label: "创建时间", value: fmtTime(s.createdAt) }),
+					react.createElement(MetaChip, { key: "st", label: "状态", value: s.live ? "运行中" : "空闲", valueStyle: { color: s.live ? "#e67e22" : "#999" } }),
+				]),
+			]);
+		}
+
+		/** 逐回合卡片 (用户问题独占整行 + 信息行 + 回退按钮) */
+		function TurnCard({ t, working, onRewind }) {
+			const cardStyle = {
+				border: "1px solid #eee",
+				borderRadius: 6,
+				padding: "8px 10px",
+				background: "#fafafa",
+				marginBottom: 8,
+			};
+
+			return react.createElement("div", { style: cardStyle }, [
+				// 用户问题描述独占整行, 完整换行显示
+				react.createElement("div", {
+					key: "q",
+					style: {
+						fontSize: 12.5,
+						lineHeight: 1.6,
+						color: "#333",
+						wordBreak: "break-word",
+						overflowWrap: "break-word",
+					},
+					title: t.userText || "",
+				}, t.userText || "(无用户消息)"),
+				// 信息行: 回合号/步骤/工具调用 + 错误/未完成 + 回退按钮 (自动换行)
+				react.createElement("div", {
+					key: "info",
+					style: {
+						marginTop: 6,
+						display: "flex",
+						alignItems: "center",
+						flexWrap: "wrap",
+						gap: "4px 12px",
+						fontSize: 11.5,
+						color: "#777",
+					},
+				}, [
+					react.createElement("span", { key: "turn", style: { fontWeight: 600, color: t.complete ? "#555" : "#c0392b" } }, "回合 #" + t.turn),
+					react.createElement("span", { key: "steps" }, "步骤 " + t.steps),
+					react.createElement("span", { key: "tools" }, "工具调用 " + t.toolCalls),
+					!t.complete && react.createElement("span", { key: "unfin", style: { fontSize: 11, color: "#c0392b", background: "#fdecea", borderRadius: 3, padding: "1px 6px", fontWeight: 600, whiteSpace: "nowrap" } }, "⚠ 未完成"),
+					errorBadge(t.errors),
+					t.complete && react.createElement("button", {
+						key: "btn",
+						type: "button",
+						disabled: working,
+						onClick: () => onRewind(t),
+						style: { marginLeft: "auto", padding: "3px 12px", cursor: working ? "default" : "pointer", fontSize: 12, borderRadius: 4, background: "#fff" },
+					}, working ? "回退中…" : "回退到此"),
+				]),
+			]);
+		}
 
 		function RewindSection({ getSessions }) {
 			const [sessions, setSessions] = react.useState(null);
@@ -147,15 +274,10 @@ window.__ModuleLoader__.load({
 			const rootStyle = { display: "flex", flexDirection: "column", gap: 12, padding: 4, maxWidth: 1080 };
 			const titleStyle = { margin: 0, fontSize: 14, fontWeight: 600 };
 			const descStyle = { margin: 0, fontSize: 13, lineHeight: 1.6, color: "#555" };
-			const tableStyle = { border: "1px solid #ddd", borderRadius: 4, fontSize: 13, background: "#fff", overflow: "hidden" };
-			// 单元格内边距: 左右仅 10px, 把宽度让给内容
-			const thStyle = { padding: "8px 10px", background: "#f5f5f5", borderBottom: "1px solid #ddd", fontWeight: 600, fontSize: 12, color: "#444" };
-			const tdStyle = { padding: "8px 10px", borderBottom: "1px solid #eee", verticalAlign: "top" };
 			const btn = { padding: "4px 10px", cursor: "pointer", fontSize: 12 };
-			const badgeLive = { fontSize: 11, color: "#e67e22", marginLeft: 6 };
 			const monoStyle = { fontFamily: "Consolas, Menlo, monospace", fontSize: 11, color: "#999" };
 
-			// ---------- 列表视图 ----------
+			// ---------- 列表视图 (卡片式) ----------
 			if (inspecting === null) {
 				return react.createElement("div", { style: rootStyle },
 					react.createElement("p", { style: titleStyle }, "会话回退"),
@@ -166,52 +288,26 @@ window.__ModuleLoader__.load({
 						"继续对话不再受干扰。原会话保留不动。"
 					),
 					error !== null && react.createElement("p", { style: { color: "#c0392b", margin: 0, fontSize: 13 } }, error),
-					sessions === null && !error && react.createElement("p", { style: { color: "#888", margin: 0, fontSize: 13 } }, busy ? "加载中…" : "加载中…"),
-					Array.isArray(sessions) && react.createElement("div", { style: tableStyle },
-						// 表头: 标题/ID(flex7) 工作区(flex1.5) 创建时间(104) 状态(52) 操作(60)
-						react.createElement("div", { style: { display: "flex", alignItems: "center" } },
-							react.createElement("span", { style: { flex: 7, ...thStyle } }, "标题 / 会话 ID"),
-							react.createElement("span", { style: { flex: 1.5, ...thStyle } }, "工作区"),
-							react.createElement("span", { style: { width: 104, ...thStyle } }, "创建时间"),
-							react.createElement("span", { style: { width: 52, ...thStyle } }, "状态"),
-							react.createElement("span", { style: { width: 60, ...thStyle, textAlign: "right" } }, "操作")
-						),
-						sessions.length === 0 && react.createElement("div", { style: { padding: 12, color: "#888" } }, "没有找到任何会话。"),
-						sessions.map((s) => react.createElement("div", { key: s.id, style: { display: "flex", alignItems: "flex-start" } },
-							// 标题单元格: 标题可换行(最多2行) + 完整会话 ID 单独一行
-							react.createElement("div", { style: { flex: 7, ...tdStyle, minWidth: 0 } },
-								react.createElement("div", {
-									style: { fontSize: 13, fontWeight: 600, lineHeight: 1.45, ...clampStyle(2) },
-									title: s.title || "(无标题)"
-								}, s.title || "(无标题)"),
-								react.createElement("div", { style: { ...monoStyle, marginTop: 3, wordBreak: "break-all", lineHeight: 1.4 } }, s.id),
-								s.live && react.createElement("span", { style: badgeLive }, "运行中")
-							),
-							react.createElement("div", { style: { flex: 1.5, ...tdStyle, minWidth: 0, fontSize: 12, color: "#666", ...clampStyle(2) }, title: (s.workspace && s.workspace.path) || s.workspaceKey || "" },
-								(s.workspace && s.workspace.title) || s.workspaceKey || "—"
-							),
-							react.createElement("div", { style: { width: 104, ...tdStyle, fontSize: 11, color: "#888", whiteSpace: "nowrap" } }, fmtTime(s.createdAt)),
-							react.createElement("div", { style: { width: 52, ...tdStyle, fontSize: 12 } },
-								s.live ? react.createElement("span", { style: { color: "#e67e22", fontWeight: 600 } }, "运行中") : react.createElement("span", { style: { color: "#999" } }, "空闲")
-							),
-							react.createElement("div", { style: { width: 60, ...tdStyle, textAlign: "right" } },
-								react.createElement("button", {
-									type: "button",
-									disabled: busy || working,
-									onClick: () => analyze(s.id),
-									style: btn
-								}, inspecting === s.id ? "分析中…" : "分析")
-							)
-						))
+					sessions === null && !error && react.createElement("p", { style: { color: "#888", margin: 0, fontSize: 13 } }, "加载中…"),
+					Array.isArray(sessions) && sessions.length === 0 && !error && react.createElement("p", { style: { color: "#888", margin: 0, fontSize: 13 } }, "没有找到任何会话。"),
+					Array.isArray(sessions) && sessions.map((s) =>
+						react.createElement(SessionCard, {
+							key: s.id,
+							s,
+							busy,
+							working,
+							inspecting,
+							onAnalyze: analyze,
+						})
 					),
-					react.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center" } },
+					react.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
 						react.createElement("button", { type: "button", disabled: busy, onClick: loadList, style: { padding: "6px 16px", cursor: busy ? "default" : "pointer" } }, busy ? "刷新中…" : "刷新列表"),
 						message !== null && react.createElement("span", { style: { fontSize: 13, color: "#27ae60" } }, message)
 					)
 				);
 			}
 
-			// ---------- 分析视图 ----------
+			// ---------- 分析视图 (逐回合卡片式) ----------
 			const data = inspect;
 			const s = data && data.session;
 			const summary = data && data.summary;
@@ -227,7 +323,7 @@ window.__ModuleLoader__.load({
 			return react.createElement("div", { style: rootStyle },
 				react.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
 					react.createElement("button", { type: "button", onClick: backToList, style: btn }, "← 返回列表"),
-					react.createElement("p", { style: { ...titleStyle, margin: 0, maxWidth: 640 } },
+					react.createElement("p", { style: { ...titleStyle, margin: 0, minWidth: 0, flex: 1, wordBreak: "break-word" } },
 						s && (s.title || "(无标题)"),
 						react.createElement("span", { style: { ...monoStyle, marginLeft: 8 } }, s && s.id)
 					)
@@ -235,12 +331,13 @@ window.__ModuleLoader__.load({
 				data === null && react.createElement("p", { style: { color: "#888" } }, "分析中…"),
 				error !== null && react.createElement("p", { style: { color: "#c0392b", margin: 0, fontSize: 13 } }, error),
 				data !== null && react.createElement(react.Fragment, null,
-					react.createElement("div", { style: { display: "flex", gap: 16, flexWrap: "wrap", fontSize: 13, color: "#555" } },
-						react.createElement("span", null, "事件数: " + summary.eventCount),
-						react.createElement("span", null, "回合: " + summary.totalTurns + " (完成 " + summary.completedTurns + " / 未完成 " + summary.unfinishedTurns + ")"),
-						s && s.live && react.createElement("span", { style: badgeLive }, "运行中(此会话当前已打开, 回退后会自动切到新会话)"),
-						s && s.cwd && react.createElement("span", { style: { color: "#999", wordBreak: "break-all" } }, s.cwd)
-					),
+					// 会话汇总 chips (自动换行)
+					react.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } }, [
+						react.createElement(MetaChip, { key: "ev", label: "事件数", value: summary.eventCount }),
+						react.createElement(MetaChip, { key: "turn", label: "回合", value: summary.totalTurns + " (完成 " + summary.completedTurns + " / 未完成 " + summary.unfinishedTurns + ")" }),
+						s && s.live && react.createElement(MetaChip, { key: "live", label: "状态", value: "运行中 (回退后自动切到新会话)", valueStyle: { color: "#e67e22" } }),
+						s && s.cwd && react.createElement(MetaChip, { key: "cwd", label: "工作区路径", value: s.cwd, valueStyle: { fontFamily: "Consolas, Menlo, monospace", fontSize: 11 } }),
+					]),
 					poisonHints.length > 0 && react.createElement("div", { style: { fontSize: 13, color: "#b8860b", background: "#fdf6e3", borderRadius: 4, padding: "8px 12px", lineHeight: 1.6 } },
 						poisonHints.map((h, i) => react.createElement("div", { key: i }, "⚠ " + h))
 					),
@@ -250,37 +347,14 @@ window.__ModuleLoader__.load({
 							? "建议回退到最后一个已完成回合(第 " + lastCompleted.turn + " 回合)之后。"
 							: "该会话没有任何已完成回合。")
 					),
-					react.createElement("div", { style: tableStyle },
-						// 表头: 回合(40) 用户问题(flex7) 步骤(34) 调用(38) 错误(flex3, 含未完成标记) 操作(80)
-						react.createElement("div", { style: { display: "flex", alignItems: "center" } },
-							react.createElement("span", { style: { width: 40, ...thStyle } }, "回合"),
-							react.createElement("span", { style: { flex: 7, ...thStyle } }, "用户问题 / 摘要"),
-							react.createElement("span", { style: { width: 34, ...thStyle } }, "步骤"),
-							react.createElement("span", { style: { width: 38, ...thStyle } }, "调用"),
-							react.createElement("span", { style: { flex: 3, ...thStyle } }, "错误 / 未完成标记"),
-							react.createElement("span", { style: { width: 80, ...thStyle, textAlign: "right" } }, "操作")
-						),
-						turns.length === 0 && react.createElement("div", { style: { padding: 12, color: "#888" } }, "该会话还没有任何回合。"),
-						turns.map((t) => react.createElement("div", { key: t.turn, style: { display: "flex", alignItems: "flex-start" } },
-							react.createElement("div", { style: { width: 40, ...tdStyle, padding: "8px 6px", fontSize: 12, fontWeight: 600, color: t.complete ? "#333" : "#c0392b" } }, "#" + t.turn),
-							react.createElement("div", { style: { flex: 7, ...tdStyle, minWidth: 0, fontSize: 12, color: "#333", ...clampStyle(2) }, title: t.userText || "" },
-								t.userText || "(无用户消息)"
-							),
-							react.createElement("div", { style: { width: 34, ...tdStyle, padding: "8px 6px", fontSize: 12 } }, t.steps),
-							react.createElement("div", { style: { width: 38, ...tdStyle, padding: "8px 6px", fontSize: 12 } }, t.toolCalls),
-							react.createElement("div", { style: { flex: 3, ...tdStyle, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" } },
-								!t.complete && react.createElement("span", { style: { fontSize: 11, color: "#c0392b", background: "#fdecea", borderRadius: 3, padding: "1px 6px", whiteSpace: "nowrap", fontWeight: 600, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" } }, "⚠ 未完成"),
-								errorBadge(t.errors)
-							),
-							react.createElement("div", { style: { width: 80, ...tdStyle, textAlign: "right" } },
-								t.complete && react.createElement("button", {
-									type: "button",
-									disabled: working,
-									onClick: () => rewindAt(s.id, t),
-									style: { ...btn, background: "#fff" }
-								}, working ? "回退中…" : "回退到此")
-							)
-						))
+					turns.length === 0 && react.createElement("p", { style: { color: "#888", margin: 0, fontSize: 13 } }, "该会话还没有任何回合。"),
+					turns.map((t) =>
+						react.createElement(TurnCard, {
+							key: t.turn,
+							t,
+							working,
+							onRewind: () => rewindAt(s.id, t),
+						})
 					),
 					react.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
 						message !== null && react.createElement("span", { style: { fontSize: 13, color: "#27ae60" } }, message),

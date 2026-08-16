@@ -112,7 +112,7 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 | `tmp_dir` | 临时目录（空 = 默认 `runtime/tmp`，绿色便携；可自定义为任意绝对路径） | 空 |
 | `default_workspace` | 默认工作区（空 = 自动解析：不冲突时用程序根目录，冲突时自动用程序目录内 `workspace` 子目录；可自定义绝对路径，与临时目录冲突会自动回退并警告） | 空 |
 | `dsh_host` | dsh web 服务绑定地址：`127.0.0.1`=仅本机访问 / `0.0.0.0`=局域网内其它电脑可远程打开 WebUI | `127.0.0.1` |
-| `trusted_hosts` | 受信任主机列表（数组，元素为 host 或 host:port，追加到 dsh 的 `--trusted-host`；一般无需填写——绑定局域网时 dsh 会自动信任全部局域网 IP，此项用于信任非 IP 主机名 / 代理场景） | `[]` |
+| `trusted_hosts` | 受信任主机列表（数组，元素为 host 或 host:port）。**不填（默认）= 绑定局域网时自动信任全部局域网 IP；填了任意一个 = 只信任填写的地址，不再自动全局域网放行** | `[]` |
 
 也可在启动器界面【设置】里改镜像和端口（网络相关的【网络设置】见下节），点【保存设置】。
 
@@ -121,8 +121,8 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 
 - 主窗口「网络设置 (局域网远程访问)」区 →「服务绑定」选 **「局域网 (允许局域网访问 0.0.0.0)」** →「保存网络设置」（下次启动服务时生效）。
 - 保存后 **点【启动服务】**，就绪日志会额外显示一行 `局域网访问地址: http://<本机IP>:3080`；局域网内其它电脑用浏览器打开该地址即可使用 WebUI（聊天、工具调用正常）。
-- 「受信任主机」一般**无需填写**：绑定局域网时 dsh 会自动信任全部局域网 IP。它用于信任**非 IP 的主机名**（如 `my-server.local`）或代理场景，多个用英文逗号分隔（如 `my-server.local, 192.168.1.10:3080`）。
-- **安全边界（请知悉）**：选择局域网模式 = **整个局域网网段开放**，任何能连到本机局域网 IP 的设备都能打开并操作 WebUI（可用工具执行）。dsh 的**设置 / 凭据（API Key）类特权操作仍仅本机可改**（远程浏览器访问会返回 403），属官方安全保护。本机模式（默认 `127.0.0.1`）则与以往完全一致，仅本机可访问。
+- 「受信任主机」**不填（默认）= 自动信任全部局域网 IP**（最简单，局域网内所有电脑都能打开）；**填了任意一个 = 只信任填写的地址**（如只允许特定主机 `my-server.local` 或 `192.168.1.10:3080` 访问），多个用英文逗号分隔。
+- **安全边界（请知悉）**：选择局域网模式且不填受信任主机 = **整个局域网网段开放**，任何能连到本机局域网 IP 的设备都能打开并操作 WebUI（可用工具执行）；填了受信任主机则只对填写的主机开放。dsh 的**设置 / 凭据（API Key）类特权操作仍仅本机可改**（远程浏览器访问会返回 403），属官方安全保护。本机模式（默认 `127.0.0.1`）则与以往完全一致，仅本机可访问。
 - 命令行/配置文件等价设置：`config.json` 的 `dsh_host`（`127.0.0.1` / `0.0.0.0`）与 `trusted_hosts`（数组）。
 
 ## 四、绿色便携说明
@@ -220,7 +220,7 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 > 常见问题：安装后 WebUI 设置里看不到「清理归档」→ 多为插件 `package.json` 的 `exports` 少了 `"./package.json"`（或改源码后没重新安装），详见插件 README 的「排查」一节。
 
 ### 配套：内置「会话回退」WebUI 插件
-启动器 `plugins/` 下自带 **`dsh-session-rewind`** 插件：解决 dsh 会话被工具运行时失效（`Cannot read properties of undefined (reading 'prepare')`）**永久毒化**的问题——崩溃回合会在日志里留下孤儿 `tool_calls`，之后每一轮都被 API 400 拒绝。安装并重启服务后，WebUI「设置 → 会话回退」可：列出全部会话 →「分析」任意会话（逐回合信息：用户问题 / 步骤数 / 工具调用数 / 错误码统计 / 是否完成）→ 在任意一个**已完成**回合上点「回退到此」，调用官方 `session.fork` 从该回合之后派生一个**干净的续接会话**并自动打开（原会话保留，可再交「会话管理」清理）。它是纯插件（不修改任何官方文件），通过「插件管理 → 选择本地插件文件夹安装…」选择 `plugins/dsh-session-rewind` 目录安装即可（命令行等价物：`python launcher.py --install-plugin plugins\dsh-session-rewind`），详见 [plugins/dsh-session-rewind/README.md](plugins/dsh-session-rewind/README.md)。
+启动器 `plugins/` 下自带 **`dsh-session-rewind`** 插件：解决 dsh 会话被工具运行时失效（`Cannot read properties of undefined (reading 'prepare')`）**永久毒化**的问题——崩溃回合会在日志里留下孤儿 `tool_calls`，之后每一轮都被 API 400 拒绝。安装并重启服务后，WebUI「设置 → 会话回退」可：列出全部会话 →「分析」任意会话（逐回合信息：用户问题 / 步骤数 / 工具调用数 / 错误码统计 / 是否完成）→ 在任意一个**已完成**回合上点「回退到此」，调用官方 `session.fork` 从该回合之后派生一个**干净的续接会话**并自动打开（原会话保留，可再交「会话管理」清理）。界面为**卡片式布局**（会话标题、用户问题描述均独占整行完整可读，下方显示工作区/创建时间/步骤/工具调用等具体信息，与用量统计同风格）。它是纯插件（不修改任何官方文件），通过「插件管理 → 选择本地插件文件夹安装…」选择 `plugins/dsh-session-rewind` 目录安装即可（命令行等价物：`python launcher.py --install-plugin plugins\dsh-session-rewind`），详见 [plugins/dsh-session-rewind/README.md](plugins/dsh-session-rewind/README.md)。
 
 ### 内置插件：dsh-usage-stats（用量统计 + 消息行「本次token」）
 启动器 `plugins/` 下自带 **`dsh-usage-stats`** 插件（v0.2.0，一个插件两个功能面，统一安装/卸载）：

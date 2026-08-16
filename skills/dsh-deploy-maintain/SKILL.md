@@ -155,7 +155,7 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
 ### 3.5 会话回退（dsh-session-rewind WebUI 插件，2026-08-15 加入内置）
 
 - **问题**：DSH 回合因工具运行时失效（`Cannot read properties of undefined (reading 'prepare')`）崩溃时，崩溃回合会在会话日志里留下**孤儿 `tool_calls`**（有调用、永远没有结果），之后每一轮对话都被 DeepSeek API 以 400 拒绝，会话**永久毒化**；DSH 0.1.0-rc.6 没有"删除失败消息"的界面功能。
-- **方案**：内置 `dsh-session-rewind` 插件在 WebUI 设置页新增「会话回退」页：列出全部会话 →「分析」任意会话（逐回合：用户问题/步骤数/工具调用数/错误码统计/是否完成）→ 在任意**已完成**回合点「回退到此」走官方 `session.fork`（`{sessionId, atSeq}`）从该回合之后**派生一个干净的续接会话**并自动打开；原会话保留不动（可再交「会话管理」清理）。
+- **方案**：内置 `dsh-session-rewind` 插件在 WebUI 设置页新增「会话回退」页：列出全部会话 →「分析」任意会话（逐回合：用户问题/步骤数/工具调用数/错误码统计/是否完成）→ 在任意**已完成**回合点「回退到此」走官方 `session.fork`（`{sessionId, atSeq}`）从该回合之后**派生一个干净的续接会话**并自动打开；原会话保留不动（可再交「会话管理」清理）。**界面为卡片式布局（2026-08-16，与 dsh-usage-stats 同风格）**：会话卡片标题独占整行完整换行 + 下方 ID 与元信息 chips（工作区/创建时间/状态）；逐回合卡片用户问题独占整行完整可读 + 下方回合号/步骤/工具调用/错误徽标/「回退到此」。
 - **为什么派生而非原地删消息**：服务运行时会话由持久化层在内存缓存，原地改写磁盘日志会被内存状态覆盖或造成 seq 断裂，不安全；官方 `session.fork` 正是为此设计的机制（与官方 UI 自带「分支」同源，官方只暴露末位回合，本插件放开到任意回合）。
 - **实现要点**：宿主端直接按磁盘扫描 `DSH_HOME/sessions/**/session.jsonl.zstd`（zstd 多帧，用官方 `@deepseek-ai/dsh-session` 的 `decodeStorageRecord` 展开事件，对 chunk-run 打包行布局无关）；回退动作走官方 `session.fork` + 客户端 `sessions.open`，与服务端持久化层一致。接口带自定义头 `X-DSH-Plugin-Rewind: 1` 防 CSRF。
 - **配套 tools/**：`rewind-session.mjs`（服务停止时的**离线原地回退**：直接把会话日志截断到最后一个完整回合，自动备份）；`apply-agentloop-guard.mjs`（给 `dsh-agent-loop` 工具派发入口加存在性检查，把晦涩报错变成明确的可操作提示，幂等、可反复执行，dsh 升级后重跑一次即可）。
@@ -215,16 +215,17 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
 ### 3.10 局域网远程访问 WebUI（2026-08-16）
 
 - **需求**：服务端部署在一台电脑，WebUI 从局域网内其它电脑的浏览器远程打开（未来还可能用 WebUI 连不同地址的服务器）。
-- **实现方式 = 直接绑定 `0.0.0.0`**（用户选定）+ GUI「网络设置」区 + `config.json`（`dsh_host` / `trusted_hosts`）+ **整个局域网开放**（信任围栏自动信任全网段 IP，属预期权衡）。
-- **三个必须一起改的点**（漏一个远程都连不上/心跳失效）：
+- **实现方式 = 直接绑定 `0.0.0.0`**（用户选定）+ GUI「网络设置」区 + `config.json`（`dsh_host` / `trusted_hosts`）。`trusted_hosts` 语义：**空=局域网模式自动信任全部局域网 IP（默认全网段开放）；填了任意一个=只信任显式填写的地址**。
+- **四个必须一起改的点**（漏一个远程都连不上/心跳失效/信任范围不对）：
   1. **放开 0.0.0.0 补丁**：dsh 官方 `dsh-web-app/lib/startup.js` 有 `if (options.host === "0.0.0.0") program.error(...)` **刻意拒绝**绑定 0.0.0.0（防把远程工具执行能力暴露到局域网）——这是**唯一需要补丁的点**（后端 schema 本身允许 0.0.0.0）。启动器 `patch_web_startup()` 把该条件替换为 `false /* dsh-launcher: 已放开 0.0.0.0 以支持局域网访问 */`（幂等，marker 已替换则直接返回 True）。**关键避坑：dsh 升级 = 重装 `runtime/dsh` 会覆盖 startup.js 还原补丁** → 必须在 `install_dsh()` 末尾 + `start_server()` 启动前各调一次兜底。
   2. **心跳脚本适配**：`patch_frontend()` 注入的心跳脚本原硬编码 `http://127.0.0.1:<port>`，远程页面拿不到 → 改 `"http://" + location.hostname + ":<port>..."`（页面自动用其所在主机名上报）。
   3. **心跳服务绑定联动**：`_ensure_ui_beacon_server()` 绑定地址随 `dsh_host` 变化——`0.0.0.0` 模式绑 `0.0.0.0`（远端浏览器才能上报），否则 `127.0.0.1`。
-- **信任围栏与特权方法**：绑定 0.0.0.0 时 dsh 的 `resolveLanTrust` 把**全部非内网 IPv4 自动加入 trustedHosts** → 整个局域网网段自动放行，无需手动填受信主机；`trusted_hosts` 配置用于信任**非 IP 主机名**/代理场景。`PRIVILEGED_METHODS`（settings/credentials/host.pickDirectory 等）**即使 LAN 部署也仅回环可调** → 远程浏览器能聊天/用工具，但**不能改设置与凭据**（远程返回 403，官方安全保护）。
+  4. **受信任主机精确语义补丁（2026-08-16 新增）**：官方 `resolveLanTrust`（`dsh-web-app/lib/index.js`）绑定 0.0.0.0 时**无条件** `trustedHosts: [...lanAddresses, ...extra]`（自动把全部局域网 IP 并入信任列表），导致填了 `trusted_hosts` 仍全局域网放行（"填了也白填"）。启动器 `patch_lan_trust()` 改为 `extra.length === 0 ? [...lanAddresses, ...extra] : [...extra]`——空=默认自动信任全部局域网，非空=只信任显式填写的（`lanAddresses` 字段保留供 LAN 地址显示）。同样 `install_dsh()` + `start_server()` 两调用点兜底（升级重装会还原）。
+- **信任围栏与特权方法**：`trusted_hosts` 为空且绑定 0.0.0.0 时，dsh 的 `resolveLanTrust` 把**全部非内网 IPv4 自动加入 trustedHosts** → 整个局域网网段自动放行，无需手动填受信主机；`trusted_hosts` 非空时（补丁后）只信任显式填写的地址。**注意 dsh 信任围栏是按请求 Host（服务器地址）判定，不是按客户端设备 IP**——"只信任填写的"等价于"只允许通过填写的服务器地址访问 /api"，要按客户端设备限制需另加鉴权层。`PRIVILEGED_METHODS`（settings/credentials/host.pickDirectory 等）**即使 LAN 部署也仅回环可调** → 远程浏览器能聊天/用工具，但**不能改设置与凭据**（远程返回 403，官方安全保护）。
 - **启动命令**：`build_server_command()` 从 config 追加 `--host <dsh_host>` + 多个 `--trusted-host <host>`；默认 `127.0.0.1` 时行为与升级前一致（多传 `--host 127.0.0.1` 无害）。
 - **GUI**：「网络设置 (局域网远程访问)」区（「设置」LabelFrame 上方）——「服务绑定」只读下拉（本机 / 局域网）+「受信任主机」文本框（逗号分隔）+ 说明文字 + 并入 on_save；就绪日志在 `dsh_host=="0.0.0.0"` 时用 `lan_addresses()`（`socket.getaddrinfo` 枚举非 127. IPv4）追加 `局域网访问地址: http://<本机IP>:3080` 供分享。
-- **验证**：`patch_web_startup()` 幂等（两次结果一致、marker 已替换）→ `build_server_command()` 传参正确 → 本机回归（默认 127.0.0.1 行为不变）→ LAN 实测（本机 `127.0.0.1:3080` 与局域网 `<服务器IP>:3080` 均可打开、聊天/工具正常、远端改设置返回 403）。
-- **教训**：① 官方为安全刻意禁用的能力（0.0.0.0）用"补丁 + 两个调用点兜底"，并记住**任何改 `node_modules` 内官方文件的补丁都会在升级重装后被还原**；② 前端脚本里凡硬编码 `127.0.0.1` 的都要排查是否需要 `location.hostname` 适配；③ 后端小服务（心跳等）绑定地址要跟随主服务 host 联动。详见 DEV_NOTES 需求 #31 / 避坑 #52。
+- **验证**：`patch_web_startup()` 幂等（两次结果一致、marker 已替换）+ `patch_lan_trust()` 幂等 → `build_server_command()` 传参正确 → 本机回归（默认 127.0.0.1 行为不变）→ LAN 实测（本机 `127.0.0.1:3080` 与局域网 `<服务器IP>:3080` 均可打开、聊天/工具正常、远端改设置返回 403）→ 精确语义用 `runtime/tmp/smoke_lan_trust.py`（node 直接执行补丁后逻辑：空=含全部局域网、非空=只含填写项、本机模式=只含填写项）。
+- **教训**：① 官方为安全刻意禁用的能力（0.0.0.0）用"补丁 + 两个调用点兜底"，并记住**任何改 `node_modules` 内官方文件的补丁都会在升级重装后被还原**；② 前端脚本里凡硬编码 `127.0.0.1` 的都要排查是否需要 `location.hostname` 适配；③ 后端小服务（心跳等）绑定地址要跟随主服务 host 联动；④ 官方"自动全放行"的语义未必满足产品需求（`resolveLanTrust` 无条件合并 lanAddresses），要用同样的幂等补丁方式修正。详见 DEV_NOTES 需求 #31 / 避坑 #52。
 
 ## 四、DSH 插件开发（双端加载 + 路由注册）
 
@@ -339,7 +340,8 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 | 远程浏览器打不开 WebUI（进程正常） | 服务端命令行查 `--host` 是否为 `0.0.0.0` → 远程电脑 `telnet <服务器IP> 3080` 测端口连通性 → 查防火墙 / 路由器 |
 | 远程浏览器能打开但心跳不上报（自动打开界面失效） | 查 `patch_frontend()` 注入的心跳脚本是否从 `127.0.0.1` 改为 `location.hostname`（`dist/index.html` 里 `dsh-launcher-ui-beacon` 块）；查心跳服务绑定地址是否随 `dsh_host` 联动为 `0.0.0.0`（否则远端连不上 3081 端口） |
 | 远程浏览器能聊天但改设置报 403 | 正常行为——dsh 的 `PRIVILEGED_METHODS`（settings/credentials/host.pickDirectory）即使 LAN 部署也仅回环可调，为官方安全保护，非 bug |
-| 手动填了受信任主机但没生效 | 查 `trusted_hosts` 值为逗号分隔字符串而非数组（`config.json` 里应为 `["192.168.1.10:3080"]` 而非 `"192.168.1.10:3080"`）→ 查 `build_server_command()` 是否生成对应的 `--trusted-host` 参数 |
+| 手动填了受信任主机但没生效 | ①查 `trusted_hosts` 值为逗号分隔字符串而非数组（`config.json` 里应为 `["192.168.1.10:3080"]` 而非 `"192.168.1.10:3080"`）→ 查 `build_server_command()` 是否生成对应的 `--trusted-host` 参数；②dsh 官方 `resolveLanTrust` 绑定 0.0.0.0 时无条件自动信任全部局域网 IP（填了也白填），需 `patch_lan_trust()` 补丁后才"填了=只信任填写的"（查 `dsh-web-app/lib/index.js` 是否含 `extra.length === 0 ?` 分支） |
+| 填了受信任主机却仍整个局域网都能访问 | dsh 官方行为（`resolveLanTrust` 无条件 `[...lanAddresses, ...extra]` 自动全局域网放行），非 bug——需要"只信任填写的"语义必须应用 `patch_lan_trust()` 补丁（改 `node_modules` 内官方文件，升级重装会还原，`install_dsh`/`start_server` 会自动重打） |
 | 点最小化窗口却进了任务栏、没进系统托盘 | ①钩子只装在 `add()` 没在 `__init__`（第一次最小化时托盘图标还没出现→漏拦截）→ 移到 `__init__`；②`winfo_id()` 拿到的是 `TkChild` 子窗口、或窗口未 realize 导致 `GetAncestor` 拿错窗口 → 先 `update_idletasks()` 再 `GetAncestor(GA_ROOT)`；③WndProc 里直接调 `after`/`withdraw` 重入 Tcl 崩溃或 `--windowed` 下 `stderr=None` 输出崩 → 改用「WndProc 只置标志位 + `after(80,...)` 轮询 `poll()`」；恢复后再最小化又失效则 `remove()` 误还原了窗口过程（应只删图标，退出才 `dispose()` 还原） |
 
 ## 六、工作流建议（一键启动器开发顺序）
