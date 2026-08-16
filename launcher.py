@@ -39,6 +39,8 @@ import tarfile
 import ssl
 import http.server
 import secrets
+import ctypes
+from ctypes import wintypes
 
 # ---------------------------------------------------------------------------
 # 常量与路径
@@ -60,6 +62,20 @@ DSH_HOME_DIR = os.path.join(RUNTIME_DIR, "dsh-home")   # dsh 数据目录(会话
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")    # 配置文件
 PID_FILE = os.path.join(RUNTIME_DIR, "server.pid")     # 服务进程号文件
 LOG_FILE = os.path.join(RUNTIME_DIR, "server.log")     # 服务运行日志
+
+
+def get_icon_path():
+    """图标文件路径 (DSH_Launcher.ico, 绿色小鲸鱼):
+    打包为 exe 后图标经 --add-data 打进临时解压目录 _MEIPASS, 源码模式在程序根目录。
+    找不到时返回 None, 由调用方优雅降级到默认图标。"""
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidate = os.path.join(meipass, "DSH_Launcher.ico")
+            if os.path.exists(candidate):
+                return candidate
+    candidate = os.path.join(BASE_DIR, "DSH_Launcher.ico")
+    return candidate if os.path.exists(candidate) else None
 
 # 默认配置 (用户可在 config.json 中覆盖)
 DEFAULT_CONFIG = {
@@ -1969,6 +1985,257 @@ class Launcher:
 
 
 # ---------------------------------------------------------------------------
+# Windows 系统托盘图标 (用 ctypes 调用 Win32 API, 零额外依赖)
+# ---------------------------------------------------------------------------
+class SysTrayIcon:
+    """Windows 系统托盘图标, 用于最小化到后台而非任务栏 (2026-08-16)"""
+
+    # Windows 常量
+    NIM_ADD = 0x00000000
+    NIM_DELETE = 0x00000002
+    NIM_SETVERSION = 0x00000004
+    NIF_MESSAGE = 0x00000001
+    NIF_ICON = 0x00000002
+    NIF_TIP = 0x00000004
+    NIF_SHOWTIP = 0x40000000
+    NOTIFYICON_VERSION_4 = 0x00000004
+    WM_USER = 0x0400
+    WM_TRAY_CALLBACK = 0x0400 + 100      # 自定义回调消息 ID
+    WM_SYSCOMMAND = 0x0112
+    SC_MINIMIZE = 0xF020
+    ICON_BIG = 1
+    GCL_HICON = -14
+    IDI_APPLICATION = 32512
+
+    # NOTIFYICONDATAW 结构 (Windows Vista+ 版本)
+    class _NOTIFYICONDATAW(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("hWnd", wintypes.HWND),
+            ("uID", wintypes.UINT),
+            ("uFlags", wintypes.UINT),
+            ("uCallbackMessage", wintypes.UINT),
+            ("hIcon", wintypes.HICON),
+            ("szTip", wintypes.WCHAR * 128),
+            ("dwState", wintypes.DWORD),
+            ("dwStateMask", wintypes.DWORD),
+            ("szInfo", wintypes.WCHAR * 256),
+            ("uVersion", wintypes.UINT),
+            ("szInfoTitle", wintypes.WCHAR * 64),
+            ("dwInfoFlags", wintypes.DWORD),
+            ("guidItem", ctypes.c_byte * 16),
+            ("hBalloonIcon", wintypes.HICON),
+        ]
+
+    def __init__(self, tk_root, on_click_restore=None, on_minimize=None, tooltip="DSH 启动器"):
+        self.root = tk_root
+        self.on_click_restore = on_click_restore
+        self.on_minimize = on_minimize
+        self.tooltip = tooltip
+        self._icon_added = False
+        self._old_wndproc = None
+        self._wndproc_new = None
+        self._nid = None
+        # 标志位 (2026-08-16): WndProc 回调里只允许做纯 Python 赋值,
+        # 绝不能直接调用 Tk 的 after/withdraw 等 — 那会让 Tcl 在消息派发中途
+        # 被重入, 触发 "PyEval_RestoreThread: GIL is released" 崩溃。
+        # 由 run_gui 里的 poll_tray() 定时轮询这两个标志, 再在正常的
+        # Tk 事件上下文里执行最小化/恢复。
+        self._minimize_pending = False
+        self._restore_pending = False
+        # 关键避坑 (2026-08-16): winfo_id() 返回的是 Tk 内部子窗口 HWND,
+        # 不是真实顶层窗口。WM_SYSCOMMAND / 托盘回调消息都发到顶层窗口,
+        # 若把钩子挂在子窗口上, 最小化消息永远收不到 (窗口会正常最小化到任务栏)。
+        # 必须用 GetAncestor(GA_ROOT) 拿到真实顶层窗口 HWND。
+        user32 = ctypes.windll.user32
+        # GetAncestor 必须显式设置签名: 否则默认按 32 位 c_int 返回,
+        # 64 位系统下句柄被截断, 拿到的仍是错误窗口。
+        user32.GetAncestor.restype = ctypes.c_ssize_t
+        user32.GetAncestor.argtypes = [wintypes.HWND, ctypes.c_int]
+        # 关键避坑 2 (2026-08-16): 构造时主窗口可能还没被真正映射 (realize),
+        # 此时 Tk 只创建了内部子窗口 (TkChild), 真实顶层窗口 (TkTopLevel)
+        # 尚未创建。若直接 GetAncestor, 拿到的仍是子窗口句柄, 钩子挂错窗口,
+        # WM_SYSCOMMAND 收不到 → 最小化照样进任务栏。
+        # 必须先 update_idletasks() 强制 Tk 完成窗口创建与布局。
+        tk_root.update_idletasks()
+        inner_hwnd = int(tk_root.winfo_id())
+        top_hwnd = user32.GetAncestor(inner_hwnd, 2)   # GA_ROOT = 2
+        if not top_hwnd:
+            top_hwnd = inner_hwnd   # 极端情况下取不到父窗口, 退回子窗口
+        self.hwnd = wintypes.HWND(top_hwnd)
+        # 初始化时即挂钩窗口过程: 确保第一次点最小化就被拦截到托盘
+        # (若等到 add() 才挂钩, 第一次最小化发生在托盘图标出现之前, 会漏拦截)
+        self._hook_wndproc()
+
+    def _get_icon(self):
+        """获取窗口图标句柄, 失败则返回默认应用图标
+        (2026-08-16): 优先从自定义 DSH_Launcher.ico 加载, 托盘/任务栏才能显示专属图标)"""
+        user32 = ctypes.windll.user32
+        # 设置函数签名, 避免 64 位系统下返回的句柄/指针被 ctypes 截断
+        user32.SendMessageW.restype = ctypes.c_ssize_t
+        user32.SendMessageW.argtypes = [
+            wintypes.HWND, wintypes.UINT,
+            wintypes.WPARAM, wintypes.LPARAM,
+        ]
+        user32.GetClassLongPtrW.restype = ctypes.c_ssize_t
+        user32.GetClassLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.LoadIconW.restype = wintypes.HICON
+        user32.LoadIconW.argtypes = [wintypes.HINSTANCE, ctypes.c_int]
+
+        # 优先: 从自定义 .ico 文件加载 (LoadImageW + LR_LOADFROMFILE)
+        icon_path = get_icon_path()
+        if icon_path:
+            try:
+                user32.LoadImageW.restype = wintypes.HICON
+                user32.LoadImageW.argtypes = [
+                    wintypes.HINSTANCE, wintypes.LPCWSTR,
+                    ctypes.c_uint, ctypes.c_int, ctypes.c_int, ctypes.c_uint,
+                ]
+                # LR_LOADFROMFILE=0x10, LR_DEFAULTSIZE=0x40 (按系统当前大小加载)
+                hicon = user32.LoadImageW(
+                    None, icon_path, 1, 0, 0, 0x10 | 0x40)
+                if hicon:
+                    return hicon
+            except Exception:
+                pass   # 自定义图标加载失败则走下面默认逻辑
+
+        hicon = user32.SendMessageW(self.hwnd, 0x007F, self.ICON_BIG, 0)   # WM_GETICON
+        if hicon:
+            return hicon
+        hicon = user32.GetClassLongPtrW(self.hwnd, self.GCL_HICON)
+        if hicon:
+            return hicon
+        return user32.LoadIconW(None, self.IDI_APPLICATION)
+
+    def add(self):
+        """添加托盘图标 (窗口过程已在 __init__ 挂钩, 此处幂等补挂一次)"""
+        if self._icon_added:
+            return True
+        shell32 = ctypes.windll.shell32
+        # 设置函数签名, 避免 64 位下结构指针被截断; 返回 BOOL(整型)
+        shell32.Shell_NotifyIconW.restype = ctypes.c_int
+        shell32.Shell_NotifyIconW.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+        hicon = self._get_icon()
+        nid = self._NOTIFYICONDATAW()
+        nid.cbSize = ctypes.sizeof(self._NOTIFYICONDATAW)
+        nid.hWnd = self.hwnd
+        nid.uID = 1
+        nid.uFlags = self.NIF_MESSAGE | self.NIF_ICON | self.NIF_TIP
+        nid.uCallbackMessage = self.WM_TRAY_CALLBACK
+        nid.hIcon = hicon
+        nid.szTip = self.tooltip[:127]
+        self._hook_wndproc()
+        result = shell32.Shell_NotifyIconW(self.NIM_ADD, ctypes.byref(nid))
+        if not result:
+            # 添加失败则还原窗口过程, 不让窗口停留在被挂钩状态
+            self._unhook_wndproc()
+            self._icon_added = False
+            return False
+        self._nid = nid
+        self._icon_added = True
+        return True
+
+    def remove(self):
+        """移除托盘图标 (保留窗口过程挂钩, 恢复窗口后再次最小化仍能进托盘)"""
+        if not self._icon_added:
+            return
+        if self._nid is not None:
+            shell32 = ctypes.windll.shell32
+            shell32.Shell_NotifyIconW.restype = ctypes.c_int
+            shell32.Shell_NotifyIconW.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+            shell32.Shell_NotifyIconW(self.NIM_DELETE, ctypes.byref(self._nid))
+            self._nid = None
+        self._icon_added = False
+
+    def poll(self):
+        """由 run_gui 的 poll_tray_loop() 定时轮询 (2026-08-16):
+        处理 WndProc 里置位的待办标志, 在正常的 Tk 事件上下文里执行
+        最小化/恢复 — 避免在 WndProc 回调里直接重入 Tcl 导致 GIL 崩溃。
+        """
+        if self._minimize_pending:
+            self._minimize_pending = False
+            if self.on_minimize:
+                self.on_minimize()
+        if self._restore_pending:
+            self._restore_pending = False
+            if self.on_click_restore:
+                self.on_click_restore()
+
+    def dispose(self):
+        """退出前调用: 移除托盘图标 + 恢复原始窗口过程, 避免窗口销毁后回调悬空"""
+        self.remove()
+        self._unhook_wndproc()
+
+    # -- 窗口过程子类化, 拦截托盘回调 + 最小化消息 --
+    def _hook_wndproc(self):
+        if self._old_wndproc is not None:
+            return
+        # WndProc 回调函数类型: LRESULT CALLBACK(HWND, UINT, WPARAM, LPARAM)
+        WNDPROC = ctypes.WINFUNCTYPE(
+            ctypes.c_ssize_t,             # LRESULT = LONG_PTR
+            wintypes.HWND,                # hWnd
+            wintypes.UINT,                # uMsg
+            wintypes.WPARAM,              # wParam
+            wintypes.LPARAM,              # lParam
+        )
+        def new_wndproc(hwnd, msg, wparam, lparam):
+            # 整个回调用 try/except 包裹 (2026-08-16):
+            # WndProc 回调里的 Python 异常会被 ctypes 吞掉并返回 0。
+            # 若此时消息是 SC_MINIMIZE, 就会出现"最小化被吃掉但没触发最小化逻辑"
+            # 的怪象 (窗口不隐藏、无托盘图标, 表现即"还在任务栏")。
+            # 因此任何异常都必须放行给旧窗口过程, 保证窗口行为始终正常。
+            try:
+                if msg == self.WM_SYSCOMMAND and (wparam & 0xFFF0) == self.SC_MINIMIZE:
+                    # 拦截最小化按钮 → 只置标志位, 不在此处调用任何 Tk 方法
+                    # (WndProc 里重入 Tcl 会崩溃, 见 __init__ 里的注释)。
+                    # poll_tray() 轮询到标志后, 再在正常事件上下文里执行隐藏。
+                    self._minimize_pending = True
+                    return 0
+                # 拦截托盘图标回调消息
+                if msg == self.WM_TRAY_CALLBACK:
+                    if lparam == 0x0202:        # WM_LBUTTONUP → 左键单击恢复
+                        self._restore_pending = True
+                    elif lparam == 0x0205:      # WM_RBUTTONUP → 右键单击恢复
+                        self._restore_pending = True
+                    return 0
+            except Exception:
+                pass   # 回调异常一律放行给旧窗口过程, 不吞消息
+            return ctypes.windll.user32.CallWindowProcW(
+                self._old_wndproc, hwnd, msg, wparam, lparam)
+        self._wndproc_new = WNDPROC(new_wndproc)
+        # 设置签名, 避免 64 位下 SetWindowLongPtrW / CallWindowProcW 指针被截断
+        user32 = ctypes.windll.user32
+        user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+        user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+        user32.CallWindowProcW.restype = ctypes.c_ssize_t
+        user32.CallWindowProcW.argtypes = [
+            ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT,
+            wintypes.WPARAM, wintypes.LPARAM,
+        ]
+        # GWL_WNDPROC = -4, 替换为自定义窗口过程, 返回旧的窗口过程指针
+        # 注意: SetWindowLongPtrW 需要整数指针, 不能直接传 WINFUNCTYPE 回调对象,
+        # 需用 ctypes.cast 取其地址后再传。
+        wndproc_address = ctypes.cast(self._wndproc_new, ctypes.c_void_p).value
+        self._old_wndproc = user32.SetWindowLongPtrW(self.hwnd, -4, wndproc_address)
+
+    def _unhook_wndproc(self):
+        if self._old_wndproc is None:
+            return
+        user32 = ctypes.windll.user32
+        user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+        user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+        user32.SetWindowLongPtrW(self.hwnd, -4, self._old_wndproc)
+        self._old_wndproc = None
+        self._wndproc_new = None
+
+    def __del__(self):
+        try:
+            self.dispose()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # tkinter 图形界面
 # ---------------------------------------------------------------------------
 def run_gui():
@@ -1988,6 +2255,14 @@ def run_gui():
     root.title("DeepSeek Harness 一键启动器")
     root.geometry("920x720")
     root.minsize(760, 600)
+
+    # ---------- 窗口图标 (2026-08-16): 自定义 DSH 绿色小鲸鱼图标, 缺失时静默降级 ----------
+    icon_path = get_icon_path()
+    if icon_path:
+        try:
+            root.iconbitmap(icon_path)
+        except Exception:
+            pass   # 图标加载失败不影响主功能, 保持系统默认图标
 
     # ---------- 日志回调 ----------
     def append_log(line):
@@ -2097,6 +2372,51 @@ def run_gui():
 
     about_btn = ttk.Button(status_frame, text="关于", command=show_about)
     about_btn.pack(side="right", padx=(10, 0))
+
+    # ---------- 最小化到系统托盘 (后台运行, 不占任务栏) ----------
+    def minimize_to_tray():
+        """点击最小化按钮时: 隐藏主窗口, 缩到系统托盘"""
+        added = tray_icon.add()
+        if added:
+            root.withdraw()   # 托盘图标添加成功才隐藏窗口
+            append_log("已最小化到系统托盘, 点击托盘图标可恢复窗口。")
+        else:
+            # 托盘添加失败 (罕见): 退回系统默认最小化到任务栏, 避免窗口无反应
+            root.iconify()
+
+    def restore_from_tray():
+        """点击托盘图标时: 恢复显示主窗口"""
+        tray_icon.remove()
+        root.deiconify()
+        root.lift()
+        root.focus_force()
+
+    class _NoTray:
+        """系统托盘初始化失败时的安全替身: 所有操作均为空操作, 不干扰窗口行为"""
+
+        def add(self):
+            return False
+
+        def remove(self):
+            return None
+
+        def poll(self):
+            return None
+
+        def dispose(self):
+            return None
+
+    try:
+        tray_icon = SysTrayIcon(
+            tk_root=root,
+            on_click_restore=restore_from_tray,
+            on_minimize=minimize_to_tray,
+            tooltip="DeepSeek Harness 一键启动器 (绿色便携版)",
+        )
+    except Exception as error:
+        # 托盘初始化失败 (如窗口环境异常) 时降级: 退回普通最小化, 不拖垮整个 GUI
+        tray_icon = _NoTray()
+        append_log("系统托盘初始化失败, 已退回普通最小化: %s" % error)
 
     # ---------- 按钮区 ----------
     button_frame = ttk.Frame(root)
@@ -2561,7 +2881,7 @@ def run_gui():
             app.launch_update_script(bat_path, content_root)
             # 脚本已分离启动, 启动器随即退出; 不重置 busy(窗口即将销毁)
             append_log("绿色版更新脚本已启动, 启动器即将退出 ...")
-            on_close()
+            on_close(confirm=False)
         except Exception as error:
             messagebox.showerror("启动更新脚本失败", str(error))
             set_busy(False)
@@ -2769,8 +3089,12 @@ def run_gui():
             """选择本地插件文件夹 (含 package.json) 并安装, 重启服务后生效"""
             if plugin_busy[0]:
                 return
+            default_plugins_dir = os.path.join(BASE_DIR, "plugins")
+            if not os.path.isdir(default_plugins_dir):
+                default_plugins_dir = BASE_DIR
             folder = filedialog.askdirectory(
                 title="选择本地插件目录 (目录内需含 package.json)",
+                initialdir=default_plugins_dir,
                 parent=top)
             if not folder:
                 return
@@ -3054,12 +3378,36 @@ def run_gui():
     log_text.pack(fill="both", expand=True, padx=6, pady=6)
 
     # ---------- 关闭窗口时停止服务 ----------
-    def on_close():
+    def on_close(confirm=True):
+        """按 X 关闭窗口: 先弹二次确认, 避免误关; 确认后停止服务并退出
+
+        :param confirm: 是否弹确认框。True 为普通手动关闭 (按 X);
+                        False 用于绿色版自更新流程 (此前已确认过, 不再重复询问)。
+        """
+        if confirm:
+            choose = messagebox.askyesno(
+                "确认关闭",
+                "确定要退出启动器吗?\n\n退出会同时停止 dsh 服务。",
+                parent=root, icon="question")
+            if not choose:
+                return
         status_text.set("正在退出并停止服务 ...")
+        tray_icon.dispose()   # 先移除托盘图标并还原窗口过程, 避免残留
         app.on_exit()
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_close)
+
+    # ---------- 托盘标志轮询 ----------
+    def poll_tray_loop():
+        """定时轮询托盘待办标志 (2026-08-16):
+        WndProc 回调里只置位 _minimize_pending/_restore_pending, 不直接碰 Tk;
+        这里在正常的 Tk 事件上下文里执行最小化/恢复, 彻底避开 WndProc 重入 Tcl。
+        """
+        tray_icon.poll()
+        root.after(80, poll_tray_loop)
+    root.after(80, poll_tray_loop)
+
     append_log("DeepSeek Harness 一键启动器已启动, 点击 [安装环境] 或直接 [启动服务] 开始。")
     root.mainloop()
 

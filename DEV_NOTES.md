@@ -63,6 +63,36 @@
    - 版本号显示 `"v" + GREEN_VERSION`（带 v 前缀更友好）、版本日期直接取 `GREEN_VERSION_DATE` 常量——与自更新版本号同源，避免再次出现"双来源不同步"（见需求 #20）；
    - 「打开本仓库 / 打开官方仓库」按钮用 `webbrowser.open()` 打开链接；链接地址与 `GITHUB_REPO` 常量一致（此处因弹窗需要完整 URL 而显式写出，后续若仓库迁移需一并同步）。
    - **验证**：`runtime/tmp/smoke_about.py` 冒烟测试通过（真实启动 GUI → monkey-patch `tk.Tk.mainloop` 自动点击「关于」→ 校验弹窗含全部关键文本与 3 个按钮 → 自动关闭）。注意：**不能 monkey-patch `tk.Toplevel`**（会破坏 `tkinter.filedialog`/`simpledialog` 里 `class Dialog(Toplevel)` 的类继承，报 `TypeError: function() argument 'code' must be code`），改用 `winfo children .` + `nametowidget` 枚举顶层窗口。
+23. **本地插件安装默认目录指向本仓库 plugins/（2026-08-16）**：用户反馈插件管理里「选择本地插件文件夹安装…」每次打开默认落在 **C 盘**（tkinter `askdirectory` 未指定 `initialdir` 时用系统记忆的上次位置/默认目录）。修复：`on_install_local()` 里给 `filedialog.askdirectory` 加 `initialdir=os.path.join(BASE_DIR, "plugins")`（`BASE_DIR` 为程序根目录，frozen 取 exe 所在目录）；若该目录不存在则回退 `BASE_DIR`，确保始终停在本地仓库内、可一键选内置插件源码。配套说明已同步 README（手动安装栏）与 SKILL.md（3.x 插件管理）。
+24. **X 关闭二次确认 + 最小化到系统托盘（2026-08-16）**：用户担心误点右上角 X 直接退出，且希望最小化后**从任务栏消失、缩到系统托盘后台运行**。实现：
+    - **X 二次确认**：`on_close(confirm=True)` 在退出前弹 `messagebox.askyesno("确认关闭", "确定要退出启动器吗?\n\n退出会同时停止 dsh 服务。")`；绿色版自更新流程调用 `on_close(False)` 跳过重复询问（此前已确认过）。确认后先 `tray_icon.dispose()`（移除托盘图标 + 还原窗口过程）再停服务销毁窗口。
+    - **最小化到托盘**：新增 `SysTrayIcon` 类（纯 `ctypes` + Win32 API，零第三方依赖）：
+      - `Shell_NotifyIconW` 添加/移除托盘图标（`_NOTIFYICONDATAW` 结构，Vista+ 版本）；图标取 `WM_GETICON` → 类图标 → 兜底 `LoadIconW(IDI_APPLICATION)`；
+      - 用 `SetWindowLongPtrW` 子类化窗口过程（`WINFUNCTYPE` 回调 + `ctypes.cast` 取地址，避免 64 位指针截断）拦截两条消息：`WM_SYSCOMMAND/SC_MINIMIZE`（点最小化 → `on_minimize` → 加托盘图标 + `root.withdraw()` 隐藏窗口，**不占任务栏**）与自定义 `WM_TRAY_CALLBACK`（`WM_LBUTTONUP`/`WM_RBUTTONUP` → 左/右键单击托盘图标都恢复窗口）；拦截后必须调用原窗口过程 `CallWindowProcW` 放行其余消息；
+      - `minimize_to_tray`：`tray_icon.add()` 成功才 `withdraw()`（添加失败罕见，回退系统默认最小化到任务栏）；`restore_from_tray`：`remove()` 图标 + `deiconify()` + `lift()` + `focus_force()`。
+    - **关键避坑（实测定点）**：
+      - **窗口过程挂钩必须在 `__init__` 里装，不能放在 `add()`**：若等 `add()` 才挂钩，第一次点最小化时托盘图标还没出现 → 漏拦截，窗口会进任务栏而非托盘（冒烟测试 `smoke_gui3` 复现 `minimized=0`）；
+      - **`remove()` 不能还原窗口过程**：还原窗口后再次最小化需要挂钩保持；`remove()` 只删托盘图标，`dispose()`（退出前调用）才 `_unhook_wndproc()` 还原，避免窗口销毁后回调对象悬空；
+      - ctypes 显式设置 `argtypes`/`restype`（`c_ssize_t` 等），避免 64 位下句柄/指针被截断；`Shell_NotifyIconW`/`SetWindowLongPtrW` 需传整数指针（`ctypes.cast(..., c_void_p).value`），不能直接传 `WINFUNCTYPE` 回调对象。
+    - **验证**：`runtime/tmp/smoke_tray.py`（添加/移除幂等）、`smoke_tray2.py`（第一次最小化进托盘 + 恢复后再最小化仍进托盘，覆盖上述两个 BUG）、`smoke_gui3.py`（端到端启动 `run_gui`：模拟最小化 → 托盘 → 恢复 → WM_CLOSE 弹二次确认）全部通过。
+25. **修复「最小化仍进任务栏、托盘无图标」（2026-08-16）**：需求 #24 落地后用户实测最小化还是落到任务栏，托盘没有图标。逐层排查出三个根因，最终方案如下：
+    - **根因 1：`winfo_id()` 返回的是 Tk 内部子窗口（类名 `TkChild`），不是真实顶层窗口（类名 `TkTopLevel`）**。Tk 在 Windows 上为一个顶层窗口创建两个窗口：外层带标题的 `TkTopLevel` + 内层内容区 `TkChild`；`root.winfo_id()` 返回内层。WM_SYSCOMMAND / 托盘回调消息都发到**顶层窗口**，若把钩子挂在子窗口上，最小化消息永远收不到。且**构造时若窗口尚未真正映射（realize），`TkTopLevel` 还没创建**，此时 `GetAncestor(GA_ROOT)` 仍返回子窗口句柄（探针 `probe_hierarchy` 实证：`GetAncestor` 结果 == `winfo_id` == `TkChild`）。修复：`SysTrayIcon.__init__` 里先 `tk_root.update_idletasks()` 强制 Tk 完成窗口创建，再 `GetAncestor(inner, GA_ROOT)` 拿真实顶层 HWND。
+    - **根因 2：WndProc 回调里直接调 `root.after(0, ...)` 重入 Tcl 会崩**。在窗口消息派发中途（ctypes 回调）里调用 Tk 的 `after`/`withdraw`，会让 Tcl 在消息派发中被重入，下一轮 `update()`/`mainloop` 时报 `PyEval_RestoreThread: the function must be called with the GIL held, but the GIL is released`（探针 `probe_tray_fix` 实证）。修复：**WndProc 里只允许做纯 Python 赋值**——拦截到 `SC_MINIMIZE` 就置 `_minimize_pending=True`、托盘点击就置 `_restore_pending=True` 并 `return 0`；`run_gui` 里新增 `poll_tray_loop()`（`root.after(80, ...)` 常驻轮询）调用 `tray_icon.poll()`，在**正常的 Tk 事件上下文**里消费标志、执行最小化/恢复。
+    - **根因 3：`--windowed` exe 下 `sys.stderr=None`**，WndProc 里的调试输出一写就抛异常被 ctypes 吞掉 → 消息被"吃掉"却无动作。修复：移除回调内所有输出 + 全程 try/except，异常一律放行给原窗口过程。
+    - **验证（全部通过）**：`probe_tray_real.py`（外部起真实 GUI + PostMessage SC_MINIMIZE → `判定 C: IsWindowVisible=0`）；`probe_tray_roundtrip.py`（最小化 → 隐藏 → 发 `WM_TRAY_CALLBACK`(lparam=WM_LBUTTONUP) → 恢复显示，完整回路 OK，注意首次轮询需稍等 >2s）；`probe_tray_exe.py`（直接起打包后的 `DSH_Launcher.exe`，判定 C 通过）。
+    - **另注**：探针判定 A（IsIconic=TRUE）说明钩子没拦截到消息；判定 B（可见且非图标化）说明拦截了但 `add()`/隐藏未生效；判定 C（不可见）才是托盘路径成功。
+
+26. **自定义 DSH 绿色版图标（2026-08-16）**：用户反馈启动器用的是 PyInstaller 默认图标（任务栏/托盘/exe 都是"小火箭"，分不清这是 DSH 绿色版）。设计并接入专属图标：
+    - **方案**：用 seedream 生成 4 个候选（A 绿色小鲸鱼 / B 青龙盾徽 / C D 字闪电标 / D 蜀汉军旗），用户选定 **A 绿色小鲸鱼**（DeepSeek 品牌鲸鱼 + 金色启动闪电，绿色传达"绿色版"）。源图 `runtime/tmp/icon_design/option_a_green_whale.jpg`（1024 方形）。
+    - **转 ICO**：`convert_ico.py` 用 Pillow（临时装到 `runtime/tmp/pillow_convert/`，不碰系统 Python / C 盘）按短边居中裁方后 `image.save(..., format="ICO", sizes=[16,24,32,48,64,128,256])` 生成 `DSH_Launcher.ico`（84KB，7 尺寸）。
+      - **避坑**：ICO 保存不能 `append_images` 手动塞帧（会得到仅 600 多字节的空壳），直接传 `sizes` 让 Pillow 内部缩放；生成后回读 `Image.open(...).info.get("sizes")` 应得 7 个尺寸。
+    - **三处接入（launcher.py）**：新增 `get_icon_path()`（frozen 时从 onefile 临时目录 `_MEIPASS` 取 `DSH_Launcher.ico`，源码模式取程序根目录，找不到返回 None）：
+      - **窗口图标**：`root.iconbitmap(icon_path)`（try/except 静默降级）；
+      - **托盘图标**：`SysTrayIcon._get_icon()` 优先 `LoadImageW(None, icon_path, 1, 0, 0, 0x10|0x40)`（IMAGE_ICON + LR_LOADFROMFILE|LR_DEFAULTSIZE）从 .ico 文件加载 HICON，失败再退回 `WM_GETICON` → 类图标 → `LoadIconW(IDI_APPLICATION)`；
+      - **exe 图标**：`build_exe.bat` 加 `--icon "%~dp0DSH_Launcher.ico"`（exe 文件图标）+ `--add-data "%~dp0DSH_Launcher.ico;."`（运行时窗口/托盘可用）。
+        - **避坑**：`--add-data` 的源路径按 **spec 目录**（`--specpath build`）解析，必须写绝对路径 `%~dp0...`，否则报 `Unable to find '...\build\DSH_Launcher.ico'`；而 `--icon` 按当前目录解析可直接写相对路径。
+    - **验证**：`verify_icon.py`（不开 GUI）——ICO 文件头 `00000100` 合法；`shell32.ExtractIconExW(exe, 0, ...)` 数出 exe 内嵌 1 个图标；`launcher.get_icon_path()` 返回正确路径且 `LoadImageW` 拿到有效 HICON。注意 **`ExtractIconExW` 在 shell32.dll**（不在 user32）。已重打 `DSH_Launcher.exe`（9.2MB，含图标）。
+    - 相关经验已同步 `skills/python-tkinter-desktop-dev.zip`（6.10 自定义 .ico 小节 + 检查清单 + 新模板）+ `skills/dsh-deploy-maintain/SKILL.md`（3.x 启动器 GUI 增强）。
 
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
@@ -79,6 +109,8 @@
 | WebUI 单页面去重 | 本地心跳服务（`http.server.ThreadingHTTPServer` 绑定 127.0.0.1:3081，daemon 线程）+ 前端 `index.html` 注入心跳脚本（`patch_frontend()` 幂等，`install_dsh()` 与 `start_server()` 自动补齐）：页面每 15 秒 `fetch` 一次 `http://127.0.0.1:3081/__dsh_ui_alive?t=<令牌>`（no-cors）；`ui_is_open()` 以最近 180 秒内有无心跳判定"界面已打开"，**自动打开**（`wait_and_open()`/`open_ui(force=False)`/CLI `--start`）打开浏览器前先查此判定，已打开则跳过并记日志；**手动打开（GUI「打开界面」按钮 → `open_ui(force=True)`）必定打开新页面，不受去重限制**。令牌存 `runtime/ui-beacon.token`（`secrets.token_hex(8)`，读写失败退化为固定值仅影响防伪造）。配置项：`auto_open_browser`（默认 True，False 则启动不自动开浏览器）、`ui_beacon_port`（默认 3081，被占用时仅记日志并禁用去重）。 |
 | 进程管理 | Windows 下 `CREATE_NO_WINDOW` 隐藏服务控制台；PID 写 `runtime/server.pid` 供独立 `--stop` 使用；**stdin 用 `PIPE` 保持打开**（否则 dsh 读到 EOF 会退出，见避坑 #12）；`watch_server` 线程监听异常退出并记日志 |
 | 界面 | tkinter：状态栏 + 安装/启动/停止/打开界面/检查更新/刷新状态 + 设置(镜像/端口) + 运行日志框；主窗口默认 **920x720**（最小 760x600），保证全部信息无需缩放即可显示；关窗自动停服务 |
+| 系统托盘 | `SysTrayIcon`（ctypes+Win32，零依赖）：`__init__` 先 `root.update_idletasks()` 再 `GetAncestor(GA_ROOT)` 取真实顶层 HWND 并挂钩窗口过程；`WndProc` 只置 `_minimize_pending`/`_restore_pending` 标志（**不直接调 Tk**），`run_gui` 里 `poll_tray_loop()`（`after(80,...)` 常驻）调 `tray_icon.poll()` 在正常事件上下文执行最小化(`add()`+`withdraw()`)/恢复(`remove()`+`deiconify()`)；`dispose()` 退出时移除图标并还原窗口过程 |
+| 图标 | 自定义绿色小鲸鱼 `DSH_Launcher.ico`（84KB，16~256 七尺寸）三处统一：窗口 `root.iconbitmap(get_icon_path())`（try/except 降级）、托盘 `SysTrayIcon._get_icon()` 优先 `LoadImageW` 从 .ico 加载、exe 打包 `--icon`+`--add-data`；`get_icon_path()` 打包后从 `_MEIPASS` 取，源码模式取程序根目录（需求 #26） |
 | 插件管理 | 第六个按钮「插件管理」开新窗口；已装列表读 `runtime/dsh-home/profiles/<profile>/package.json` 的 `dependencies`；安装/移除走 `node bin.js plugin --profile <profile> add|remove`（内部转发 pnpm）；搜索源 = npm 注册表 API（国内镜像优先，结果经 `_is_dsh_plugin_package` 过滤只留 dsh 相关包）+ GitHub 官方话题页 `https://github.com/topics/dsh-plugin`；另有「加载推荐」按钮展示内置 `RECOMMENDED_PLUGINS`（npm 上已核实的 12 个 dsh 插件，无需网络也能看到可安装项）；GitHub 源插件安装规格 `github:owner/repo` |
 | 本地插件安装 | 手动安装栏新增「选择本地插件文件夹安装…」按钮（`filedialog.askdirectory` 选目录）；`install_plugin()` / `--install-plugin` 均支持：入参 `os.path.isdir(spec)` 为真时自动归一化为 `file:<绝对路径>`（`\`→`/`）交给 pnpm；pnpm 对 `file:` 本地路径默认**拷贝**而非软链，改源文件后需重新安装才同步 |
 | 数据维护 | 主窗口新增「数据维护」区（LabelFrame，需先停止服务，操作不可恢复）：**单个「清理归档」按钮**（`on_purge` 统一入口，服务运行中弹窗提示先停止）→ 弹出 `open_purge_dialog()` 会话列表弹窗：Treeview 列出标题/工作区/状态(已归档或正常)/有无日志，首行「全选 / 全不选」，行点击即勾选，底部「删除选中 (N)」二次确认后逐个 `purge_session(session_id)`（失败项收集后统一提示），删除后自动刷新列表。三处数据源一并清理：① `sessions/<工作区编码>/<会话ID>/` 日志目录（`_delete_session_log_dir` 按 id 遍历查找，防路径穿越）② `storages/workspace.json` 的 `sessionIds`/`archivedSessionIds` ③ `storages/session_projcache.json` 缓存行（`_remove_session_from_registries` + `_atomic_write_json` 原子写回）。命令行等价：`--purge-archived` / `--purge-session <ID>`（服务运行时会校验并拒绝） |

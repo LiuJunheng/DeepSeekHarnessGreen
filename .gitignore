@@ -18,6 +18,7 @@ DSH_Launcher.exe
 DSH_Launcher_*.zip
 DSH_Skill_*.zip
 Skill-dsh-deploy-maintain.zip
+python-tkinter-desktop-dev.zip
 
 # TRAE 内部工作区文件（设计草稿等，不进仓库）
 .trae/

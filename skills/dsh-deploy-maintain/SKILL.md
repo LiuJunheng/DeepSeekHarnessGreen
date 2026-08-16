@@ -161,6 +161,35 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
 - **配套 tools/**：`rewind-session.mjs`（服务停止时的**离线原地回退**：直接把会话日志截断到最后一个完整回合，自动备份）；`apply-agentloop-guard.mjs`（给 `dsh-agent-loop` 工具派发入口加存在性检查，把晦涩报错变成明确的可操作提示，幂等、可反复执行，dsh 升级后重跑一次即可）。
 - **排查"会话突然全部 400"**：先看 `server.log` 有无该 bug 签名（`Cannot read properties of undefined (reading 'prepare')`）→ 用插件「分析」定位崩溃回合 → 在崩溃回合之前的**已完成**回合「回退到此」派生干净续接会话。
 
+### 3.6 启动器 GUI 增强：X 关闭二次确认 + 最小化到系统托盘（2026-08-16）
+
+- **需求**：误点右上角 X 直接退出难受 → 加**二次确认**；希望最小化后**从任务栏消失、缩到系统托盘后台**。
+- **X 二次确认**：`root.protocol("WM_DELETE_WINDOW", on_close)`，`on_close` 里 `messagebox.askyesno` 确认后才停服务销毁窗口；绿色版自更新流程传 `confirm=False` 跳过重复询问。
+- **最小化到托盘（纯 ctypes + Win32，零第三方依赖）**：
+  - `Shell_NotifyIconW` 加/删托盘图标（`_NOTIFYICONDATAW` 结构，Vista+ 版）；图标取 `WM_GETICON` → 类图标 → 兜底 `LoadIconW(IDI_APPLICATION)`。
+  - `SetWindowLongPtrW` 子类化窗口过程（`WINFUNCTYPE` 回调 + `ctypes.cast(回调, c_void_p).value` 取地址）拦截：`WM_SYSCOMMAND/SC_MINIMIZE`（点最小化 → `add()` 托盘图标 + `root.withdraw()` 隐藏）与自定义 `WM_TRAY_CALLBACK`（左/右键单击图标都恢复窗口）；其余消息必须 `CallWindowProcW` 放行。
+- **避坑（实测定点，见 DEV_NOTES 需求 #24/#25）**：
+  - **窗口过程挂钩必须在 `__init__` 里装，不能放 `add()`**——否则第一次点最小化时托盘图标还没出现 → 漏拦截 → 窗口进任务栏而非托盘。
+  - **`remove()` 只删托盘图标，不能还原窗口过程**——还原窗口后再次最小化要靠挂钩保持；退出前才用 `dispose()`（`remove()` + `_unhook_wndproc()`）还原，避免窗口销毁后回调对象悬空。
+  - **`winfo_id()` 返回的是 Tk 内部子窗口（`TkChild`），不是真实顶层窗口（`TkTopLevel`）**；且构造时若窗口尚未 realize，顶层窗口还没创建。必须先在 `__init__` 里 `root.update_idletasks()` 强制 Tk 完成窗口创建，再用 `GetAncestor(inner, GA_ROOT)`（显式设 `argtypes`/`restype=c_ssize_t` 防 64 位截断）拿真实顶层 HWND 挂钩——否则钩子挂错窗口，最小化消息收不到、照样进任务栏。
+  - **WndProc 回调里绝不能直接调 Tk（`after`/`withdraw` 等）**——消息派发中途重入 Tcl 会在下一轮 `update()`/`mainloop` 报 `PyEval_RestoreThread: the function must be called with the GIL held, but the GIL is released` 崩溃。**正确做法：WndProc 里只做纯 Python 赋值**（拦截 `SC_MINIMIZE` → 置 `_minimize_pending=True`；托盘点击 → 置 `_restore_pending=True`，`return 0`），另起 `root.after(80, ...)` 常驻轮询 `poll()` 在正常 Tk 事件上下文里消费标志、执行最小化/恢复。
+  - **`--windowed` exe 下 `sys.stderr=None`**：WndProc 里任何输出都会抛异常被 ctypes 吞掉 → 消息被"吃掉"却无动作。回调内不输出 + 全程 try/except，异常一律放行给原窗口过程。
+  - ctypes 必须显式设 `argtypes`/`restype`（`c_ssize_t` 等），否则 64 位下句柄/指针被截断；`Shell_NotifyIconW`/`SetWindowLongPtrW` 要传整数指针，不能直接传 `WINFUNCTYPE` 回调对象。
+- **验证**：`runtime/tmp/smoke_tray.py`（加/删幂等）、`smoke_tray2.py`（第一次最小化进托盘 + 恢复后再最小化仍进托盘）、`smoke_gui3.py`（端到端 `run_gui`）、`probe_tray_real.py` / `probe_tray_roundtrip.py` / `probe_tray_exe.py`（外部起真实 GUI/exe + PostMessage SC_MINIMIZE，判定 C 即 `IsWindowVisible=0` 为托盘成功；判定 A `IsIconic=TRUE`=钩子没拦到；判定 B 可见非图标=拦截了但 add/隐藏没生效）。
+
+### 3.7 启动器自定义图标（窗口 + 托盘 + exe 三处统一，2026-08-16）
+
+- **需求**：默认 PyInstaller 图标（"小火箭"）任务栏/托盘/exe 都一样，分不清哪个是 DSH 绿色版。用 seedream 生成 4 个候选（A 绿色小鲸鱼 / B 青龙盾徽 / C D 字闪电标 / D 蜀汉军旗），选定 **A 绿色小鲸鱼**（DeepSeek 品牌鲸鱼 + 金色启动闪电，绿色传达"绿色版"）。源图 `runtime/tmp/icon_design/option_a_green_whale.jpg`。
+- **转 ICO**：Pillow（临时装到 `runtime/tmp/pillow_convert/`，不碰系统 Python / C 盘）按短边居中裁方后 `image.save("DSH_Launcher.ico", format="ICO", sizes=[16,24,32,48,64,128,256])`（84KB，7 尺寸）。
+  - **避坑**：ICO 保存别用 `append_images` 手动塞帧（会得到仅 600 多字节的空壳），直接传 `sizes` 让 Pillow 内部缩放；回读 `Image.open(...).info.get("sizes")` 应得 7 个尺寸。
+- **三处接入**：`get_icon_path()`（frozen 时从 onefile 临时目录 `_MEIPASS` 取，源码模式取程序根目录，找不到返回 None）：
+  - **窗口**：`root.iconbitmap(icon_path)`（try/except 静默降级）；
+  - **托盘**：`SysTrayIcon._get_icon()` 优先 `LoadImageW(None, icon_path, 1, 0, 0, 0x10|0x40)`（IMAGE_ICON + LR_LOADFROMFILE|LR_DEFAULTSIZE）从 .ico 加载 HICON，失败再退回 `WM_GETICON` → 类图标 → `LoadIconW(IDI_APPLICATION)`；
+  - **exe**：`build_exe.bat` 加 `--icon "%~dp0DSH_Launcher.ico"` + `--add-data "%~dp0DSH_Launcher.ico;."`。
+- **避坑（build_exe.bat 实测）**：`--add-data` 的源路径按 **spec 目录**（`--specpath build`）解析，**必须写绝对路径 `%~dp0...`**，否则报 `Unable to find '...\build\DSH_Launcher.ico'`；而 `--icon` 按当前目录解析可直接写相对路径。
+- **验证**（不开 GUI，`runtime/tmp/icon_design/verify_icon.py`）：ICO 文件头 `00000100`；`shell32.ExtractIconExW(exe, 0, ...)` 数 exe 内嵌图标 > 0；`launcher.get_icon_path()` + `LoadImageW` 拿到有效 HICON。注意 **`ExtractIconExW` 在 shell32.dll**（不在 user32）。详见 DEV_NOTES 需求 #26。
+- 通用 tkinter 图标经验已同步 `skills/python-tkinter-desktop-dev.zip`（6.10 自定义 .ico + 检查清单 + `tray_icon_template.py` 模板）。
+
 ## 四、DSH 插件开发（双端加载 + 路由注册）
 
 ### 4.1 插件 = npm 包 + 双入口（最容易漏）
@@ -257,6 +286,7 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 | 多次重启累积一堆相同 WebUI 标签页 | 查 `dist/index.html` 是否含 `dsh-launcher-ui-beacon` 标记（无则 `patch_frontend()` 没跑，多半是旧 exe/没重启）；有心跳仍开新页则查 3081 端口占用或 `runtime/ui-beacon.token` |
 | 「检查绿色版更新」查不到/报错 | 依次查：网络能否访问 api.github.com / 镜像 `mirror.nju.edu.cn/github-release`；Release 是否存在且 tag 带 `v` 前缀；资产名是否以 `DSH_Launcher_GreenPortable_Online_` 开头（否则 `green_find_zip_asset` 匹配不到） |
 | 绿色版更新后启动器没被替换 | 查 `runtime/update/backup/` 有无备份、`runtime/update/update_apply.bat` 是否被执行过；bat 卡在 `start` 说明目标文件缺失未加 `if exist` 判断 |
+| 点最小化窗口却进了任务栏、没进系统托盘 | ①钩子只装在 `add()` 没在 `__init__`（第一次最小化时托盘图标还没出现→漏拦截）→ 移到 `__init__`；②`winfo_id()` 拿到的是 `TkChild` 子窗口、或窗口未 realize 导致 `GetAncestor` 拿错窗口 → 先 `update_idletasks()` 再 `GetAncestor(GA_ROOT)`；③WndProc 里直接调 `after`/`withdraw` 重入 Tcl 崩溃或 `--windowed` 下 `stderr=None` 输出崩 → 改用「WndProc 只置标志位 + `after(80,...)` 轮询 `poll()`」；恢复后再最小化又失效则 `remove()` 误还原了窗口过程（应只删图标，退出才 `dispose()` 还原） |
 
 ## 六、工作流建议（一键启动器开发顺序）
 
