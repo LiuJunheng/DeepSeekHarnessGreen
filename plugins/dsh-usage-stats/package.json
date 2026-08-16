@@ -1,0 +1,26 @@
+{
+  "name": "dsh-usage-stats",
+  "version": "0.2.0",
+  "description": "WebUI 用量统计（统一安装/卸载）：① 设置页「用量统计」面板——扫描解码全部会话日志，按模型汇总 token 用量与费用估算（价格表可编辑）、逐回合明细；② 对话消息行「本次token」显示——每条已完成助手消息上方常驻显示该回合实际消耗的 token（输入/输出/缓存/思考）。不修改任何官方文件",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "license": "MIT"
+}

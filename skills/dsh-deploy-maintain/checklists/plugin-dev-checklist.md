@@ -3,6 +3,7 @@
 ## 初始搭建
 
 - [ ] 项目目录结构完整（`lib/index.js` + `lib/client.js` + `cordis.patch.yml` + `package.json`）
+- [ ] **`lib/index.js` 必须存在（哪怕纯客户端插件也要，官方 no-op：`function apply(){} export { apply }`）**——宿主 cordis loader 会 import 每个包的 main/exports["."]，缺失 → `ERR_MODULE_NOT_FOUND` → **服务启动即退出**（2026-08-16 dsh-message-actions 实测）
 - [ ] `package.json` 含 `dsh.bundle.patch` 指向 `cordis.patch.yml`
 - [ ] `package.json` 含 `dsh.client` 声明（`inject` + `platform: "web"`）
 - [ ] `files` 数组包含 `cordis.patch.yml`（否则发布/安装后文件缺失）
@@ -11,7 +12,7 @@
 
 ## 宿主端（lib/index.js）
 
-- [ ] 导出 `{ name, inject, apply }`
+- [ ] 导出 `{ name, inject, apply }`（纯客户端插件可只导出 `apply`，官方 no-op 写法）
 - [ ] `inject` 声明了所需服务（`webServer` 必须，其他按需）
 - [ ] 路由注册使用 `ctx.effect(() => ctx.webServer.register({...}), label)` 写法（**禁止先注册再传注销函数给 effect**）
 - [ ] `kind` 正确（`exact` 或 `prefix`）
@@ -25,6 +26,8 @@
 
 - [ ] 使用 `window.__ModuleLoader__.load({ id, factory })` 加载器契约
 - [ ] `apply(ctx)` 里 `ctx.slots.inject("settings.section", ...)` 注册设置区块
+- [ ] 消息行类 UI 用官方插槽：`conversation.chat.assistant-actions`（已完成消息操作行，`owner={messageId}`，`order` 20+）或 `conversation.chat.turnTail`（操作行上方内容区，chain：`select` 必填 + `priority`，组件拿 `matched` + `useSession`）；读消息数据用 `snapshot.nodes`（`kind:"assistant"`+`turn`+`usage`）或 `snapshot.chat.nodes.values()`
+- [ ] **宽数据（标题/长文本/明细）用卡片式纵向布局**（标题独占整行 `wordBreak`、元信息 `flexWrap` chips），别用固定列宽的横向表格（窄面板下只显示半个字）
 - [ ] **插槽条目组件不要条件调用 props 传入的 hook**（`typeof useXxx === "function" ? useXxx() : null` 会触发 "Rendered more/fewer hooks" 被错误边界吞掉 → 组件不渲染）；读快照优先用 ownerProps 里的普通数据字段（如 InputZone 的 `input.draft`），hook 只能无条件调用
 - [ ] 改客户端源码后**强制刷新页面即可**（bundle 按请求重新生成、rev 变化），不必重启服务；改宿主端/加减插件才需重启
 - [ ] 组件内 fetch 调宿主路由时带自定义头

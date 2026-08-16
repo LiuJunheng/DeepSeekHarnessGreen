@@ -44,6 +44,14 @@ dsh-xxx-plugin/
 
 **关键**：`exports` 必须包含 `"./package.json"`（否则客户端 bundle 不进 `__DSH_BOOT__`）；`files` 必须包含 `cordis.patch.yml`。
 
+> **⚠️ 纯客户端插件也必须带 `lib/index.js`**：宿主 cordis loader 会 import 每个包的 `main`/`exports["."]`，纯客户端插件（只做 WebUI 注入、无宿主路由）若缺 `lib/index.js`，安装后**重启服务会瞬间退出**（`ERR_MODULE_NOT_FOUND: ...lib/index.js`，`plugin tree failed to load`）。纯客户端插件用官方 no-op 写法即可：
+> ```js
+> // lib/index.js —— 纯客户端插件宿主端 no-op
+> function apply() {}
+> export { apply };
+> ```
+> （对照官方 `@deepseek-ai/dsh-client-ui-message-feedback` 的宿主端。2026-08-16 `dsh-message-actions` 实测踩坑，见 SKILL.md 4.9 / DEV_NOTES 避坑 #49）
+
 ## cordis.patch.yml
 
 ```yaml

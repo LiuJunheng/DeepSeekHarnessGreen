@@ -6,7 +6,7 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
 # DeepSeek Harness 绿色便携版 · 部署维护与插件开发
 
 > 版本日期：2026-08-15
-> 本 Skill 沉淀自 `DeepSeekHarnessLauncher` 项目（Python tkinter 一键启动器 + 内置 `dsh-archive-purge` / `dsh-file-browser` / `dsh-session-rewind` 插件）的全过程实测经验，含 46 条避坑记录。适用于：把 dsh 封装成"双击即用、绿色便携、可整目录拷走"的形态，以及开发 DSH 插件（宿主端路由 + WebUI 客户端入口）。
+> 本 Skill 沉淀自 `DeepSeekHarnessLauncher` 项目（Python tkinter 一键启动器 + 内置 `dsh-archive-purge` / `dsh-file-browser` / `dsh-session-rewind` / `dsh-usage-stats` 插件）的全过程实测经验，含 51 条避坑记录。适用于：把 dsh 封装成"双击即用、绿色便携、可整目录拷走"的形态，以及开发 DSH 插件（宿主端路由 + WebUI 客户端入口）。
 
 ## 一、适用场景
 
@@ -25,7 +25,7 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
 ├── start.bat / stop.bat   # ASCII + CRLF 编码的 .bat 入口
 ├── build_exe.bat          # PyInstaller 打包 DSH_Launcher.exe
 ├── config.json            # 镜像/端口/default_workspace 等配置
-├── plugins/               # 内置插件源码（如 dsh-archive-purge）
+├── plugins/               # 内置插件源码（如 dsh-archive-purge、dsh-usage-stats）
 └── runtime/               # 全部运行时数据（绿色便携核心）
     ├── node/              # 便携 Node（node-v22.20.0）
     ├── dsh/               # @deepseek-ai/dsh 本体
@@ -190,6 +190,14 @@ description: "DeepSeek Harness 绿色便携版（一键启动器）的部署、�
 - **验证**（不开 GUI，`runtime/tmp/icon_design/verify_icon.py`）：ICO 文件头 `00000100`；`shell32.ExtractIconExW(exe, 0, ...)` 数 exe 内嵌图标 > 0；`launcher.get_icon_path()` + `LoadImageW` 拿到有效 HICON。注意 **`ExtractIconExW` 在 shell32.dll**（不在 user32）。详见 DEV_NOTES 需求 #26。
 - 通用 tkinter 图标经验已同步 `skills/python-tkinter-desktop-dev.zip`（6.10 自定义 .ico + 检查清单 + `tray_icon_template.py` 模板）。
 
+### 3.8 用量统计 + 消息行「本次token」（dsh-usage-stats 插件，2026-08-16 加入内置，v0.2.0 合并）
+
+- **功能**：一个插件两个功能面、统一安装/卸载——①「设置 → 用量统计」面板：扫描全部会话日志按模型汇总 token 用量 + 费用估算（价格表可编辑）；② 对话消息行上方常驻显示 `本次token：输入 X · 输出 Y · 缓存 Z · 思考 R`（该回合所有 `assistant/message` 的 `usage` 求和，k/M 缩写）。
+- **数据链路**：宿主端复用 session-rewind 的扫描解码机制（`DSH_HOME/sessions/**/session.jsonl.zstd` zstd 多帧 + 官方 `decodeStorageRecord`）；`assistant/message` 事件的 `usage`（`inputTokens`/`outputTokens`/`cacheReadTokens`/`cacheWriteTokens`/`reasoningTokens`）即模型实际报告用量，模型名取 `message.source.model`；**费用不在日志里**，客户端按价格表估算（`token数 ÷ 1e6 × 单价`）。
+- **界面布局教训（卡片式而非表格）**：固定列宽的横向表格在窄面板下标题只显示半个字——改成**卡片式纵向流**：标题/用户消息**独占整行**（`wordBreak: break-word`）、元信息用 `flex-wrap` chips 自动换行、明细在卡片内展开。
+- **消息行显示实现**：走官方链式插槽 `conversation.chat.turnTail`（操作行**上方**内容区）——`ctx.slots.register({ name: "conversation.chat.turnTail", priority: -10, select: (owner) => ({ turn: owner.turn, seq: owner.seq }) }, 组件)`，组件拿 `matched` + `useSession`，从 `snapshot.nodes`（`kind==="assistant"` 且 `turn` 匹配）求和 `usage`；无数据静默不渲染。
+- **验证**：`node --check` 语法 + 无头 Edge CDP 实测（见 4.9 / DEV_NOTES 避坑 #51）。
+
 ## 四、DSH 插件开发（双端加载 + 路由注册）
 
 ### 4.1 插件 = npm 包 + 双入口（最容易漏）
@@ -265,6 +273,17 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 - **排查"装了但没完全生效"顺序**：① dependencies + bundles 是否含包 → ② 设 DSH_HOME 后 dump-config 看插件层 → ③ 有无 `dsh.client`（双端才有 UI）→ ④ **插件自身的外部运行时要求**（外部解释器版本 / 下载型依赖 / API key）——最容易被忽略 → ⑤ 重启服务后看 `server.log` 里插件自己 `ctx.logger.error` 的降级提示。
 - **修复（绿色便携）**：便携 Python 3.11+ 进 `runtime/python`，在插件 Web Settings（如 vision-toolkit 命名空间）把 `runtime.python` 指向它、配好 credential，重启服务；成功标志 = server.log 出现 "dsh-vision-toolkit ... ready"。
 
+### 4.9 纯客户端插件也必须带宿主端 `lib/index.js`（空 apply）→ 缺失则服务启动即退出；消息行扩展点盘点（2026-08-16，dsh-message-actions 实测）
+
+- **【严重】纯客户端插件缺 `lib/index.js` → 整个服务起不来**：宿主 cordis loader 对 bundle 树里**每个包都会 import 其 `main`/`exports["."]`**，纯客户端插件（只做 WebUI 插槽注入）也不例外。`lib/` 下只放 `client.js` 时，安装后重启服务**瞬间退出**，server.log 报 `ERR_MODULE_NOT_FOUND: ...lib/index.js`（`plugin tree failed to load`）。**修复**：`lib/index.js` 放官方纯 UI 插件同款 no-op——`function apply() {} export { apply };`（对照官方 `@deepseek-ai/dsh-client-ui-message-feedback` 宿主端）。
+- **消息行两个官方插槽**：
+  - `conversation.chat.assistant-actions`：每条**已完成**助手消息的 IconActions 操作行，`owner={messageId}`，list 按 `order` 升序（官方反馈 👍👎 用 `order:10`，第三方从 `order:20` 起）；组件拿 session standard kit（`useSession`/`sessionId`）。
+  - `conversation.chat.turnTail`：操作行**上方**内容区，chain 链式——`select` 必填返回匹配值（全拒渲染空），`priority` 控制选举顺序；组件拿 `matched` + `useSession`。
+- **官方已原生覆盖、别重复做**：消息正文「复制」、回合尾「在新对话中分支」（fork 到该消息）、悬停「用时/首 token/速率」；会话级 token 合计官方 StatsLine 已显示在输入框下方（`useProjection("tokenUsage")`）。**教训**：给官方已有能力做"重复插件"价值有限（`dsh-message-actions` 因此被废弃删除）；本项目价值插件 = "官方没有的"（清理/回退/统计）。
+- **fork 边界语义限制"重新生成/删除回合"**：官方 `session.fork` 边界 =「≥ atSeq 的**第一个 turn/end**」→ 只能整回合切，**切不出**"历史 + 用户提问、无回答"（用户提问在上一 turn/end 之后、本回合 turn/end 之前，中间没有 turn/end）；**原地删回合 dsh 不支持**（内存缓存 + seq 断裂）。替代能力由 `dsh-session-rewind`（回退）+ 启动器「会话管理」（清理）覆盖。
+- **读快照拿消息数据**：`useSession((s) => s)` 的 `snapshot.nodes`（legacy 字段，含 `AssistantMessageNode`：`kind:'assistant'`/`turn`/`usage`）与 `snapshot.chat.nodes.values()`（实时节点库，`data.finalNode`/`data.closing.finalNode`）双源；`finalNode.usage` 即事件原始 usage（`outputTokens` 至少必有）。
+- **验证**：无头 Edge + CDP（`/json/list` 取 `type==="page"` target；`Page.addScriptToEvaluateOnNewDocument` 预置 `localStorage["dsh.sessions.current"]={sessionId}` 自动打开历史会话；`Runtime.enable` 抓异常；设置触发器 class `VOzbGW_trigger`；读文本用 `textContent` 而非 `innerText`——innerText 会把 flex 项拆行误判）。详见 DEV_NOTES 避坑 #51。
+
 ## 五、验证与排查速查表
 
 | 症状 | 首选排查动作 |
@@ -277,6 +296,8 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 | "Failed to fetch" / 服务 40 秒退 | stdin 读到 EOF → 用 `stdin=PIPE` 保持打开 |
 | 日志报 `Unexpected token '\ufeff'` | 某 npm 包 package.json 带 UTF-8 BOM → 安装前/读入后去 BOM |
 | 改插件源码 WebUI 没变化 | pnpm 对 `file:` 是拷贝 → 重新安装插件 + 重启服务 |
+| 安装插件后**服务重启即退出**（`ERR_MODULE_NOT_FOUND: ...lib/index.js`） | **纯客户端插件也必须带宿主端 `lib/index.js`**（官方 no-op：`function apply(){} export { apply }`）——`exports["."]`/`main` 必须指向真实存在的模块，缺了它插件树加载失败、整个服务起不来 |
+| 消息行看不到自定义操作按钮 | 先确认官方已原生覆盖（正文复制 / 在新对话中分支 / 悬停用时首token速率 / StatsLine token 合计）→ 检查 `conversation.chat.assistant-actions`（`order` 20+）或 `conversation.chat.turnTail`（chain `select`）注册是否生效 → 强制刷新页面 |
 | 插件树里有但入口没有 | 重启服务（加减插件需重启生效） |
 | 装了插件在 WebUI 看不到任何东西（无 UI） | 查插件 `package.json` 有无 `dsh.client`——无则是宿主端工具/路由插件，靠 agent 按需调用（如 `find_dsh_plugin`）或 HTTP 路由验证，不是装坏了 |
 | `dsh --dump-config` 看不到自定义插件层 | 先 `$env:DSH_HOME=runtime\dsh-home` 再 dump（否则加载 `~/.dsh` 默认 home，只有内置 bundle） |

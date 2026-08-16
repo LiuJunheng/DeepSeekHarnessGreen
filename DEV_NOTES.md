@@ -93,6 +93,9 @@
         - **避坑**：`--add-data` 的源路径按 **spec 目录**（`--specpath build`）解析，必须写绝对路径 `%~dp0...`，否则报 `Unable to find '...\build\DSH_Launcher.ico'`；而 `--icon` 按当前目录解析可直接写相对路径。
     - **验证**：`verify_icon.py`（不开 GUI）——ICO 文件头 `00000100` 合法；`shell32.ExtractIconExW(exe, 0, ...)` 数出 exe 内嵌 1 个图标；`launcher.get_icon_path()` 返回正确路径且 `LoadImageW` 拿到有效 HICON。注意 **`ExtractIconExW` 在 shell32.dll**（不在 user32）。已重打 `DSH_Launcher.exe`（9.2MB，含图标）。
     - 相关经验已同步 `skills/python-tkinter-desktop-dev.zip`（6.10 自定义 .ico 小节 + 检查清单 + 新模板）+ `skills/dsh-deploy-maintain/SKILL.md`（3.x 启动器 GUI 增强）。
+27. **内置插件 dsh-usage-stats（用量统计，2026-08-16，另一 AI 开发）**：用户希望知道每个对话实际消耗了多少 token。插件在 WebUI 设置页新增「用量统计」面板，并提供消息行 token 显示（见 #28）。**宿主端** `lib/index.js` 复用 session-rewind 的扫描解码机制（`DSH_HOME/sessions/**/session.jsonl.zstd` zstd 多帧 + 官方 `decodeStorageRecord`），对每条 `assistant/message` 事件的 `usage`（`inputTokens`/`outputTokens`/`cacheReadTokens`/`cacheWriteTokens`/`reasoningTokens`）按模型聚合，模型名取 `message.source.model`；路由 `GET /__dsh/usage-stats/list`（全会话汇总）+ `GET /__dsh/usage-stats/detail?id=`（逐回合明细），均要求自定义头 `X-DSH-Usage-Stats: 1` 防跨站。**费用估算在客户端**：日志不含费用，前端价格表（元/每百万 tokens，localStorage 键 `dsh.usageStats.prices.v1` 持久化，可编辑增删模型、恢复默认）按 `token数 ÷ 1e6 × 单价` 估算。**客户端** `lib/client.js` 设置页布局迭代两次：初版横向表格（列宽固定）→ 用户反馈「标题格子太窄、只显示半个字」→ **重设计为卡片式纵向布局**：会话卡片（标题独占整行可换行 + ID + 元信息 chips 自动换行）+ 逐回合卡片（用户消息独占整行完整可读，下方回合号/步骤/工具调用/输出 tk/估算/模型/状态）。
+28. **消息行「本次token」显示 + 插件合并（2026-08-16）**：用户希望对话框里能看到每回合具体 token 数字（官方悬停只显示用时/首token/速率）。先做独立插件 `dsh-turn-tokens`：走官方链式插槽 `conversation.chat.turnTail`（操作行上方内容区，`select` 返回 `{turn, seq}`，组件用 `useSession` 读快照，把本回合所有 `assistant` 节点的 `usage` 求和），右对齐常驻显示。用户随后要求**与用量统计合并成一个插件统一安装/卸载**——`dsh-turn-tokens` 的功能并入 `dsh-usage-stats`（v0.2.0，一个插件 = 设置面板 + 消息行显示），并删除独立插件；同时消息行显示加「**本次token：**」前缀（否则旁人看不出是 token 数字）。**另记 `dsh-message-actions`（消息操作增强）的完整生命周期**：先做「重新生成 + 复制含思考」→ 安装后**服务启动即退出**（缺宿主端 `lib/index.js`，见避坑 #49）→ 补文件后功能正常 → 用户实测「重新生成」语义 = fork 到上一回合结束 + 手动重发提示词（并非原地覆盖，dsh 架构不支持），**价值有限**（复制官方已有、删除/回退被 `dsh-session-rewind` 与启动器会话管理覆盖）→ 用户决定废弃，已卸载并删除源码。教训：**给官方已有能力做"重复插件"前先确认扩展点覆盖了什么**；本项目的价值插件是"官方没有的"（清理/回退/统计）。
+
 
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
@@ -401,6 +404,22 @@
     - **新功能：插件管理窗口启用/停用开关**：左侧"已安装插件"列表新增**状态列**（启用/停用/—）+「启用选中」「停用选中」按钮；停用状态持久化在 `dsh.profile.disabled` 数组（launcher 维护，官方 reconcile 不识别 → 由 launcher 每次命令后重新应用）；`set_plugin_enabled()` / `get_plugin_state()` 实现读写；启停后需重启服务生效（GUI 有提示）。
     - **验证**：① `py_compile` 通过；② 隔离测试 6 断言全过（幂等 reconcile 不删内置 bundle / 停用从 bundles 移除且 disabled 记录 / 停用后 reconcile 不被加回 / 启用恢复 / 模拟移除清除 / 最终恢复）；③ 端到端模拟 GUI 安装本地 bundle 包：pnpm 触发 `ERR_PNPM_IGNORED_BUILDS`（exit 1）后**仍自动写入 bundles** ✓、移除后自动清除 ✓；④ `dsh --profile web --dump-config`（设 DSH_HOME）确认全家桶 10 个插件行全部合成进树；⑤ 重新 PyInstaller 打包 `DSH_Launcher.exe` 成功（新 exe 另存 `DSH_Launcher_new.exe` 供替换）。
     - **教训**：① 排查"装了插件没生效"先看 `dsh.profile.bundles` 是否含包（不是看 dependencies/node_modules）；② **任何调 pnpm 的插件命令，绝不能假设退出码 0 才成功**——`ERR_PNPM_IGNORED_BUILDS` 会让 pnpm 以 1 结束但安装实际成功，启动器必须自己兜底同步编排层；③ 停用状态必须由启动器自己持久化并在每次命令后重放，因为官方 reconcile 只认 `dsh.profile.bundles`，会无视 disabled 把停用的包加回。**本经验已同步至 `skills/dsh-deploy-maintain/`（SKILL.md 3.2 + plugin-dev-checklist）并重建 `Skill-dsh-deploy-maintain.zip`。**
+49. **【DSH 插件·严重】纯客户端插件也必须带宿主端 `lib/index.js`（哪怕空 apply）→ 缺失则服务启动即退出（2026-08-16，dsh-message-actions 实测）**：
+    - **现象**：`dsh-message-actions` 是纯客户端插件（只做 WebUI 插槽注入，无宿主路由），当时 `lib/` 下只放了 `client.js`。安装后**重启服务瞬间退出**，server.log 报 `dsh: plugin tree failed to load: failed to apply loader entry include (cordis:include): failed to import loader entry message-actions (dsh-message-actions): Cannot find module '...lib/index.js'`（`ERR_MODULE_NOT_FOUND`）——宿主 cordis loader 对 bundle 树里的**每个包都会 import 其 main/exports["."]**，纯客户端插件也不例外。
+    - **修复**：`lib/index.js` 放官方纯 UI 插件同款 no-op：`function apply() {} export { apply };`（可再带 `const name`/`inject` 注释说明）。对照官方 `@deepseek-ai/dsh-client-ui-message-feedback` 的宿主端就是这么写的。
+    - **教训**：**写任何 dsh 插件（含纯客户端）都必须保证 `package.json` 的 `exports["."]`（main）指向一个真实存在的模块文件**；缺了它插件树加载失败，不是"插件不生效"而是"整个服务起不来"。这也是后续 `dsh-turn-tokens`/合并后的 `dsh-usage-stats` 都带 `lib/index.js` 空 apply 的原因。
+50. **【DSH 插件客户端】消息行扩展点与官方已覆盖能力盘点（2026-08-16）**：
+    - **两个官方插槽**：① `conversation.chat.assistant-actions`——每条**已完成**助手消息的 IconActions 操作行（`owner={messageId}`，list 按 `order` 升序渲染，官方反馈 👍👎 用 `order:10`，第三方从 `order:20` 起）；② `conversation.chat.turnTail`——操作行**上方**的内容区（chain 链式，`select` 必填返回匹配值，组件拿 `matched` + session standard kit 的 `useSession`，`priority` 控制选举顺序，全拒则渲染空）。
+    - **官方已原生提供、插件别重复做**：消息正文「复制」、每条回合尾「在新对话中分支」（fork 到该消息）、悬停「用时/首 token/速率」（`MessageIconActions`）；会话级 token 合计官方 StatsLine 已显示在输入框下方（`useProjection("tokenUsage")`）。
+    - **fork 边界语义限制"重新生成/删除回合"**：官方 `session.fork` 的边界是「≥ atSeq 的**第一个 turn/end**」——只能整回合切，**无法**切到"历史 + 用户提问、无回答"（用户提问在上一 turn/end 之后、本回合 turn/end 之前，不存在介于两者之间的 turn/end 边界）。因此"重新生成"只能 fork 到上一回合结束再手动重发（或 fork 后取提问文本自动重发，但只支持纯文本且立即耗 token）；**原地删除回合 dsh 不支持**（内存缓存 + seq 断裂，见 dsh-session-rewind 设计结论）。本项目的替代能力已由 `dsh-session-rewind`（回退）+ 启动器「会话管理」（清理）覆盖。
+    - **读快照拿消息数据**：`useSession((s) => s)` 的 `snapshot.nodes`（legacy 兼容字段，含 `AssistantMessageNode`：`kind:'assistant'`/`turn`/`usage`）与 `snapshot.chat.nodes.values()`（实时节点库，`data.finalNode`/`data.closing.finalNode`）双源；`finalNode.usage` 即事件的原始 `usage`（`outputTokens` 至少必有）。
+51. **【验证】无头 Edge + CDP 实测 WebUI 插件（2026-08-16）**：浏览器侧问题（按钮不渲染/布局错）用无头 Edge 复现最靠谱：
+    - **CDP 连接**：`msedge --headless=new --remote-debugging-port=934X --user-data-dir=<临时>` 后 `GET /json/list` 取 **`type === "page"`** 的 target（否则会连到扩展 background page）；用 node_modules 里的 `ws` 写脚本：`Runtime.enable`（抓 `Runtime.exceptionThrown`/`console.error`）+ `Page.addScriptToEvaluateOnNewDocument`（页面脚本前注入）+ `Page.navigate`。
+    - **自动打开历史会话**：无头浏览器无当前会话（停在 hero），在 `addScriptToEvaluateOnNewDocument` 里预置 `localStorage.setItem("dsh.sessions.current", JSON.stringify({ sessionId: "<id>" }))`（客户端选择持久化键，`dsh-client-runtime` 里 `persist: { name: "dsh.sessions.current" }`），加载后自动打开该会话并可检查消息行。
+    - **设置面板**：触发按钮 class `VOzbGW_trigger`（侧边栏底部齿轮，无文本/aria），面板是居中模态（`.VOzbGW_navCell` 导航 + 右区 `settings.section`）。
+    - **读文本用 textContent 而非 innerText**：innerText 会把 flex 项当块级插入换行（"本次token：值"被拆成两行误判），`el.textContent` 才是真实拼接。
+    - **清理**：无头 Edge 的 `--user-data-dir` 会留在 `runtime/tmp/dsh-cdp-*`，跑完要删；`taskkill /F /IM msedge.exe` 兜底清进程。
+    - **教训**：服务端 bundle/路由都对、浏览器看不到 → 十有八九是**页面缓存**（强制刷新 Ctrl+Shift+R）或组件运行时问题；先用无头复现拿控制台异常，再对症下药。
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。

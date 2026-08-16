@@ -30,7 +30,7 @@ DeepSeekHarnessLauncher/
 │   ├── tmp/               # 临时文件
 │   ├── server.pid         # 服务进程号
 │   └── server.log         # 服务运行日志
-├── plugins/               # 内置插件源码（dsh-archive-purge 清理归档 / dsh-session-rewind 会话回退 / dsh-file-browser 文件浏览）
+├── plugins/               # 内置插件源码（dsh-archive-purge 清理归档 / dsh-session-rewind 会话回退 / dsh-file-browser 文件浏览 / dsh-usage-stats 用量统计）
 ├── skills/                # 本项目的 DSH 经验 Skill（已安装到 TRAE 全局 skills）
 └── README.md
 ```
@@ -134,7 +134,7 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 ### 轻量分发 zip（精简在线版，约 8MB）
 > 相较"整目录迁移"，此 zip **不含 `runtime/`（不带已下载的环境与会话）**，新机联网后由启动器自动下载 Node / Python / dsh，体积小、适合放到 GitHub Release 分发。
 >
-> 打包内容（即项目根目录的"发货清单"）：`launcher.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`config.json`、`README.md`、`DEV_NOTES.md`、`.gitignore`、`plugins/dsh-archive-purge/`、`plugins/dsh-session-rewind/`、`plugins/dsh-file-browser/`、`skills/dsh-deploy-maintain/`。
+> 打包内容（即项目根目录的"发货清单"）：`launcher.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`config.json`、`README.md`、`DEV_NOTES.md`、`.gitignore`、`plugins/dsh-archive-purge/`、`plugins/dsh-session-rewind/`、`plugins/dsh-file-browser/`、`plugins/dsh-usage-stats/`、`skills/dsh-deploy-maintain/`。
 
 - **最新下载**（GitHub Release，tag `v1.0.3`）：<https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
 - 仓库：<https://github.com/LiuJunheng/DeepSeekHarnessGreen>
@@ -210,6 +210,16 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 ### 配套：内置「会话回退」WebUI 插件
 启动器 `plugins/` 下自带 **`dsh-session-rewind`** 插件：解决 dsh 会话被工具运行时失效（`Cannot read properties of undefined (reading 'prepare')`）**永久毒化**的问题——崩溃回合会在日志里留下孤儿 `tool_calls`，之后每一轮都被 API 400 拒绝。安装并重启服务后，WebUI「设置 → 会话回退」可：列出全部会话 →「分析」任意会话（逐回合信息：用户问题 / 步骤数 / 工具调用数 / 错误码统计 / 是否完成）→ 在任意一个**已完成**回合上点「回退到此」，调用官方 `session.fork` 从该回合之后派生一个**干净的续接会话**并自动打开（原会话保留，可再交「会话管理」清理）。它是纯插件（不修改任何官方文件），通过「插件管理 → 选择本地插件文件夹安装…」选择 `plugins/dsh-session-rewind` 目录安装即可（命令行等价物：`python launcher.py --install-plugin plugins\dsh-session-rewind`），详见 [plugins/dsh-session-rewind/README.md](plugins/dsh-session-rewind/README.md)。
 
+### 内置插件：dsh-usage-stats（用量统计 + 消息行「本次token」）
+启动器 `plugins/` 下自带 **`dsh-usage-stats`** 插件（v0.2.0，一个插件两个功能面，统一安装/卸载）：
+
+1. **设置页「用量统计」**：扫描本机**全部会话日志**，按模型汇总每次模型调用的 token 用量，支持**费用估算**。总览卡片（会话数 / 回合总数 / 输入 / 输出 / 缓存 / 思考 tokens + 估算费用，按模型分布）；**可编辑价格表**（元 / 每百万 tokens，存浏览器 localStorage）；**会话卡片列表**（标题独占整行、元信息自动换行）+ 点「明细」展开**逐回合卡片**（用户消息独占整行完整可读，下方回合号 / 步骤 / 工具调用 / 输出 tk / 估算 / 模型 / 完成状态）。
+2. **对话消息行「本次token」**：每条**已完成助手消息**的操作行上方，右对齐常驻显示该回合实际消耗的 token——`本次token：输入 3.3k · 输出 4.6k · 缓存 832.3k · 思考 3.7k`（k/M 缩写，数据取该回合所有 `assistant/message` 事件的 `usage` 求和，与面板同源；官方悬停的用时/首token/速率不受影响）。
+
+数据直接从会话日志解码（`session.jsonl.zstd` zstd 多帧，与 `dsh-session-rewind` 同机制），**费用为估算**（日志不含费用，按价格表估算，仅供成本参考）。通过「插件管理 → 选择本地插件文件夹安装…」选择 `plugins/dsh-usage-stats` 目录安装即可（命令行等价物：`python launcher.py --install-plugin plugins\dsh-usage-stats`），详见 [plugins/dsh-usage-stats/README.md](plugins/dsh-usage-stats/README.md)。
+
+> 说明：消息行「本次token」原为独立插件 `dsh-turn-tokens`（v0.1.0），自 v0.2.0 起合并进本插件；若历史版本装过它，先移除再安装本插件，避免重复显示。
+
 ## 七、绿色版自更新（双通道更新）
 
 本绿色版支持**两条完全独立、互不干扰的更新通道**：
@@ -270,7 +280,7 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 
 - 源文件在项目 `skills/dsh-deploy-maintain/`（主文档 `SKILL.md` + `checklists/` 检查清单 + `references/` 插件骨架与数据目录详解）。
 - 已安装到 TRAE 全局 skills（`~/.trae-cn/skills/dsh-deploy-maintain/`），新会话可直接用。
-- 内容：绿色便携部署（便携 Node / 环境变量重定向 / 工作区 ACL 沙箱 / exe 打包）、日常维护（更新备份 / 插件管理 / 数据维护）、DSH 插件开发（双端加载 / `ctx.effect` 路由注册 / `exports` 坑）、34 条避坑浓缩为排查速查表。
+- 内容：绿色便携部署（便携 Node / 环境变量重定向 / 工作区 ACL 沙箱 / exe 打包）、日常维护（更新备份 / 插件管理 / 数据维护）、DSH 插件开发（双端加载 / `ctx.effect` 路由注册 / `exports` 坑）、51 条避坑浓缩为排查速查表。
 
 ## 十一、常见问题
 

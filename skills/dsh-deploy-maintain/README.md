@@ -7,8 +7,8 @@ DeepSeek Harness 绿色便携版（一键启动器）的部署、维护与插件
 - **部署**：便携 Node + dsh 安装、环境变量重定向、工作区 ACL 沙箱、exe 打包
 - **维护**：更新备份、插件管理（pnpm）、数据维护（会话永久删除）
 - **体验优化**：WebUI 单页面去重（向前端注入心跳，避免多次重启累积重复标签页）
-- **插件开发**：dsh 插件双端加载、`ctx.effect` 路由注册、客户端 `exports` 坑
-- **避坑**：34 条实测经验浓缩为排查速查表
+- **插件开发**：dsh 插件双端加载、`ctx.effect` 路由注册、客户端 `exports` 坑、纯客户端插件宿主端 `lib/index.js` 必须存在（缺失服务启动即退出）
+- **避坑**：51 条实测经验浓缩为排查速查表
 
 ## 目录
 
@@ -30,4 +30,4 @@ dsh-deploy-maintain/
 
 ## 来源
 
-沉淀自 `DeepSeekHarnessLauncher` 项目（Python tkinter 一键启动器 + `dsh-archive-purge` 插件）的全过程实测，含 34 条避坑记录（2026-08-15）。
+沉淀自 `DeepSeekHarnessLauncher` 项目（Python tkinter 一键启动器 + 内置 `dsh-archive-purge` / `dsh-file-browser` / `dsh-session-rewind` / `dsh-usage-stats` 插件）的全过程实测，含 51 条避坑记录（2026-08-16 更新）。
