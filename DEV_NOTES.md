@@ -169,6 +169,8 @@
     - **发布默认 config.json 恢复本机模式**：本地 config.json 因局域网测试残留 `dsh_host: 0.0.0.0`，**发布默认改回 `127.0.0.1`**（用户确认）——新用户开箱仅本机访问，局域网需自行在 GUI 网络设置开启（特权 API 本就仅回环）。
     - **旧版 Release 资产清理**：v1.0.0~v1.0.6 各 Release 的 zip 资产（含 `DSH_Skill_*.zip`）全部删除，**Release 条目与更新记录保留**；新版本只传绿色 zip 一个资产。
     - **发布流程执行细节**：`gh` CLI 不可用，凭据在 Windows 凭据管理器（`credential.helper=manager`）→ 用 **`git credential fill` 取 token + urllib 直调 GitHub API**（`runtime/tmp/gh_helper.py`，用后即删）；上传资产走 `POST /releases/{id}/assets`（`Content-Type: application/zip`，body 为文件字节流）；release body 用 UTF-8 字节流提交（避坑 #32）；发布前用 `git credential fill` 拿到的 token 验证 API 可达。另：系统 PATH 的 `python` 是旧版（报 Py2 语法错误），统一用内置便携 Python `runtime\python\python\python.exe` 跑脚本。
+    - **上传资产端点坑（实测 404）**：资产上传 **`POST` 端点必须用 `uploads.github.com`**（`https://uploads.github.com/repos/<owner>/<repo>/releases/<id>/assets?name=...`），用 `api.github.com` 同路径会 404；下载/读取资产走 `api.github.com` 正常。国内网络 github.com:443 不可达但 api.github.com/uploads.github.com 可达（用户开全局代理后可正常 git push）。
+    - **发布完成（2026-08-17 实测）**：v1.0.7 Release（id 371534576，三国味 body 1077 字符）已创建，zip 资产 `DSH_Launcher_GreenPortable_Online_20260817_v1.0.7.zip`（9201258 字节）上传成功；v1.0.0~v1.0.6 共 **13 个旧资产全部删除，Release 条目与更新记录保留**（v1.0.7 起不再有 `DSH_Skill_*.zip`）。git 推送由用户本人完成（master=b8a6fdc，tag v1.0.7=34e94cb）。
 
 
 ## 二、代码设定（launcher.py）
