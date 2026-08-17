@@ -678,9 +678,11 @@ window.__ModuleLoader__.load({
 		 * 汇总某个回合所有助手消息的 usage。
 		 * 数据源: 会话快照顶层兼容字段 snapshot.nodes 里的 AssistantMessageNode
 		 * (kind === "assistant", 带 turn 与 usage)。
+		 * 返回: 该回合汇总 totals + perModel (按模型分组的 usage, 用于按模型分别计价,
+		 * 模型名取节点 provenance.model, 缺失归 "unknown")。
 		 */
 		function sumTurnUsage(snapshot, turnNum) {
-			const total = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, found: false };
+			const total = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, found: false, perModel: {} };
 			const nodes = snapshot && Array.isArray(snapshot.nodes) ? snapshot.nodes : [];
 			for (const n of nodes) {
 				if (!n || n.kind !== "assistant") continue;
@@ -693,6 +695,17 @@ window.__ModuleLoader__.load({
 				total.cacheReadTokens += num(u.cacheReadTokens);
 				total.cacheWriteTokens += num(u.cacheWriteTokens);
 				total.reasoningTokens += num(u.reasoningTokens);
+				// 按模型分组 (用于按模型价格分别计价)
+				const model = (n.provenance && typeof n.provenance.model === "string" && n.provenance.model) || "unknown";
+				if (!total.perModel[model]) {
+					total.perModel[model] = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 };
+				}
+				const m = total.perModel[model];
+				m.inputTokens += num(u.inputTokens);
+				m.outputTokens += num(u.outputTokens);
+				m.cacheReadTokens += num(u.cacheReadTokens);
+				m.cacheWriteTokens += num(u.cacheWriteTokens);
+				m.reasoningTokens += num(u.reasoningTokens);
 			}
 			return total;
 		}
@@ -713,7 +726,14 @@ window.__ModuleLoader__.load({
 			const usage = sumTurnUsage(snapshot, turnNum);
 			if (!usage.found) return null;
 
-			// 拼装展示项 (按官方计费口径分类): 输入(未命中缓存) / 输入(命中缓存) / 输出 / 思考
+			// 预估费用: 按回合内各模型分别计价 (价格表取 localStorage 已保存值, 未保存用官方默认价)
+			const prices = loadPrices();
+			let cost = 0;
+			for (const model of Object.keys(usage.perModel || {})) {
+				cost += costOf(usage.perModel[model], prices, model);
+			}
+
+			// 拼装展示项 (按官方计费口径分类): 输入(未命中缓存) / 输入(命中缓存) / 输出 / 思考 / 费用约
 			//   输入未命中 = inputTokens + cacheWriteTokens (首次写入缓存的输入按未命中计费);
 			//   思考(reasoning) 已计入输出, 不重复计费, 仅作参考展示。
 			const parts = [];
@@ -726,10 +746,11 @@ window.__ModuleLoader__.load({
 			if (hitStr && usage.cacheReadTokens > 0) parts.push("输入(命中缓存) " + hitStr);
 			if (outStr) parts.push("输出 " + outStr);
 			if (reasonStr && usage.reasoningTokens > 0) parts.push("思考 " + reasonStr);
+			if (cost > 0) parts.push("费用约 " + fmtCost(cost));
 			if (parts.length === 0) return null;
 
 			return react.createElement("div", {
-				title: "该回合实际消耗的 token（按 DeepSeek 官方计费口径分类：输入分未命中/命中缓存；思考(reasoning) 已计入输出、不重复计费）",
+				title: "该回合实际消耗的 token 与预估费用（token 按 DeepSeek 官方计费口径分类：输入分未命中/命中缓存，思考(reasoning) 已计入输出不重复计费；费用按价格表估算，可在 设置 → 用量统计 调整价格）",
 				style: {
 					display: "flex",
 					justifyContent: "flex-end",

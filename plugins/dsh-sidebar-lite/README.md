@@ -22,7 +22,7 @@
   | 来源能力（Better Sidebar） | 本版取舍 |
   |---|---|
   | 文件资源管理器 / 文件预览 / 内嵌浏览器 | **保留**（核心，并放开上级目录浏览） |
-  | 会话工作目录溯源（`session.header.cwd`）与工作区兜底 | **升级**（资源管理器默认根改为工作区根 `sandboxPolicy.workspaceRoot`，会话 cwd 退居兜底，保持上级浏览） |
+  | 会话工作目录溯源（`session.header.cwd`）与工作区兜底 | **升级**（资源管理器默认根为工作区根 `sandboxPolicy.workspaceRoot`，会话 cwd 退居兜底；兜底链不再落到 dsh 进程 cwd `runtime\dsh`，避免默认路径显示成 "dsh"，保持上级浏览） |
   | 后台任务（Jobs）列表/输出/收割 | **保留**（列表走官方 jobs 推送镜像，输出/停止走 jobs.output / jobs.kill） |
   | 终端（node-pty / xterm） | **换为** `cmd.exe + SSE` 的轻量方案（绿色版零原生依赖，逐行执行） |
   | 自定义头防跨站 + DNS-rebinding / CSRF 边界 | **保留**（`X-DSH-Sidebar-Lite: 1`） |

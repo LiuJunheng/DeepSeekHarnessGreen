@@ -611,6 +611,13 @@
     - **诊断手法（可复用）**：用 `curl -s -H "X-DSH-Sidebar-Lite: 1" -H "Content-Type: application/json" -X POST http://127.0.0.1:3080/__dsh/sidebar-lite/session.cwd -d "{}"` 直接打运行中的宿主端，发现 `sessionId":""` 也能返回 `workspaceRoot`；再开浏览器 DevTools 看 console（无 React 报错）+ 亲眼看 UI 文字「扫描目录…」是**前端状态短路**而非后端 500。疑似前端问题时先 trace 状态依赖链，别只查后端。
     - **部署坑**：客户端 bundle `client.js` 被运行中的 DSH web 服务**持有文件句柄**，改完源码 `Copy-Item` 到 `node_modules` 会报 `The process cannot access the file ... because it is being used by another process`——**必须重启 DSH 服务**才释放句柄并重载 bundle；只 `node --check` 过语法无用，不重启永远跑旧代码（本次正是改完也卡「扫描目录」，重启后生效）。
 
+63. **【插件】侧边栏资源管理器默认路径"总是 dsh"的坑：`process.cwd()` 兜底落在 dsh 安装目录（2026-08-17，dsh-sidebar-lite）**：
+    - **现象**：资源管理器默认根目录**总是显示 `dsh`**（路径框 `...\runtime\dsh`），用户期望的是**工作目录的根目录**（用户选择的工作区，如 `D:\DeepSeekHarnessLauncher`）。
+    - **根因**：dsh 服务进程由启动器以 `subprocess.Popen(..., cwd=DSH_DIR)` 拉起（见 launcher.py `start_server`），**进程 cwd 就是 `runtime\dsh`**（目录名恰为 "dsh"）。宿主插件 `sessionCwdOf()` 的兜底链是 `会话 header.cwd → 客户端 cwd → process.cwd()`；当 `ctx.get("sessions").get(sessionId)` 拿不到（服务未就绪/会话对象无 header）且客户端 `summaryCwd` 也为空时，就**落到 `process.cwd()` = `runtime\dsh`**，于是资源管理器默认根固定显示 "dsh"——明明会话 header.cwd 是 `D:\DeepSeekHarnessLauncher`（用 zstd 解压 `session.jsonl.zstd` 第一行 header 可实测确认）。
+    - **修法（双管齐下）**：① 宿主端新增 `defaultRootOf(ctx)` 同步兜底函数：优先返回 `sandboxPolicy.workspaceRoot`（工作区根），拿不到才 `process.cwd()`；`sessionCwdOf` 改为接受可选第 4 参 `fallbackRoot`，兜底链变成 `header.cwd → 客户端 cwd → fallbackRoot(工作区根) → sandboxPolicy.workspaceRoot → process.cwd()`；`session.cwd` 路由先 `await resolveWorkspaceRoot(ctx)` 拿到工作区根再当 fallback 传给 `sessionCwdOf`。② 客户端 `ExplorerView` 初始根与首次同步 effect 的优先级改为 **`workspaceRoot || cwd`（工作区根优先，会话 cwd 兜底）**——资源管理器默认展示"工作目录的根目录"（工作区根），而不是会话子目录或 runtime\dsh。
+    - **诊断手法（可复用）**：别猜"用户选的工作区对不对"，先确认兜底值来源。用 `node --check` 过语法只是基础；本项目用便携 Node 解压 `runtime/dsh-home/sessions/<工作区编码>/<会话ID>/session.jsonl.zstd`（Node 22 内置 `zlib.zstdDecompressSync` 按 `28 B5 2F FD` magic 切帧）读首行 header 看 `cwd`，再对照 `runtime/dsh-home/storages/workspace.json` 的工作区 `path`——两处都该是工作区根；如果宿主端返回的 `cwd` 不是它俩之一，就是 `process.cwd()` 兜底被命中（启动器 `cwd=DSH_DIR` 所致）。
+    - **教训**：**进程 cwd ≠ 用户工作目录**，尤其 dsh 服务进程 cwd 是安装目录 `runtime\dsh`。插件任何"默认路径"的兜底都不该直接用 `process.cwd()`，应优先工作区根（`sandboxPolicy.workspaceRoot`，经 `fs.resolve/processPath` 转可展示绝对路径）；客户端侧"工作区根优先、会话 cwd 兜底"才是"工作目录的根目录"语义。
+
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验

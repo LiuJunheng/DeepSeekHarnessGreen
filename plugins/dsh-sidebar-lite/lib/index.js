@@ -101,15 +101,36 @@ function requireString(payload, key) {
 // ---- 会话工作目录溯源 ----
 
 /**
+ * 同步取一个"好用的"兜底根目录。
+ * 优先级: sandboxPolicy.workspaceRoot (工作区根, 即用户在 WebUI 选择的工作区) > 进程 cwd。
+ * 目的: 当会话 header.cwd 与客户端 cwd 都拿不到时, 资源管理器默认根应该是
+ * 工作目录的根目录(工作区), 而不是 dsh 服务进程 cwd(runtime\dsh, 目录名恰为 "dsh"),
+ * 否则侧栏资源管理器默认路径会显示成 "dsh" 而非用户的工作区根目录。
+ * @param {object} ctx - cordis 宿主上下文。
+ * @returns {string} 兜底根目录绝对路径。
+ */
+function defaultRootOf(ctx) {
+	try {
+		const sandboxPolicy = ctx.get("sandboxPolicy");
+		const root = sandboxPolicy && typeof sandboxPolicy.workspaceRoot === "string" && sandboxPolicy.workspaceRoot !== ""
+			? sandboxPolicy.workspaceRoot
+			: "";
+		if (root !== "") return root;
+	} catch { /* sandboxPolicy 服务不可用则忽略 */ }
+	return process.cwd();
+}
+
+/**
  * 取当前激活会话的工作目录 (权威来源是会话 header.cwd)。
- * 这里用 ctx.get("sessions") 动态取服务, 拿不到会话时回退到 guest 的 cwd 或进程 cwd。
+ * 这里用 ctx.get("sessions") 动态取服务, 拿不到会话时回退到兜底根目录。
  * 若会话无 cwd 且客户端提供了 cwd, 则用客户端 cwd。
  * @param {object} ctx - cordis 宿主上下文。
  * @param {string} sessionId - 会话 id。
  * @param {string} [clientCwd] - 客户端上报的工作目录 (作为兜底)。
+ * @param {string} [fallbackRoot] - 外部传入的兜底根 (通常为工作区根, 优先于进程 cwd)。
  * @returns {string} 会话权威工作目录绝对路径。
  */
-function sessionCwdOf(ctx, sessionId, clientCwd) {
+function sessionCwdOf(ctx, sessionId, clientCwd, fallbackRoot) {
 	try {
 		const sessions = ctx.get("sessions");
 		const session = sessions && sessions.get(sessionId);
@@ -124,7 +145,9 @@ function sessionCwdOf(ctx, sessionId, clientCwd) {
 			throw new Error("invalid client cwd: " + clientCwd);
 		}
 	}
-	return process.cwd();
+	// 兜底: 优先工作区根(用户工作目录的根), 其次 sandboxPolicy.workspaceRoot,
+	// 最后才落到进程 cwd(runtime\dsh)。避免默认路径显示成 "dsh"。
+	return fallbackRoot || defaultRootOf(ctx) || process.cwd();
 }
 
 /**
@@ -497,20 +520,22 @@ function apply(ctx) {
 				let result;
 				switch (method) {
 					case "session.cwd": {
-						const workspace = sessionCwdOf(ctx, sessionId, cwd);
-						const parent = dirname(workspace);
-						// 工作区根 = 资源管理器默认根目录 (对齐 dsh-file-browser 的 home),
-						// 让侧栏默认展示 E:\DeepSeekHarnessLauncher 整个项目而非 runtime\dsh。
-						const workspaceRoot = await resolveWorkspaceRoot(ctx);
-						result = {
-							sessionId,
-							cwd: workspace,
-							root: basename(workspace) || workspace,
-							parent: parent === workspace ? null : parent,
-							workspaceRoot: workspaceRoot || undefined,
-						};
-						break;
-					}
+					// 工作区根 = 资源管理器默认根目录 (对齐 dsh-file-browser 的 home),
+					// 让侧栏默认展示工作区根(如 D:\DeepSeekHarnessLauncher) 而非 runtime\dsh。
+					const workspaceRoot = await resolveWorkspaceRoot(ctx);
+					// 会话工作目录权威来源是 header.cwd; 拿不到时用工作区根兜底,
+					// 不再落到 dsh 进程 cwd(runtime\dsh), 否则默认路径会显示成 "dsh"。
+					const workspace = sessionCwdOf(ctx, sessionId, cwd, workspaceRoot || undefined);
+					const parent = dirname(workspace);
+					result = {
+						sessionId,
+						cwd: workspace,
+						root: basename(workspace) || workspace,
+						parent: parent === workspace ? null : parent,
+						workspaceRoot: workspaceRoot || undefined,
+					};
+					break;
+				}
 					case "fs.tree": {
 						const workspace = sessionCwdOf(ctx, sessionId, cwd);
 						const target = payload.path === undefined
