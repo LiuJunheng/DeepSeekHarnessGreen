@@ -23,6 +23,8 @@
   |---|---|
   | 文件资源管理器 / 文件预览 / 内嵌浏览器 | **保留**（核心，并放开上级目录浏览） |
   | 会话工作目录溯源（`session.header.cwd`）与工作区兜底 | **升级**（资源管理器默认根为工作区根 `sandboxPolicy.workspaceRoot`，会话 cwd 退居兜底；兜底链不再落到 dsh 进程 cwd `runtime\dsh`，避免默认路径显示成 "dsh"，保持上级浏览） |
+  | 资源管理器「回到工作目录」按钮 | **新增**（在刷新按钮旁，一键回到 `workspaceRoot || cwd`，用户改过路径后无需手动重输） |
+  | 运行中会话定位（`current` vs `sessionId`） | **修复**（官方 list store 用 `current` 字段表示当前激活会话 id，原代码误用不存在的 `sessionId` 字段导致 `sessionId` 恒为 null，任务面板永远空、会话 cwd 拿不到，引避坑 #64） |
   | 后台任务（Jobs）列表/输出/收割 | **保留**（列表走官方 jobs 推送镜像，输出/停止走 jobs.output / jobs.kill） |
   | 终端（node-pty / xterm） | **换为** `cmd.exe + SSE` 的轻量方案（绿色版零原生依赖，逐行执行） |
   | 自定义头防跨站 + DNS-rebinding / CSRF 边界 | **保留**（`X-DSH-Sidebar-Lite: 1`） |

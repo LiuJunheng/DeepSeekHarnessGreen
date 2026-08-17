@@ -618,6 +618,14 @@
     - **诊断手法（可复用）**：别猜"用户选的工作区对不对"，先确认兜底值来源。用 `node --check` 过语法只是基础；本项目用便携 Node 解压 `runtime/dsh-home/sessions/<工作区编码>/<会话ID>/session.jsonl.zstd`（Node 22 内置 `zlib.zstdDecompressSync` 按 `28 B5 2F FD` magic 切帧）读首行 header 看 `cwd`，再对照 `runtime/dsh-home/storages/workspace.json` 的工作区 `path`——两处都该是工作区根；如果宿主端返回的 `cwd` 不是它俩之一，就是 `process.cwd()` 兜底被命中（启动器 `cwd=DSH_DIR` 所致）。
     - **教训**：**进程 cwd ≠ 用户工作目录**，尤其 dsh 服务进程 cwd 是安装目录 `runtime\dsh`。插件任何"默认路径"的兜底都不该直接用 `process.cwd()`，应优先工作区根（`sandboxPolicy.workspaceRoot`，经 `fs.resolve/processPath` 转可展示绝对路径）；客户端侧"工作区根优先、会话 cwd 兜底"才是"工作目录的根目录"语义。
 
+64. **【插件】侧边栏任务面板永远"暂无后台任务" + 会话定位失效：官方 list store 字段是 `current` 不是 `sessionId`（2026-08-17，dsh-sidebar-lite）**：
+    - **现象**：① 任务面板**无论当前会话有没有在跑后台任务都空**，永远显示「暂无后台任务…」；② 资源管理器其实也一直拿不到真实会话 cwd（默认根一直走"无会话兜底"，恰好显示成工作区根所以看着正常）。
+    - **根因**：`SidebarShell` 里 `const sessionId = snapshot.sessionId`，但官方 `dsh-client-runtime` 的会话列表 store（`ctx.sessions.list`）snapshot 结构是 `{ ids, byId, current, phase, jobsBySession, currentAddress }`——**当前激活会话 id 的字段叫 `current`，根本没有 `sessionId` 字段**（见 client-runtime `projectList()` 的 `this.list.set({...})`）。于是 `sessionId` 恒为 `null`：① `jobs = snapshot.jobsBySession[null]` = undefined → 任务面板永远空；② 会话溯源 effect 误判"无会话"，走 `fallbackResolved` 兜底分支，`postMethod("session.cwd", { sessionId: "" })` 拿不到 header.cwd，只拿到工作区根。
+    - **修法**：`const sessionId = (snapshot && (snapshot.current || snapshot.sessionId)) || null;`——官方字段 `current` 优先，保留 `sessionId` 作旧字段兼容兜底。修好后：任务面板 `jobsBySession[sessionId]` 正常取数（与官方 `dsh-client-ui-jobs` 的 `useSessions(state => state.jobsBySession[sessionId])` 同源同键）；会话溯源改走有会话分支，`session.cwd` 传真实 sessionId 拿到 header.cwd。
+    - **附带功能**：`ExplorerView` 头部在刷新按钮旁新增「⌂ 回到工作目录」按钮（目标 = `workspaceRoot || cwd`，即资源管理器默认根）——用户用路径框/上下级浏览改过目录后，可一键回到工作区根，不用手动重输路径。
+    - **诊断手法（可复用）**：插件读官方 store 前先核对 snapshot 键名——在浏览器 DevTools 里 `window.__DSH_BOOT__` 相关 store 或临时 `console.log(Object.keys(snapshot))` 打印键集合，别凭记忆猜字段名；官方 client-runtime 的 list store 统一用 `current` 表示"当前激活会话"，`selection` store 才用 `sessionId`，别混。
+    - **教训**：**"数据源明明存在却取不到" 优先怀疑键名/字段名写错**（`sessionId` vs `current`），其次是取值时 key 为 null/undefined 导致的静默空结果；修这种字段名 bug 往往同时治愈多个看似无关的症状（任务面板空 + 会话定位不准同源）。
+
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验

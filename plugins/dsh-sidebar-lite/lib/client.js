@@ -483,7 +483,7 @@ window.__ModuleLoader__.load({
 			const currentLabel = (currentPath || rootName || "工作目录").replace(/[\\/]+$/, "").split(/[\\/]/).pop();
 
 			return react.createElement("div", { style: { display: "flex", flexDirection: "column", minHeight: 0, flex: 1, position: "relative" } }, [
-				// 资源管理头: 返回上级 + 根目录名 + 路径框 + 刷新按钮。
+				// 资源管理头: 返回上级 + 根目录名 + 路径框 + 回到工作目录 + 刷新按钮。
 				react.createElement("div", { key: "head", style: { display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderBottom: "1px solid var(--dsw-alias-stroke-default,#eee)" } }, [
 					react.createElement("button", { key: "up", type: "button", disabled: !canGoUp, style: { cursor: canGoUp ? "pointer" : "default", fontSize: 12, padding: "2px 6px", opacity: canGoUp ? 1 : 0.4 }, title: "返回上级 (" + parentPath + ")", onClick: goUp }, "⬆"),
 					react.createElement("input", {
@@ -496,6 +496,12 @@ window.__ModuleLoader__.load({
 						onChange: (event) => setPathBox(event.target.value),
 						onKeyDown: (event) => { if (event.key === "Enter") goToPath(); },
 					}),
+					// 回到工作目录根: 资源管理器默认根 (workspaceRoot 优先, cwd 兜底),
+					// 用户已改过路径后点此一键回到工作区根, 不再需要手动输入路径。
+					react.createElement("button", { key: "home", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 5px", border: "none", background: "transparent", color: "#8a8f98" }, title: "回到工作目录", onClick: () => {
+						const target = (workspaceRoot || cwd || "");
+						if (target !== "") { setCurrentPath(target); setPathBox(target); }
+					} }, "⌂"),
 					react.createElement("button", { key: "refresh", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 5px", border: "none", background: "transparent", color: "#8a8f98" }, title: "刷新", onClick: () => setRefreshTick((tick) => tick + 1) }, "⟳"),
 				]),
 				error !== null && react.createElement("div", { key: "err", style: { padding: 8, fontSize: 12, color: "#c0392b" } }, "加载失败: " + error),
@@ -888,7 +894,9 @@ window.__ModuleLoader__.load({
 			}, [ctx]);
 
 			const snapshot = (ctx && ctx.sessions && ctx.sessions.list && typeof ctx.sessions.list.getSnapshot === "function") ? ctx.sessions.list.getSnapshot() : null;
-			const sessionId = (snapshot && snapshot.sessionId) || null;
+			// 当前激活会话 id: 官方 list store 的字段是 current (不是 sessionId!),
+			// 用错字段会恒为 null → 走"无会话兜底" → 任务面板永远空、会话 cwd 拿不到。
+			const sessionId = (snapshot && (snapshot.current || snapshot.sessionId)) || null;
 			const summaryCwd = sessionId ? ((snapshot && snapshot.byId && snapshot.byId[sessionId] && snapshot.byId[sessionId].cwd) || undefined) : undefined;
 			// 后台任务列表 (官方 session/jobs 推送镜像, 与 better-sidebar 同一数据源)。
 			const jobs = (snapshot && snapshot.jobsBySession && sessionId && snapshot.jobsBySession[sessionId]) || [];
