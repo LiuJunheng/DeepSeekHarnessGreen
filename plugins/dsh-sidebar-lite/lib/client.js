@@ -381,9 +381,10 @@ window.__ModuleLoader__.load({
 		// ---- 资源管理器面板 ----
 
 		function ExplorerView({ scope, cwd, workspaceRoot, rootName, onOpenFile }) {
-			// 当前正在浏览的目录 (默认工作区根目录 E:\DeepSeekHarnessLauncher; 无则回退会话
-			// 工作目录; 支持「返回上级」与路径框上溯)。不再把会话 cwd 当作锁死的固定根。
-			const initialRoot = (workspaceRoot || cwd || "");
+			// 当前正在浏览的目录 (默认优先用会话工作目录 cwd——即用户在 WebUI 选择的工作区；
+			// 无会话时回退到工作区根 workspaceRoot——即 sandboxPolicy.workspaceRoot 或 process.cwd())。
+			// 支持「返回上级」与路径框上溯任意路径，不再锁死在会话 cwd 内。
+			const initialRoot = (cwd || workspaceRoot || "");
 			const [currentPath, setCurrentPath] = react.useState(initialRoot);
 			const [pathBox, setPathBox] = react.useState(initialRoot);
 			const [busy, setBusy] = react.useState(false);
@@ -396,9 +397,10 @@ window.__ModuleLoader__.load({
 			const [copiedPath, setCopiedPath] = react.useState(null);
 
 			// 工作区根/会话工作目录可能在会话挂载后才确定, 首次拿到后同步当前浏览目录。
+			// 与 initialRoot 一致: 会话工作目录 cwd 优先, 工作区根 workspaceRoot 兜底。
 			react.useEffect(() => {
 				if (currentPath === "") {
-					const target = workspaceRoot || cwd || "";
+					const target = cwd || workspaceRoot || "";
 					if (target !== "") {
 						setCurrentPath(target);
 						setPathBox(target);
