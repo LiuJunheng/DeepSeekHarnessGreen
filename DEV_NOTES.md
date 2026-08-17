@@ -626,6 +626,14 @@
     - **诊断手法（可复用）**：插件读官方 store 前先核对 snapshot 键名——在浏览器 DevTools 里 `window.__DSH_BOOT__` 相关 store 或临时 `console.log(Object.keys(snapshot))` 打印键集合，别凭记忆猜字段名；官方 client-runtime 的 list store 统一用 `current` 表示"当前激活会话"，`selection` store 才用 `sessionId`，别混。
     - **教训**：**"数据源明明存在却取不到" 优先怀疑键名/字段名写错**（`sessionId` vs `current`），其次是取值时 key 为 null/undefined 导致的静默空结果；修这种字段名 bug 往往同时治愈多个看似无关的症状（任务面板空 + 会话定位不准同源）。
 
+65. **【插件】"回到工作目录"仍指向 `runtime\dsh` 的深坑：工作区根权威来源是 `workspaceRegistry` 而非 `sandboxPolicy.workspaceRoot`（2026-08-17，dsh-sidebar-lite）**：
+    - **现象**：用户明确澄清"工作目录不是 dsh 程序的位置（`runtime\dsh`），而是**这个会话所指定的目录**（会话 header 的 `cwd`）"；但修复 #63 后「回到工作目录」仍恒为 `D:\DeepSeekHarnessLauncher\runtime\dsh`。
+    - **根因（两层）**：① `sandboxPolicy.workspaceRoot` **未显式配置时默认值 = `process.cwd()` = `runtime\dsh`**（启动器以 `Popen(cwd=DSH_DIR)` 拉起 dsh，见避坑 #63），把它当"工作区根"兜底天然就是错的；② 会话 header.cwd 优先逻辑虽在，但 `ctx.get("sessions").get(sessionId)` 在**会话对象尚未进入 live store**（服务刚启动 / 会话未激活）时返回 `undefined`，于是 `sessionCwdOf` 一路落到兜底，命中 `sandboxPolicy.workspaceRoot` 的默认值 `runtime\dsh`。
+    - **修法（权威来源改为工作区注册表 `workspaceRegistry`）**：宿主端新增 `workspaceRootOf(ctx, sessionId)`，**优先从 `ctx.get("workspaceRegistry")` 取**——该服务（`@deepseek-ai/dsh-workspace`）维护"用户创建的工作区目录"（`runtime/dsh-home/storages/workspace.json` 的 `tables.workspaces`），是工作区根的唯一权威来源；有 sessionId 时按 `workspace.sessionIds.includes(sessionId)` 匹配该会话所属工作区的 `path`，否则取注册表第一个；`sandboxPolicy.workspaceRoot` 降级为**次选**（只有显式配置才可信）。兜底链最终变成：**会话 header.cwd → 客户端 cwd → 工作区根（workspaceRegistry，含会话归属匹配）→ sandboxPolicy.workspaceRoot（仅显式配置）→ process.cwd()（最后的最后）**。`sessionCwdOf`/`defaultRootOf`/`resolveWorkspaceRoot` 统一走 `workspaceRootOf`，并把 sessionId 一路传下去。实测服务重启后日志：`sessionCwdOf: 用 header.cwd = E:\1\AI项目`（激活会话直接命中 header.cwd）；无会话兜底时 `兜底 cwd = E:\1\EscapeExpert`（注册表第一个，不再是 `runtime\dsh`）。
+    - **附带 UI 修复**：「⌂ 回到工作目录」字符按钮在部分字体/浏览器下渲染成空白/方框看不清（用户反馈"看不太清是什么"）。改为**内联 SVG 房子图标**（`<svg viewBox="0 0 24 24">` + Material 的 `M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z` 填充路径），不依赖字体字形、跨浏览器稳定；按钮再放大为高 26px、蓝边框（主题强调色 `--dsw-alias-accent`）更醒目，**图标旁加文字标签「目录」**一眼可辨用途，`title` 提示改为显示实际跳转的目标路径（`回到工作目录: <cwd 或 workspaceRoot>`），悬停即可确认目标对不对。按钮目标统一为 `cwd || workspaceRoot`（会话工作目录优先，工作区根兜底）。
+    - **诊断手法（可复用）**：别只看 `sandboxPolicy.workspaceRoot`（未配置时是 `process.cwd()` 假值），**先查工作区注册表** `runtime/dsh-home/storages/workspace.json`（用户工作区 `path` 清单 + 各工作区 `sessionIds`）作为兜底根的事实来源；`header.cwd` 是否可用可从服务日志 `[dsh-sidebar-lite] sessionCwdOf:` 前缀行直接看到（`用 header.cwd` / `用客户端 cwd` / `兜底 cwd` 三种去向一目了然）。
+    - **教训**：**"工作区根"与"dsh 进程 cwd"是两个概念**；凡涉及"用户工作目录"的默认/兜底路径，权威来源 = `workspaceRegistry`（用户创建的工作区注册表），`sandboxPolicy.workspaceRoot` 只有在**显式配置**时才可信（其默认值就是 `process.cwd()`=安装目录）。WebUI 侧字符按钮要优先用内联 SVG，避免依赖字体字形。
+
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验

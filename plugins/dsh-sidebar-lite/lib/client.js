@@ -381,10 +381,11 @@ window.__ModuleLoader__.load({
 		// ---- 资源管理器面板 ----
 
 		function ExplorerView({ scope, cwd, workspaceRoot, rootName, onOpenFile }) {
-			// 当前正在浏览的目录 (默认优先用工作区根 workspaceRoot——即用户在 WebUI 选择的
-			// 工作区根目录, 如 D:\DeepSeekHarnessLauncher；无工作区根时回退到会话工作目录 cwd)。
+			// 当前正在浏览的目录 (默认优先用会话工作目录 cwd——即"这个会话锁指定的目录"
+			// session.header.cwd, 如 D:\DeepSeekHarnessLauncher；无会话/无 cwd 时回退到
+			// 工作区根 workspaceRoot)。
 			// 支持「返回上级」与路径框上溯任意路径，不再锁死在会话 cwd 内。
-			const initialRoot = (workspaceRoot || cwd || "");
+			const initialRoot = (cwd || workspaceRoot || "");
 			const [currentPath, setCurrentPath] = react.useState(initialRoot);
 			const [pathBox, setPathBox] = react.useState(initialRoot);
 			const [busy, setBusy] = react.useState(false);
@@ -397,10 +398,11 @@ window.__ModuleLoader__.load({
 			const [copiedPath, setCopiedPath] = react.useState(null);
 
 			// 工作区根/会话工作目录可能在会话挂载后才确定, 首次拿到后同步当前浏览目录。
-			// 与 initialRoot 一致: 工作区根 workspaceRoot 优先, 会话工作目录 cwd 兜底。
+			// 与 initialRoot 一致: 会话工作目录 cwd 优先 (即"这个会话锁指定的目录"),
+			// 工作区根 workspaceRoot 兜底。
 			react.useEffect(() => {
 				if (currentPath === "") {
-					const target = workspaceRoot || cwd || "";
+					const target = cwd || workspaceRoot || "";
 					if (target !== "") {
 						setCurrentPath(target);
 						setPathBox(target);
@@ -496,12 +498,26 @@ window.__ModuleLoader__.load({
 						onChange: (event) => setPathBox(event.target.value),
 						onKeyDown: (event) => { if (event.key === "Enter") goToPath(); },
 					}),
-					// 回到工作目录根: 资源管理器默认根 (workspaceRoot 优先, cwd 兜底),
-					// 用户已改过路径后点此一键回到工作区根, 不再需要手动输入路径。
-					react.createElement("button", { key: "home", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 5px", border: "none", background: "transparent", color: "#8a8f98" }, title: "回到工作目录", onClick: () => {
-						const target = (workspaceRoot || cwd || "");
-						if (target !== "") { setCurrentPath(target); setPathBox(target); }
-					} }, "⌂"),
+					// 回到工作目录: 目标是「这个会话锁指定的目录」= 会话工作目录 cwd
+					// (session.header.cwd), 而非 dsh 程序目录 runtime\dsh、也非工作区根;
+					// 无会话/无 cwd 时才回退到工作区根 workspaceRoot。
+					// 图标用内联 SVG 房子 (不依赖字体字形, 跨浏览器/字体稳定显示, 避免
+					// 原 "⌂" 字符在某些字体下渲染成空白/方框看不清); 按钮放大 26px 高,
+					// 图标旁带文字标签「目录」, 一眼可辨用途; 边框用主题强调色更醒目,
+					// 悬停提示显示实际跳转的目标路径。
+					react.createElement("button", {
+						key: "home",
+						type: "button",
+						style: { cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 3, height: 26, padding: "0 8px", whiteSpace: "nowrap", border: "1px solid var(--dsw-alias-accent,#4a7bff)", borderRadius: 4, background: "transparent", color: "var(--dsw-alias-accent,#4a7bff)", fontSize: 12 },
+						title: "回到工作目录: " + (cwd || workspaceRoot || "(未连接会话)"),
+						onClick: () => {
+							const target = (cwd || workspaceRoot || "");
+							if (target !== "") { setCurrentPath(target); setPathBox(target); }
+						},
+					}, [
+						react.createElement("svg", { key: "ic", width: 15, height: 15, viewBox: "0 0 24 24", fill: "currentColor", style: { display: "block" } }, react.createElement("path", { d: "M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" })),
+						react.createElement("span", { key: "lb", style: { lineHeight: "16px" } }, "目录"),
+					]),
 					react.createElement("button", { key: "refresh", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 5px", border: "none", background: "transparent", color: "#8a8f98" }, title: "刷新", onClick: () => setRefreshTick((tick) => tick + 1) }, "⟳"),
 				]),
 				error !== null && react.createElement("div", { key: "err", style: { padding: 8, fontSize: 12, color: "#c0392b" } }, "加载失败: " + error),
