@@ -19,6 +19,8 @@ window.__ModuleLoader__.load({
 		const BASE = "/__dsh/file-browser";
 		const GUARD_HEADER = "X-DSH-File-Browser";
 		const CONTENT_INSERT_CAP = 3000; // 插入内容的最大字符数
+		// 与宿主端一致: 大二进制文件仅预览前部 4KB head (host 端常量 BINARY_HEAD_BYTES)
+		const BINARY_HEAD_BYTES = 4096;
 
 		// ---- 通用工具 ----
 		function fmtSize(n) {
@@ -115,6 +117,71 @@ window.__ModuleLoader__.load({
 			// 右键菜单: null 或 { x, y, path, name, type }
 			const [menu, setMenu] = react.useState(null);
 
+			// ---- 弹窗几何 (可拖动 + 可拉伸右/下/右下角) ----
+			// 初始为默认尺寸/位置 (680 × (视口高-128), 右下锚), 用户拖动后按记忆渲染;
+			// 最小尺寸 520×380, 最大不超过视口 - 16px (避免溢出屏幕外点不到关闭按钮)。
+			const DEFAULT_W = 720;
+			const MIN_W = 520;
+			const MIN_H = 380;
+			const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+			const initialWin = () => {
+				const w = clamp(DEFAULT_W, MIN_W, (window.innerWidth || 1280) - 16);
+				const h = clamp((window.innerHeight || 800) - 128, MIN_H, (window.innerHeight || 800) - 16);
+				const left = (window.innerWidth || 1280) - w - 20;
+				const top = 64;
+				return { left, top, width: w, height: h };
+			};
+			const [win, setWin] = react.useState(initialWin);
+			const dragStateRef = react.useRef(null); // { mode, startX, startY, origLeft, origTop, origW, origH }
+			const windowOnDown = (ev, mode) => {
+				ev.preventDefault();
+				ev.stopPropagation();
+				dragStateRef.current = {
+					mode, // "move" | "r" | "b" | "br"
+					startX: ev.clientX,
+					startY: ev.clientY,
+					origLeft: win.left,
+					origTop: win.top,
+					origW: win.width,
+					origH: win.height,
+				};
+			};
+			react.useEffect(() => {
+				const onMove = (ev) => {
+					const ds = dragStateRef.current;
+					if (!ds) return;
+					const dx = ev.clientX - ds.startX;
+					const dy = ev.clientY - ds.startY;
+					const vw = window.innerWidth || 1280;
+					const vh = window.innerHeight || 800;
+					setWin((cur) => {
+						let left = cur.left;
+						let top = cur.top;
+						let width = cur.width;
+						let height = cur.height;
+						if (ds.mode === "move") {
+							left = clamp(ds.origLeft + dx, 8, vw - 60);
+							top = clamp(ds.origTop + dy, 8, vh - 60);
+						} else if (ds.mode === "r") {
+							width = clamp(ds.origW + dx, MIN_W, vw - 16);
+						} else if (ds.mode === "b") {
+							height = clamp(ds.origH + dy, MIN_H, vh - 16);
+						} else if (ds.mode === "br") {
+							width = clamp(ds.origW + dx, MIN_W, vw - 16);
+							height = clamp(ds.origH + dy, MIN_H, vh - 16);
+						}
+						return { left, top, width, height };
+					});
+				};
+				const onUp = () => { dragStateRef.current = null; };
+				window.addEventListener("mousemove", onMove);
+				window.addEventListener("mouseup", onUp);
+				return () => {
+					window.removeEventListener("mousemove", onMove);
+					window.removeEventListener("mouseup", onUp);
+				};
+			}, []);
+
 			async function loadDir(path) {
 				setBusy(true);
 				setListError(null);
@@ -142,12 +209,35 @@ window.__ModuleLoader__.load({
 					const res = await postJson(BASE + "/read", { path });
 					if (res && res.error) {
 						setPreview({ kind: "error", message: res.error });
-					} else if (res && res.tooLarge) {
-						setPreview({ kind: "error", message: "文件过大，无法预览（" + fmtSize(res.size) + "）" });
 					} else if (res && res.kind === "image") {
-						setPreview({ kind: "image", src: res.dataUrl });
+						setPreview({
+							kind: "image",
+							path,
+							src: res.dataUrl,
+							size: res.size || 0,
+							truncated: !!res.truncated,
+						});
+					} else if (res && res.kind === "binary") {
+						setPreview({
+							kind: "binary",
+							path,
+							size: res.size || 0,
+							truncated: !!res.truncated,
+							head: res.head || "",
+						});
 					} else {
-						setPreview({ kind: "text", content: res.content, lines: res.lineCount });
+						// kind===text / 旧兼容: 初始预览只读前部 content; 若 truncated, 按已读字节长度做 offset 继续分块
+						const text = res && typeof res.content === "string" ? res.content : "";
+						setPreview({
+							kind: "text",
+							path,
+							content: text,
+							size: res && typeof res.size === "number" ? res.size : 0,
+							truncated: !!(res && res.truncated),
+							loadedBytes: res && typeof res.size === "number"
+								? Math.min(res.size, new Blob([text]).size) // 粗估 UTF-8 字节 (用于 offset)
+								: 0,
+						});
 					}
 				} catch (e) {
 					setPreview({ kind: "error", message: String((e && e.message) || e) });
@@ -155,6 +245,80 @@ window.__ModuleLoader__.load({
 					setPreviewing(false);
 				}
 			}
+
+			// 分块加载「再看后面一段」: 按 preview.loadedBytes 作为 offset 继续读一块
+			// (chunk size = 默认 512KB), 结果 append 到 content。
+			const [chunkLoading, setChunkLoading] = react.useState(false);
+			const loadMoreChunk = async () => {
+				const current = preview;
+				if (!current || (current.kind !== "text" && current.kind !== "binary")) return;
+				const fileSize = current.size || 0;
+				const offset = Number.isFinite(Number(current.loadedBytes)) ? Number(current.loadedBytes) : 0;
+				if (offset >= fileSize) {
+					setPreview((prev) => prev && Object.assign({}, prev, { truncated: false, eof: true }));
+					return;
+				}
+				setChunkLoading(true);
+				try {
+					const res = await postJson(BASE + "/readChunk", {
+						path: current.path,
+						offset,
+						size: 512 * 1024,
+					});
+					if (res && (res.error || !res)) {
+						throw new Error((res && res.error) || "未知错误");
+					}
+					setPreview((prev) => {
+						if (!prev) return prev;
+						if (prev.kind === "text") {
+							let added = (res && typeof res.content === "string") ? res.content : "";
+							// ---- 修正 UTF-8 多字节字符在 chunk 边界被截断 ----
+							// 宿主端回传了 back 字节的"回退冗余"并按 actualStart 解码整段,
+							// 现在用 TextEncoder 取 UTF-8 字节, 找到第一个非续字节的位置作为
+							// 真正新内容起始 (前几个字节是上一段末尾已解码过的 UTF-8 尾巴+残体,
+							// 上一段 content 末尾已经解过完整码点, 直接丢即可不丢内容)。
+							const back = Number.isFinite(Number(res && res.back)) ? Number(res.back) : 0;
+							if (back > 0 && added) {
+								const utf8bytes = new TextEncoder().encode(added);
+								// 只看前 (back+1) 字节区间: 合法起始应该在 offset 处的字节
+								// 位置之前 (host 回退了 back 字节, 所以真正的合法码点起始位一定
+								// 在 [0, back] 字节之间)。
+								const scanTo = Math.min(utf8bytes.length, back + 1);
+								let startByteIdx = 0;
+								for (let i = 0; i < scanTo; i++) {
+									const b = utf8bytes[i];
+									// 非续字节: !(b >> 6 === 0b10), 即 < 0x80 或 >= 0xC0
+									if ((b & 0xC0) !== 0x80) {
+										startByteIdx = i;
+										break;
+									}
+								}
+								if (startByteIdx > 0) {
+									added = new TextDecoder("utf-8").decode(utf8bytes.subarray(startByteIdx));
+								}
+							}
+							const nextContent = prev.content + added;
+							return Object.assign({}, prev, {
+								content: nextContent,
+								truncated: !!res.truncated && !res.eof,
+								eof: !!res.eof,
+								loadedBytes: new Blob([nextContent]).size,
+							});
+						}
+						return prev;
+					});
+				} catch (e) {
+					setPreview((prev) => {
+						if (!prev || prev.kind !== "text") return prev;
+						return Object.assign({}, prev, {
+							kind: "text", // 保持类型不变, 附一个错误提示
+							content: prev.content + "\n\n[读取后续失败] " + String((e && e.message) || e) + "\n",
+						});
+					});
+				} finally {
+					setChunkLoading(false);
+				}
+			};
 
 			// 挂载时获取起始目录
 			react.useEffect(() => {
@@ -213,16 +377,18 @@ window.__ModuleLoader__.load({
 					let text;
 					if (res && res.error) {
 						text = "[文件] " + menuEntry.path + "（读取失败：" + res.error + "）";
-					} else if (res && res.tooLarge) {
-						text = "[文件] " + menuEntry.path + "（过大无法读取，大小 " + fmtSize(res.size) + "）";
 					} else if (res && res.kind === "image") {
-						text = "[图片] " + menuEntry.path;
+						text = "[图片] " + menuEntry.path + "（" + fmtSize(res.size) + (res.truncated ? "，过大仅预览前部" : "") + "）";
+					} else if (res && res.kind === "binary") {
+						text = "[二进制文件] " + menuEntry.path + "（大小 " + fmtSize(res.size) + "，不支持内容插入）";
 					} else {
-						let body = res.content;
+						let body = res && typeof res.content === "string" ? res.content : "";
 						let note = "";
 						if (body.length > CONTENT_INSERT_CAP) {
 							body = body.slice(0, CONTENT_INSERT_CAP);
-							note = "（内容过长，已截断为前 " + CONTENT_INSERT_CAP + " 字符，完整文件共 " + res.lineCount + " 行）";
+							note = "（内容过长，已截断为前 " + CONTENT_INSERT_CAP + " 字符）";
+						} else if (res && res.truncated) {
+							note = "（文件过大，预览仅前部内容；请在文件浏览面板点击「再看后面一段」分批查看全文）";
 						}
 						text = "[文件] " + menuEntry.path + "\n" + body + "\n[文件内容结束]" + note;
 					}
@@ -328,14 +494,58 @@ window.__ModuleLoader__.load({
 			} else if (preview.kind === "error") {
 				previewBody = react.createElement("div", { style: errorStyle }, preview.message);
 			} else if (preview.kind === "image") {
-				previewBody = react.createElement("img", {
-					src: preview.src,
-					alt: "preview",
-					style: { maxWidth: "100%", height: "auto", borderRadius: 6, display: "block" },
-				});
+				previewBody = react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, [
+					preview.truncated
+						? react.createElement("div", { key: "note", style: statusStyle }, "图片过大（" + fmtSize(preview.size) + "），以下为前部缩略预览（建议直接用图片文件双击打开看原图）。")
+						: react.createElement("div", { key: "note", style: statusStyle }, fmtSize(preview.size)),
+					preview.src
+						? react.createElement("img", {
+							key: "img",
+							src: preview.src,
+							alt: "preview",
+							style: { maxWidth: "100%", height: "auto", borderRadius: 6, display: "block" },
+						})
+						: react.createElement("div", { key: "na", style: errorStyle }, "预览失败：未能生成缩略数据"),
+				]);
+			} else if (preview.kind === "binary") {
+				const head = preview.head || "";
+				let headDisplay = "";
+				if (head) {
+					try {
+						const buf = Uint8Array.from(atob(head), (c) => c.charCodeAt(0));
+						const hex = Array.from(buf.slice(0, 64)).map((b) => b.toString(16).padStart(2, "0")).join(" ");
+						const ascii = Array.from(buf.slice(0, 64)).map((b) => (b >= 0x20 && b < 0x7F) ? String.fromCharCode(b) : ".").join("");
+						headDisplay = hex + "\n" + ascii;
+					} catch (_decodeErr) { headDisplay = ""; }
+				}
+				previewBody = react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, [
+					react.createElement("div", { key: "note", style: statusStyle }, "二进制文件，大小 " + fmtSize(preview.size) + (preview.truncated ? "（预览仅前部 " + BINARY_HEAD_BYTES + " 字节 head）" : "")),
+					headDisplay
+						? react.createElement("pre", {
+							key: "head",
+							style: {
+								margin: 0,
+								fontFamily: "ui-monospace, SFMono-Regular, Consolas, 'Courier New', monospace",
+								fontSize: 11,
+								lineHeight: 1.5,
+								whiteSpace: "pre-wrap",
+								wordBreak: "break-all",
+								background: C.bg1,
+								padding: 8,
+								borderRadius: 6,
+								color: C.text,
+							},
+						}, headDisplay)
+						: null,
+				]);
 			} else {
-				previewBody = react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, minHeight: "100%" } }, [
-					react.createElement("div", { key: "meta", style: statusStyle }, preview.lines + " 行"),
+				// kind === "text"
+				const meta = fmtSize(preview.size);
+				const truncatedNote = preview.truncated
+					? "已预览前部 " + fmtSize(preview.loadedBytes || 0) + "，共 " + meta
+					: meta + "（已全部载入）";
+				const children = [
+					react.createElement("div", { key: "meta", style: statusStyle }, truncatedNote),
 					react.createElement("pre", {
 						key: "pre",
 						style: {
@@ -347,16 +557,42 @@ window.__ModuleLoader__.load({
 							color: C.text,
 						},
 					}, preview.content),
-				]);
+				];
+				if (preview.truncated && !preview.eof) {
+					children.push(react.createElement("div", {
+						key: "more",
+						style: { flex: "none", display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 8, padding: "6px 0" },
+					}, [
+						react.createElement("button", {
+							key: "btn",
+							type: "button",
+							disabled: chunkLoading,
+							style: {
+								border: "1px solid " + C.border,
+								background: C.bg1,
+								color: C.text,
+								borderRadius: 6,
+								padding: "4px 10px",
+								fontSize: 12,
+								cursor: chunkLoading ? "default" : "pointer",
+								opacity: chunkLoading ? 0.6 : 1,
+							},
+							onClick: loadMoreChunk,
+						}, chunkLoading ? "加载中…" : "再看后面一段（512KB）"),
+						react.createElement("span", { key: "tip", style: { fontSize: 11, color: C.text2 } }, "可连续点击直到文件末尾"),
+					]));
+				} else if (preview.eof) {
+					children.push(react.createElement("div", { key: "eof", style: { fontSize: 11, color: C.text2, padding: "4px 0" } }, "已到文件末尾 ✓"));
+				}
+				previewBody = react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, minHeight: "100%" } }, children);
 			}
 
 			const panelStyle = {
 				position: "fixed",
-				top: 64,
-				right: 20,
-				bottom: 64,
-				width: 680,
-				maxWidth: "calc(100vw - 40px)",
+				left: win.left,
+				top: win.top,
+				width: win.width,
+				height: win.height,
 				display: "flex",
 				flexDirection: "column",
 				background: C.bgOverlay,
@@ -378,7 +614,13 @@ window.__ModuleLoader__.load({
 				padding: "10px 12px",
 				borderBottom: "1px solid " + C.border,
 				flex: "none",
+				cursor: "move",
 			};
+
+			// 四个拉伸手柄: 右 (ew-resize) / 下 (ns-resize) / 右下 (nwse-resize)
+			const rightHandleStyle = { position: "absolute", top: 8, bottom: 8, right: -3, width: 7, cursor: "ew-resize", userSelect: "none", background: "transparent", zIndex: 5 };
+			const bottomHandleStyle = { position: "absolute", left: 8, right: 8, bottom: -3, height: 7, cursor: "ns-resize", userSelect: "none", background: "transparent", zIndex: 5 };
+			const brHandleStyle = { position: "absolute", right: -3, bottom: -3, width: 14, height: 14, cursor: "nwse-resize", userSelect: "none", background: "transparent", zIndex: 6 };
 
 			const inputStyle = {
 				flex: 1,
@@ -450,7 +692,16 @@ window.__ModuleLoader__.load({
 			}
 
 			return react.createElement("div", { style: panelStyle }, [
-				react.createElement("div", { key: "header", style: headerStyle }, [
+				// 拉伸手柄: 右下角 BR + 右侧 R + 底部 B (顺序靠前, 避免被其他内部元素盖住事件)。
+				react.createElement("div", { key: "hrR", style: rightHandleStyle, onMouseDown: (e) => windowOnDown(e, "r"), title: "拖动调整宽度" }),
+				react.createElement("div", { key: "hrB", style: bottomHandleStyle, onMouseDown: (e) => windowOnDown(e, "b"), title: "拖动调整高度" }),
+				react.createElement("div", { key: "hrBR", style: brHandleStyle, onMouseDown: (e) => windowOnDown(e, "br"), title: "拖动调整尺寸" }),
+				react.createElement("div", {
+					key: "header", style: headerStyle,
+					onMouseDown: (e) => windowOnDown(e, "move"),
+					// 避免拖动头部时选中文本
+					onDoubleClick: (e) => { e.preventDefault(); /* 预留: 双击可重置尺寸 */ },
+				}, [
 					react.createElement("span", { key: "t", style: { fontWeight: 600, fontSize: 13, whiteSpace: "nowrap" } }, "文件浏览"),
 					react.createElement("input", {
 						key: "p",
@@ -459,9 +710,10 @@ window.__ModuleLoader__.load({
 						placeholder: "输入路径后回车",
 						onChange: (ev) => setPathInput(ev.target.value),
 						onKeyDown: (ev) => { if (ev.key === "Enter") goToPath(); },
+						onMouseDown: (e) => e.stopPropagation(),  // 输入框不触发拖动
 					}),
-					react.createElement("button", { key: "r", type: "button", style: btnStyle, onClick: () => loadDir(cwd || pathInput), title: "刷新" }, "\u21BB"),
-					react.createElement("button", { key: "c", type: "button", style: btnStyle, onClick: props.onClose, title: "关闭" }, "\u2715"),
+					react.createElement("button", { key: "r", type: "button", style: btnStyle, onClick: () => loadDir(cwd || pathInput), title: "刷新", onMouseDown: (e) => e.stopPropagation() }, "\u21BB"),
+					react.createElement("button", { key: "c", type: "button", style: btnStyle, onClick: props.onClose, title: "关闭", onMouseDown: (e) => e.stopPropagation() }, "\u2715"),
 				]),
 				react.createElement("div", { key: "body", style: { flex: 1, display: "flex", minHeight: 0 } }, [
 					react.createElement("div", { key: "list", style: { width: "46%", flex: "none", borderRight: "1px solid " + C.border, overflowY: "auto" } }, listBody),

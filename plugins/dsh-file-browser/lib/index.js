@@ -3,10 +3,16 @@
 // 跨域请求无法携带该头, 防止外部网页对本地端口发起读取):
 //   GET  /__dsh/file-browser/home -> { root }                     起始目录 (workspace root)
 //   POST /__dsh/file-browser/list -> { path, entries, truncated } 列目录
-//   POST /__dsh/file-browser/read -> 文本 { kind:'text', content, lineCount }
-//                                   | 图片 { kind:'image', dataUrl, size }
-//                                   | { tooLarge, size } | { error }
-// 文本预览上限 200KB, 图片预览上限 4MB, 单目录最多返回 1000 项。
+//   POST /__dsh/file-browser/read -> 文本 { kind:'text', content, size, truncated? }
+//                                   | 图片 { kind:'image', dataUrl, size, truncated? }
+//                                   | { kind:'binary', size, truncated? } (不可预览的大二进制)
+//                                   | { error }
+//                                   默认只预览前部 (文本 512KB, 图片 32MB, 二进制 4KB head)，
+//                                   超出标 truncated，不再返回 tooLarge 直接报错 (见 #45 需求)。
+//   POST /__dsh/file-browser/readChunk -> { content, size, truncated, offset, eof }
+//                                   按偏移 offset 读指定 size (字节, 文本按 UTF8)，
+//                                   支持用户点击「看后面一段」分批加载。
+// 单目录最多返回 1000 项。
 // 通过 ctx.get('fs') 使用 dsh 文件系统服务, 与模型读写共用同一套路径语义。
 // 不修改任何官方文件/包。
 
@@ -17,8 +23,13 @@ const inject = ["webServer"];
 
 const BASE = "/__dsh/file-browser";
 const GUARD_HEADER = "x-dsh-file-browser";
-const TEXT_CAP = 200 * 1024;
-const IMAGE_CAP = 4 * 1024 * 1024;
+// 默认 read 预览上限 (默认只读前部, 避免大文件一次性载入内存, 超出标 truncated,
+// 客户端可点击「看后面一段」通过 readChunk 继续加载)。
+const TEXT_PREVIEW_BYTES = 512 * 1024;    // 文本 512KB 预览 (≈25 万汉字, 够读)
+const IMAGE_PREVIEW_BYTES = 32 * 1024 * 1024;  // 图片 32MB 预览 (仍以文件实际大小为主, 超大图 truncated)
+const BINARY_HEAD_BYTES = 4096;            // 大二进制文件只读 4KB head (嗅探二进制/文本混合)
+const READ_CHUNK_DEFAULT_BYTES = 512 * 1024;  // readChunk 单次默认 512KB
+const READ_CHUNK_MAX_BYTES = 4 * 1024 * 1024; // readChunk 单次上限 4MB
 const LIST_CAP = 1000;
 const IMAGE_EXTS = {
 	png: "image/png",
@@ -148,32 +159,124 @@ function apply(ctx) {
 			if (!info || info.type !== "file") {
 				return sendJson(res, 400, { error: "not a file: " + path });
 			}
+			const fileSize = typeof info.size === "number" ? info.size : 0;
 			const dot = path.lastIndexOf(".");
 			const ext = dot >= 0 ? path.slice(dot + 1).toLowerCase() : "";
 			const mime = IMAGE_EXTS[ext];
 			if (mime) {
-				// 图片: 以 data URL 返回
-				if (typeof info.size === "number" && info.size > IMAGE_CAP) {
-					return sendJson(res, 200, { tooLarge: true, size: info.size });
-				}
-				const bytes = await fs.readBytes(target, undefined, IMAGE_CAP);
+				// 图片: 文件≤预览上限才做完整 dataURL; 更大的图片只取前部 head + 标 truncated
+				// (客户端提示"图片过大, 以下为缩略预览", 避免一次性 base64 炸内存)。
+				const needFull = fileSize > 0 && fileSize <= IMAGE_PREVIEW_BYTES;
+				const cap = needFull ? fileSize : Math.min(fileSize, IMAGE_PREVIEW_BYTES);
+				const bytes = cap > 0
+					? (await fs.readBytes(target, undefined, cap))
+					: new Uint8Array(0);
+				const truncated = fileSize > bytes.length;
 				sendJson(res, 200, {
 					kind: "image",
-					dataUrl: "data:" + mime + ";base64," + Buffer.from(bytes).toString("base64"),
-					size: bytes.length,
+					dataUrl: bytes.length > 0
+						? "data:" + mime + ";base64," + Buffer.from(bytes).toString("base64")
+						: "",
+					size: fileSize,
+					truncated,
 				});
 			} else {
-				// 其余按文本处理 (二进制内容会被 fs 拒绝并转为 error)
-				if (typeof info.size === "number" && info.size > TEXT_CAP) {
-					return sendJson(res, 200, { tooLarge: true, size: info.size });
+				// 非图片: 先按「文本 UTF-8」只读前部字节 (TEXT_PREVIEW_BYTES),
+				// 返回 content + size + truncated。若 fs.readText 被文件类型判定为非文本
+				// 抛错, 则降级为 binary 读 head(只给大小 + truncated + 4KB 嗅探字节 hex),
+				// 不再直接说"过大无法预览"。
+				let readBytes;
+				let decodedText = "";
+				let binaryFallback = false;
+				try {
+					// fs 语义下: readBytes(target, offset, count) -> Uint8Array
+					readBytes = await fs.readBytes(target, undefined, TEXT_PREVIEW_BYTES);
+					decodedText = Buffer.from(readBytes).toString("utf8");
+				} catch (__readErr) {
+					binaryFallback = true;
+					try {
+						readBytes = await fs.readBytes(target, undefined, BINARY_HEAD_BYTES);
+					} catch (__headErr) {
+						readBytes = new Uint8Array(0);
+					}
 				}
-				const text = await fs.readText(target);
-				sendJson(res, 200, {
-					kind: "text",
-					content: text,
-					lineCount: text.split("\n").length,
+				if (binaryFallback) {
+					const truncated = fileSize > readBytes.length;
+					sendJson(res, 200, {
+						kind: "binary",
+						size: fileSize,
+						truncated,
+						head: readBytes.length > 0
+							? Buffer.from(readBytes).toString("base64")
+							: "",
+					});
+				} else {
+					const truncated = fileSize > readBytes.length;
+					sendJson(res, 200, {
+						kind: "text",
+						content: decodedText,
+						size: fileSize,
+						truncated,
+					});
+				}
+			}
+		} catch (e) {
+			sendJson(res, 500, { error: errText(e) });
+		}
+	});
+
+	register(BASE + "/readChunk", async (req, res) => {
+		if (req.method !== "POST") return sendJson(res, 405, { error: "use POST" });
+		if (!guarded(req, res)) return;
+		let body;
+		try {
+			body = await readJsonBody(req);
+		} catch (e) {
+			return sendJson(res, 400, { error: errText(e) });
+		}
+		const path = typeof body.path === "string" ? body.path : "";
+		const offset = Number.isFinite(Number(body.offset)) ? Math.max(0, Number(body.offset)) : 0;
+		const sizeRequest = Number.isFinite(Number(body.size)) ? Math.max(0, Number(body.size)) : READ_CHUNK_DEFAULT_BYTES;
+		const size = Math.min(sizeRequest || READ_CHUNK_DEFAULT_BYTES, READ_CHUNK_MAX_BYTES);
+		if (!path) return sendJson(res, 400, { error: "missing path" });
+		try {
+			const target = await fs.resolve(path);
+			const info = await fs.stat(target);
+			if (!info || info.type !== "file") {
+				return sendJson(res, 400, { error: "not a file: " + path });
+			}
+			const fileSize = typeof info.size === "number" ? info.size : 0;
+			if (offset >= fileSize) {
+				return sendJson(res, 200, {
+					content: "",
+					size: fileSize,
+					truncated: false,
+					offset,
+					eof: true,
 				});
 			}
+			// ---- UTF-8 多字节字符跨块裁剪保护 ----
+			// 客户端靠字节 (Blob.size) 估算 offset, 这个 offset 可能落在一个 UTF-8 多字节
+			// 序列的中间, 直接从这里读会产生"首字节残缺"导致乱码。解决办法:
+			//   1) 本端多读一点 (back = min(3, offset) 字节, 覆盖前一个可能的 UTF-8 tail)
+			//      并把 back 数一并回传;
+			//   2) 客户端在返回字符串里, 扫前 (back+1) 字节对应字符, 找到第一个合法起始
+			//      之后的内容做增量拼接, 前缀丢掉的字节在上一轮 preview.content 末尾已经
+			//      解码过了, 不会真的丢内容。
+			const back = Math.min(3, offset);
+			const actualStart = offset - back;
+			const end = Math.min(fileSize, offset + size);
+			const readCount = end - actualStart;
+			const bytes = await fs.readBytes(target, actualStart, readCount);
+			const content = Buffer.from(bytes).toString("utf8");
+			sendJson(res, 200, {
+				content,
+				size: fileSize,
+				truncated: end < fileSize,
+				offset,
+				back,
+				eof: end >= fileSize,
+			});
 		} catch (e) {
 			sendJson(res, 500, { error: errText(e) });
 		}
