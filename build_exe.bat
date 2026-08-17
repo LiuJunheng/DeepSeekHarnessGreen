@@ -37,9 +37,10 @@ if not exist "%PYINSTALLER_DIR%" (
 )
 
 rem 3. Build single-file windowed exe (no UPX to reduce AV false positives)
-rem    --icon: exe ?? (?????); --add-data: ????? onefile ????,
-rem    ????????/?????? (?????????????? DSH_Launcher.ico)
-rem    ??: --add-data ????? spec ??(build\)??, ??? %~dp0 ????
+rem    --icon: embeds exe icon; --add-data: carries the icon into the onefile bundle
+rem    so the GUI/tray icon works when running from the unpacked temp dir
+rem    note: --add-data src;dst paths are relative to the spec dir (build\), so
+rem    always pass absolute source paths (%~dp0...) here
 set "PYTHONPATH=%PYINSTALLER_DIR%;%PYTHONPATH%"
 echo [INFO] Building DSH_Launcher.exe ...
 "%PYTHON_CMD%" -m PyInstaller --onefile --windowed --noupx --name DSH_Launcher --icon "%~dp0DSH_Launcher.ico" --add-data "%~dp0DSH_Launcher.ico;." --distpath dist --workpath build --specpath build "%~dp0launcher.py"

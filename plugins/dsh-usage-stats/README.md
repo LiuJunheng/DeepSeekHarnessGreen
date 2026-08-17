@@ -38,7 +38,7 @@
 - **公式**：`费用 = 输入(未命中缓存) × 未命中单价 + 输入(命中缓存) × 命中单价 + 输出 × 输出单价`，各项 token 数 ÷ 1e6 × 单价（元/每百万 tokens）。
 - **字段映射**：`inputTokens + cacheWriteTokens`（首次写入缓存的输入按未命中价计费）→ 未命中列；`cacheReadTokens` → 命中列；`outputTokens` → 输出列。
 - **思考 token**：`reasoningTokens` 已计入 `outputTokens`（DeepSeek 输出总量含思考），**不重复计费**。
-- 参考：[DeepSeek 官方模型 & 价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)（2026-08-16：v4-flash 命中 0.02 / 未命中 1 / 输出 2 元每百万 tokens；v4-pro 0.025 / 3 / 6；**2026-08-17 起改为峰谷定价**——高峰 9:00-12:00/14:00-18:00 为低谷 2 倍，默认价格未含该时段系数，请按实际价格修改）。
+- 参考：[DeepSeek 官方模型 & 价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)（2026-08-17 抓取：v4-flash 高峰 命中 0.10 / 未命中 3.0 / 输出 9.0 元每百万 tokens；v4-pro 高峰 0.30 / 9.0 / 27.0。官方为峰谷定价——高峰北京 9:00-12:00 / 14:00-18:00，高峰为低谷 2 倍；**插件默认取高峰价（估算偏保守）**，前端价格表可改，请按实际价格/时段修改）。
 
 ## 接口（宿主端）
 

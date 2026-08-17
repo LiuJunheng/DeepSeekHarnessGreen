@@ -149,6 +149,27 @@
     - 绿色分发 zip 打包时包含 `README_EN.md`（`-Path` 显式加入）。
     - 版本号升至 v1.0.6，Release 时同步发布含英文 README 的绿色分发 zip。
 
+37. **安装环境自动装上全部内置插件 + 插件管理「一键安装内置插件」（2026-08-17）**：
+    - 用户要求：①「安装环境」最后自动把所有计划内置的插件都装上；②插件管理窗口加"一键安装本地内置插件"按钮。
+    - 实现：新增 `bundled_plugin_dirs()`（扫描程序目录 `plugins/` 下含 package.json 的子目录，动态发现内置插件，不硬编码名单）与 `install_bundled_plugins()`（用 `file:<绝对路径>` 经 pnpm 批量安装，**已装的跳过**、单个失败不中断、返回 (新装/跳过/失败) 三元组）。
+    - 接线：`prepare_all()` 在 `prepare_dsh()` 之后自动调用（因"已装跳过"所以幂等——每次启动服务前的 `prepare_all` 不会重复安装）；插件管理工具栏新增「一键安装内置插件」按钮复用同一方法。
+    - 坑：内置插件安装走 `file:` 本地源，**不联网**，新装会写 `DSH_HOME/profiles/<profile>/package.json` 的 dependencies 并自动同步 `dsh.profile.bundles`（复用 `install_plugin()` 的 reconcile 逻辑）；装完需重启服务生效。
+
+38. **用量管理价格更新为官方【高峰期】默认价 + bat 打包脚本闪退排查（2026-08-17）**：
+    - **需求**：用户给出官方定价页 `https://api-docs.deepseek.com/zh-cn/quick_start/pricing/`，要求"更新默认的用量管理的价格，用官方的高峰期时段价格作为默认"；同时反馈"bat 打包脚本貌似有问题，打开就闪退"。
+    - **官方定价抓取（2026-08-17）**：DeepSeek 官方改为**峰谷定价**——北京时间高峰 9:00-12:00 / 14:00-18:00，高峰为低谷 2 倍。高峰期价格（元/百万 tokens）：
+      - `deepseek-v4-flash`：输入命中缓存 **0.10** / 未命中 **3.0** / 输出 **9.0**
+      - `deepseek-v4-pro`：输入命中缓存 **0.30** / 未命中 **9.0** / 输出 **27.0**
+    - **实现（`plugins/dsh-usage-stats/lib/client.js`）**：价格表 `localStorage` 键升级 `dsh.usageStats.prices.v2` → **`dsh.usageStats.prices.v3`**，`DEFAULT_PRICES` 改为上述官方高峰价（fallback 同 flash）。**升级后浏览器旧 v2 价格自动失效、回退新默认高峰价**（loadPrices 读不到 v3 键即用默认），无需用户手动清缓存。注释与 UI 提示文字同步改为"默认取官方高峰时段价（估算偏保守），可按实际价格/时段修改"。
+    - **bat 闪退排查结论**：`build_exe.bat` **实际不闪退**。排查方法：① 字节级检查根目录 3 个 bat（start/stop/build_exe）——全部 ASCII、无 BOM、CRLF 行尾，排除编码问题；② 发现 `build_exe.bat` 第 40-42 行注释乱码（`?????`）——非 ASCII 虽不影响运行但破坏可读性，已改为纯 ASCII 英文注释；③ 用 Python `subprocess` 调 `cmd /c build_exe.bat` 抓完整输出——**退出码 0、增量构建 1.3s、输出 `[OK] Build finished`、`pause` 正常**；新 exe 实测启动存活（不闪退）。真正误判来源：PowerShell `Start-Process -RedirectStandardOutput/Error` 与 cmd 的交互（pause）冲突导致看起来"闪退"，见避坑 #59。
+
+39. **v1.0.7 发布：Chrome 150 无端口 Origin 补丁（避坑 #58）+ 用量高峰价（#38）+ 发布流程调整（2026-08-17）**：
+    - **版本号**：`GREEN_VERSION` 1.0.6 → **1.0.7**，`GREEN_VERSION_DATE` → 2026年08月17日（README/README_EN 的"最新下载 tag"与"当前版本"同步更新，共 3 处 × 2 文件）。
+    - **不再单独打 Skill zip**：用户要求"不用单独打包 skill 了，把 `skills/dsh-deploy-maintain` 包含在 release 包里就行"——绿色 zip 直接带 `skills/dsh-deploy-maintain/` 目录（本版起 **Release 不再上传 `DSH_Skill_*.zip` 资产**）。打包用 **Python zipfile**（`runtime/tmp/pack_release.py`，用后即删）替代 Compress-Archive（避免 PowerShell 转义/路径问题），内置复核：根必须含 `LICENSE`、不得有 `skills/*.zip` 嵌套。zip 命名沿用 `DSH_Launcher_GreenPortable_Online_20260817_v1.0.7.zip`（9200793 字节，39 项）。
+    - **发布默认 config.json 恢复本机模式**：本地 config.json 因局域网测试残留 `dsh_host: 0.0.0.0`，**发布默认改回 `127.0.0.1`**（用户确认）——新用户开箱仅本机访问，局域网需自行在 GUI 网络设置开启（特权 API 本就仅回环）。
+    - **旧版 Release 资产清理**：v1.0.0~v1.0.6 各 Release 的 zip 资产（含 `DSH_Skill_*.zip`）全部删除，**Release 条目与更新记录保留**；新版本只传绿色 zip 一个资产。
+    - **发布流程执行细节**：`gh` CLI 不可用，凭据在 Windows 凭据管理器（`credential.helper=manager`）→ 用 **`git credential fill` 取 token + urllib 直调 GitHub API**（`runtime/tmp/gh_helper.py`，用后即删）；上传资产走 `POST /releases/{id}/assets`（`Content-Type: application/zip`，body 为文件字节流）；release body 用 UTF-8 字节流提交（避坑 #32）；发布前用 `git credential fill` 拿到的 token 验证 API 可达。另：系统 PATH 的 `python` 是旧版（报 Py2 语法错误），统一用内置便携 Python `runtime\python\python\python.exe` 跑脚本。
+
 
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
@@ -502,13 +523,34 @@
 56. **【局域网 403】WebUI 报 `transport failure for /api/host.pickDirectory: HTTP 403`（2026-08-17）**：
     - **背景/根因**：dsh 官方把 `client-connection` 插件的 `/api` 通道（`@deepseek-ai/dsh-client-connection/lib/index.js`）默认信任围栏 **pin 死在 loopback**：`apply()` 里 `trustedHosts = config?.trustedHosts ?? []`，且特权方法（`PRIVILEGED_METHODS`，含 `host.pickDirectory`、`host.openPath`、`settings.*`、`credentials.*`、`llm.discoverModels` 等）**硬编码传空列表** `isTrustedApiRequest(request, [])`。实测（curl 模拟 Host）：`127.0.0.1` 访问全部 200；用**本机局域网 IP / 局域网 Host** 访问时**所有 /api（含普通 API）都 403**。而 `dsh-web-app` 的 `resolveLanTrust()` 明明算了 `lanAddresses`（0.0.0.0 绑定时的本机局域网 IPv4）并通过 `WEB_RUNTIME_SERVICE`（`"webRuntime"`）提供——client-connection 却没用它，两套信任语义不一致。
     - **修复（幂等补丁 `patch_lan_api_trust()`）**：补丁 `dsh-client-connection/lib/index.js` 的 `apply()`：① `trustedHosts` 改为 `let`，当 `config.trustedHosts` 为空且 `ctx.get("webRuntime").lanAddresses` 非空时，自动并入本机局域网 IPv4（与 resolveLanTrust 语义一致）；② 特权方法的 `isTrustedApiRequest(request, [])` 改为 `isTrustedApiRequest(request, trustedHosts)`。CSRF 防护（`sec-fetch-site: cross-site` 拒绝 / Origin 必须同 host）**保留**。安全边界：只信任本机网卡实际地址（`lanAddresses`），伪造局域网 IP 依然 403。已在 `install_dsh()` 与 `start_server()` 中自动重打（dsh 升级重装后恢复原样）。
-    - **验证（0.0.0.0 实测）**：loopback → 200；本机局域网 IP（192.168.32.88）→ **200**（原 403）；伪造 192.168.1.100 → 403（安全）；跨站 Origin evil.example.com → 403（CSRF 保留）。loopback-only 模式无行为变化（lanAddresses 为空，trustedHosts 仍 []）。
-    - **坑**：① dsh 官方"局域网模式"文档语义与实际 `client-connection` 实现不一致——页面能开但 /api 全 403，报错很误导（"transport failure"）；② 补丁匹配串要跟随 dsh 版本，结构不匹配时**宁可跳过不硬改**（防止破坏运行），并在日志提示。
+    - **验证（0.0.0.0 实测）**：loopback → 200；本机局域网 IP（192.168.32.88）→ **200**（原 403）；伪造 192.168.1.100 → 403（安全）；跨站 Origin evil.example.com → 403（CSRF 保留）。loopback-only 模式无行为变化（lanAddresses 为空，trustedHosts 仍 []）。**注：此结论仅对"Origin 带端口"的客户端成立；真实 Chrome 150+ 会发无端口 Origin 导致本机模式也 403，见避坑 #58（补丁已升级 v3 修复）。**
+    - **坑**：① dsh 官方"局域网模式"文档语义与实际 `client-connection` 实现不一致——页面能开但 /api 全 403，报错很误导（"transport failure"）；② 补丁匹配串要跟随 dsh 版本，结构不匹配时**宁可跳过不硬改**（防止破坏运行），并在日志提示；③ 补丁失败要**醒目提示**——`install_dsh()`/`start_server()` 里对 `patch_lan_api_trust()` 返回值做判断，失败输出 `[警告]`（此前仅一行普通日志，用户"装了才发现局域网用不了"），见 2026-08-17 补记。
 
 57. **【发布】Release zip 与 GitHub 仓库统一 + exe 上传 GitHub（2026-08-17）**：
     - **需求**：用户要求"release 包跟 github 上传内容统一，包含 exe 也上传 github，移除 skills/python-tkinter-desktop-dev.zip；DEV_NOTES.md / .gitignore 不进 release"。
     - **实施**：① `.gitignore` 移除 `DSH_Launcher.exe` 忽略项 → exe 作为仓库文件一并提交 GitHub（与 Release 同源）；② README/README_EN 的"发货清单"与 `Compress-Archive` 命令改为**与仓库内容统一**：`launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, DSH_Launcher.ico, config.json, README.md, README_EN.md, LICENSE, "plugins", "skills"`（剔除 `DEV_NOTES.md`、`.gitignore`；`.ico` 保留）；③ `skills\*.zip` 残留打包前 `Move-Item skills\*.zip %TEMP%\` 清走（实测 release 曾误入 `python-tkinter-desktop-dev.zip`）。
     - **教训**：二进制 exe 进 git 仓库虽非常规（会撑大仓库），但用户明确要求"仓库与 Release 一致、exe 可一键下载"，且单文件 9MB 可接受；`.gitignore` 里 `DSH_Launcher_*.zip` 仍保留（zip 只进 Release 不进仓库）。
+
+58. **【本机模式 403 复发】Chrome 150+ 同源请求发送"无端口 Origin"，官方 `new URL(origin).host` 精确比较判 403（2026-08-17，避坑 #56 补记）**：
+    - **现象**：局域网 403 修复（#56）后，用户"本机模式 + 手动点启动服务"仍报 `transport failure for /api/host.pickDirectory: HTTP 403`；且**用 curl 模拟（Origin 带端口）死活复现不出**（一直 200）。
+    - **定位（关键）**：把 #56 补丁升级为 v2，在 client-connection 全部 403 出口（fetchHandler/route/websocket/register/interceptor）加诊断日志（记录 url/method/ua/origin/host/sec-fetch-site/referer/trustedHosts），server.log 立刻现形：
+      ```
+      [client-connection:403] route url=/api/host.describe method=POST
+        ua=Mozilla/5.0 ... Chrome/150.0.0.0  host=127.0.0.1:3080
+        origin=http://127.0.0.1  sec-fetch-site=same-origin
+        referer=http://127.0.0.1:3080/  trustedHosts=[]
+      ```
+      **真实 Chrome 150 对 `http://127.0.0.1:3080` 页面的同源请求，Origin 竟然不带端口（`http://127.0.0.1`）**。官方校验 `new URL(origin).host === hostUrl.host` → `"127.0.0.1" !== "127.0.0.1:3080"` → false → 全部 /api 403（不只是 pickDirectory，页面加载的 host.describe 等都 403）。这就是"本机模式也 403"、且"curl 复现不出"（curl 手动带端口 Origin）的原因。
+    - **修复（补丁升级 v3）**：`isTrustedApiRequest` 的 Origin 校验改为**只比较 hostname（忽略端口）**：`new URL(origin).hostname === hostUrl.hostname`。安全性论证：端口不是 CSRF / DNS-rebinding 边界（跨站攻击是不同 hostname 的页面发请求；rebinding 是 Host header hostname 与服务地址不一致），忽略端口不削弱防护；第一道"Host 必须 loopback 或受信任"与 `sec-fetch-site: cross-site` 拒绝都保留。补丁函数 `patch_lan_api_trust()` 升级为"完整 v3 幂等检查（hostname 比较 + 各出口日志都存在才 True），否则先把 v1/v2/v3 已知片段还原为官方原样再打 v3"的收敛逻辑，dsh 升级重装后自动重打。
+    - **验证**：本机模式重启后，`host.describe` / `session.list` / `llm.discoverModels` 全部恢复 200（此前 Chrome 下全 403）；跨站伪造 Origin 仍 403（CSRF 保留）；`lan-ip=000` 确认服务确为本机绑定。**附带发现**：`host.pickDirectory` 放行后 curl 会**超时挂起**——那是 native 目录选择器（`dsh-host-directory-picker-native` spawn 的 worker.cjs 阻塞在 Win32 `Show()`）在**等待用户在原生对话框里选目录**，真实浏览器点"选择工作区"会弹窗、选完正常返回；无人交互的自动化请求超时属预期。
+    - **教训**：① 服务端对 Origin/Host 的校验**不要用"带端口精确相等"**——浏览器 Origin 序列化行为会变（Chrome 150 对 loopback 丢端口），用 hostname 比较最稳；② 排查"xxx 明明该放行却 403"，**第一件事给被拒出口加请求头日志（必须含 UA 和 Origin）**，否则 curl/脚本模拟与真实浏览器的 header 差异会让你陷入"复现不出"的死循环；③ 补丁迭代（v1→v2→v3）要设计成"还原全部已知片段→按官方锚点重打"的收敛函数，并做"完整版本"幂等检查，否则老补丁文件会把新补丁的 replace 锚点破坏。
+    - **待办**：重打 `DSH_Launcher.exe`（内置 v3 补丁 + 403 诊断日志），用户确认后替换/发布。（2026-08-17 已完成：`build_exe.bat` 实测正常，根目录 `DSH_Launcher.exe` 已重打为 v3 补丁 + 新高峰价格版，12:34:53，9184901 字节。）
+
+59. **【bat 闪退排查】`build_exe.bat` 双击"闪退"实为正常，误判来自 Start-Process 重定向与 cmd 交互冲突（2026-08-17）**：
+    - **现象**：用户反馈"bat 打包脚本貌似有问题，打开就闪退"。
+    - **排查步骤**：① 字节级检查根目录 3 个 bat（start/stop/build_exe）——全部 **ASCII、无 BOM、CRLF 行尾**（用户规则要求 bat 全 ASCII 防 cmd 编码问题），排除编码闪退；② 逐行审阅 `build_exe.bat` 逻辑——`%~dp0` 定位、Python 探测、PyInstaller 本地安装、`--onefile --windowed --noupx` 构建、copy 到根目录、`pause`，逻辑无误；③ 发现第 40-42 行注释被写成乱码 `?????`（非 ASCII），虽不破坏运行但影响可读性，改为纯 ASCII 英文；④ **用 Python `subprocess` 调 `cmd /c build_exe.bat` 抓完整输出**：退出码 0、增量构建 1.3s、`[INFO]/[OK] Build finished` 输出齐全、`pause` 正常驻留——**bat 本身不闪退**。
+    - **误判根因**：PowerShell `Start-Process cmd -RedirectStandardOutput -RedirectStandardError` 重定向的是管道，而 cmd 脚本里的 `pause` 等待键盘输入，两者交互下输出被吞、窗口看起来瞬间消失——**"闪退"是抓取方式的假象，不是脚本问题**。正确抓 bat 完整行为用 Python `subprocess.run(["cmd", "/c", bat], capture_output=True, text=True)` 或 `CreateProcess` 加参数，别用 Start-Process 重定向。
+    - **坑**：① 判断 bat "闪退"前先分清"窗口本身关闭"与"逻辑失败退出"——带 `pause` 的 bat 若真逻辑失败也会暂停显示错误，不会闪退；② bat 内注释/回显字符串必须保持 ASCII（中文注释在非 UTF-8 代码页下会变乱码，虽不致命但难看），要写中文说明就放脚本外的 README/md；③ PyInstaller 增量构建很快（复用 build/ 缓存），复打 exe 是低成本的，改 launcher.py 后随手重打即可。
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。

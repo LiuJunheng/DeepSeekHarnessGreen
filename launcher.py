@@ -220,8 +220,8 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # 发布流程: 打 tag v{GREEN_VERSION} + Release 资产 DSH_Launcher_GreenPortable_Online_<日期>_v<tag>.zip
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
-GREEN_VERSION = "1.0.6"                            # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
-GREEN_VERSION_DATE = "2026年08月16日"               # 绿色版版本日期
+GREEN_VERSION = "1.0.7"                            # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
+GREEN_VERSION_DATE = "2026年08月17日"               # 绿色版版本日期
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
 GREEN_RELEASE_MIRROR = ("https://mirror.nju.edu.cn/github-release/%s/latest"
@@ -638,7 +638,12 @@ class Launcher:
         self.patch_frontend()   # 安装/升级后注入 WebUI 心跳脚本 (单页面去重)
         self.patch_web_startup()  # 安装/升级后补丁 startup.js, 放开 --host 0.0.0.0 (局域网访问)
         self.patch_lan_trust()    # 安装/升级后补丁 resolveLanTrust, 支持「只信任填写的主机」
-        self.patch_lan_api_trust()  # 安装/升级后补丁 client-connection, 局域网模式 /api 与特权 API 可用
+        # 局域网 /api 补丁 (pickDirectory 等特权 API 不再 403)。失败时给出醒目提示,
+        # 不让用户"装了才发现局域网用不了" (2026-08-17, 避坑 #56)。
+        lan_api_patched = self.patch_lan_api_trust()
+        if not lan_api_patched:
+            self.log("[警告] client-connection 局域网补丁未生效: 局域网模式 /api 可能报 403 "
+                     "(本机模式不受影响); 可稍后重启服务重试, 或等 dsh 更新后再装一次环境")
         return True
 
     def prepare_dsh(self, force=False):
@@ -1381,6 +1386,54 @@ class Launcher:
             self.log("已自动同步编排层 (dsh.profile.bundles): %s" % ", ".join(bundles))
         return True
 
+    def bundled_plugin_dirs(self):
+        """返回程序目录 plugins/ 下所有内置插件目录 (含 package.json 的子目录)。
+        内置插件 (dsh-archive-purge / dsh-session-rewind / dsh-file-browser /
+        dsh-usage-stats) 以源码形式随绿色版一起发布, 需要时用 file: 本地安装。"""
+        result = []
+        plugins_root = os.path.join(BASE_DIR, "plugins")
+        if not os.path.isdir(plugins_root):
+            return result
+        for entry_name in sorted(os.listdir(plugins_root)):
+            entry_path = os.path.join(plugins_root, entry_name)
+            if os.path.isfile(os.path.join(entry_path, "package.json")):
+                result.append(entry_path)
+        return result
+
+    def install_bundled_plugins(self, profile=DEFAULT_PROFILE):
+        """把程序目录 plugins/ 下所有内置插件批量装到指定 profile (已装的跳过)。
+        返回 (本次新装列表, 已存在跳过列表, 失败列表); 单个失败不中断其余插件。
+        安装环境后自动调用 (2026-08-17, 需求: 安装环境最后把所有计划内置插件都装上);
+        插件管理窗口的「一键安装内置插件」按钮也复用本方法。"""
+        installed_now = []
+        skipped = []
+        failed = []
+        already_installed = self.list_installed_plugins(profile)
+        for folder in self.bundled_plugin_dirs():
+            try:
+                with open(os.path.join(folder, "package.json"), "r", encoding="utf-8") as file_handle:
+                    manifest = json.load(file_handle)
+            except Exception as error:
+                failed.append(os.path.basename(folder))
+                self.log("[警告] 读取内置插件 %s 的 package.json 失败: %s" % (folder, error))
+                continue
+            package_name = manifest.get("name") or ""
+            if not package_name:
+                failed.append(os.path.basename(folder))
+                self.log("[警告] 内置插件 %s 缺少 name 字段, 已跳过" % folder)
+                continue
+            if package_name in already_installed:
+                skipped.append(package_name)
+                continue
+            spec = "file:" + folder.replace("\\", "/")
+            try:
+                self.install_plugin(spec, profile)
+                installed_now.append(package_name)
+            except Exception as error:
+                failed.append(package_name)
+                self.log("[警告] 内置插件 %s 安装失败: %s" % (package_name, error))
+        return installed_now, skipped, failed
+
     def remove_plugin(self, package_name, profile=DEFAULT_PROFILE):
         """从指定 profile 移除插件 (转发给 pnpm remove), 失败抛异常。
         移除后同步编排层, 把已卸载的包从 dsh.profile.bundles 清掉。"""
@@ -1546,6 +1599,14 @@ class Launcher:
         python_ok = self.prepare_python()
         self.prepare_node()
         self.prepare_dsh()
+        # 安装环境最后自动把所有计划内置的插件都装上 (已装的跳过, 单个失败不中断)。
+        # 注意: prepare_all 在每次启动服务前也会调用, 因"已装跳过"故幂等, 无重复安装开销。
+        if self.dsh_installed():
+            installed_now, skipped, failed = self.install_bundled_plugins()
+            if installed_now:
+                self.log("内置插件已自动安装: %s" % ", ".join(installed_now))
+            if failed:
+                self.log("[警告] 内置插件安装失败: %s (可在插件管理里重试)" % ", ".join(failed))
         if python_ok:
             self.log("环境准备完成, 可以启动服务")
         else:
@@ -1641,9 +1702,15 @@ class Launcher:
         (host.pickDirectory 等 PRIVILEGED_METHODS) 默认 pin 死在 loopback——局域网模式
         (0.0.0.0) 下用局域网 IP / 本机局域网 IP 访问 WebUI 时, 所有 /api 请求都返回
         HTTP 403, 报 "transport failure for /api/host.pickDirectory: HTTP 403"。
-        本补丁: ① 未显式配置信任主机时, 自动把 dsh-web-app 提供的 lanAddresses 并入
-        信任列表 (与 resolveLanTrust 语义一致); ② 特权方法改用同一个 trustedHosts 而
-        非硬编码空列表。CSRF 防护 (sec-fetch-site / origin 校验) 仍保留。
+        本补丁(v3): ① 未显式配置信任主机时, 自动把 dsh-web-app 提供的 lanAddresses
+        并入信任列表; ② 特权方法改用同一个 trustedHosts 而非硬编码空列表; ③ 在被拒
+        的 403 出口 (fetchHandler/route/websocket/register/interceptor) 加诊断日志;
+        ④ Origin 校验改为 hostname 比较 (忽略端口)——Chrome 150+ 对 http://127.0.0.1:<port>
+        页面的同源请求发送不带端口的 Origin (http://127.0.0.1), 官方 new URL(origin).host
+        比较会把 "127.0.0.1" 与 "127.0.0.1:3080" 判为不等, 导致本机模式全部 /api 也 403。
+        CSRF 防护 (sec-fetch-site / origin 同 hostname) 与 DNS-rebinding 防护仍保留。
+        说明: register() 是类方法, 闭包访问不到 apply() 内的 log403, 故用内联
+        console.error; 其余出口 (route/websocket/fetchHandler) 在 apply 作用域内可用。
         dsh 升级重装后由 install_dsh() 自动重新补丁。返回 True 表示就绪(或已是最新)。"""
         connection_path = os.path.join(DSH_DIR, "node_modules", "@deepseek-ai",
                                        "dsh-client-connection", "lib", "index.js")
@@ -1654,10 +1721,48 @@ class Launcher:
                 text = file_handle.read()
         except OSError:
             return False
-        if "dsh-launcher LAN patch" in text:
-            return True   # 已是补丁后状态, 幂等返回
-        old_trust = "const trustedHosts = config?.trustedHosts ?? [];"
-        new_trust = (
+        # 完整 v3 幂等检查: 具备 hostname 比较 + 各出口日志
+        if ("new URL(origin).hostname" in text
+                and 'log403("fetchHandler"' in text and 'log403("route"' in text
+                and 'log403("websocket"' in text
+                and "[client-connection:403] register" in text):
+            return True   # 已是完整 v3 补丁, 幂等返回
+
+        # ---------- 官方面貌 (用于还原与替换锚点) ----------
+        original_trust = "const trustedHosts = config?.trustedHosts ?? [];"
+        original_privileged = "!isTrustedApiRequest(request, [])) return new Response(\"forbidden\", { status: 403 });"
+        original_route = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
+                          "\t\t\tres.writeHead(403);\n"
+                          "\t\t\tres.end(\"forbidden\");\n"
+                          "\t\t\treturn;\n"
+                          "\t\t}")
+        original_register = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
+                             "\t\t\t\tres.writeHead(403);\n"
+                             "\t\t\t\tres.end(\"forbidden\");\n"
+                             "\t\t\t\treturn;\n"
+                             "\t\t\t}")
+        original_ws = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
+                       "\t\t\t\t\trejectWebSocketUpgrade(socket);\n"
+                       "\t\t\t\t\treturn;\n"
+                       "\t\t\t\t}")
+        original_interceptor = ('if (interceptor.options.authority === "loopback" && !isTrustedApiRequest(request, [])) '
+                                'return Promise.resolve(new Response("forbidden", { status: 403 }));')
+        original_origin = ("try {\n"
+                           "\t\treturn new URL(origin).host === hostUrl.host;\n"
+                           "\t} catch {")
+
+        # ---------- v1 / v2 已知补丁片段 (用于还原) ----------
+        v1_trust = ("let trustedHosts = config?.trustedHosts ?? [];\n"
+                    "\t// dsh-launcher LAN patch: 局域网模式(0.0.0.0)且未显式配置信任主机时, 自动把\n"
+                    "\t// dsh-web-app 提供的本机局域网 IPv4 (webRuntime.lanAddresses) 并入信任列表;\n"
+                    "\t// 否则 /api 通道与 pickDirectory 等特权 API 被 client-connection 默认 pin 死在\n"
+                    "\t// loopback, 局域网 IP / 本机局域网 IP 访问会全部 HTTP 403 (仅 127.0.0.1 可用)。\n"
+                    "\tconst webRuntime = ctx.get?.(\"webRuntime\");\n"
+                    "\tif (trustedHosts.length === 0 && webRuntime?.lanAddresses?.length > 0) {\n"
+                    "\t\ttrustedHosts = [...webRuntime.lanAddresses];\n"
+                    "\t}")
+        v1_privileged = "!isTrustedApiRequest(request, trustedHosts)) return new Response(\"forbidden\", { status: 403 });"
+        v2_trust = (
             "let trustedHosts = config?.trustedHosts ?? [];\n"
             "\t// dsh-launcher LAN patch: 局域网模式(0.0.0.0)且未显式配置信任主机时, 自动把\n"
             "\t// dsh-web-app 提供的本机局域网 IPv4 (webRuntime.lanAddresses) 并入信任列表;\n"
@@ -1666,21 +1771,92 @@ class Launcher:
             "\tconst webRuntime = ctx.get?.(\"webRuntime\");\n"
             "\tif (trustedHosts.length === 0 && webRuntime?.lanAddresses?.length > 0) {\n"
             "\t\ttrustedHosts = [...webRuntime.lanAddresses];\n"
-            "\t}")
-        old_privileged = "!isTrustedApiRequest(request, [])) return new Response(\"forbidden\", { status: 403 });"
-        new_privileged = "!isTrustedApiRequest(request, trustedHosts)) return new Response(\"forbidden\", { status: 403 });"
-        if old_trust not in text or old_privileged not in text:
+            "\t}\n"
+            "\t// dsh-launcher: 403 诊断日志 (v2) —— 记录被信任围栏拒绝的请求头, 排查\n"
+            "\t// \"transport failure for /api/host.pickDirectory: HTTP 403\" 时看 server.log。\n"
+            "\tconsole.error(\"[client-connection] LAN patch v2 active, trustedHosts=\" + JSON.stringify(trustedHosts)\n"
+            "\t\t+ \" lanAddresses=\" + JSON.stringify(webRuntime?.lanAddresses));\n"
+            "\tconst log403 = (where, request) => {\n"
+            "\t\tconsole.error(\"[client-connection:403] \" + where\n"
+            "\t\t\t+ \" url=\" + request.url\n"
+            "\t\t\t+ \" method=\" + (request.method ?? \"\")\n"
+            "\t\t\t+ \" ua=\" + header(request.headers, \"user-agent\")\n"
+            "\t\t\t+ \" host=\" + header(request.headers, \"host\")\n"
+            "\t\t\t+ \" origin=\" + header(request.headers, \"origin\")\n"
+            "\t\t\t+ \" sec-fetch-site=\" + header(request.headers, \"sec-fetch-site\")\n"
+            "\t\t\t+ \" referer=\" + header(request.headers, \"referer\")\n"
+            "\t\t\t+ \" trustedHosts=\" + JSON.stringify(trustedHosts));\n"
+            "\t};")
+        v2_privileged = ("!isTrustedApiRequest(request, trustedHosts)) { log403(\"fetchHandler\", request); "
+                         "return new Response(\"forbidden\", { status: 403 }); }")
+        v2_route = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
+                    "\t\t\tlog403(\"route\", req);\n"
+                    "\t\t\tres.writeHead(403);\n"
+                    "\t\t\tres.end(\"forbidden\");\n"
+                    "\t\t\treturn;\n"
+                    "\t\t}")
+        v2_register = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
+                       "\t\t\t\tconsole.error(\"[client-connection:403] register host=\" + header(req.headers, \"host\")\n"
+                       "\t\t\t\t\t+ \" origin=\" + header(req.headers, \"origin\")\n"
+                       "\t\t\t\t\t+ \" sec-fetch-site=\" + header(req.headers, \"sec-fetch-site\"));\n"
+                       "\t\t\t\tres.writeHead(403);\n"
+                       "\t\t\t\tres.end(\"forbidden\");\n"
+                       "\t\t\t\treturn;\n"
+                       "\t\t\t}")
+        v2_register_flat = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
+                            "\t\t\t\tconsole.error(\"[client-connection:403] register host=\" + header(req.headers, \"host\")"
+                            " + \" origin=\" + header(req.headers, \"origin\")"
+                            " + \" sec-fetch-site=\" + header(req.headers, \"sec-fetch-site\"));\n"
+                            "\t\t\t\tres.writeHead(403);\n"
+                            "\t\t\t\tres.end(\"forbidden\");\n"
+                            "\t\t\t\treturn;\n"
+                            "\t\t\t}")
+        v2_ws = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
+                 "\t\t\t\t\tlog403(\"websocket\", req);\n"
+                 "\t\t\t\t\trejectWebSocketUpgrade(socket);\n"
+                 "\t\t\t\t\treturn;\n"
+                 "\t\t\t\t}")
+        v2_interceptor = ('if (interceptor.options.authority === "loopback" && !isTrustedApiRequest(request, [])) { '
+                          'console.error("[client-connection:403] interceptor host=" + header(request.headers, "host") '
+                          '+ " origin=" + header(request.headers, "origin") '
+                          '+ " sec-fetch-site=" + header(request.headers, "sec-fetch-site")); '
+                          'return Promise.resolve(new Response("forbidden", { status: 403 })); }')
+        v3_origin = ("try {\n"
+                     "\t\t// dsh-launcher patch v3: 只比较 hostname, 忽略端口。\n"
+                     "\t\t// Chrome 150+ 对 http://127.0.0.1:<port> 页面的同源请求会发送不带端口的\n"
+                     "\t\t// Origin (http://127.0.0.1), 官方用 new URL(origin).host === hostUrl.host\n"
+                     "\t\t// 比较会把 \"127.0.0.1\" 与 \"127.0.0.1:3080\" 判为不等 → 全部 /api 403。\n"
+                     "\t\t// 端口不是 CSRF / DNS-rebinding 边界, 忽略它不影响安全语义。\n"
+                     "\t\treturn new URL(origin).hostname === hostUrl.hostname;\n"
+                     "\t} catch {")
+
+        # ---------- 还原所有已知补丁片段为官方原样 ----------
+        for old, new in ((v3_origin, original_origin),
+                         (v2_trust, original_trust), (v1_trust, original_trust),
+                         (v2_privileged, original_privileged), (v1_privileged, original_privileged),
+                         (v2_route, original_route), (v2_register, original_register),
+                         (v2_register_flat, original_register),
+                         (v2_ws, original_ws), (v2_interceptor, original_interceptor)):
+            text = text.replace(old, new, 1)
+
+        # ---------- 打完整 v3 补丁 ----------
+        if original_trust not in text or original_privileged not in text:
             # 目标文件结构不符 (dsh 版本大改时), 不强行打补丁, 避免破坏运行
             self.log("跳过 client-connection 补丁: 目标代码结构不匹配 (dsh 版本可能已大改)")
             return False
-        new_text = text.replace(old_trust, new_trust, 1)
-        new_text = new_text.replace(old_privileged, new_privileged, 1)
+        text = text.replace(original_origin, v3_origin, 1)
+        text = text.replace(original_trust, v2_trust, 1)
+        text = text.replace(original_privileged, v2_privileged, 1)
+        text = text.replace(original_route, v2_route, 1)
+        text = text.replace(original_register, v2_register, 1)
+        text = text.replace(original_ws, v2_ws, 1)
+        text = text.replace(original_interceptor, v2_interceptor, 1)
         try:
             with open(connection_path, "w", encoding="utf-8") as file_handle:
-                file_handle.write(new_text)
+                file_handle.write(text)
         except OSError:
             return False
-        self.log("已补丁 dsh client-connection: 局域网模式 /api 与特权 API 不再 403")
+        self.log("已补丁 dsh client-connection (v3): 局域网/本机模式 /api 不再 403, 含 Chrome 150 无端口 Origin 兼容与 403 诊断日志")
         return True
 
     def lan_addresses(self):
@@ -1817,7 +1993,12 @@ class Launcher:
         self.patch_frontend()             # 确保前端已注入心跳脚本 (dsh 升级重装后自动补齐)
         self.patch_web_startup()          # 确保 startup.js 已补丁 (dsh 升级重装后自动补齐, 局域网绑定用)
         self.patch_lan_trust()            # 确保 resolveLanTrust 已补丁 (受信任主机精确语义)
-        self.patch_lan_api_trust()        # 确保 /api 通道在局域网模式下可用 (pickDirectory 等特权 API 不再 403)
+        # 确保 /api 通道在局域网模式下可用 (pickDirectory 等特权 API 不再 403);
+        # 失败时给出醒目提示, 避免"局域网模式下静默 403" (2026-08-17, 避坑 #56)。
+        lan_api_patched = self.patch_lan_api_trust()
+        if not lan_api_patched:
+            self.log("[警告] client-connection 局域网补丁未生效: 局域网模式 /api 可能报 403 "
+                     "(本机模式不受影响); 可重启服务重试")
 
         command = self.build_server_command()
         self.log("启动命令: %s" % " ".join(command))
@@ -3436,6 +3617,44 @@ def run_gui():
             spec = "file:" + os.path.abspath(folder).replace("\\", "/")
             do_install(spec, os.path.basename(folder))
 
+        def on_install_bundled():
+            """一键安装程序目录 plugins/ 下所有内置插件 (已装的自动跳过)。
+            复用 install_bundled_plugins(), 与「安装环境」里的自动安装同一实现"""
+            if plugin_busy[0]:
+                return
+            if not app.bundled_plugin_dirs():
+                messagebox.showinfo("插件管理", "程序目录 plugins/ 下未发现内置插件。", parent=top)
+                return
+            if not messagebox.askyesno(
+                    "安装内置插件",
+                    "将批量安装程序目录 plugins/ 下的全部内置插件:\n%s\n\n"
+                    "已安装的会自动跳过, 安装后需重启服务生效。继续吗?" % "\n".join(
+                        os.path.basename(folder) for folder in app.bundled_plugin_dirs()),
+                    parent=top):
+                return
+            set_plugin_busy(True)
+            plugin_status.set("正在批量安装内置插件 ...")
+            def worker():
+                try:
+                    installed_now, skipped, failed = app.install_bundled_plugins(profile)
+                    summary = []
+                    if installed_now:
+                        summary.append("已装: %s" % ", ".join(installed_now))
+                    if skipped:
+                        summary.append("跳过(已存在): %s" % ", ".join(skipped))
+                    if failed:
+                        summary.append("失败: %s" % ", ".join(failed))
+                    message = "\n".join(summary) if summary else "(没有可安装的内置插件)"
+                    root.after(0, lambda: (refresh_installed(),
+                                           messagebox.showinfo("安装内置插件", message, parent=top),
+                                           plugin_status.set("内置插件安装完成")))
+                except Exception as error:
+                    root.after(0, lambda: (messagebox.showerror("安装失败", str(error), parent=top),
+                                           plugin_status.set("安装失败")))
+                finally:
+                    root.after(0, lambda: set_plugin_busy(False))
+            threading.Thread(target=worker, daemon=True).start()
+
         def do_install(spec, display_name):
             """后台线程执行插件安装"""
             set_plugin_busy(True)
@@ -3522,6 +3741,10 @@ def run_gui():
         ttk.Label(toolbar, text="GitHub 官方入口:").pack(side="left")
         github_btn = ttk.Button(toolbar, text="打开官方话题页", command=do_open_github_topic)
         github_btn.pack(side="left", padx=(6, 0))
+
+        bundled_btn = ttk.Button(toolbar, text="一键安装内置插件",
+                                 command=on_install_bundled)
+        bundled_btn.pack(side="left", padx=(12, 0))
 
         # ---------- 中间: 左右两个面板 ----------
         middle = ttk.Panedwindow(top, orient="horizontal")

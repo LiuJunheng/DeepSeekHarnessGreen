@@ -27,22 +27,24 @@ window.__ModuleLoader__.load({
 		const ROUTE_LIST = "/__dsh/usage-stats/list";
 		const ROUTE_DETAIL = "/__dsh/usage-stats/detail";
 		const GUARD_HEADER = "X-DSH-Usage-Stats";
-		const PRICES_KEY = "dsh.usageStats.prices.v2";
+		const PRICES_KEY = "dsh.usageStats.prices.v3";
 
 		/**
 		 * 默认价格表 (单位: 元 / 每百万 tokens)。
-		 * 参考 DeepSeek 官方定价 (api-docs.deepseek.com/zh-cn/quick_start/pricing/, 2026-08-16 抓取):
-		 *   deepseek-v4-flash: 输入命中缓存 0.02 / 未命中 1 / 输出 2
-		 *   deepseek-v4-pro:   输入命中缓存 0.025 / 未命中 3 / 输出 6
-		 * 注: 2026-08-17 00:00 起官方改为峰谷定价 (高峰 9:00-12:00/14:00-18:00 为低谷 2 倍),
-		 * 本表为当前生效价, 用户可自行按实际价格/时段修改。字段: miss=输入未命中缓存, hit=输入命中缓存, out=输出。
+		 * 参考 DeepSeek 官方定价 (api-docs.deepseek.com/zh-cn/quick_start/pricing/, 2026-08-17 抓取),
+		 * 默认取【高峰时段】价格 (北京时间 9:00-12:00 / 14:00-18:00, 高峰为低谷 2 倍):
+		 *   deepseek-v4-flash: 输入命中缓存 0.10 / 未命中 3.0 / 输出 9.0
+		 *   deepseek-v4-pro:   输入命中缓存 0.30 / 未命中 9.0 / 输出 27.0
+		 * 注: 官方自 2026-08-17 起改为峰谷定价; 本表默认高峰价, 费用估算偏保守,
+		 * 用户可自行按实际价格/时段修改 (前端价格表可编辑并保存)。
+		 * 字段: miss=输入未命中缓存, hit=输入命中缓存, out=输出。
 		 */
 		const DEFAULT_PRICES = {
 			models: {
-				"deepseek-v4-flash": { miss: 1.0, hit: 0.02, out: 2.0 },
-				"deepseek-v4-pro": { miss: 3.0, hit: 0.025, out: 6.0 },
+				"deepseek-v4-flash": { miss: 3.0, hit: 0.10, out: 9.0 },
+				"deepseek-v4-pro": { miss: 9.0, hit: 0.30, out: 27.0 },
 			},
-			fallback: { miss: 1.0, hit: 0.02, out: 2.0 },
+			fallback: { miss: 3.0, hit: 0.10, out: 9.0 },
 		};
 
 		// ---- 工具 ----
@@ -284,7 +286,7 @@ window.__ModuleLoader__.load({
 					react.createElement("button", { key: "save", type: "button", style: { padding: "4px 14px", cursor: "pointer", fontSize: 12 }, onClick: save }, "保存价格"),
 					react.createElement("button", { key: "reset", type: "button", style: { padding: "4px 14px", cursor: "pointer", fontSize: 12 }, onClick: reset }, "恢复默认"),
 					react.createElement("span", { key: "tip", style: { fontSize: 11, color: "#999", alignSelf: "center" } },
-						"单价 = 元 / 每百万 tokens；费用 = 输入(未命中)×单价 + 输入(命中)×单价 + 输出×单价，思考 token 已计入输出不重复计费；默认参考 DeepSeek 官方定价（2026-08-17 起官方改为峰谷定价，请按实际价格修改）"
+						"单价 = 元 / 每百万 tokens；费用 = 输入(未命中)×单价 + 输入(命中)×单价 + 输出×单价，思考 token 已计入输出不重复计费；默认按 DeepSeek 官方高峰时段价（北京 9:00-12:00 / 14:00-18:00，高峰为低谷 2 倍），请按实际价格/时段修改"
 					),
 				]),
 			]);
@@ -615,7 +617,7 @@ window.__ModuleLoader__.load({
 				react.createElement("p", { key: "desc", style: descStyle },
 					"扫描本机全部会话日志，按模型汇总每次模型调用的 token 用量（输入 / 输出 / 缓存读取 / 缓存写入 / 思考推理）。" +
 					"费用按 DeepSeek 官方计费口径估算：输入（未命中缓存）+ 输入（命中缓存）+ 输出，各自 ÷1e6 × 单价；思考 token 已计入输出、不重复计费。" +
-					"价格表可在下方编辑并保存（仅存于本浏览器，默认值为官方当前价，请按实际价格/时段修改）。" +
+					"价格表可在下方编辑并保存（仅存于本浏览器，默认按官方高峰时段价，请按实际价格/时段修改）。" +
 					"当前服务运行中的会话可能仍在写入，统计为截至刷新时的数据。"
 				),
 
