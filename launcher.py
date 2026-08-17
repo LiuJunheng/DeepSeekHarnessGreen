@@ -1697,18 +1697,21 @@ class Launcher:
         return True
 
     def patch_lan_api_trust(self):
-        """补丁 dsh client-connection 的 /api 信任围栏 (幂等可重复)。
+        """补丁 dsh client-connection 的 /api 信任围栏 (两段式, 幂等可重复)。
         背景 (2026-08-17 实测): dsh 官方把 client-connection 的 /api 通道与特权方法
         (host.pickDirectory 等 PRIVILEGED_METHODS) 默认 pin 死在 loopback——局域网模式
         (0.0.0.0) 下用局域网 IP / 本机局域网 IP 访问 WebUI 时, 所有 /api 请求都返回
         HTTP 403, 报 "transport failure for /api/host.pickDirectory: HTTP 403"。
-        本补丁(v3): ① 未显式配置信任主机时, 自动把 dsh-web-app 提供的 lanAddresses
-        并入信任列表; ② 特权方法改用同一个 trustedHosts 而非硬编码空列表; ③ 在被拒
-        的 403 出口 (fetchHandler/route/websocket/register/interceptor) 加诊断日志;
-        ④ Origin 校验改为 hostname 比较 (忽略端口)——Chrome 150+ 对 http://127.0.0.1:<port>
-        页面的同源请求发送不带端口的 Origin (http://127.0.0.1), 官方 new URL(origin).host
-        比较会把 "127.0.0.1" 与 "127.0.0.1:3080" 判为不等, 导致本机模式全部 /api 也 403。
-        CSRF 防护 (sec-fetch-site / origin 同 hostname) 与 DNS-rebinding 防护仍保留。
+        两段式拆分 (更灵活, 可随官方演进逐步停用; 任一段结构不匹配只跳过该段并告警,
+        绝不整块跳过或破坏运行):
+          段1 (hostname 兼容): 只把 Origin 同源比较从 host(带端口) 放开为 hostname(忽略
+            端口)。这是 Chrome 150+ 无端口 Origin 引出的官方 bug——本机与局域网带 Origin
+            的请求都走同一处比较; 官方若已自行放宽/修复, 本段幂等自动跳过, 不误伤其它。
+          段2 (局域网 trustedHosts): 未显式配置信任主机时, 自动把 dsh-web-app 提供的
+            lanAddresses 并入信任列表, 并给被拒的 403 出口加诊断日志。仅在局域网模式下
+            需要; DSH 官方本就将 trustedHosts 暴露为插件级 config.trustedHosts schema
+            (零改官方可注入), 未来可把本段收敛为纯配置注入。
+        CSRF 防护 (sec-fetch-site / origin 同 hostname) 与 DNS-rebinding 防护均保留。
         说明: register() 是类方法, 闭包访问不到 apply() 内的 log403, 故用内联
         console.error; 其余出口 (route/websocket/fetchHandler) 在 apply 作用域内可用。
         dsh 升级重装后由 install_dsh() 自动重新补丁。返回 True 表示就绪(或已是最新)。"""
@@ -1839,24 +1842,49 @@ class Launcher:
                          (v2_ws, original_ws), (v2_interceptor, original_interceptor)):
             text = text.replace(old, new, 1)
 
-        # ---------- 打完整 v3 补丁 ----------
-        if original_trust not in text or original_privileged not in text:
-            # 目标文件结构不符 (dsh 版本大改时), 不强行打补丁, 避免破坏运行
-            self.log("跳过 client-connection 补丁: 目标代码结构不匹配 (dsh 版本可能已大改)")
+        # ---------- 打补丁: 段1 本机/共用 Chrome150 兼容 (仅 Origin 比较) ----------
+        # 只改那一行判定: host(带端口) -> hostname(忽略端口)。
+        origin_patched = False
+        if "new URL(origin).hostname" in text:
+            origin_patched = True                 # 官方已自行放宽/修复, 幂等跳过
+        elif original_origin in text:
+            text = text.replace(original_origin, v3_origin, 1)
+            origin_patched = True
+        else:
+            self.log("跳过 client-connection 段1(Origin hostname 兼容) 补丁: 目标代码结构不匹配")
+
+        # ---------- 打补丁: 段2 局域网 trustedHosts 注入 + 403 诊断日志 ----------
+        # 官方把 trustedHosts 暴露为插件级 config schema; 这里仍以运行时代码注入兜底,
+        # 端口/结构一旦不对只跳过本段, 不影响段1。
+        lan_patched = False
+        if "[client-connection:403]" in text and "LAN patch v2 active" in text:
+            lan_patched = True                    # 已打
+        elif original_trust not in text or original_privileged not in text:
+            self.log("跳过 client-connection 段2(局域网 trustedHosts) 补丁: 目标代码结构不匹配 (dsh 版本可能已大改)")
+        else:
+            text = text.replace(original_trust, v2_trust, 1)
+            text = text.replace(original_privileged, v2_privileged, 1)
+            text = text.replace(original_route, v2_route, 1)
+            text = text.replace(original_register, v2_register, 1)
+            text = text.replace(original_ws, v2_ws, 1)
+            text = text.replace(original_interceptor, v2_interceptor, 1)
+            lan_patched = True
+
+        if not (origin_patched or lan_patched):
+            # 两段结构都不匹配 (dsh 版本大改时), 不强行写回, 避免破坏运行
+            self.log("跳过 client-connection 补丁: 两段目标结构均不匹配 (dsh 版本可能已大改)")
             return False
-        text = text.replace(original_origin, v3_origin, 1)
-        text = text.replace(original_trust, v2_trust, 1)
-        text = text.replace(original_privileged, v2_privileged, 1)
-        text = text.replace(original_route, v2_route, 1)
-        text = text.replace(original_register, v2_register, 1)
-        text = text.replace(original_ws, v2_ws, 1)
-        text = text.replace(original_interceptor, v2_interceptor, 1)
         try:
             with open(connection_path, "w", encoding="utf-8") as file_handle:
                 file_handle.write(text)
         except OSError:
             return False
-        self.log("已补丁 dsh client-connection (v3): 局域网/本机模式 /api 不再 403, 含 Chrome 150 无端口 Origin 兼容与 403 诊断日志")
+        applied_segments = []
+        if origin_patched:
+            applied_segments.append("段1 Chrome150 hostname 兼容")
+        if lan_patched:
+            applied_segments.append("段2 局域网 trustedHosts+403日志")
+        self.log("已补丁 dsh client-connection (两段式, " + " + ".join(applied_segments) + "): /api 不再 403")
         return True
 
     def lan_addresses(self):

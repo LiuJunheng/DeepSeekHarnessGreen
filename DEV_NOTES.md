@@ -171,7 +171,36 @@
     - **发布流程执行细节**：`gh` CLI 不可用，凭据在 Windows 凭据管理器（`credential.helper=manager`）→ 用 **`git credential fill` 取 token + urllib 直调 GitHub API**（`runtime/tmp/gh_helper.py`，用后即删）；上传资产走 `POST /releases/{id}/assets`（`Content-Type: application/zip`，body 为文件字节流）；release body 用 UTF-8 字节流提交（避坑 #32）；发布前用 `git credential fill` 拿到的 token 验证 API 可达。另：系统 PATH 的 `python` 是旧版（报 Py2 语法错误），统一用内置便携 Python `runtime\python\python\python.exe` 跑脚本。
     - **上传资产端点坑（实测 404）**：资产上传 **`POST` 端点必须用 `uploads.github.com`**（`https://uploads.github.com/repos/<owner>/<repo>/releases/<id>/assets?name=...`），用 `api.github.com` 同路径会 404；下载/读取资产走 `api.github.com` 正常。国内网络 github.com:443 不可达但 api.github.com/uploads.github.com 可达（用户开全局代理后可正常 git push）。
     - **发布完成（2026-08-17 实测）**：v1.0.7 Release（id 371534576，三国味 body 1077 字符）已创建，zip 资产 `DSH_Launcher_GreenPortable_Online_20260817_v1.0.7.zip`（9201258 字节）上传成功；v1.0.0~v1.0.6 共 **13 个旧资产全部删除，Release 条目与更新记录保留**（v1.0.7 起不再有 `DSH_Skill_*.zip`）。git 推送由用户本人完成（master=b8a6fdc，tag v1.0.7=34e94cb）。
+40. **内置「WebUI 精简侧边栏」插件 dsh-sidebar-lite（2026-08-17，复刻自第三方 DSH Better Sidebar）**：
+    - **来源**：用户点名第三方插件 **DSH Better Sidebar（omdsh-dev/DSH-better-sidebar）**，要求研究并参考复刻一个内置精简版，README 需标注引用来源以示尊重。定位「精简单机版」，只做**资源管理 / 文件预览 / 内嵌浏览器**三项核心（去掉终端 node-pty、Git 面板、Diff、Subagent、多分栏工作台等重能力）。
+    - **宿主端** `plugins/dsh-sidebar-lite/lib/index.js`：在 `ctx.webServer` 注册前缀路由 `/__dsh/sidebar-lite/*`。`session.cwd`/`fs.tree`/`fs.read`/`fs.write` 走 POST JSON；`file` 走 GET 回原始媒体字节。安全：全部请求必须带自定义头 `X-DSH-Sidebar-Lite: 1`（跨域页面无法伪造，同 dsh-usage-stats 先例）；所有读写/列目录/媒体读取都用 `isWithin(cwd, …)` 锁定在会话工作目录之下；文本上限 1MB（超标 truncated）、媒体上限 32MB、单目录最多 1000 条（超标 truncated）；写文件先写临时文件再 rename 保证原子性。
+    - **会话溯源**：权威来源是 `ctx.get("sessions").get(sessionId).header.cwd`（主机端优先），客户端经 `ctx.sessions.list`（standard kit 外部 store）订阅当前激活会话，取 id 与摘要 `byId[<id>].cwd` 上报；兜底用客户端 cwd → `process.cwd()`。
+    - **客户端挂载** `lib/client.js`：与 better-sidebar 一致，往 `document.body` 挂 portal div 再用 `react-dom/client` 的 `createRoot` 渲染，**不依赖官方任何内部布局插槽**，也不修改官方文件；可折叠（收起时右侧留细条 `‹‹` 便于重开）、资源管理/浏览器双 Tab；展开时用 CSS 变量 `--dsh-sidebar-lite-width` 推动 `#root` 的 `margin-right` 让位（VSCode 侧栏效果，参考 better-sidebar layout.css 的手法简化实现）。
+    - **安装方式**：与其它内置插件一致，`plugins/` 目录 → `--install-plugin file:...` → pnpm add → `reconcile_bundles` 自动进 `dsh.profile.bundles`，随服务重启加载；插件管理窗口「一键安装内置插件」会自动带上。
+41. **dsh-sidebar-lite 对齐 better-sidebar 交互细节（2026-08-17）**：用户要求侧栏 UI 尽量照抄 better-sidebar 的打开/缩回按钮、文件显示方式/位置、右键功能，并把**资源管理器根目录改为会话的整个工作目录**（非写死，随会话切换变）。本次对齐：
+    - **去掉「精简」字样**：UI 标题、package.json 描述、README 全文全部改成「侧边栏」；客户端标题为「侧边栏」，不再出现"精简（版）"。
+    - **资源管理器根目录 = 会话工作目录**：客户端经 `session.cwd` 请求宿主端，宿主端以 `ctx.get("sessions").get(sessionId).header.cwd` 为权威（兜底客户端 cwd → `process.cwd()`），根目录随当前激活会话实时切换，**非写死路径**。
+    - **资源管理头对齐**：头部显示「根目录名 + 刷新按钮（⟳）」，刷新清缓存重拉目录树（`refreshTick` 触发）；根行（`depth=0`）自身也可右键，点击根行复制其相对路径。
+    - **缩进对齐**：行内的 `paddingLeft` 由 `6 + depth*14` 改为 `6 + depth*22`（与 better-sidebar 的 `depth*22+6` 一致）；沿用目录优先、隐藏灰显。
+    - **右键菜单完全照抄原版 3 项**（用户明确选择「完全照抄」，其余新建/重命名/删除/刷新后续再加）：
+      - 菜单项 = **仅文件行提供「下载」**；目录行只提供「**复制相对路径 / 复制绝对路径**」；
+      - 单个共享菜单（`rowMenu` 记录触发行 + 光标位置），点击空白/菜单外关闭（`menu-mask`），复制成功该行短暂显示「已复制」（1200ms）。
+    - **下载实现避坑**：宿主 `file` 媒体路由要求防御头（`X-DSH-Sidebar-Lite: 1`），故**不能**用 `<a href>` 直接跳转（会 403），而是 `fetch(带防御头)→blob→URL.createObjectURL` 后再用 `<a download>` 触发浏览器保存，1s 后 `revokeObjectURL` 释放内存。宿主 `file` 路由已支持 `download=1` 时返回 `Content-Disposition: attachment`。
+    - **删除已无用的后端增删改接口**：先前为支持右键新建/重命名/删除加的 `fs.mkdir` / `fs.rename` / `fs.rm` 三个路由已随「只保留原版 3 项」删除（`rename` 导入保留，仍被 `writeText` 原子写使用），README 路由表同步更新。
+    - **浏览器 AI 可调用性（对比结论）**：better-sidebar 的浏览器是**纯用户驱动的沙箱 iframe**，`browser.probe` 仅探测站点可嵌入性（返回头信息、非模型工具）；其唯一暴露给模型的是 8 个**终端**工具（`terminal_create/send/read/...`），浏览器**不能被 AI 调用**。我们的浏览器同为纯用户驱动 iframe，**同样不能被 AI 调用**——两者能力在此持平。用户选择暂不新增「AI 调浏览器」工具，维持与双方一致。
 
+42. **dsh-sidebar-lite 补齐终端 + 任务管理，资源管理器默认根改为工作区根（2026-08-17）**：用户反馈「还没完全对齐」，要求：① 补上 CMD 终端页、任务管理页；② 资源管理器不能只显示固定会话工作目录（`runtime\dsh`），应默认显示 `E:\DeepSeekHarnessLauncher` 整个项目，或至少放开上级浏览——即放开资源管理器浏览上限，与内部 `dsh-file-browser` 插件一致。本次改动：
+    - **CMD 终端（宿主端 `lib/index.js`）**：`terminal.stream`（GET SSE 流，回放 transcript + 实时推送）/ `terminal.open` / `terminal.input` / `terminal.kill` 四个路由；按 `${sessionId}:${tab}` 键控一把 `child_process.spawn("cmd.exe", [], {cwd})` 进程（STARTUPINFO 不建 TTY、绿色版零原生依赖、非 node-pty），stdout+stderr 合并 `push` 到有界 transcript（1MB 丢头）并推给所有 SSE 监听器；`req.on('close')` 只摘监听器**不杀进程**，刷新/切页断连后 `terminal.stream` 重连先回放 `replay` 事件恢复现场，`terminal.kill` 才真正 `proc.kill()`；客户端 `TerminalView`：`attachTerminalStream`（fetch SSE + TextDecoder + 按 `\n\n` 分事件解析 `data:` 行 JSON）+ 输入框回车 `terminal.input` 写 stdin + 「停止」按钮 `killTerminal`（先 `stop()` 断开 SSE 再 `kill`，避免进程退出事件写向已断开响应）+ 自动滚动到底。命令行由 cmd 自行回显，SSE 不再输回。
+    - **任务管理（宿主端）**：`jobs.output` 从 `ctx.get("sessions").get(sessionId).events` 重放 `tool/call(job_output)` 与配对 `tool/result` 的文本块（按 `source.callId` 配对，幂等，不消费模型游标）；`jobs.kill` 复用官方 `ctx.get("jobs").kill(jobId, caller, reason)`（caller 取 `agents.get(sessionId)`）。客户端 `TasksView`：直接读**官方 session/jobs 推送镜像** `snapshot.jobsBySession[sessionId]` 列任务（状态/标题），「输出」调 `jobs.output`、「停止」调 `jobs.kill`。任务列表数据源与 better-sidebar 一致，不直连内部 API。
+    - **资源管理器默认根改为工作区根**：宿主端 `session.cwd` 追加返回 `workspaceRoot`，用新增 `resolveWorkspaceRoot(ctx)` 解析 `ctx.get("sandboxPolicy").workspaceRoot`（优先 `fsService.resolve→processPath` 得可展示绝对路径，fs 不可用退回原始 root），与 `dsh-file-browser` 的 `/home` 同源；客户端 `SidebarShell` 存 `workspaceRoot`，`ExplorerView` 的 `currentPath` 默认取 `workspaceRoot || cwd`，此后「返回上级 ⬆ / 路径框」已放开可上溯到任意路径——**不再把会话 cwd 当锁死的固定根**。终端/文件操作的 scope.cwd 仍以会话 cwd 为准，仅资源管理器视图根变了。
+    - **语法校验**：`node --check` 对 `index.js` / `client.js` 均通过。
+    - **验证状态**：代码对齐已完成，需重装插件并重启 DSH 服务后做端到端验证（终端命令执行、任务列表/输出/停止、资源管理器默认显示工作区根）。
+43. **dsh-sidebar-lite 侧栏宽度自由拉伸 + 文件「另存为」（2026-08-17）**：用户实测侧栏可打开后，要求 ① 做成左右能拉动的自由调整宽度；② 文件右键「下载」在本地机器上没意义，应改为「另存为」。本次改动（仅 `lib/client.js`，后端路由不变）：
+    - **宽度自由拉伸**：右停靠面板的宽度从 `#dsl-host` CSS 常量改为用 CSS 变量 `--dsh-sidebar-lite-width`（`width:var(--dsh-sidebar-lite-width,320px)`），`#root` 的 `margin-right` 早已依赖同一变量，故拖动改宽度时面板与主内容区同步让位。`SidebarShell` 新增 `panelWidth` 状态、`lastWidthRef`（记住收起前宽度，展开时恢复而非重置回 320）、`resizing` 状态；渲染一个位于宿主左边缘、宽 5px、绝对定位的透明拖动手柄（`cursor:ew-resize`），`onMouseDown` 置 `resizing=true`，在 `resizing` 期间全局监听 `mousemove`（`nextWidth = max(200, window.innerWidth - clientX)`，右停靠故用视口宽减光标 x）与 `mouseup`，宽度变化经 `useEffect` 同步 CSS 变量。`#dsl-host.dsl-resizing` 关掉 `width` 过渡（`transition:none;cursor:col-resize;user-select:none`）避免拖动时延迟/跟手。
+    - **文件「另存为」**：`downloadFile` 改名 `saveAsFile`。因宿主 `file` 媒体路由要求防御头、`<a href>` 直跳会 403（见避坑 #56 系），仍先 `fetch(带防御头)→blob` 取字节；随后**优先用原生「另存为」对话框**（File System Access API `window.showSaveFilePicker({suggestedName})`）让用户自选保存位置，`handle.createWritable()→write(blob)→close()` 写入；该 API 不可用或用户取消时**直接返回**（不触发自动下载）。「另存为」是本地机器语义的正确交互。右键菜单文案「下载」改「另存为」，触发 id `download`→`saveas`。
+    - **避坑（另存为一键）**：`showSaveFilePicker` **必须在用户手势（右键点击）激活窗口内调用**，若先 `await fetch` 再弹框，异步丢失去焦点后对话框会被浏览器拦截（提示需用户手势）。故实现为**先弹框拿 handle、再 fetch**。初次调用会请求文件访问权限（浏览器询问），属正常。
+    - **语法校验**：`node --check lib/client.js` 通过。
+    - **验证状态**：代码完成，需重装插件并重启 DSH 服务后做端到端验证（拖动左边缘调整宽度并观察主区同步让位；对文件右键「另存为」弹出系统保存对话框选择不同位置保存成功）。若 `showSaveFilePicker` 在注入 iframe/受限上下文不可用，会自动回退为浏览器下载（同名文件），不影响主流程。
 
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
@@ -553,6 +582,26 @@
     - **排查步骤**：① 字节级检查根目录 3 个 bat（start/stop/build_exe）——全部 **ASCII、无 BOM、CRLF 行尾**（用户规则要求 bat 全 ASCII 防 cmd 编码问题），排除编码闪退；② 逐行审阅 `build_exe.bat` 逻辑——`%~dp0` 定位、Python 探测、PyInstaller 本地安装、`--onefile --windowed --noupx` 构建、copy 到根目录、`pause`，逻辑无误；③ 发现第 40-42 行注释被写成乱码 `?????`（非 ASCII），虽不破坏运行但影响可读性，改为纯 ASCII 英文；④ **用 Python `subprocess` 调 `cmd /c build_exe.bat` 抓完整输出**：退出码 0、增量构建 1.3s、`[INFO]/[OK] Build finished` 输出齐全、`pause` 正常驻留——**bat 本身不闪退**。
     - **误判根因**：PowerShell `Start-Process cmd -RedirectStandardOutput -RedirectStandardError` 重定向的是管道，而 cmd 脚本里的 `pause` 等待键盘输入，两者交互下输出被吞、窗口看起来瞬间消失——**"闪退"是抓取方式的假象，不是脚本问题**。正确抓 bat 完整行为用 Python `subprocess.run(["cmd", "/c", bat], capture_output=True, text=True)` 或 `CreateProcess` 加参数，别用 Start-Process 重定向。
     - **坑**：① 判断 bat "闪退"前先分清"窗口本身关闭"与"逻辑失败退出"——带 `pause` 的 bat 若真逻辑失败也会暂停显示错误，不会闪退；② bat 内注释/回显字符串必须保持 ASCII（中文注释在非 UTF-8 代码页下会变乱码，虽不致命但难看），要写中文说明就放脚本外的 README/md；③ PyInstaller 增量构建很快（复用 build/ 缓存），复打 exe 是低成本的，改 launcher.py 后随手重打即可。
+
+60. **【插件】侧边栏媒体预览踩坑：`<img>`/`<iframe>` 带不了自定义防御头，媒体路由 GET 需 fetch→blob→objectURL（2026-08-17，dsh-sidebar-lite）**：
+    - **现象/根因**：给插件每个路由都加自定义头（如 `X-DSH-Sidebar-Lite: 1`）防跨站后，图片/PDF 预览如果直接用 `<img src="...">` 或 `<iframe src="...">`，浏览器加载子资源时**根本不带自定义头** → 媒体路由被 403 拒绝，图片全挂。
+    - **解法**：媒体路由对"是否带防御头"同样校验，但**预览一律端内 `fetch(url, { headers: { 防御头: "1" } })` 取回 `blob`，再 `URL.createObjectURL` 交给 `<img>`/`<iframe>`**——fetch 能带自定义头，blob URL 同源且不用二次鉴权。记得在组件卸载/换文件时 `URL.revokeObjectURL` 释放，避免 blob 泄漏。
+    - **另一个配套坑**：宿主端注册 `"prefix"` 路由后，若只在 handler 里接了 POST 方法，GET 会一路 405——**插件同时暴露 POST 业务路由 + GET 媒体路由时，handler 里必须按 `req.method` + `pathname` 分支**（本项目 `file` 路由就是 `req.method === "GET" && pathname === 前缀 + "/file"` 才分流到字节流）。写路由注解（注释顶部说好有哪些方法/路径）也避免"注释说做了、代码没做"（参考需求 #40 宿主端描述）。
+    - **坑**：仅凭 `require("react")` 不一定拿到 `createRoot`——DHS 客户端注入若要用 React 根，优先 `require("react-dom/client")`，失败再兜底全局 `ReactDOM.createRoot`；挂载方式抄 better-sidebar `document.body` portal，别赌官方内部布局插槽名。
+
+61. **【插件】轻量 CMD 终端：`node-pty` 是原生依赖、绿色版带不动，改 `child_process.spawn(cmd.exe)` + SSE 流（2026-08-17，dsh-sidebar-lite）**：
+    - **缘由**：better-sidebar 原版终端走 `node-pty/xterm`，「xterm.js 键盘布局 + 光标 + 回显」体验好，但 `node-pty` 要编译原生模块（Windows 需 VS 工具链），**违反本绿色版"零原生依赖、可整目录拷走"的定位**，故不引入。
+    - **方案**：`child_process.spawn("cmd.exe", [], { cwd })` 起一把 cmd，stdout+stderr 合并推送，前端回车写一行到 stdin。**cmd 没有真实 TTY**：光标/ANSI 序列会以原始字节回流 → 前端用 `<pre>` + `white-space: pre-wrap` 原样展示，不解析 ANSI（可接受，命令结果可读）；`dir`/`cd` 完整输出、中文代码页 GBK 由 Node 按 stdout 默认编码转 utf8 在浏览器端显示（个别中文可能有乱码，无碍命令执行）。
+    - **键控与生命周期**：`TERMINALS` Map 以 `${sessionId}:${tab}` 为键复用进程；SSE 连接的 `req.on('close')` **只删监听器、不杀进程**，刷新/切页断连后重新连一次自动 `replay` 历史 transcript 恢复现场；「停止」按钮/`terminal.kill` 才 `proc.kill()` 并清 Map。插件卸载兜底清理全部已开终端。
+    - **坑**：`spawn("cmd.exe")` 若不传 `{cwd}` 会用 Node 进程 cwd（可能不是用户预期目录），务必传会话 cwd；Windows 下别用 `shell:true` 双启动避免嵌套 exit 校验；前端 SSE 解析要按空行 `\n\n` 分隔事件、只取 `data: ` 行并 `JSON.parse`，才拿得到宿主 `push` 的结构化事件。
+    - **遗留**：非 TTY 下的 ANSI 转义不回显美化、不支持 `Ctrl+C` 中断前台命令（`taskkill` 才能杀），如需更完整终端体验再评估是否引 `node-pty`（被迫上原生依赖时要在 README 标注绿色版例外）。
+
+62. **【插件】无激活会话时，侧边栏资源管理器卡死在「扫描目录…」不显示目录（2026-08-17，dsh-sidebar-lite）**：
+    - **现象**：新开页面/未新建会话（`sessionId` 为空）时，右边侧边栏资源管理区一直显示「📁 工作目录 扫描目录…」，目录树永不渲染；浏览器 console 无 React 报错。后端路由 `session.cwd` / `fs.tree` 实测均正常，问题在客户端。
+    - **根因**：`SidebarShell` 的会话溯源 effect 里写了 `if (!sessionId) return undefined;`——**没有会话就完全不请求 `session.cwd`**，于是 `workspaceRoot`/`cwd` 一直是 `null`；`ExplorerView` 的 `currentPath` 用 `workspaceRoot || cwd || ""` 初始化成空串，主 effect 又 `if (currentPath === "") return;` 直接短路不调 `fs.tree`，于是永久停在 `rootEntries===null` 的 loading 态（渲染「扫描目录…」），就这么白白卡死。
+    - **修法**：无会话时也兜底解析一次工作区根。把 effect 改为：`sessionId` 非空走原逻辑（解析会话 cwd + workspaceRoot）；`sessionId` 为空时用 `fallbackResolved` ref 保证只兜底一次，调 `session.cwd({sessionId:""})` 拿 `workspaceRoot` 设入 `workspaceRoot` 与 `cwd`（宿主端 `resolveWorkspaceRoot` 不依赖 sessionId，空会话也能返回工作区根）。这样资源管理器始终有可浏览的根目录，`scope.cwd` 也非空，`fs.tree/file/terminal` 都有落点。
+    - **诊断手法（可复用）**：用 `curl -s -H "X-DSH-Sidebar-Lite: 1" -H "Content-Type: application/json" -X POST http://127.0.0.1:3080/__dsh/sidebar-lite/session.cwd -d "{}"` 直接打运行中的宿主端，发现 `sessionId":""` 也能返回 `workspaceRoot`；再开浏览器 DevTools 看 console（无 React 报错）+ 亲眼看 UI 文字「扫描目录…」是**前端状态短路**而非后端 500。疑似前端问题时先 trace 状态依赖链，别只查后端。
+    - **部署坑**：客户端 bundle `client.js` 被运行中的 DSH web 服务**持有文件句柄**，改完源码 `Copy-Item` 到 `node_modules` 会报 `The process cannot access the file ... because it is being used by another process`——**必须重启 DSH 服务**才释放句柄并重载 bundle；只 `node --check` 过语法无用，不重启永远跑旧代码（本次正是改完也卡「扫描目录」，重启后生效）。
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
