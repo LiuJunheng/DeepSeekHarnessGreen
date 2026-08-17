@@ -14,7 +14,7 @@ window.__ModuleLoader__.load({
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 		let react = require("react");
 
-		const inject = ["slots"];
+		const inject = ["slots", "sessions"];
 
 		const BASE = "/__dsh/file-browser";
 		const GUARD_HEADER = "X-DSH-File-Browser";
@@ -320,10 +320,12 @@ window.__ModuleLoader__.load({
 				}
 			};
 
-			// 挂载时获取起始目录
+			// 挂载时获取起始目录 (带上当前激活会话 id, 宿主端据此优先返回会话 header.cwd,
+			// 而不是 dsh 程序目录 runtime\dsh)。
 			react.useEffect(() => {
 				let alive = true;
-				fetch(BASE + "/home", { headers: { [GUARD_HEADER]: "1" } })
+				const sessionId = typeof props.sessionId === "string" ? props.sessionId : "";
+				fetch(BASE + "/home?sessionId=" + encodeURIComponent(sessionId), { headers: { [GUARD_HEADER]: "1" } })
 					.then((r) => r.json().catch(() => null))
 					.then((res) => {
 						if (!alive) return;
@@ -617,10 +619,54 @@ window.__ModuleLoader__.load({
 				cursor: "move",
 			};
 
-			// 四个拉伸手柄: 右 (ew-resize) / 下 (ns-resize) / 右下 (nwse-resize)
-			const rightHandleStyle = { position: "absolute", top: 8, bottom: 8, right: -3, width: 7, cursor: "ew-resize", userSelect: "none", background: "transparent", zIndex: 5 };
-			const bottomHandleStyle = { position: "absolute", left: 8, right: 8, bottom: -3, height: 7, cursor: "ns-resize", userSelect: "none", background: "transparent", zIndex: 5 };
-			const brHandleStyle = { position: "absolute", right: -3, bottom: -3, width: 14, height: 14, cursor: "nwse-resize", userSelect: "none", background: "transparent", zIndex: 6 };
+			// 四个拉伸手柄: 右 (ew-resize) / 下 (ns-resize) / 右下 (nwse-resize)。
+			// 全部放在面板边界内 (right/bottom 为 0, 避免被 overflow:hidden 裁剪),
+			// 并用半透明品牌色背景, 让用户一眼能看出这里可以拖拽调整尺寸。
+			const resizeHandleBase = {
+				position: "absolute",
+				zIndex: 8,
+				userSelect: "none",
+				background: "rgba(74, 123, 255, 0.22)",
+			};
+			const rightHandleStyle = {
+				...resizeHandleBase,
+				top: 10,
+				bottom: 10,
+				right: 0,
+				width: 6,
+				cursor: "ew-resize",
+				borderRadius: "0 3px 3px 0",
+			};
+			const bottomHandleStyle = {
+				...resizeHandleBase,
+				left: 10,
+				right: 10,
+				bottom: 0,
+				height: 6,
+				cursor: "ns-resize",
+				borderRadius: "0 0 3px 3px",
+			};
+			const brHandleStyle = {
+				...resizeHandleBase,
+				right: 0,
+				bottom: 0,
+				width: 16,
+				height: 16,
+				cursor: "nwse-resize",
+				background: "rgba(74, 123, 255, 0.34)",
+				borderRadius: "12px 0 12px 0",
+			};
+			// 右下角拖拽指示: 两条对角线 (放在 br 手柄内部, 随手柄移动)。
+			const brGripStyle = {
+				position: "absolute",
+				right: 3,
+				bottom: 3,
+				width: 9,
+				height: 9,
+				borderRight: "2px solid " + C.brand,
+				borderBottom: "2px solid " + C.brand,
+				borderRadius: "0 0 2px 0",
+			};
 
 			const inputStyle = {
 				flex: 1,
@@ -695,7 +741,8 @@ window.__ModuleLoader__.load({
 				// 拉伸手柄: 右下角 BR + 右侧 R + 底部 B (顺序靠前, 避免被其他内部元素盖住事件)。
 				react.createElement("div", { key: "hrR", style: rightHandleStyle, onMouseDown: (e) => windowOnDown(e, "r"), title: "拖动调整宽度" }),
 				react.createElement("div", { key: "hrB", style: bottomHandleStyle, onMouseDown: (e) => windowOnDown(e, "b"), title: "拖动调整高度" }),
-				react.createElement("div", { key: "hrBR", style: brHandleStyle, onMouseDown: (e) => windowOnDown(e, "br"), title: "拖动调整尺寸" }),
+				react.createElement("div", { key: "hrBR", style: brHandleStyle, onMouseDown: (e) => windowOnDown(e, "br"), title: "拖动调整尺寸" },
+					react.createElement("div", { key: "grip", style: brGripStyle })),
 				react.createElement("div", {
 					key: "header", style: headerStyle,
 					onMouseDown: (e) => windowOnDown(e, "move"),
@@ -777,7 +824,18 @@ window.__ModuleLoader__.load({
 				() => {
 					const isOpen = useOpen();
 					if (!isOpen) return null;
-					return react.createElement(FileBrowser, { onClose: () => setOpen(false) });
+					// 当前激活会话 id: 官方 sessions.list store 快照的字段是 current
+					// (不是 sessionId! 用错字段会恒为 null)。传给宿主端 /home, 让它优先
+					// 返回该会话的 header.cwd 作为文件浏览弹窗的默认路径。
+					let sessionId = "";
+					try {
+						const sessions = ctx && ctx.sessions;
+						const snapshot = sessions && sessions.list && typeof sessions.list.getSnapshot === "function"
+							? sessions.list.getSnapshot()
+							: null;
+						sessionId = (snapshot && (snapshot.current || snapshot.sessionId)) || "";
+					} catch (e) { /* 取不到就按无会话处理, 宿主端回退工作区根 */ }
+					return react.createElement(FileBrowser, { onClose: () => setOpen(false), sessionId });
 				},
 			));
 		}

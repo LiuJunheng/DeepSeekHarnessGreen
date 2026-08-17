@@ -220,8 +220,8 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # 发布流程: 打 tag v{GREEN_VERSION} + Release 资产 DSH_Launcher_GreenPortable_Online_<日期>_v<tag>.zip
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
-GREEN_VERSION = "1.0.7"                            # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
-GREEN_VERSION_DATE = "2026年08月17日"               # 绿色版版本日期
+GREEN_VERSION = "1.0.8"                            # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
+GREEN_VERSION_DATE = "2026年08月18日"               # 绿色版版本日期
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
 GREEN_RELEASE_MIRROR = ("https://mirror.nju.edu.cn/github-release/%s/latest"
@@ -2015,6 +2015,11 @@ class Launcher:
                 self.open_ui()
             return True
 
+        # 启动前自动清理: 端口若被孤儿 dsh 进程占用则先清理, 避免新进程 EADDRINUSE
+        # 启动失败 (2026-08-18, 需求 #46: 手动点「启动服务」时自动检查并清理)
+        port = int(self.config.get("dsh_port", 3080))
+        self._cleanup_orphan_dsh(port)
+
         self._ensure_ui_beacon_server()   # 先启动心跳服务, 使已打开页面的上报能尽早被记录
         self.log("正在准备环境 ...")
         self.prepare_all()
@@ -2118,6 +2123,77 @@ class Launcher:
                 return True
         except OSError:
             return False
+
+    @staticmethod
+    def _find_port_owner(port):
+        """查询监听指定端口的进程信息, 返回 [(pid, name, command_line), ...]。
+        仅 Windows 支持 (借助 PowerShell Get-NetTCPConnection + CIM 查命令行);
+        其它平台或查询失败返回空列表, 保证安全兜底。"""
+        if sys.platform != "win32":
+            return []
+        script = (
+            "$ErrorActionPreference='SilentlyContinue';"
+            "Get-NetTCPConnection -LocalPort %d -State Listen | ForEach-Object {"
+            "  $ownPid = $_.OwningProcess;"
+            "  $p = Get-CimInstance Win32_Process -Filter \"ProcessId=$ownPid\";"
+            "  if ($p) { Write-Output (\"$ownPid`t$($p.Name)`t$($p.CommandLine)\") }"
+            "}"
+        ) % int(port)
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, timeout=8)
+        except Exception:
+            return []
+        owners = []
+        for line in result.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 2 and parts[0].strip().isdigit():
+                owners.append((int(parts[0]),
+                               parts[1].strip(),
+                               parts[2] if len(parts) > 2 else ""))
+        return owners
+
+    @staticmethod
+    def _wait_port_free(port, timeout=5):
+        """等待端口释放 (taskkill /F 后端口一般立即释放, 此处做短暂兜底)"""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if not Launcher.port_open(port):
+                return True
+            time.sleep(0.3)
+        return False
+
+    def _cleanup_orphan_dsh(self, port):
+        """启动前调用: 端口若被孤儿 dsh 进程占用 (非本启动器记录的进程), 确认后清理,
+        避免新进程 EADDRINUSE 启动失败 (2026-08-18, 需求 #46)。
+        只清理明确的 dsh 服务进程 (node + bin.js + web + --port), 不误杀其它程序。
+        返回清理掉的进程数。"""
+        if sys.platform != "win32":
+            return 0
+        if not self.port_open(port):
+            return 0
+        cleaned = 0
+        for pid, name, command_line in self._find_port_owner(port):
+            is_dsh = ("node" in name.lower()
+                      and "bin.js" in command_line
+                      and "web" in command_line
+                      and "--port" in command_line)
+            if not is_dsh:
+                continue
+            self.log("检测到残留 dsh 进程占用端口 %d (PID: %s), 正在清理 ..." % (port, pid))
+            try:
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               timeout=8)
+                self.log("已清理残留 dsh 进程 (PID: %s)" % pid)
+                cleaned += 1
+            except Exception as error:
+                self.log("清理残留 dsh 进程失败 (PID: %s): %s" % (pid, error))
+        if cleaned > 0:
+            self._wait_port_free(port)
+        return cleaned
 
     def is_server_running(self):
         """判断服务是否仍在运行 (依据进程对象或 PID 文件)"""

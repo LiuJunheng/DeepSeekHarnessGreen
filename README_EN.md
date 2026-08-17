@@ -253,7 +253,7 @@ Each channel judges its own version, downloads its own updates, and backs up sep
 ### Safety & Rollback
 - **Does NOT replace** `config.json` (your custom port/mirror settings) or `runtime/` (your session data / installed environment).
 - Old files are auto-backed up to `runtime/update/backup/` before overwrite; if the new version has issues you can manually copy them back to the root to roll back.
-- Distribution zip naming convention: `DSH_Launcher_GreenPortable_Online_<date>_v<version>.zip`, Release tag `v<version>` (currently `v1.0.7`).
+- Distribution zip naming convention: `DSH_Launcher_GreenPortable_Online_<date>_v<version>.zip`, Release tag `v<version>` (currently `v1.0.8`).
 - Built-in plugin sources update with the green edition, but plugin copies **already installed** into `runtime/dsh-home/profiles/web` are pnpm copies; reinstall the local plugins via「Plugin Manager」for them to take effect.
 
 ## 8. Built-in Python & exe Packaging

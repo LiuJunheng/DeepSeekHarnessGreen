@@ -208,7 +208,21 @@
     - **避坑（UTF-8 chunk 边界）**：`Blob([string]).size` 是「字符串 UTF-8 字节数」，对纯 ASCII/大多数文本是对的，但**不能做精确字节指针**（因为 JS string 是 UTF-16）；只要分块**按字节 offset 去 fs.readBytes**，就必然有概率把一个 2~3 字节 UTF-8 码点切成两段，前半段上一段 decoded 的末尾还是正常完整码点显示（前一整块的 decoded 末尾 `content` 还是完整），**增量段如果从半中间读直接 decode 就会生成 `U+FFFD` 问号乱码**。解法必须是「host 多读 1~3 字节 + client 扫首字节跳过续字节」或用 offset 以字符为单位（难）。已实装 host 端 back 机制 + client `(b & 0xC0) !== 0x80` 找码点起始，这是最稳妥的 0 依赖解法。
     - **避坑（拖动事件冒泡）**：header 里含 `<input>`/按钮，若直接给 `header onMouseDown` 绑定 move 拖动，会覆盖用户在输入框上的正常点击（按下去就触发拖动、无法选中文本/聚焦输入框），因此**所有 header 内可交互子元素必须 `onMouseDown={e => e.stopPropagation()}`**，只有点在「文件浏览」文字与空白区域才会触发 move。
     - **语法校验**：`node --check lib/index.js` / `node --check lib/client.js` 双端均通过。
-    - **验证状态**：代码完成，需重装插件并重启 DSH 服务后做端到端验证（窗口拖动/三路拉伸不丢焦点、超大 MD/日志 512KB 前部预览后点按钮能继续追加且 chunk 交界字符不问号乱码、超大图片不报错给缩略图、二进制文件显示嗅探网格）。
+    - **验证状态（2026-08-18 已实测通过）**：① 弹窗可拖动——真实渲染后对 header 分发 mousedown → window 分发 mousemove(+120/+60) → mouseup，面板从 (283,64) 精确移到 (403,124)（偏移 = 事件 delta，跟手无延迟）；② 三路拉伸可用——右下角手柄拖 +100/+80，高度精确 +80（521→601），宽度按「最大不超过视口-16」正确 clamp（视口 716 时上限 700，720→700）；③ 手柄可见——三条手柄半透明品牌色背景 + 右下角两条对角线指示，不再是透明不可见。注意：**合成事件测试要等 React 异步重渲染后再测量 DOM**（dispatch 后立即同步量尺寸会读到旧几何，误判 delta=0）；`browser_drag` 工具只支持 HTML5 `draggable` 元素，无法用于自定义 mousedown 拖动，需用 `dispatchEvent(new MouseEvent(...))` 合成事件验证。
+
+45. **dsh-file-browser 弹窗默认路径仍指向 `runtime\dsh`，修成工作区根优先（2026-08-18）**：用户反馈「改了图标但默认路径没变」——弹窗打开后路径框显示 `D:\DeepSeekHarnessLauncher\runtime\dsh`（dsh 进程目录，目录名恰为 "dsh"）。根因：宿主端 `/home` 路由原用 `sandboxPolicy.workspaceRoot` 作为起始目录，但该值**未显式配置时默认 = `process.cwd()`**，而启动器用 `Popen(cwd=DSH_DIR)` 拉起 dsh，于是兜底天然错成 `runtime\dsh`。本次改动（两端各 1 文件，与 dsh-sidebar-lite 避坑 #65 同思路）：
+    - **宿主端 `lib/index.js`**：新增 `workspaceRootOf(ctx, sessionId)`（权威来源改为 **`workspaceRegistry` 服务**——有 sessionId 按 `workspace.sessionIds.includes(sessionId)` 匹配所属工作区 path，否则取注册表第一个；`sandboxPolicy.workspaceRoot` 降级为**仅显式配置（≠ process.cwd()）才可信**的次选）+ `homeRootOf(ctx, sessionId)`（优先级：会话 `header.cwd` → 工作区注册表根 → 显式 workspaceRoot → 空串）；`/home` 路由支持 `?sessionId=` 查询参数，用 `homeRootOf` 解析起始目录。
+    - **客户端 `lib/client.js`**：① `inject` 从 `["slots"]` 补成 `["slots", "sessions"]`（否则拿不到 sessions 服务）；② `shell.overlay` 插槽从官方 `sessions.list` store 快照取当前激活会话 id——**注意字段是 `snapshot.current` 不是 `sessionId`**（与避坑 #64 相同，用错字段恒为 null）；③ 挂载 `/home` 请求带上 `sessionId` 查询参数。
+    - **验证（2026-08-18 浏览器实测）**：弹窗打开后路径框显示 `D:\DeepSeekHarnessLauncher`（工作区注册表第一个工作区根），不再是 `runtime\dsh`。
+    - **同步 pnpm 副本**：pnpm 对 `file:` 依赖是**拷贝**，改 `plugins/dsh-file-browser/lib/*.js` 后必须同步到 `runtime/dsh-home/profiles/web/node_modules/dsh-file-browser/lib/` 并**重启服务**（`node bin.js web --port 3080 --host 127.0.0.1`，cwd=`runtime/dsh`，env 用 `build_env` 那套 DSH_HOME/npm_config_cache/TEMP 等）才生效。
+
+46. **启动服务前自动清理占用端口的孤儿 dsh 进程（2026-08-18）**：用户手动点「启动服务」后新进程立刻以退出码 1 退出——日志显示 `listen EADDRINUSE: address already in use 127.0.0.1:3080`。根因：`start_server` 开头只检查 `is_server_running()`（本启动器记录的服务进程/PID 文件），**不检测孤儿进程**——之前调试/测试时手动 `node bin.js web` 启动的服务残留占着 3080，启动器误以为端口就绪（`wait_ready` 里 `port_open` 立即为 True 打印"服务已就绪"），新进程实际绑定失败退出。本次改动（仅 `launcher.py`）：
+    - 新增 `_find_port_owner(port)`：借助 PowerShell `Get-NetTCPConnection -LocalPort <port> -State Listen` 拿 `OwningProcess`，再用 `Get-CimInstance Win32_Process` 取进程名与命令行，返回 `[(pid, name, command_line), ...]`（tab 分隔解析；非 Windows 或查询失败返回空列表安全兜底）。
+    - 新增 `_cleanup_orphan_dsh(port)`：启动前调用，先 `port_open` 确认端口被占，再遍历占用者**严格校验 dsh 特征**（`node` 进程名 + 命令行含 `bin.js` 且 `web` 且 `--port`）才 `taskkill /F /PID` 清理，**不误杀其它程序**；清理后 `_wait_port_free` 短暂轮询等端口释放。
+    - 新增 `_wait_port_free(port, timeout=5)`：`taskkill /F` 后端口一般立即释放，此处做兜底轮询。
+    - `start_server` 在 `is_server_running()` 判断之后、启动新进程之前调用 `_cleanup_orphan_dsh(port)`。
+    - **验证（runtime/tmp/smoke_port_cleanup.py 实测，3 场景全 PASS）**：① 端口空闲→清理数 0 不动作；② 普通进程（命令行无 dsh 特征）占用→清理数 0 且进程存活（不误杀）；③ 带 `bin.js web --port 3080` 特征的占用进程→清理数 1、进程被终止、端口释放。
+    - **注意**：改 `launcher.py` 后需重打包 `DSH_Launcher.exe`（`build_exe.bat`）才随 GUI 生效；命令行 `python launcher.py --start` 直接跑源码不受影响。
 
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |

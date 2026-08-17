@@ -244,6 +244,18 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 - **验证**：`patch_web_startup()` 幂等（两次结果一致、marker 已替换）+ `patch_lan_trust()` 幂等 → `build_server_command()` 传参正确 → 本机回归（默认 127.0.0.1 行为不变）→ LAN 实测（本机 `127.0.0.1:3080` 与局域网 `<服务器IP>:3080` 均可打开、聊天/工具正常、远端改设置返回 403）→ 精确语义用 `runtime/tmp/smoke_lan_trust.py`（node 直接执行补丁后逻辑：空=含全部局域网、非空=只含填写项、本机模式=只含填写项）。
 - **教训**：① 官方为安全刻意禁用的能力（0.0.0.0）用"补丁 + 两个调用点兜底"，并记住**任何改 `node_modules` 内官方文件的补丁都会在升级重装后被还原**；② 前端脚本里凡硬编码 `127.0.0.1` 的都要排查是否需要 `location.hostname` 适配；③ 后端小服务（心跳等）绑定地址要跟随主服务 host 联动；④ 官方"自动全放行"的语义未必满足产品需求（`resolveLanTrust` 无条件合并 lanAddresses），要用同样的幂等补丁方式修正。详见 DEV_NOTES 需求 #31 / 避坑 #52。
 
+### 3.11 启动前自动清理占用端口的孤儿 dsh 进程（2026-08-18，需求 #46）
+
+- **现象**：手动点「启动服务」后新进程立刻以退出码 1 退出，`server.log` 报 `listen EADDRINUSE: address already in use 127.0.0.1:3080`；且此前打印了"服务已就绪"（误导）。
+- **根因**：`start_server()` 开头只检查 `is_server_running()`（本启动器记录的 service 进程 / PID 文件），**不检测孤儿进程**。之前调试/测试时手动 `node bin.js web` 启动的服务残留占着 3080，`wait_ready()` 里 `port_open()` 对残留端口立即返回 True → 误报"已就绪"，新进程实际绑定失败退出。
+- **修法（仅 launcher.py，3 个新方法 + 1 个调用点）**：
+  1. `_find_port_owner(port)`：PowerShell `Get-NetTCPConnection -LocalPort <port> -State Listen` 拿 `OwningProcess` → `Get-CimInstance Win32_Process` 取进程名 + 命令行，返回 `[(pid, name, command_line), ...]`（**tab 分隔**解析；非 Windows / 查询失败返回空列表安全兜底）。
+  2. `_cleanup_orphan_dsh(port)`：启动前调用，先 `port_open` 确认被占，再遍历占用者**严格校验 dsh 特征**（进程名含 `node` + 命令行含 `bin.js` 且 `web` 且 `--port`）才 `taskkill /F /PID`——**绝不误杀普通程序**；清理后轮询等端口释放。
+  3. `_wait_port_free(port, timeout=5)`：`taskkill /F` 后端口一般立即释放，仅兜底轮询。
+  4. 调用点：`start_server()` 在 `is_server_running()` 判断之后、启动新进程之前调 `_cleanup_orphan_dsh(port)`。
+- **验证（runtime/tmp/smoke_port_cleanup.py，3 场景全 PASS）**：① 端口空闲→不动；② 普通进程（命令行无 dsh 特征）→ 不误杀、进程存活；③ 带 `bin.js web --port` 特征的占用进程 → 清理数 1、进程终止、端口释放。测试用 `Launcher.__new__(Launcher)` + 覆盖 `obj.log` 即可免 GUI 实例化。
+- **注意**：改 `launcher.py` 后必须重打包 `DSH_Launcher.exe`（`build_exe.bat`）GUI 才生效；命令行 `python launcher.py --start` 直接跑源码不受影响。
+
 ## 四、DSH 插件开发（双端加载 + 路由注册）
 
 ### 4.1 插件 = npm 包 + 双入口（最容易漏）
@@ -348,6 +360,23 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 - **文件"下载"改"另存为"（本地机器语义 + showSaveFilePicker 手势坑）**：媒体路由带防御头、`<a href>` 直跳 403（见上），所以仍要 `fetch(带防御头)→blob`。要改成真正的「另存为」：调用原生 `window.showSaveFilePicker({suggestedName})` 让用户自选保存位置，`handle.createWritable()→write(blob)→close()` 写入。**关键坑：`showSaveFilePicker` 必须在用户手势（右键点击）激活窗口内调用**——若先 `await fetch` 再弹框，异步丢失去焦点后浏览器会拦截对话框（提示"需要用户手势"）。所以**先弹框拿 handle、再 fetch 取字节写回**。API 不可用 / 用户取消对话框 → `AbortError` 直接 return 不触发下载。初次调用浏览器会询问文件访问权限，属正常。
 - **自由弹窗（非侧栏）可拖动 + 三路拉伸（dsh-file-browser 手法）**：若窗口是"自由浮层"（非边缘停靠），把 `panelStyle` 的位置改为 `left/top/width/height` 四元状态 `win={left,top,width,height}`，最小 520×380、最大视口-16 做 clamp。三条透明手柄：右（ew-resize 调 width）、下（ns-resize 调 height）、右下（nwse-resize 双调）——注意手柄要放在面板**溢出区**（如 `right:-3px` 宽 7px），`zIndex:5/6` 盖住内部元素的点击，`onMouseDown` 设 mode。**拖动用 `dragStateRef.current` + 全局 window mousemove/mouseup**，在 onMove 里读 ref 的 orig 值（而非闭包内 win 状态）。另外 `header cursor:move` 做 move 拖拽、**header 内所有可交互元素（input/刷新/关闭按钮）必须 `onMouseDown={e.stopPropagation()}`**，否则按到输入框聚焦/点刷新会被当拖动。
 - **大文件预览（文本按字节分块 + UTF-8 chunk 边界不乱码，0 依赖）**：别用「文件 > X 就报 tooLarge」，`fs.readBytes(target, undefined, 512KB)` 取前部文本预览 + 标 `truncated`，客户端加「再看后面一段 512KB」按钮反复追加，内存稳。**致命坑：字节 offset 可能落在 UTF-8 多字节码点中间**（中文、emoji 占 2~4 字节），直接从中间读 decode 会在 chunk 交界出现 `U+FFFD` 问号。最稳妥 0 依赖解法：host 端接到 offset>0 时回退 `back=min(3,offset)` 字节再读，并把 `back` 回传；client 端把返回字符串 `TextEncoder().encode()` 成 utf8bytes，扫前 `back+1` 字节里第一个「非续字节」`(b & 0xC0) !== 0x80` 的位置 `startByteIdx`，仅 `utf8bytes.subarray(startByteIdx)` 再解码后才拼接到 `preview.content`。这样丢的那几个字节（前一块末尾的多字节尾巴）**在前一块完整解码里已经有完整码点显示**，不会真丢字符、不会乱码。
+
+### 4.11 「工作目录 / 工作区根」兜底路径权威来源 = `workspaceRegistry`，绝不能用 `process.cwd()`（2026-08-17，避坑 #65）
+
+用户说"回到工作目录"应回到**当前会话指定的目录**（会话 header 的 `cwd`，即 WebUI 左侧选的工作区），**不是 dsh 程序自己的位置**（绿色版 = `runtime\dsh`）。但即便 header.cwd 逻辑写对，路径仍恒为 `runtime\dsh`，两层根因：
+
+- **① `sandboxPolicy.workspaceRoot` 未显式配置时默认值 = `process.cwd()`**：启动器以 `Popen(cwd=DSH_DIR)` 拉起 dsh，dsh 进程 cwd = `runtime\dsh`（目录名恰为 "dsh"，资源管理器默认路径就会显示成 "dsh"）。把它当"工作区根"兜底天然就是错的。
+- **② 会话对象可能还没进 live store**：`ctx.get("sessions").get(sessionId)` 在服务刚启动/会话未激活时返回 `undefined`，header.cwd 拿不到，一路落到兜底命中 `process.cwd()`。
+
+**修法（权威来源改为工作区注册表）**：
+- 宿主端新增 `workspaceRootOf(ctx, sessionId)`，**优先从 `ctx.get("workspaceRegistry")` 取**——该服务（`@deepseek-ai/dsh-workspace`）维护用户创建的工作区目录，物理文件 `runtime/dsh-home/storages/workspace.json` 的 `tables.workspaces`（每个工作区含 `path` + `sessionIds`）。有 sessionId 按 `workspace.sessionIds.includes(sessionId)` 匹配该会话所属工作区 path，否则取注册表第一个；`sandboxPolicy.workspaceRoot` 降级为**次选且只有显式配置（≠ process.cwd()）才可信**。
+- 兜底链最终：**会话 header.cwd → 客户端 cwd → 工作区根(workspaceRegistry，含会话归属匹配) → sandboxPolicy.workspaceRoot(仅显式) → process.cwd()（最后的最后）**。
+- 诊断：先查 `runtime/dsh-home/storages/workspace.json` 工作区注册表当兜底根的事实来源，再看服务日志 `[dsh-sidebar-lite] sessionCwdOf:` 前缀（`用 header.cwd` / `用客户端 cwd` / `兜底 cwd` 三种去向一目了然）。
+
+**客户端侧配套（"回到工作目录"按钮）**：
+- 目标 = `cwd || workspaceRoot`（会话工作目录优先，工作区根兜底），一键回到会话锁指定的目录。
+- **字符按钮（如 `⌂`）在部分字体/浏览器渲染成空白/方框看不清**——WebUI 侧字符按钮要优先用**内联 SVG**（如 Material 房子 `M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z`），再配文字标签（如「目录」）+ 高 26px + 主题强调色边框（`--dsw-alias-accent`）更醒目；`title` 提示显示实际跳转的目标路径，悬停即可确认。
+- 注意「工作区根」与「dsh 进程 cwd」是两个概念；凡涉及"用户工作目录"的默认/兜底路径，权威来源 = `workspaceRegistry`。
 
 ## 五、验证与排查速查表
 

@@ -69,6 +69,89 @@ function readJsonBody(req) {
 	});
 }
 
+/**
+ * 解析"工作区根"绝对路径 (用户工作目录的根, 如 D:\DeepSeekHarnessLauncher)。
+ * 优先级:
+ *   1) workspaceRegistry (工作区注册表): 用户创建的工作区目录, 权威来源;
+ *      有 sessionId 时优先取该会话所属工作区的 path, 否则取注册表第一个
+ *      (注册表按创建顺序, 最新在前);
+ *   2) sandboxPolicy.workspaceRoot: 配置显式设置的 workspaceRoot; 注意未配置时
+ *      其默认值 = process.cwd() = runtime\dsh (dsh 进程被启动器以 cwd=DSH_DIR 拉起),
+ *      不可作为"工作区根"兜底, 只能作为次选;
+ *   3) 空串 (调用方再回退到会话 cwd, 已是最后的兜底)。
+ * 目的: 当会话 header.cwd 与客户端 cwd 都拿不到时, 兜底根应该是用户的工作区根,
+ * 而不是 dsh 服务进程 cwd(runtime\dsh, 目录名恰为 "dsh"), 否则文件浏览弹窗
+ * 默认路径会显示成 "dsh" 而非用户的工作区根目录。
+ * @param {object} ctx - cordis 宿主上下文。
+ * @param {string} [sessionId] - 会话 id, 用于优先匹配该会话所属的工作区。
+ * @returns {string} 工作区根绝对路径, 找不到时返回空串。
+ */
+function workspaceRootOf(ctx, sessionId) {
+	try {
+		const registry = ctx.get("workspaceRegistry");
+		const workspaces = registry && typeof registry.list === "function" ? registry.list() : [];
+		if (typeof sessionId === "string" && sessionId !== "") {
+			// 优先找 sessionId 所属的工作区 (会话 header.cwd 与工作区 path 同源)。
+			for (const workspace of workspaces) {
+				if (workspace && Array.isArray(workspace.sessionIds)
+					&& workspace.sessionIds.includes(sessionId)
+					&& typeof workspace.path === "string" && workspace.path !== "") {
+					return workspace.path;
+				}
+			}
+		}
+		// 其次: 注册表第一个工作区 (最新创建的在前)。
+		if (workspaces.length > 0 && typeof workspaces[0].path === "string" && workspaces[0].path !== "") {
+			return workspaces[0].path;
+		}
+	} catch { /* workspaceRegistry 服务不可用则忽略 */ }
+	// 次选: sandboxPolicy.workspaceRoot (配置显式设置的值; 未设置时默认 process.cwd()=runtime\dsh)。
+	// 只有显式配置(与默认值 process.cwd() 不同)才可信, 否则返回空串, 让调用方回退到会话 cwd 等。
+	try {
+		const sandboxPolicy = ctx.get("sandboxPolicy");
+		const root = sandboxPolicy && typeof sandboxPolicy.workspaceRoot === "string" && sandboxPolicy.workspaceRoot !== ""
+			? sandboxPolicy.workspaceRoot
+			: "";
+		if (root !== "" && root !== process.cwd()) return root;
+	} catch { /* sandboxPolicy 服务不可用则忽略 */ }
+	return "";
+}
+
+/**
+ * 解析文件浏览弹窗的起始目录 (默认路径)。
+ * 优先级 (与侧栏插件一致, 避免默认路径显示成 dsh 程序目录 runtime\dsh):
+ *   1) 当前激活会话 header.cwd (用户为该会话指定的工作目录, 权威来源);
+ *   2) 工作区注册表 workspaceRegistry 的工作区根 (会话所属工作区或注册表第一个);
+ *   3) sandboxPolicy.workspaceRoot (仅显式配置, 与默认值 process.cwd() 不同才可信);
+ *   4) 空串 (宿主端报错提示未配置)。
+ * @param {object} ctx - cordis 宿主上下文。
+ * @param {string} [sessionId] - 会话 id, 用于优先读会话 header.cwd / 匹配工作区。
+ * @returns {string} 起始目录绝对路径, 找不到时返回空串。
+ */
+function homeRootOf(ctx, sessionId) {
+	// 1) 会话 header.cwd: 当前激活会话的工作目录。
+	try {
+		const sessions = ctx.get("sessions");
+		const session = sessions && typeof sessions.get === "function" && sessionId ? sessions.get(sessionId) : null;
+		const headerCwd = session && session.header && typeof session.header.cwd === "string" ? session.header.cwd : "";
+		if (headerCwd !== "") {
+			return headerCwd;
+		}
+	} catch { /* sessions 服务不可用则忽略 */ }
+	// 2) 工作区注册表 (工作区根)。
+	const workspaceRoot = workspaceRootOf(ctx, sessionId);
+	if (workspaceRoot !== "") return workspaceRoot;
+	// 3) sandboxPolicy.workspaceRoot 显式配置。
+	try {
+		const sandboxPolicy = ctx.get("sandboxPolicy");
+		const root = sandboxPolicy && typeof sandboxPolicy.workspaceRoot === "string" && sandboxPolicy.workspaceRoot !== ""
+			? sandboxPolicy.workspaceRoot
+			: "";
+		if (root !== "" && root !== process.cwd()) return root;
+	} catch { /* sandboxPolicy 服务不可用则忽略 */ }
+	return "";
+}
+
 function apply(ctx) {
 	const fs = ctx.get("fs");
 	if (fs === undefined) return; // fs 服务未挂载时不注册路由
@@ -97,8 +180,12 @@ function apply(ctx) {
 	register(BASE + "/home", async (req, res) => {
 		if (req.method !== "GET") return sendJson(res, 405, { error: "use GET" });
 		if (!guarded(req, res)) return;
-		const sp = ctx.get("sandboxPolicy");
-		const root = sp && typeof sp.workspaceRoot === "string" ? sp.workspaceRoot : "";
+		// 起始目录解析: 优先当前激活会话 header.cwd, 其次工作区注册表,
+		// 最后才轮到 sandboxPolicy.workspaceRoot (仅显式配置)。避免默认路径
+		// 显示成 dsh 程序目录 runtime\dsh (未配置时 workspaceRoot = process.cwd())。
+		const absUrl = new URL(req.url, "http://dsh.internal");
+		const sessionId = absUrl.searchParams.get("sessionId") || "";
+		const root = homeRootOf(ctx, sessionId);
 		if (!root) return sendJson(res, 500, { error: "no workspace root configured" });
 		try {
 			const target = await fs.resolve(root);
