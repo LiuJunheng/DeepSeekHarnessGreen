@@ -159,11 +159,11 @@ Three steps on a new machine:
 
 To regenerate this zip (run in the project root in PowerShell):
 ```powershell
-Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, config.json, README.md, README_EN.md, DEV_NOTES.md, LICENSE, .gitignore, "plugins", "skills" -DestinationPath DSH_Launcher_GreenPortable_Online_<date>.zip -CompressionLevel Optimal
+Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, DSH_Launcher.ico, config.json, README.md, README_EN.md, LICENSE, "plugins", "skills" -DestinationPath DSH_Launcher_GreenPortable_Online_<date>.zip -CompressionLevel Optimal
 ```
 > **Important (zip structure)**: for plugins/skills you MUST pass the **directory names** `"plugins"` / `"skills"` (keeping the `plugins/`, `skills/` prefixes inside the zip). **Do NOT** pass sub-paths like `"plugins\dsh-archive-purge"` — `Compress-Archive` would put that directory at the zip root and **drop the `plugins/` prefix**, so an update would copy the plugin into the program root by mistake (see DEV_NOTES requirement #21). After packing, confirm with `tar -tf xxx.zip` (or File Explorer) that the zip root contains `plugins/`, `skills/` folders and files like `launcher.py`.
 >
-> **(2026-08-16 addition)**: if `skills/` still contains `Skill-dsh-deploy-maintain.zip` (the Skill sync package), passing `"skills"` will pack it into the green zip too. Before packing, move it out (e.g., `Move-Item skills\Skill-dsh-deploy-maintain.zip %TEMP%\`), then move it back after packing, to avoid nesting a redundant sync zip inside the green zip.
+> **(2026-08-16 addition)**: if `skills/` still contains any Skill sync zip (e.g., `Skill-dsh-deploy-maintain.zip`, `python-tkinter-desktop-dev.zip`), passing `"skills"` will pack it into the green zip too. Before packing, move all `skills\*.zip` out (e.g., `Move-Item skills\*.zip %TEMP%\`), then move them back after packing, to avoid nesting redundant sync zips inside the green zip (2026-08-17: Release v1.0.6 accidentally included `skills/python-tkinter-desktop-dev.zip`).
 
 ## 5. Plugin Management
 

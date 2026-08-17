@@ -493,6 +493,23 @@
     - **验证**：重新打包 `DSH_Launcher_GreenPortable_Online_20260817_v1.0.6.zip`，用 `[System.IO.Compression.ZipFile]::OpenRead` 核对 zip 根含 `LICENSE`（plugins/dsh-session-rewind/LICENSE 也保留）。**旧资产 20260816_v1.0.6.zip 不含根 LICENSE，保持已发布原样不破坏；本合规 zip 为新增件**（未上传 Release，供下次发布或手动替换时使用）。
     - **教训**：① GitHub "Create LICENSE" 模板只有协议正文、**版权行要自己补**（README 的打包命令/发货清单/README_EN 三处都要同步）；② 只要走"绿色版 zip/exe"再分发，**打包清单必须含 LICENSE**，否则 Apache 2.0 §4 违约；③ 内嵌子组件（如 dsh-session-rewind）若用不同协议（MIT），要在主 LICENSE 之外随包保留其许可证文本并在 README 说明。
 
+55. **【发布】绿色 zip 的"发货清单"漏 `DSH_Launcher.ico`，且 `skills\*.zip` 残留会被误打进去（2026-08-17）**：
+    - **背景**：用户加装 git 后要求核对"exe 一键启动是否被漏传 / Release 包是否有缺有冗余"。实测 Release v1.0.6 资产 `DSH_Launcher_GreenPortable_Online_20260817_v1.0.6.zip`（9389386B，"Online" 精简版）：**含 `DSH_Launcher.exe`（exe 一键启动没漏）**、不含 `runtime/`（正确，属在线版语义）；但发现两处问题：① **缺 `DSH_Launcher.ico`**——README 发货清单与 `Compress-Archive` 命令都漏了这个文件；脚本版 start.bat 跑起来窗口/托盘会退化为系统默认图标（exe 版图标已内嵌不受影响）；② **误入 `skills/python-tkinter-desktop-dev.zip`**——传统 `"skills"` 整目录打包会把 `skills\*.zip` 残留一并塞进绿色 zip。
+    - **修复**：① README.md / README_EN.md 的"发货清单"与 `Compress-Archive` 命令都补上 `DSH_Launcher.ico`；② 把"移出一个 zip"的提示改成 `Move-Item skills\*.zip %TEMP%\` 全量清走；③ 打包后必用 `tar -tf` 核对：zip 根要有 `plugins/`、`skills/`、`DSH_Launcher.exe`、`DSH_Launcher.ico`、`LICENSE`，且**不应有** `skills\*.zip`、`runtime/`。
+    - **配套（同一会话）**：内置 Python 用 `py -3` 跑时会选到系统 Python **3.13**（`py -0p` 的 `*` 默认项），触发 `tarfile.extractall` 的 "Python 3.14 will..." DeprecationWarning。`prepare_python()` 的 `extractall` 已改为**按版本判断**：`sys.version_info >= (3,12)` 才传 `filter="data"`，3.10（内置便携）省略——既消除 3.14 警告，又不破坏 3.10 兼容。内置便携 Python 实测为 3.10.20（`runtime/python/python/python.exe`）。
+    - **待发布动作**：本地重打合规 zip（补 .ico、剔除 skills 残留）并按需替换/追加 Release 资产；重打 exe 时用内置 Python 3.10（`build_exe.bat` 会优先内置，当前根目录无 exe，需先 `build_exe.bat`）。
+
+56. **【局域网 403】WebUI 报 `transport failure for /api/host.pickDirectory: HTTP 403`（2026-08-17）**：
+    - **背景/根因**：dsh 官方把 `client-connection` 插件的 `/api` 通道（`@deepseek-ai/dsh-client-connection/lib/index.js`）默认信任围栏 **pin 死在 loopback**：`apply()` 里 `trustedHosts = config?.trustedHosts ?? []`，且特权方法（`PRIVILEGED_METHODS`，含 `host.pickDirectory`、`host.openPath`、`settings.*`、`credentials.*`、`llm.discoverModels` 等）**硬编码传空列表** `isTrustedApiRequest(request, [])`。实测（curl 模拟 Host）：`127.0.0.1` 访问全部 200；用**本机局域网 IP / 局域网 Host** 访问时**所有 /api（含普通 API）都 403**。而 `dsh-web-app` 的 `resolveLanTrust()` 明明算了 `lanAddresses`（0.0.0.0 绑定时的本机局域网 IPv4）并通过 `WEB_RUNTIME_SERVICE`（`"webRuntime"`）提供——client-connection 却没用它，两套信任语义不一致。
+    - **修复（幂等补丁 `patch_lan_api_trust()`）**：补丁 `dsh-client-connection/lib/index.js` 的 `apply()`：① `trustedHosts` 改为 `let`，当 `config.trustedHosts` 为空且 `ctx.get("webRuntime").lanAddresses` 非空时，自动并入本机局域网 IPv4（与 resolveLanTrust 语义一致）；② 特权方法的 `isTrustedApiRequest(request, [])` 改为 `isTrustedApiRequest(request, trustedHosts)`。CSRF 防护（`sec-fetch-site: cross-site` 拒绝 / Origin 必须同 host）**保留**。安全边界：只信任本机网卡实际地址（`lanAddresses`），伪造局域网 IP 依然 403。已在 `install_dsh()` 与 `start_server()` 中自动重打（dsh 升级重装后恢复原样）。
+    - **验证（0.0.0.0 实测）**：loopback → 200；本机局域网 IP（192.168.32.88）→ **200**（原 403）；伪造 192.168.1.100 → 403（安全）；跨站 Origin evil.example.com → 403（CSRF 保留）。loopback-only 模式无行为变化（lanAddresses 为空，trustedHosts 仍 []）。
+    - **坑**：① dsh 官方"局域网模式"文档语义与实际 `client-connection` 实现不一致——页面能开但 /api 全 403，报错很误导（"transport failure"）；② 补丁匹配串要跟随 dsh 版本，结构不匹配时**宁可跳过不硬改**（防止破坏运行），并在日志提示。
+
+57. **【发布】Release zip 与 GitHub 仓库统一 + exe 上传 GitHub（2026-08-17）**：
+    - **需求**：用户要求"release 包跟 github 上传内容统一，包含 exe 也上传 github，移除 skills/python-tkinter-desktop-dev.zip；DEV_NOTES.md / .gitignore 不进 release"。
+    - **实施**：① `.gitignore` 移除 `DSH_Launcher.exe` 忽略项 → exe 作为仓库文件一并提交 GitHub（与 Release 同源）；② README/README_EN 的"发货清单"与 `Compress-Archive` 命令改为**与仓库内容统一**：`launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, DSH_Launcher.ico, config.json, README.md, README_EN.md, LICENSE, "plugins", "skills"`（剔除 `DEV_NOTES.md`、`.gitignore`；`.ico` 保留）；③ `skills\*.zip` 残留打包前 `Move-Item skills\*.zip %TEMP%\` 清走（实测 release 曾误入 `python-tkinter-desktop-dev.zip`）。
+    - **教训**：二进制 exe 进 git 仓库虽非常规（会撑大仓库），但用户明确要求"仓库与 Release 一致、exe 可一键下载"，且单文件 9MB 可接受；`.gitignore` 里 `DSH_Launcher_*.zip` 仍保留（zip 只进 Release 不进仓库）。
+
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验

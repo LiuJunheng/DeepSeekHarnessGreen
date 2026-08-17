@@ -34,7 +34,7 @@
 - [ ] 官方 API 查询失败降级国内镜像（`mirror.nju.edu.cn/github-release/<owner>/<repo>/latest`）
 - [ ] 下载后校验文件大小，不符即删并报错
 - [ ] zip 安全解压（逐成员 normpath 拒绝 `..`/绝对路径，防 zip-slip）+ 内容根目录检测（兼容带/不带外层文件夹）
-- [ ] zip 打包命令的 `-Path` 传**目录名** `"plugins"` / `"skills"`（zip 内保留前缀）；**不能**传 `"plugins\dsh-xxx"` 子路径（会把插件目录打在 zip 根、丢前缀，覆盖时错位拷到程序根目录）；打包后 `tar -tf` 确认 zip 根下有 `plugins/`、`skills/`
+- [ ] zip 打包命令的 `-Path` 传**目录名** `"plugins"` / `"skills"`（zip 内保留前缀）；**不能**传 `"plugins\dsh-xxx"` 子路径（会把插件目录打在 zip 根、丢前缀，覆盖时错位拷到程序根目录）；打包前把 `skills\*.zip` 残留全部移出（`Move-Item skills\*.zip %TEMP%\`）；打包后 `tar -tf` 确认 zip 根含 `plugins/`、`skills/`、`DSH_Launcher.exe`、`DSH_Launcher.ico`、`LICENSE`，且**不含** `skills\*.zip`、`runtime/`、`DEV_NOTES.md`、`.gitignore`（Release 与仓库统一，仅仓库文件发货）
 - [ ] 更新侧 `_normalize_update_structure()` 解压后把错位的 `dsh-*` 插件/skill 目录归位到 `plugins/` / `skills/`（正确位置已存在则跳过）；update_apply.bat 第 2.5 步清理程序根目录的错位残留（只删已知旧目录）
 - [ ] 覆盖安装 bat 跳过 `config.json`（用户配置）与 `runtime/`、`.git`（用户数据/仓库）
 - [ ] update_apply.bat 用「exe 文件锁轮询」等待启动器退出（不轮询 PID，防 PID 复用死循环）；DETACHED 模式下用 `wscript.exe "%~dp0sleep_helper.vbs" <毫秒>` 睡眠替代 `ping`/`timeout`/`choice`（后三者无控制台时失败，`ping` 会闪烁窗口且系统 ping.exe 损坏时报 0xc0000142），`goto` 只用顶层标签，`start` 前加 `if exist` 判断

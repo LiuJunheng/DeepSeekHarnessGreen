@@ -11,14 +11,15 @@ build/
 dist/
 *.spec
 
-# 打包好的可执行文件（可自行用 build_exe.bat 重新生成）
-DSH_Launcher.exe
-
 # 分发 zip（发到 GitHub Release 用，不提交进仓库）
 DSH_Launcher_*.zip
 DSH_Skill_*.zip
 Skill-dsh-deploy-maintain.zip
 python-tkinter-desktop-dev.zip
+
+# 用户全局 gitignore 里的 *.exe 会拦截 DSH_Launcher.exe, 这里显式取消忽略:
+# 与 Release 同源约定 (2026-08-17), exe 一键启动器要随仓库一起上传 GitHub。
+!DSH_Launcher.exe
 
 # TRAE 内部工作区文件（设计草稿等，不进仓库）
 .trae/

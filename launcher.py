@@ -423,9 +423,11 @@ class Launcher:
     # ---------- 环境准备 ----------
     def prepare_python(self):
         """确保内置便携 Python 就绪, 缺失则自动下载 (供 start.bat 下次优先使用)
+        返回 True 表示内置 Python 已就绪, False 表示下载失败(此时只做日志警示,
+        不抛异常, 因为 dsh 服务本身由 Node 运行, 缺失内置 Python 不影响启动服务)。
         注意: 当前进程可能正由系统 Python 运行, 这里补齐的是"下次启动"用的内置解释器"""
         if self.find_python_exe() is not None:
-            return
+            return True
         python_version = self.config.get("python_version", "3.10.20")
         python_release = self.config.get("python_release", "20260807")
         self.log("未检测到内置便携 Python, 开始自动下载 (版本 %s, 完整版自带 tkinter) ..."
@@ -434,8 +436,18 @@ class Launcher:
         archive_name = PYTHON_ARCHIVE_TEMPLATE.format(
             version=python_version, release=python_release)
         archive_path = os.path.join(RUNTIME_DIR, archive_name)
-        # 依次尝试 国内镜像 -> GitHub (自动模式), 或仅尝试指定源
-        source_order = ["cn", "official"] if self.resolve_mirror()[1] else [self.resolve_mirror()[0]]
+        # 依次尝试 国内镜像 -> GitHub (自动模式), 或仅尝试指定源。
+        # 重点避坑 (2026-08-17): python 的国内源是 mirror.nju.edu.cn, 在部分机器/网络上
+        # 会 SSL 握手失败 (实测 curl 退出码 35 / urllib 报 Errno 2), 而 Node/npm 的国内源
+        # registry.npmmirror.com 是正常的。因此内置 python 下载**无条件**把官方 GitHub 源
+        # 作为最后兜底, 即使 config.mirror="cn" 也要试 official, 避免"国内源失败就整体失败
+        # 且无任何官方回退"。去重后确定源顺序。
+        resolved_mirror, mirror_is_auto = self.resolve_mirror()
+        if mirror_is_auto or resolved_mirror == "cn":
+            source_order = ["cn", "official"]
+        else:
+            source_order = ["official"]
+        source_order = list(dict.fromkeys(source_order))   # 去重, 保留顺序
         last_error = None
         for source in source_order:
             url = PYTHON_URL_TEMPLATE[source].format(
@@ -447,13 +459,20 @@ class Launcher:
                 self.log("下载完成, 正在解压 ...")
                 # python-build-standalone 的压缩包是 .tar.gz, 与 Node 的 zip 不同, 需用 tarfile
                 with tarfile.open(archive_path, "r:gz") as tar_handle:
-                    tar_handle.extractall(PYTHON_DIR)
+                    # Python >= 3.12 的 tarfile 才支持 filter 参数(默认 data, 防路径逃逸/净化元数据);
+                    # 内置便携 Python 是 3.10 (不支持 filter), 而 start.bat 可能用系统 python 兜底。
+                    # 按版本判断: 高版本显式传 filter 消除 3.14 的 DeprecationWarning, 低版本则省略,
+                    # 避免在 3.10 上传 filter 报 TypeError。
+                    if sys.version_info >= (3, 12):
+                        tar_handle.extractall(PYTHON_DIR, filter="data")
+                    else:
+                        tar_handle.extractall(PYTHON_DIR)
                 if os.path.exists(archive_path):
                     os.remove(archive_path)      # 清理压缩包
                 python_exe = self.find_python_exe()
                 if python_exe is not None:
                     self.log("内置便携 Python 就绪: %s" % python_exe)
-                    return
+                    return True
                 raise RuntimeError("解压后未找到 python.exe")
             except Exception as error:
                 last_error = error
@@ -462,6 +481,7 @@ class Launcher:
                     os.remove(archive_path)
         self.log("便携 Python 自动下载失败: %s (可在 start.bat 里仍使用系统 Python, 或手动放入 runtime/python)"
                  % last_error)
+        return False
 
     def prepare_node(self):
         """确保便携版 Node 就绪, 缺失则自动下载"""
@@ -618,6 +638,7 @@ class Launcher:
         self.patch_frontend()   # 安装/升级后注入 WebUI 心跳脚本 (单页面去重)
         self.patch_web_startup()  # 安装/升级后补丁 startup.js, 放开 --host 0.0.0.0 (局域网访问)
         self.patch_lan_trust()    # 安装/升级后补丁 resolveLanTrust, 支持「只信任填写的主机」
+        self.patch_lan_api_trust()  # 安装/升级后补丁 client-connection, 局域网模式 /api 与特权 API 可用
         return True
 
     def prepare_dsh(self, force=False):
@@ -1516,13 +1537,21 @@ class Launcher:
             self.log("预置默认工作区失败(不影响启动): %s" % error)
 
     def prepare_all(self):
-        """一键准备全部环境 (内置 Python + Node + dsh), 供启动前调用"""
+        """一键准备全部环境 (内置 Python + Node + dsh), 供启动前调用。
+        返回内置 Python 是否就绪 (True/False)。Node/dsh 失败会抛异常; 仅 Python 属
+        可降级项 —— dsh 服务由 Node 运行, 缺失内置 Python 不影响启动服务, 但 start.bat
+        脚本版需要它, 故以布尔返回让调用方能看到"python 失败"而不是假装都装好了。"""
         self.ensure_runtime_dirs()
         self.seed_default_workspace()
-        self.prepare_python()
+        python_ok = self.prepare_python()
         self.prepare_node()
         self.prepare_dsh()
-        self.log("环境准备完成, 可以启动服务")
+        if python_ok:
+            self.log("环境准备完成, 可以启动服务")
+        else:
+            self.log("环境准备完成, 但内置便携 Python 下载失败 (不影响 dsh 服务; "
+                     "可后续点「安装环境」重试, 或用 start.bat 走系统 Python 兜底)")
+        return python_ok
 
     # ---------- 服务启动 / 停止 ----------
     def build_server_command(self):
@@ -1604,6 +1633,54 @@ class Launcher:
         except OSError:
             return False
         self.log("已补丁 dsh web 信任围栏: 受信任主机非空时只信任显式填写的地址")
+        return True
+
+    def patch_lan_api_trust(self):
+        """补丁 dsh client-connection 的 /api 信任围栏 (幂等可重复)。
+        背景 (2026-08-17 实测): dsh 官方把 client-connection 的 /api 通道与特权方法
+        (host.pickDirectory 等 PRIVILEGED_METHODS) 默认 pin 死在 loopback——局域网模式
+        (0.0.0.0) 下用局域网 IP / 本机局域网 IP 访问 WebUI 时, 所有 /api 请求都返回
+        HTTP 403, 报 "transport failure for /api/host.pickDirectory: HTTP 403"。
+        本补丁: ① 未显式配置信任主机时, 自动把 dsh-web-app 提供的 lanAddresses 并入
+        信任列表 (与 resolveLanTrust 语义一致); ② 特权方法改用同一个 trustedHosts 而
+        非硬编码空列表。CSRF 防护 (sec-fetch-site / origin 校验) 仍保留。
+        dsh 升级重装后由 install_dsh() 自动重新补丁。返回 True 表示就绪(或已是最新)。"""
+        connection_path = os.path.join(DSH_DIR, "node_modules", "@deepseek-ai",
+                                       "dsh-client-connection", "lib", "index.js")
+        if not os.path.isfile(connection_path):
+            return False
+        try:
+            with open(connection_path, "r", encoding="utf-8") as file_handle:
+                text = file_handle.read()
+        except OSError:
+            return False
+        if "dsh-launcher LAN patch" in text:
+            return True   # 已是补丁后状态, 幂等返回
+        old_trust = "const trustedHosts = config?.trustedHosts ?? [];"
+        new_trust = (
+            "let trustedHosts = config?.trustedHosts ?? [];\n"
+            "\t// dsh-launcher LAN patch: 局域网模式(0.0.0.0)且未显式配置信任主机时, 自动把\n"
+            "\t// dsh-web-app 提供的本机局域网 IPv4 (webRuntime.lanAddresses) 并入信任列表;\n"
+            "\t// 否则 /api 通道与 pickDirectory 等特权 API 被 client-connection 默认 pin 死在\n"
+            "\t// loopback, 局域网 IP / 本机局域网 IP 访问会全部 HTTP 403 (仅 127.0.0.1 可用)。\n"
+            "\tconst webRuntime = ctx.get?.(\"webRuntime\");\n"
+            "\tif (trustedHosts.length === 0 && webRuntime?.lanAddresses?.length > 0) {\n"
+            "\t\ttrustedHosts = [...webRuntime.lanAddresses];\n"
+            "\t}")
+        old_privileged = "!isTrustedApiRequest(request, [])) return new Response(\"forbidden\", { status: 403 });"
+        new_privileged = "!isTrustedApiRequest(request, trustedHosts)) return new Response(\"forbidden\", { status: 403 });"
+        if old_trust not in text or old_privileged not in text:
+            # 目标文件结构不符 (dsh 版本大改时), 不强行打补丁, 避免破坏运行
+            self.log("跳过 client-connection 补丁: 目标代码结构不匹配 (dsh 版本可能已大改)")
+            return False
+        new_text = text.replace(old_trust, new_trust, 1)
+        new_text = new_text.replace(old_privileged, new_privileged, 1)
+        try:
+            with open(connection_path, "w", encoding="utf-8") as file_handle:
+                file_handle.write(new_text)
+        except OSError:
+            return False
+        self.log("已补丁 dsh client-connection: 局域网模式 /api 与特权 API 不再 403")
         return True
 
     def lan_addresses(self):
@@ -1740,6 +1817,7 @@ class Launcher:
         self.patch_frontend()             # 确保前端已注入心跳脚本 (dsh 升级重装后自动补齐)
         self.patch_web_startup()          # 确保 startup.js 已补丁 (dsh 升级重装后自动补齐, 局域网绑定用)
         self.patch_lan_trust()            # 确保 resolveLanTrust 已补丁 (受信任主机精确语义)
+        self.patch_lan_api_trust()        # 确保 /api 通道在局域网模式下可用 (pickDirectory 等特权 API 不再 403)
 
         command = self.build_server_command()
         self.log("启动命令: %s" % " ".join(command))
@@ -2486,20 +2564,31 @@ def run_gui():
         """检查环境是否已就绪 (Node + dsh 已安装)"""
         return (app.find_node_exe() is not None) and app.dsh_installed()
 
+    def python_ok():
+        """内置便携 Python 是否就绪 (供 start.bat 脚本版使用; 缺失不影响 dsh 服务)"""
+        return app.find_python_exe() is not None
+
     def refresh_status():
         """刷新状态显示 + 按钮状态"""
         server_running = app.is_server_running()
         env_ready = check_environment_ready()
 
-        # 更新状态指示灯 (绿/黄/灰)
+        # 更新状态指示灯 (绿/黄/红/灰)。2026-08-17 新增"内置 Python 缺失"红色态:
+        # 此前 Node/dsh 就绪时 detail 里的 "Python: ✓" 是硬编码的, Python 实际没装
+        # 也显示勾选, 且在"装环境"时 Python 失败还会被报成"安装完成", 误导用户。
         if server_running:
             status_indicator.itemconfig(dot, fill="#22c55e")   # 绿色
             status_text.set("服务运行中")
             detail_text.set("端口: %s" % app.config.get("dsh_port", 3080))
         elif env_ready:
-            status_indicator.itemconfig(dot, fill="#f59e0b")   # 黄色
-            status_text.set("环境已就绪, 待启动")
-            detail_text.set("Node: \u2713  dsh: \u2713  Python: \u2713")
+            if python_ok():
+                status_indicator.itemconfig(dot, fill="#f59e0b")   # 黄色
+                status_text.set("环境已就绪, 待启动")
+                detail_text.set("Node: \u2713  dsh: \u2713  Python: \u2713")
+            else:
+                status_indicator.itemconfig(dot, fill="#dc2626")   # 红色: 内置 Python 缺失
+                status_text.set("环境已就绪, 内置 Python 缺失")
+                detail_text.set("内置 Python 未安装, 请点击「安装环境」重装 (不影响 dsh 服务)")
         else:
             status_indicator.itemconfig(dot, fill="#999999")   # 灰色
             status_text.set("环境未准备")
@@ -2671,8 +2760,20 @@ def run_gui():
         append_log("--- 开始安装环境 ---")
         def worker():
             try:
-                app.prepare_all()
-                root.after(0, lambda: append_log("--- 环境安装完成 ---"))
+                python_ok = app.prepare_all()
+                def finish(python_ok_value):
+                    if python_ok_value:
+                        append_log("--- 环境安装完成 ---")
+                    else:
+                        # 明确提示 Python 失败, 不再假装"全部装好" (2026-08-17)
+                        append_log("--- 环境安装完成, 但内置 Python 下载失败 ---")
+                        messagebox.showwarning(
+                            "内置 Python 下载失败",
+                            "Node 和 dsh 已安装成功, 但内置便携 Python 未下载成功。\n\n"
+                            "这不影响 dsh 服务 (服务由 Node 运行), 但会让顶栏状态灯显示红色。\n"
+                            "你可稍后再次点击「安装环境」重试; 或把 python-build-standalone 的\n"
+                            "install_only 压缩包手动解压到 runtime/python 即可。")
+                root.after(0, lambda: finish(python_ok))
             except Exception as error:
                 root.after(0, lambda: messagebox.showerror("安装失败", str(error)))
             finally:

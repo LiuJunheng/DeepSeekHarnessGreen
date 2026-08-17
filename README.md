@@ -148,7 +148,7 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 ### 轻量分发 zip（精简在线版，约 8MB）
 > 相较"整目录迁移"，此 zip **不含 `runtime/`（不带已下载的环境与会话）**，新机联网后由启动器自动下载 Node / Python / dsh，体积小、适合放到 GitHub Release 分发。
 >
-> 打包内容（即项目根目录的"发货清单"）：`launcher.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`config.json`、`README.md`、`README_EN.md`、`DEV_NOTES.md`、`LICENSE`、`.gitignore`、`plugins/dsh-archive-purge/`、`plugins/dsh-session-rewind/`、`plugins/dsh-file-browser/`、`plugins/dsh-usage-stats/`、`skills/dsh-deploy-maintain/`。
+> 打包内容与 GitHub 仓库（main 分支）**保持一致**：`launcher.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`DSH_Launcher.ico`、`config.json`、`README.md`、`README_EN.md`、`LICENSE`、`plugins/`、`skills/dsh-deploy-maintain/`（`DSH_Launcher.exe` 也上传 GitHub 仓库，与 Release 同源；`DEV_NOTES.md` 与 `.gitignore` 是开发侧文件，不进 release）。
 
 - **最新下载**（GitHub Release，tag `v1.0.6`）：<https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
 - 仓库：<https://github.com/LiuJunheng/DeepSeekHarnessGreen>
@@ -160,11 +160,11 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 
 重新生成该 zip（在项目根目录 PowerShell 执行）：
 ```powershell
-Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, config.json, README.md, README_EN.md, DEV_NOTES.md, LICENSE, .gitignore, "plugins", "skills" -DestinationPath DSH_Launcher_GreenPortable_Online_<日期>.zip -CompressionLevel Optimal
+Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, DSH_Launcher.ico, config.json, README.md, README_EN.md, LICENSE, "plugins", "skills" -DestinationPath DSH_Launcher_GreenPortable_Online_<日期>.zip -CompressionLevel Optimal
 ```
 > **重要（zip 目录结构）**：`-Path` 里的插件/skill 必须传**目录名** `"plugins"` / `"skills"`（zip 内保留 `plugins/`、`skills/` 前缀）。**不能**传 `"plugins\dsh-archive-purge"` 这种子路径——`Compress-Archive` 会把该目录直接打在 zip 根、**丢掉 `plugins/` 前缀**，更新覆盖时会把插件错位拷到程序根目录（详见 DEV_NOTES 需求 #21）。打包后建议用 `tar -tf xxx.zip`（或资源管理器打开）确认 zip 根下有 `plugins/`、`skills/` 文件夹且 `launcher.py` 等文件。
 >
-> **（2026-08-16 补充）**：`skills/` 下若留有 `Skill-dsh-deploy-maintain.zip`（Skill 同步包），传 `"skills"` 目录名会把它一起塞进绿色 zip。打包前请先将其移出（如 `Move-Item skills\Skill-dsh-deploy-maintain.zip %TEMP%\`），打包后再移回，避免绿色 zip 内嵌套冗余的同步 zip。
+> **（2026-08-16 补充）**：`skills/` 下若留有 Skill 同步 zip（如 `Skill-dsh-deploy-maintain.zip`、`python-tkinter-desktop-dev.zip`），传 `"skills"` 目录名会把它们一起塞进绿色 zip。打包前请把 `skills\*.zip` 全部移出（如 `Move-Item skills\*.zip %TEMP%\`），打包后再移回，避免绿色 zip 内嵌套冗余的同步 zip（2026-08-17 实测 Release v1.0.6 里就误入了 `skills/python-tkinter-desktop-dev.zip`）。
 
 ## 五、插件管理
 
