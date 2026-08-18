@@ -149,8 +149,9 @@ You can also change the mirror and port in the launcher UI 【Settings】(networ
 >
 > Packed contents (consistent with the GitHub repo): `launcher.py`, `start.bat`, `stop.bat`, `build_exe.bat`, `DSH_Launcher.exe`, `DSH_Launcher.ico`, `config.json`, `README.md`, `README_EN.md`, `LICENSE`, `plugins/`, `skills/dsh-deploy-maintain/` (`DSH_Launcher.exe` is also tracked in the GitHub repo, same source as the Release; `DEV_NOTES.md` and `.gitignore` are dev-side files, not shipped).
 
-- **Latest download** (GitHub Release, tag `v1.0.8`): <https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
-- Repository: <https://github.com/LiuJunheng/DeepSeekHarnessGreen>
+- **Latest download** (GitHub Release, tag `v1.0.9`): <https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
+- **Gitee mirror download** (when GitHub is not accessible from your network): <https://gitee.com/liujunheng/DeepSeekHarnessGreen/releases>
+- Repository: <https://github.com/LiuJunheng/DeepSeekHarnessGreen> (GitHub) / <https://gitee.com/liujunheng/DeepSeekHarnessGreen> (Gitee)
 
 Three steps on a new machine:
 1. Extract to any directory (e.g., `E:\DeepSeekHarnessLauncher`), double-click **start.bat** (or `DSH_Launcher.exe`);
@@ -255,7 +256,7 @@ Each channel judges its own version, downloads its own updates, and backs up sep
 ### Safety & Rollback
 - **Does NOT replace** `config.json` (your custom port/mirror settings) or `runtime/` (your session data / installed environment).
 - Old files are auto-backed up to `runtime/update/backup/` before overwrite; if the new version has issues you can manually copy them back to the root to roll back.
-- Distribution zip naming convention: `DSH_Launcher_GreenPortable_Online_<date>_v<version>.zip`, Release tag `v<version>` (currently `v1.0.8`).
+- Distribution zip naming convention: `DSH_Launcher_GreenPortable_Online_<date>_v<version>.zip`, Release tag `v<version>` (currently `v1.0.9`).
 - Built-in plugin sources update with the green edition, but plugin copies **already installed** into `runtime/dsh-home/profiles/web` are pnpm copies; reinstall the local plugins via「Plugin Manager」for them to take effect.
 
 ## 8. Built-in Python & exe Packaging

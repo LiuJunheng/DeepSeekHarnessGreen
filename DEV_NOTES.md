@@ -736,6 +736,13 @@
     - **坑 3（source 标记要区分）**：Gitee 有发布版与无发布版是两条不同链路，launcher 用 `source="gitee_release"`（zip 直连下载）与 `source="gitee"`（git 克隆整仓）区分；所有按 source 分流/提示的地方（`green_find_zip_asset`、`prepare_update_content_root`、`prepare_green_update` 手动地址、界面提示文案）都要兼容 `in ("gitee", "gitee_release")`，漏一处就会出现"版本对比正常但下载走错分支"。
     - **坑 4（multipart 手写）**：Gitee 上传附件 API 是 multipart/form-data（字段 `access_token` + `file`），无 requests 时手写要保证 boundary 随机、普通字段在前、附件字段 `Content-Disposition` 带 `filename`、结尾 `--boundary--` 闭合且二进制原文保留（`test_multipart.py` 六项断言覆盖）。
 
+72. **【发布】v1.0.9 发布：关于对话框补 Gitee 仓库跳转 + 双平台分发（2026-08-18）**：
+    - **背景**：上一版 GitHub Release 资产是 01:03 上传的旧包（不含 18:26 重打的 exe），且 GitHub 上 `v1.0.8` 已被占用，直接升 **v1.0.9** 再发，避免与旧 Release 撞 tag。
+    - **关于对话框**：在「关于」弹窗信息表里补充 **Gitee 仓库**行（`gitee.com/liujunheng/DeepSeekHarnessGreen`），并新增「打开 Gitee 仓库」按钮（`webbrowser.open(GITEE_REPO_PAGE_URL)`），与已有的 GitHub 按钮并列——用户在国内访问 GitHub 不便时可一键直达 Gitee 仓库页。
+    - **版本号同步（共 5 处）**：`launcher.py` 的 `GREEN_VERSION` → `1.0.9`（日期不变 2026-08-18）；README.md / README_EN.md 的"最新下载 tag"与"当前版本"各 2 处共 4 处同步。`update_agent.py` 无写死版本号，从 `update_job.json` 读取，无需改。
+    - **重打包**：`build_exe.bat` 重新打出 `DSH_Launcher.exe` / `DSH_Update.exe`（含 VC 运行库三件套）；绿色 zip 改用 Python 内置 zipfile 脚本 `runtime/tmp/build_release_zip.py` 打包（不依赖 PowerShell Compress-Archive，避免编码/转义坑），zip 内保留 `plugins/`、`skills/dsh-deploy-maintain/` 顶层目录名，排除 `DEV_NOTES.md`/`.gitignore`/技能 zip 冗余。
+    - **双平台分发**：GitHub Release `v1.0.9`（`GH_TOKEN` 可用）+ Gitee Release（需 `GITEE_TOKEN`，暂未配置）。Gitee 此前"无 Release 只能整仓克隆"的兜底策略保持不变，但本次按用户要求正式在 Gitee 建 Release 并上传 zip 附件（`/releases/download/<tag>/<file>` 直连下载，避坑 #71 已验证该链路）。
+
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验

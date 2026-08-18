@@ -152,8 +152,9 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 >
 > 打包内容与 GitHub 仓库（main 分支）**保持一致**：`launcher.py`、`update_agent.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`DSH_Update.exe`、`DSH_Launcher.ico`、`config.json`、`README.md`、`README_EN.md`、`LICENSE`、`plugins/`、`skills/dsh-deploy-maintain/`（`DSH_Launcher.exe` / `DSH_Update.exe` 也上传 GitHub 仓库，与 Release 同源；`DEV_NOTES.md` 与 `.gitignore` 是开发侧文件，不进 release）。
 
-- **最新下载**（GitHub Release，tag `v1.0.8`）：<https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
-- 仓库：<https://github.com/LiuJunheng/DeepSeekHarnessGreen>
+- **最新下载**（GitHub Release，tag `v1.0.9`）：<https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
+- **Gitee 镜像下载**（国内访问 GitHub 不便时）：<https://gitee.com/liujunheng/DeepSeekHarnessGreen/releases>
+- 仓库：<https://github.com/LiuJunheng/DeepSeekHarnessGreen>（GitHub）/ <https://gitee.com/liujunheng/DeepSeekHarnessGreen>（Gitee）
 
 新机使用三步：
 1. 解压到任意目录（如 `E:\DeepSeekHarnessLauncher`），双击 **start.bat**（或 `DSH_Launcher.exe`）；
@@ -260,7 +261,7 @@ Compress-Archive -Path launcher.py, update_agent.py, start.bat, stop.bat, build_
 ### 安全与回退
 - **不替换** `config.json`（你自定义的端口/镜像设置）与 `runtime/`（你的会话数据 / 已装环境）。
 - 覆盖前旧文件自动备份到 `runtime/update/backup/`，新版有问题可手动复制回根目录回退。
-- 分发 zip 命名约定：`DSH_Launcher_GreenPortable_Online_<日期>_v<版本>.zip`，Release tag 为 `v<版本>`（当前 `v1.0.8`）。
+- 分发 zip 命名约定：`DSH_Launcher_GreenPortable_Online_<日期>_v<版本>.zip`，Release tag 为 `v<版本>`（当前 `v1.0.9`）。
 - 内置插件源码随绿色版更新，但**已安装**到 `runtime/dsh-home/profiles/web` 的插件副本是 pnpm 拷贝，需到「插件管理」重新安装本地插件才生效。
 - **手动更新方式（自动更新失败时的备选）**：打开 GitHub 发布页下载最新 zip → 解压 → 把解压得到的文件**覆盖**到程序根目录（**不要**覆盖 `config.json` 与 `runtime/` 文件夹）→ 重新双击启动。
 
