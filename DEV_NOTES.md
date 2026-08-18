@@ -750,6 +750,7 @@
     - **发帖**：官方仓库 `deepseek-ai/deepseek-harness` 已开启 Discussions（`has_discussions=true`）。用户提供带 `repo` scope 的 PAT 后，用 **GraphQL mutation `createDiscussion`**（REST API 不支持建 Discussion）成功发帖，分类 General，正文附 AI 协助声明：
       - 帖子标题：`Bug: HTTP 403 on all /api requests in Chrome 150+ (port-less Origin vs host comparison)`
       - 链接：<https://github.com/deepseek-ai/deepseek-harness/discussions/3106>
+    - **跟进（追加两条评论，2026-08-18）**：① 中文版完整说明（`addDiscussionComment` GraphQL，正文含根因/复现/修复建议/验证，AI 协助声明）；② 绿色版解决方案 + 仓库地址（GitHub / Gitee + 双平台 Release 下载表），明确"官方若采纳修复，本地补丁对应段落自动停用"。当前帖子共 1 主题 + 2 评论（均 LiuJunheng）。
     - **发帖要点（可复用）**：① 官方 Discussion 只能 GraphQL 建（`mutation { createDiscussion(input:{repositoryId, categoryId, title, body}) }`，repo/category 的 node id 用 `repository(owner,name){id}` 与 `discussionCategories{id}` 先查）；② 建 Discussion 需要 token 对目标仓库有权限——**fine-grained token 即使有 `repo` 也只对"已选仓库"生效，对外部仓库（deepseek-ai）报 `Resource not accessible by integration`；classic PAT 带 `repo` scope 可对外部公共仓库建 Discussion**；③ body 中文字符走独立 UTF-8 文件 + `[System.Text.Encoding]::UTF8.GetBytes` 字节流（同避坑 #66）；④ 帖子正文从用户视角写好根因、复现、修复建议，附官方代码行号与推荐 diff，官方维护者能直接定位。
 
 ## 七、后续建议
