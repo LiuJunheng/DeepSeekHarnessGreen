@@ -742,6 +742,8 @@
     - **版本号同步（共 5 处）**：`launcher.py` 的 `GREEN_VERSION` → `1.0.9`（日期不变 2026-08-18）；README.md / README_EN.md 的"最新下载 tag"与"当前版本"各 2 处共 4 处同步。`update_agent.py` 无写死版本号，从 `update_job.json` 读取，无需改。
     - **重打包**：`build_exe.bat` 重新打出 `DSH_Launcher.exe` / `DSH_Update.exe`（含 VC 运行库三件套）；绿色 zip 改用 Python 内置 zipfile 脚本 `runtime/tmp/build_release_zip.py` 打包（不依赖 PowerShell Compress-Archive，避免编码/转义坑），zip 内保留 `plugins/`、`skills/dsh-deploy-maintain/` 顶层目录名，排除 `DEV_NOTES.md`/`.gitignore`/技能 zip 冗余。
     - **双平台分发**：GitHub Release `v1.0.9`（`GH_TOKEN` 可用）+ Gitee Release（需 `GITEE_TOKEN`，暂未配置）。Gitee 此前"无 Release 只能整仓克隆"的兜底策略保持不变，但本次按用户要求正式在 Gitee 建 Release 并上传 zip 附件（`/releases/download/<tag>/<file>` 直连下载，避坑 #71 已验证该链路）。
+    - **发布结果（2026-08-18 实测）**：GitHub Release v1.0.9（id 372265522）与 Gitee Release v1.0.9（id 814534）均已创建，绿色 zip（17607889B）+ 技能 zip（58047B）双平台上传成功；源码与 tag 已推送 GitHub + Gitee（master=00d5026）。Gitee 建 Release 时 API 必须带 `target_commitish=master`（否则 400 `target_commitish is missing`）。Gitee Release 建好后，启动器 `_gitee_release_latest` 会自动命中"发布版附件直连下载"分支，不再走整仓快照兜底。
+    - **坑（Gitee 同名附件不覆盖，实测）**：Gitee `attach_files` 上传**同名附件不会覆盖旧文件，而是新增一条**——同一文件名传 3 次会有 3 个附件并存。重传资产前必须**先按 attachment id 删除全部同名旧附件再上传**（`DELETE /releases/{id}/attach_files/{attachment_id}`），否则 Release 附件越传越多、`_gitee_release_latest` 取到的可能是旧版。
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
