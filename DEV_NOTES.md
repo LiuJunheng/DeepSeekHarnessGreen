@@ -745,6 +745,13 @@
     - **发布结果（2026-08-18 实测）**：GitHub Release v1.0.9（id 372265522）与 Gitee Release v1.0.9（id 814534）均已创建，绿色 zip（17607889B）+ 技能 zip（58047B）双平台上传成功；源码与 tag 已推送 GitHub + Gitee（master=00d5026）。Gitee 建 Release 时 API 必须带 `target_commitish=master`（否则 400 `target_commitish is missing`）。Gitee Release 建好后，启动器 `_gitee_release_latest` 会自动命中"发布版附件直连下载"分支，不再走整仓快照兜底。
     - **坑（Gitee 同名附件不覆盖，实测）**：Gitee `attach_files` 上传**同名附件不会覆盖旧文件，而是新增一条**——同一文件名传 3 次会有 3 个附件并存。重传资产前必须**先按 attachment id 删除全部同名旧附件再上传**（`DELETE /releases/{id}/attach_files/{attachment_id}`），否则 Release 附件越传越多、`_gitee_release_latest` 取到的可能是旧版。
 
+73. **【官方沟通】Chrome 150 无端口 Origin 403 问题在官方最新版仍未修复，已发官方 Discussion 帖子（2026-08-18）**：
+    - **复查结论**：用 `npm pack @deepseek-ai/dsh-client-connection@0.1.0-rc.7`（官方最新版）拉官方 tar 包解包，对比 `lib/index.js` 第 194 行——官方仍是 `return new URL(origin).host === hostUrl.host;`（带端口精确比较），**Chrome 150+ 无端口 Origin 问题官方未修复**。本地靠 launcher 的 v3 补丁（`hostname` 比较）兜底，dsh 升级重装后会自动重打。
+    - **发帖**：官方仓库 `deepseek-ai/deepseek-harness` 已开启 Discussions（`has_discussions=true`）。用户提供带 `repo` scope 的 PAT 后，用 **GraphQL mutation `createDiscussion`**（REST API 不支持建 Discussion）成功发帖，分类 General，正文附 AI 协助声明：
+      - 帖子标题：`Bug: HTTP 403 on all /api requests in Chrome 150+ (port-less Origin vs host comparison)`
+      - 链接：<https://github.com/deepseek-ai/deepseek-harness/discussions/3106>
+    - **发帖要点（可复用）**：① 官方 Discussion 只能 GraphQL 建（`mutation { createDiscussion(input:{repositoryId, categoryId, title, body}) }`，repo/category 的 node id 用 `repository(owner,name){id}` 与 `discussionCategories{id}` 先查）；② 建 Discussion 需要 token 对目标仓库有权限——**fine-grained token 即使有 `repo` 也只对"已选仓库"生效，对外部仓库（deepseek-ai）报 `Resource not accessible by integration`；classic PAT 带 `repo` scope 可对外部公共仓库建 Discussion**；③ body 中文字符走独立 UTF-8 文件 + `[System.Text.Encoding]::UTF8.GetBytes` 字节流（同避坑 #66）；④ 帖子正文从用户视角写好根因、复现、修复建议，附官方代码行号与推荐 diff，官方维护者能直接定位。
+
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验
