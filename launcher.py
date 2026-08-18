@@ -231,13 +231,16 @@ GREEN_RELEASE_MIRROR = ("https://mirror.nju.edu.cn/github-release/%s/latest"
                         % GITHUB_REPO)             # 国内镜像 (与其它下载源镜像一致)
 GREEN_ZIP_PREFIX = "DSH_Launcher_GreenPortable_Online_"   # Release 分发 zip 资产名前缀
 
-# Gitee 镜像兜底通道 (GitHub Release / 国内镜像都连不通时, 自动转 Gitee):
-# Gitee 上**没有 Release**, 只能下载"整个仓库"的内容来覆盖, 因此:
-#   - 版本号从 Gitee master 分支的 launcher.py 源码里提取 GREEN_VERSION 常量
-#   - 下载 = git 智能 HTTP 协议克隆整仓 (见 green_gitee_clone_tree):
-#     Gitee 的 archive zip 地址 (repository/archive/master.zip) 会返回带 JS 轮询
-#     的挑战页, 纯 urllib 拿不到真实 zip; 改用 /info/refs + /git-upload-pack
-#     拉取 pack 并解析对象, 等价拿到整仓文件 (2026-08-18 已验证)
+# Gitee 镜像兜底通道 (GitHub Release / 国内镜像都连不通时, 自动转 Gitee), 两级策略:
+#   1. Gitee Release 优先: 查 GITEE_RELEASES_API 找"最新且带手动上传 zip 附件"的发布版,
+#      附件下载走 releases/download/<tag>/<file> 直连 (2026-08-18 实测返回真实 zip, 不走挑战页),
+#      来源标记 source="gitee_release"。注意附件必须 URL 含 /releases/download/, 否则会误选
+#      Gitee 自动生成的 tag 源码包 (archive/refs/tags/...zip, 仍是 JS 挑战页) —— 见避坑 #71。
+#   2. 无 Release/无附件回退整仓快照: 版本号从 master 分支 launcher.py 源码提取 GREEN_VERSION,
+#      下载 = git 智能 HTTP 协议克隆整仓 (见 green_gitee_clone_tree):
+#      Gitee 的 archive zip 地址 (repository/archive/master.zip) 会返回带 JS 轮询
+#      的挑战页, 纯 urllib 拿不到真实 zip; 改用 /info/refs + /git-upload-pack
+#      拉取 pack 并解析对象, 等价拿到整仓文件 (2026-08-18 已验证)
 #   - 整仓内容会比 GitHub 发货清单多出 DEV_NOTES.md / .gitignore,
 #     由 update_agent.py 的 overlay_copy 统一排除 (与 GitHub 通道一致)
 GITEE_REPO = "liujunheng/DeepSeekHarnessGreen"     # Gitee 仓库 (owner/repo, Gitee 全小写)
