@@ -5,7 +5,7 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 
 # DeepSeek Harness 绿色整合版 · 部署维护与插件开发
 
-> 版本日期：2026-08-15
+> 版本日期：2026-08-18
 > 本 Skill 沉淀自 `DeepSeekHarnessLauncher` 项目（Python tkinter 绿色整合版启动器 + 内置 `dsh-archive-purge` / `dsh-file-browser` / `dsh-session-rewind` / `dsh-usage-stats` 插件）的全过程实测经验，含 51 条避坑记录。适用于：把 dsh 封装成"双击即用、绿色整合、可整目录拷走"的形态，以及开发 DSH 插件（宿主端路由 + WebUI 客户端入口）。
 
 ## 一、适用场景
@@ -83,6 +83,7 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 - **不污染环境/不用 C 盘**：`pip install --target runtime\pyinstaller -i https://pypi.tuna.tsinghua.edu.cn/simple pyinstaller` 装到项目目录，设 `PYTHONPATH=runtime\pyinstaller` 后用 `python -m PyInstaller` 调用；加 `--onefile --windowed --noupx`（禁用 UPX 减少杀软误报）。
 - **内置便携 Python**：python-build-standalone 的 `install_only` 压缩包解压后有**顶层子目录**（`runtime/python/python/python.exe`），`find_python_exe()` 必须"先查顶层 `python.exe`，再遍历一层子目录"兼容两种布局。
 - **重新打包纪律**：改过 `launcher.py` 后必须重打包 exe（用 `build_exe.bat`），否则用户跑的仍是旧版 exe（曾出现过"界面空白其实是旧 exe"的假象）。
+- **必须显式补齐全套 VC 运行库（2026-08-18 实测）**：PyInstaller 默认只自动收集 `VCRUNTIME140.dll`，**漏 `vcruntime140_1.dll` / `vcruntime140_threads.dll`** → 目标机没装新版 VC++ 运行库时，exe 启动弹 `Failed to load Python DLL ... 找不到指定的模块`（`%TEMP%\MEIxxxx` 里的 python310.dll `LoadLibrary` 失败，这是 onefile 正常解压机制，与"内置 python"无关）。**修法**：`build_exe.bat` 用 `--add-binary "%~dp0runtime\python\python\vcruntime140_1.dll;."` 等三条把三个 DLL 全打进 bundle。诊断：`pyi-archive_viewer -l DSH_Launcher.exe` 过滤 `vcruntime|python310` 看包内内容；单 DLL 依赖用 PE 导入表解析（`runtime/tmp/pe_imports.py`，不依赖 dumpbin）。详见 DEV_NOTES 避坑 #67。
 
 ## 三、日常维护
 
@@ -90,7 +91,7 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 
 - **"装了就永远最新"是错觉**：`prepare_dsh()` 只在缺失时安装，已装就跳过；同步更新的唯一途径是强制重装。
 - `dsh_latest_version()` 用 `npm view @deepseek-ai/dsh version` **只读查询**（复用 find_npm_cli + build_env + 镜像参数，与安装同源），失败返回 `None` 而非抛错。
-- `update_dsh()` 顺序 = 查最新版 → `backup_dsh()` 把旧版拷到 `runtime/dsh-backup-<版本>`（同名加时间戳后缀防覆盖）→ **备份成功后才** `prepare_dsh(force=True)` 强制重装。备份失败直接中止，防止"旧版被覆盖又没装上"的数据丢失。
+- `update_dsh()` 顺序 = 查最新版 → `backup_dsh()` 把旧版拷到统一备份目录 `runtime/backup/dsh-<版本>`（同名加时间戳后缀防覆盖）→ **备份成功后才** `prepare_dsh(force=True)` 强制重装。备份失败直接中止，防止"旧版被覆盖又没装上"的数据丢失。GUI「数据维护」可一键清理更新/备份目录。
 - 备份目录不自动清理，是否删除交给用户手动管理。
 - 把安装主体抽成 `install_dsh()`，`prepare_dsh(force)` 只做"缺失则装 / 强制重装"分支，首装与更新共用同一代码。
 
@@ -135,20 +136,26 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 
 > **发布执行（2026-08-17，v1.0.7 实测，详见 DEV_NOTES 需求 #39）**：① 无 `gh` CLI、无 `GH_TOKEN` 环境变量时，用 **`git credential fill`**（stdin 喂 `protocol=https\nhost=github.com\n`）取 Windows 凭据管理器里的 PAT，再 urllib 直调 GitHub API（建 release、`POST /releases/{id}/assets` 传 zip、按 asset id 删旧资产，body 走 UTF-8 字节流）；② 打绿色 zip 用 **Python zipfile（stdlib）替代 Compress-Archive**，避免 PowerShell 转义/路径坑，并内置"根含 `LICENSE` + 无 `skills/*.zip` 嵌套"复核；③ **国内网络 github.com:443 常不可达但 api.github.com 正常**——git push 卡死而 API 通畅时，用 `curl --resolve github.com:443:<IP> https://github.com` 逐个测已知 IP（实测 `140.82.112.3` / `140.82.116.3` 可达），找到可用 IP 后可临时加 hosts 再 push；④ 用户要求"不单独打 Skill zip"时，绿色 zip 直接带 `skills/dsh-deploy-maintain/` 目录即可，Release 不再传 `DSH_Skill_*.zip`。
 
-**查询与下载**：`green_latest_release()` 先 `api.github.com/repos/<owner>/<repo>/releases/latest`，失败降级国内镜像 `mirror.nju.edu.cn/github-release/<owner>/<repo>/latest`，只读返回 release_info；`green_find_zip_asset()` 按前缀 `DSH_Launcher_GreenPortable_Online_` + `.zip` 匹配资产；`download_green_update()` 下载到 `runtime/update/`（带进度），下载后**校验文件大小**，不符即删并抛异常。
+**查询与下载**：`green_latest_release()` **三级降级**——① `api.github.com/repos/<owner>/<repo>/releases/latest` → ② 国内镜像 `mirror.nju.edu.cn/github-release/<owner>/<repo>/latest` → ③ 全失败自动转 **Gitee 整仓快照**（`green_gitee_latest()`，用户 2026-08-18 需求：github 连不通时自动转 gitee）。返回值统一带 `source`（`"github"` / `"gitee"`）。`green_find_zip_asset()` 按前缀 `DSH_Launcher_GreenPortable_Online_` + `.zip` 匹配资产；`download_green_update()` 下载到 `runtime/update/`（带进度），下载后**校验文件大小**（`size==0` 的整仓 zip 跳过校验），不符即删并抛异常。
+
+> **Gitee 兜底三坑（2026-08-18，详见 DEV_NOTES 需求 #48/#49 与避坑 #69/#70）**：① **Gitee 整仓 zip 接口是 `https://gitee.com/<repo>/repository/archive/<branch>.zip`**，不是 GitHub 的 `/archive/<ref>.zip`——套 GitHub 格式直接 404；② **Gitee 无 Release**，版本号改读 `gitee.com/<repo>/raw/<branch>/launcher.py` 源码，正则 `GREEN_VERSION\s*=\s*"([\d.]+)"` 提取（该常量是唯一版本来源，见需求 #20）；③ 整仓快照带 `DEV_NOTES.md`/`.gitignore` 开发侧文件 → `overlay_copy` 统一 `always_skipped_names=("DEV_NOTES.md",".gitignore")` 跳过，保证与 GitHub 发货清单覆盖结果一致。失败手动提示地址按 source 区分（github→`releases/latest` 发布页；gitee→仓库主页，因无 Release）。
+>
+> **Gitee 整仓 zip 实际拿不到（2026-08-18 实测，见 DEV_NOTES 需求 #49 / 避坑 #70）**：用户从 Gitee 网页"下载仓库 ZIP"按钮复制的 `repository/archive/master.zip` 地址，urllib 直接 GET 返回 **HTTP 200 但内容是 ~46KB HTML 挑战页**（`window._info`/`window._paths` + JS 轮询 checkURL），**不是真 zip**。纯 urllib 模拟拿不到真实包 → **改用 git 智能 HTTP 协议克隆整仓**（`green_gitee_clone_tree`）：`GET /<repo>.git/info/refs?service=git-upload-pack` 拿分支 head sha → `POST /<repo>.git/git-upload-pack`（want+done）拉 pack → 解析 pack 对象（普通 / REF_DELTA / OFS_DELTA 还原 delta）按 tree 落盘，只依赖标准库。集成要点：① `launcher.py` 需补 `import zlib`；② pack 对象前进位置用 `decompressobj().unused_data` 算消耗，别用 `unconsumed_tail`；③ REF/OFS_DELTA 要先读走未压缩前置字段（base sha / varint 负偏移）再解压 delta；④ sha 是 40 位 hex 串、pack key 是 20 字节 digest，匹配要 `bytes.fromhex()`；⑤ `green_gitee_clone_tree` 返回落盘文件数（int），`prepare_update_content_root` 的 Gitee 分支要返回 `target_dir` 本身。更新内容准备已拆成 `prepare_update_content_root(release_info, target_dir)`：github=下载 zip 解压，gitee=git 克隆整仓；`prepare_green_update` 改为接收 `content_root`。
+>
+> **Gitee 发布版 (Release) 优先于整仓克隆（2026-08-18 实测，见 DEV_NOTES 需求 #50 / 避坑 #71）**：Gitee **支持 Release + 附件**（网页"发布"页上传，上限 100MB；API v5 `POST /releases` + `POST /releases/{id}/attach_files`，需个人令牌 `projects` 权限）。**关键实测**：**手动上传的附件**（`browser_download_url = .../releases/download/<tag>/<file>`）**直连返回真实二进制，不走挑战页**；而 Gitee **自动生成的 tag 源码包**（`archive/refs/tags/<tag>.zip`）**仍走挑战页**。因此：① 建议每次发版用 `runtime/tmp/gitee_upload_release.py`（纯标准库 multipart）+ `upload_gitee_release.bat` 同步上传 zip 附件；② `launcher.py` 的 Gitee 通道两级策略：`green_gitee_latest()` 先查 `GITEE_RELEASES_API`（公开读）选"最新且带手动 zip 附件"的发布版（过滤条件 = 名字以 `.zip` 结尾 **且** URL 含 `/releases/download/`，否则会误选挑战页源码包）→ `source="gitee_release"` 走 zip 直连下载（与 GitHub 同路径）；无发布版才回退 `source="gitee"` 整仓克隆。所有按 source 分流/提示处要兼容 `in ("gitee", "gitee_release")`。
 
 **安全解压**：`_safe_extract_zip()` 逐成员 `os.path.normpath` 检查，拒绝绝对路径与 `..` 前缀（防 zip-slip 路径穿越）；`_detect_zip_content_root()` 兼容「zip 是整文件夹」与「zip 内直接是文件」两种形态——解压后仅一个顶层目录且含 `launcher.py`/`start.bat`/`DSH_Launcher.exe` 标志文件则判定为外层文件夹，返回内层作为内容根。
 
 > **zip 目录结构坑（2026-08-16，需求 #21，绿色版 v1.0.3 实测）**：`Compress-Archive -Path launcher.py, ..., "plugins", "skills"` 必须传**目录名** `"plugins"` / `"skills"`（zip 内保留 `plugins/`、`skills/` 前缀）。**不能**传 `"plugins\dsh-archive-purge"` 这种子路径——PowerShell 会把该目录直接打在 zip 根、**丢掉 `plugins/` 前缀**，更新覆盖时 `robocopy` 把插件错位拷到程序根目录。**双保险**：① 发布侧打包命令传目录名（README 已修正）；② 更新侧 `_normalize_update_structure()` 在 `prepare_green_update()` 解压后把 content_root 下错位的 `dsh-archive-purge`/`dsh-file-browser`/`dsh-session-rewind`/`dsh-deploy-maintain` 归位到 `plugins/` / `skills/`（正确位置已存在则跳过，以 zip 内正确结构为准），且 update_apply.bat 第 2.5 步**清理程序根目录的错位残留**（只删这 4 个已知旧目录，不碰用户数据/config/runtime）。打包后建议 `tar -tf xxx.zip` 确认 zip 根下有 `plugins/`、`skills/` 文件夹。
 
-**覆盖安装（update_apply.bat，分离进程执行）**：启动器自身文件被锁定无法自替换 → `launch_update_script()` 用 `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` 把 bat 变成**独立进程**，启动器随即退出，bat 存活完成覆盖后 `start` 重启新版。bat 流程：① 等文件锁释放 → ② 备份旧文件到 `runtime/update/backup/` → ③ `robocopy /E /XF config.json /XD runtime .git` 覆盖 → ④ 重启新版。
+**覆盖安装（独立更新程序 `DSH_Update.exe`，2026-08-18 替代 update_apply.bat）**：启动器自身文件被锁定无法自替换 → `launch_update_agent(job_path)` 用 `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` 启动独立更新程序，启动器随即退出，由更新程序在独立进程里完成：① 读 `runtime/update/update_job.json`（含 `base_dir`/`content_root`/`backup_dir`/`relaunch_mode`/`new_version`/`manual_release_url`/`manual_zip_url`）→ ② **自我复制到 `runtime/tmp` 从副本运行**（释放根目录更新程序文件的锁，让新版更新程序也能被覆盖）→ ③ 等本体退出释放文件锁 → ④ 备份旧文件到 `runtime/update/backup/` → ⑤ 覆盖（跳过 `config.json`/`runtime/`/`.git`）→ ⑥ 重启新版。全程 tkinter 进度窗口，**失败弹窗给出手动下载地址**（GitHub 发布页 + 更新包直链）。
 
-**update_apply.bat 关键避坑（DETACHED 模式实测）**：
-- **不轮询 PID，改轮询 exe 文件锁**：启动器退出后 PID 被 Windows 立即复用，`tasklist` 会永远匹配上新进程 → 死循环。改用 `ren DSH_Launcher.exe .DSH_Launcher.exe.upd` 试探文件锁，能改名 = 锁已释放，随即改回原名继续；运行 .py 形态时无锁可轮询，直接短暂睡眠。
-- **分离进程里别用 `ping`/`timeout`/`choice` 做睡眠延迟** → 用 `wscript.exe "%~dp0sleep_helper.vbs" <毫秒>`（`sleep_helper.vbs` 内容 `WScript.Sleep CLng(WScript.Arguments(0))`，由 `_write_update_bat()` 在 `runtime/update/` 同目录生成）。原因：`timeout`/`choice` 需要控制台、stdin 被重定向(DEVNULL)时直接报错退出；分离进程（无控制台）里调 `ping.exe` 会让 Windows 为它**新建控制台窗口逐次闪烁**，且若系统 ping.exe 损坏（启动报 0xc0000142）还会反复弹错误框把安装卡在等待循环。`wscript.exe` 是 GUI 子系统（不新建控制台窗口）、Windows 全自带、`WScript.Sleep` 精确。
-- **`goto` 不能写在括号块内**（`if (...)` 里用 goto 会解析错误）→ 全部用顶层标签 + 顺序跳转。
-- **`start` 目标文件不存在会弹错误框并卡死脚本** → 先 `if exist` 判断再 `start`。
-- bat 全文**纯 ASCII + CRLF**（写文件用 `encoding="ascii", newline=""`，行以 `\r\n` 连接），避免 Windows cmd 编码问题。
+**独立更新程序关键避坑（2026-08-18 实测，详见 DEV_NOTES 需求 #47 / 避坑 #68）**：
+- **运行中的 exe 无法原地覆盖**（Windows 以 `FILE_SHARE_READ` 打开执行中的 exe，进程存活期间不可写/删）→ 更新程序先把自己 `shutil.copy2` 到 `runtime/tmp/DSH_Update_worker.exe` 再从副本重启、原进程退出；副本的 `_self_name()` = worker 名，覆盖时不再跳过根目录 `DSH_Update.exe`，新版更新程序也能装进去。**判定要严谨**：用 `os.path.normcase` 比较绝对路径，仅当"自身就是根目录更新程序"才迁移，从副本二次运行时直接走正常覆盖，**不能无限复制重启**。
+- **不轮询 PID，改轮询 exe 文件锁**：等待本体退出用 `_can_open_write`（`os.open` 以写方式试探 `DSH_Launcher.exe`），能打开 = 锁已释放。启动器退出后 PID 被 Windows 立即复用，轮询 PID 会死循环（避坑 #44）。
+- **DSH_Update.exe 内嵌 python**，打包必须带 `VC_BINARIES` 三件套（`vcruntime140*.dll`），否则目标机同样报 `Failed to load Python DLL`（避坑 #67）。
+- 用 `shutil.copy2` 逐个复制比 `robocopy` 更可控：失败能精确定位到具体文件并在 GUI 给可读错误。
+- 兜底：根目录无 `DSH_Update.exe` 时用内置 python 跑 `update_agent.py --apply <job>`（同样带自我复制迁移，worker 名 = `update_agent_worker.py`）。
 
 **发布 Release（含中文正文）的编码坑**：用 GitHub API（PowerShell）创建/更新 Release 时，即使 `ConvertTo-Json` + `[System.Text.Encoding]::UTF8.GetBytes()` + `-ContentType "application/json; charset=utf-8"`，正文中文仍可能全变 `?`——因为 **Windows PowerShell 5.1 会把"无 BOM 的 UTF-8 .ps1"按系统 ANSI（GBK）读取**，脚本里写的中文字符串字面量在内存里已乱码，后面怎么编码都救不回。**正确做法**：发布脚本保持**纯 ASCII**（不写一个中文字符），中文正文单独放一个 UTF-8 文本文件，脚本里 `[System.IO.File]::ReadAllText(路径, [System.Text.Encoding]::UTF8)` 显式按 UTF-8 读入再发送。校验也别用 PowerShell 的 `-match "中文"`（同样会被 ANSI 读乱），导出 body 到 UTF-8 文件后用 python 检查是否含关键中文且无 U+FFFD/`?`；资产下载 URL 用 `curl.exe -s -I -L` 验证 200。**本经验已同步至 `DEV_NOTES.md` 避坑 #43。**
 
@@ -400,7 +407,7 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 | 界面空白（GUI 布局） | `ttk.Panedwindow` 漏 `.add()`；滚动条被列宽挤成 1x1 |
 | 多次重启累积一堆相同 WebUI 标签页 | 查 `dist/index.html` 是否含 `dsh-launcher-ui-beacon` 标记（无则 `patch_frontend()` 没跑，多半是旧 exe/没重启）；有心跳仍开新页则查 3081 端口占用或 `runtime/ui-beacon.token` |
 | 「检查绿色版更新」查不到/报错 | 依次查：网络能否访问 api.github.com / 镜像 `mirror.nju.edu.cn/github-release`；Release 是否存在且 tag 带 `v` 前缀；资产名是否以 `DSH_Launcher_GreenPortable_Online_` 开头（否则 `green_find_zip_asset` 匹配不到） |
-| 绿色版更新后启动器没被替换 | 查 `runtime/update/backup/` 有无备份、`runtime/update/update_apply.bat` 是否被执行过；bat 卡在 `start` 说明目标文件缺失未加 `if exist` 判断 |
+| 绿色版更新后启动器没被替换 | 更新是独立更新程序 `DSH_Update.exe --apply runtime/update/update_job.json` 完成：查 `runtime/update/backup/` 有无备份、`runtime/update/update_job.json` 是否生成、`server.log` 有无启动更新程序日志；失败会弹窗给出手动下载地址（发布页 + zip 直链）。旧 `update_apply.bat` 方案已废弃（避坑 #47/#68） |
 | 远程浏览器打不开 WebUI / 启动后进程立即报错退出 | 查 `dsh_host` 是否为 `0.0.0.0` → 查 `startup.js` 补丁是否生效（`dsh-web-app/lib/startup.js` 里 `options.host === "0.0.0.0"` 是否已替换为 `false`）→ 查 `install_dsh()` 后是否调了 `patch_web_startup()`（dsh 升级重装会还原补丁） |
 | 远程浏览器打不开 WebUI（进程正常） | 服务端命令行查 `--host` 是否为 `0.0.0.0` → 远程电脑 `telnet <服务器IP> 3080` 测端口连通性 → 查防火墙 / 路由器 |
 | 远程浏览器能打开但心跳不上报（自动打开界面失效） | 查 `patch_frontend()` 注入的心跳脚本是否从 `127.0.0.1` 改为 `location.hostname`（`dist/index.html` 里 `dsh-launcher-ui-beacon` 块）；查心跳服务绑定地址是否随 `dsh_host` 联动为 `0.0.0.0`（否则远端连不上 3081 端口） |

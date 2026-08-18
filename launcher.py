@@ -29,6 +29,9 @@ import time
 import re
 import shutil
 import socket
+import struct
+import hashlib
+import zlib
 import webbrowser
 import threading
 import subprocess
@@ -228,6 +231,25 @@ GREEN_RELEASE_MIRROR = ("https://mirror.nju.edu.cn/github-release/%s/latest"
                         % GITHUB_REPO)             # 国内镜像 (与其它下载源镜像一致)
 GREEN_ZIP_PREFIX = "DSH_Launcher_GreenPortable_Online_"   # Release 分发 zip 资产名前缀
 
+# Gitee 镜像兜底通道 (GitHub Release / 国内镜像都连不通时, 自动转 Gitee):
+# Gitee 上**没有 Release**, 只能下载"整个仓库"的内容来覆盖, 因此:
+#   - 版本号从 Gitee master 分支的 launcher.py 源码里提取 GREEN_VERSION 常量
+#   - 下载 = git 智能 HTTP 协议克隆整仓 (见 green_gitee_clone_tree):
+#     Gitee 的 archive zip 地址 (repository/archive/master.zip) 会返回带 JS 轮询
+#     的挑战页, 纯 urllib 拿不到真实 zip; 改用 /info/refs + /git-upload-pack
+#     拉取 pack 并解析对象, 等价拿到整仓文件 (2026-08-18 已验证)
+#   - 整仓内容会比 GitHub 发货清单多出 DEV_NOTES.md / .gitignore,
+#     由 update_agent.py 的 overlay_copy 统一排除 (与 GitHub 通道一致)
+GITEE_REPO = "liujunheng/DeepSeekHarnessGreen"     # Gitee 仓库 (owner/repo, Gitee 全小写)
+GITEE_BRANCH = "master"                            # Gitee 仓库默认分支
+GITEE_ARCHIVE_URL = ("https://gitee.com/%s/repository/archive/%s.zip"
+                     % (GITEE_REPO, GITEE_BRANCH))  # 整仓 zip (仅供界面展示/手动提示, 下载不走它)
+GITEE_RAW_LAUNCHER_URL = ("https://gitee.com/%s/raw/%s/launcher.py"
+                          % (GITEE_REPO, GITEE_BRANCH))  # 读取 GREEN_VERSION
+GITEE_RELEASES_API = ("https://gitee.com/api/v5/repos/%s/releases"
+                      % GITEE_REPO)  # Gitee 发布版列表 (公开读无需令牌)
+GITEE_REPO_PAGE_URL = "https://gitee.com/%s" % GITEE_REPO  # Gitee 仓库主页 (失败手动提示)
+
 # npm 上已核实的一批 dsh 插件 (供「加载推荐」一键展示, 保证即使搜索/网络异常也能看到可安装项)
 # version 留空表示安装时自动取 npm 最新版; 来源标记为 "推荐"
 RECOMMENDED_PLUGINS = [
@@ -266,7 +288,8 @@ NPM_USER_CONFIG = os.path.join(RUNTIME_DIR, "npm-userconfig")  # npm 用户配�
 PNPM_HOME_DIR = os.path.join(RUNTIME_DIR, "pnpm-home")      # pnpm 全局 home (插件管理)
 PNPM_STORE_DIR = os.path.join(RUNTIME_DIR, "pnpm-store")    # pnpm 内容寻址存储
 TMP_DIR = os.path.join(RUNTIME_DIR, "tmp")
-GREEN_UPDATE_DIR = os.path.join(RUNTIME_DIR, "update")      # 绿色版更新暂存目录 (zip/解压/备份/bat)
+GREEN_UPDATE_DIR = os.path.join(RUNTIME_DIR, "update")      # 绿色版更新暂存目录 (zip/解压/job/备份)
+BACKUP_DIR = os.path.join(RUNTIME_DIR, "backup")            # 统一备份目录 (dsh 旧版本备份等)
 # 默认工作区子目录名: 仅在"程序根目录包含临时目录"(绿色便携默认形态)冲突时,
 # 才把它作为默认工作区使用; 不冲突时默认工作区直接用程序根目录本身,
 # 由 resolve_default_workspace() 自动判定, 不再写死完整路径。
@@ -689,16 +712,18 @@ class Launcher:
             return None
 
     def backup_dsh(self):
-        """把当前已安装的 dsh 目录备份到 runtime/dsh-backup-<版本> 下
+        """把当前已安装的 dsh 目录备份到统一备份目录 BACKUP_DIR/dsh-<版本> 下
+        (不再散落在 runtime 根目录, 便于集中管理/一键清理)。
         返回备份目录绝对路径; 若当前未安装 dsh 返回 None"""
         if not self.dsh_installed():
             return None
         version = self.dsh_version()
-        backup_dir = os.path.join(RUNTIME_DIR, "dsh-backup-%s" % version)
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        backup_dir = os.path.join(BACKUP_DIR, "dsh-%s" % version)
         if os.path.exists(backup_dir):
             backup_dir = os.path.join(
-                RUNTIME_DIR, "dsh-backup-%s-%s" % (version,
-                                                   time.strftime("%Y%m%d%H%M%S")))
+                BACKUP_DIR, "dsh-%s-%s" % (version,
+                                           time.strftime("%Y%m%d%H%M%S")))
         self.log("正在备份旧版本 dsh (%s) ..." % version)
         try:
             shutil.copytree(DSH_DIR, backup_dir)
@@ -723,6 +748,49 @@ class Launcher:
         self.log("更新完成, 当前版本: %s" % self.dsh_version())
         self.log("旧版本备份在: %s (可手动删除)" % backup_dir)
         return self.dsh_version()
+
+    def cleanup_update_files(self):
+        """清空绿色版更新目录 (runtime/update): 暂存 zip / 解压内容 / 覆盖前旧文件备份 / 更新任务文件。
+        更新程序运行中时被锁定的文件会跳过 (不报错)。返回删除的文件/目录项数"""
+        if not os.path.isdir(GREEN_UPDATE_DIR):
+            self.log("更新目录不存在, 无需清理: %s" % GREEN_UPDATE_DIR)
+            return 0
+        removed_count = self._clear_directory_contents(GREEN_UPDATE_DIR)
+        self.log("已清理更新目录: %s (删除 %d 项)" % (GREEN_UPDATE_DIR, removed_count))
+        return removed_count
+
+    def cleanup_backup_files(self):
+        """清空统一备份目录 (runtime/backup) 与旧版散落在 runtime 根的 dsh-backup-* 目录
+        (v1.0.x 时代的旧布局, 一并归入"备份"概念清理, 避免残留)。返回删除的文件/目录项数"""
+        removed_count = 0
+        if os.path.isdir(BACKUP_DIR):
+            removed_count += self._clear_directory_contents(BACKUP_DIR)
+        # 兼容旧布局: 清理 runtime 根下散落的 dsh-backup-* 目录 (新版本已统一进 BACKUP_DIR)
+        if os.path.isdir(RUNTIME_DIR):
+            for name in os.listdir(RUNTIME_DIR):
+                if name.startswith("dsh-backup-"):
+                    legacy_path = os.path.join(RUNTIME_DIR, name)
+                    if os.path.isdir(legacy_path):
+                        shutil.rmtree(legacy_path, ignore_errors=True)
+                        removed_count += 1
+        self.log("已清理备份目录: %s (删除 %d 项)" % (BACKUP_DIR, removed_count))
+        return removed_count
+
+    def _clear_directory_contents(self, target_dir):
+        """清空目录内容 (保留目录本身), 返回删除的文件/目录项数。
+        被占用的文件 (如更新程序运行中) 忽略不报错, 不阻断其余清理"""
+        removed_count = 0
+        for name in os.listdir(target_dir):
+            entry_path = os.path.join(target_dir, name)
+            try:
+                if os.path.isdir(entry_path) and not os.path.islink(entry_path):
+                    shutil.rmtree(entry_path, ignore_errors=True)
+                else:
+                    os.remove(entry_path)
+                removed_count += 1
+            except OSError:
+                pass   # 文件被占用等, 跳过不阻断
+        return removed_count
 
     def dsh_version(self):
         """读取已安装 dsh 的版本号"""
@@ -772,9 +840,12 @@ class Launcher:
         return GREEN_VERSION
 
     def green_latest_release(self):
-        """查询本项目 GitHub 最新 Release 信息 (只读, 不改动本地)。
-        先试官方 api.github.com, 失败自动降级国内镜像; 全部失败返回 None。
-        返回 dict: tag_name / name / body / published_at / assets"""
+        """查询本绿色版最新版本信息 (只读, 不改动本地)。
+        通道优先级: GitHub 官方 Releases API -> 国内镜像 -> Gitee 整仓快照兜底
+        (Gitee 没有 Release, 从 master 分支 launcher.py 提取 GREEN_VERSION 当版本号,
+        下载源是整仓 zip)。全部失败返回 None。
+        返回 dict: tag_name / name / body / published_at / assets / source
+        (source = "github" 或 "gitee", 供界面区分更新来源与手动提示地址)"""
         url_list = [GREEN_RELEASE_API, GREEN_RELEASE_MIRROR]
         ssl_context = ssl.create_default_context()
         for url in url_list:
@@ -787,11 +858,431 @@ class Launcher:
                 if release_info.get("tag_name"):
                     self.log("最新 Release: %s (发布时间: %s)" % (
                         release_info.get("tag_name"), release_info.get("published_at") or "未知"))
+                    release_info["source"] = "github"
                     return release_info
                 self.log("该地址返回的 Release 为空: %s" % url)
             except Exception as error:
                 self.log("查询 Release 失败 [%s]: %s" % (url, error))
-        return None
+        # GitHub 与国内镜像都不可达 -> 自动切换 Gitee 整仓快照兜底
+        self.log("GitHub Release 通道全部不可达, 自动切换 Gitee 镜像源 ...")
+        return self.green_gitee_latest()
+
+    def green_gitee_latest(self):
+        """Gitee 兜底通道, 两级策略:
+        1. Gitee Release 优先: GET GITEE_RELEASES_API (公开读无需令牌), 取最新带 .zip
+           附件的发布版, 附件下载走 releases/download/<tag>/<file> 直连 (2026-08-18 已实测
+           返回真实 zip, 不走 archive 挑战页)。返回 source="gitee_release"。
+        2. 无 Release/无附件回退整仓快照: 读 master 分支 launcher.py 的 GREEN_VERSION
+           当版本号, 下载源 = git 协议克隆整仓 (green_gitee_clone_tree)。
+        返回与 green_latest_release 相同的 dict 结构; 全部失败返回 None"""
+        # ---- 1. 优先查 Gitee Release (有 zip 附件则直接下载) ----
+        release_info = self._gitee_release_latest()
+        if release_info is not None:
+            return release_info
+        # ---- 2. 回退: 整仓快照 (git 协议克隆) ----
+        try:
+            self.log("Gitee 无可用 Release, 回退整仓快照: 读取 %s" % GITEE_RAW_LAUNCHER_URL)
+            ssl_context = ssl.create_default_context()
+            request = urllib.request.Request(
+                GITEE_RAW_LAUNCHER_URL,
+                headers={"User-Agent": "DSH-Launcher/%s" % GREEN_VERSION})
+            with urllib.request.urlopen(request, context=ssl_context, timeout=30) as response:
+                source_text = response.read().decode("utf-8", errors="replace")
+            version_match = re.search(r'GREEN_VERSION\s*=\s*"([\d.]+)"', source_text)
+            if not version_match:
+                self.log("Gitee 源码里未找到 GREEN_VERSION, 无法判断版本")
+                return None
+            version = version_match.group(1)
+            self.log("Gitee 镜像源最新版本: v%s (整仓快照)" % version)
+            return {
+                "tag_name": "v%s" % version,
+                "name": "Gitee 整仓快照 v%s" % version,
+                "body": "来自 Gitee 整仓快照 (GitHub 连不通且 Gitee 无 Release 时的兜底镜像源)。",
+                "published_at": "",
+                "assets": [{
+                    "name": "DeepSeekHarnessGreen-%s.zip" % GITEE_BRANCH,
+                    "browser_download_url": GITEE_ARCHIVE_URL,
+                    "size": 0,   # 整仓 zip 无法预知大小, 传 0 跳过大小校验
+                }],
+                "source": "gitee",
+            }
+        except Exception as error:
+            self.log("查询 Gitee 镜像源失败: %s" % error)
+            return None
+
+    def _gitee_release_latest(self):
+        """查询 Gitee 发布版列表, 返回"最新且带 .zip 附件"的 release 信息。
+        Gitee release 附件 (browser_download_url = releases/download/<tag>/<file>)
+        已实测可直连下载 (不走 archive 挑战页), 上传需仓库主人在 Gitee 网页/API 操作。
+        返回 dict (source="gitee_release", assets 含真实 zip 直连地址); 无可用返回 None"""
+        try:
+            self.log("正在查询 Gitee 发布版: %s" % GITEE_RELEASES_API)
+            ssl_context = ssl.create_default_context()
+            request = urllib.request.Request(
+                GITEE_RELEASES_API,
+                headers={"User-Agent": "DSH-Launcher/%s" % GREEN_VERSION})
+            with urllib.request.urlopen(request, context=ssl_context, timeout=30) as response:
+                release_list = json.loads(response.read().decode("utf-8"))
+            if not isinstance(release_list, list) or not release_list:
+                self.log("Gitee 暂无发布版 (返回空列表)")
+                return None
+            for item in release_list:
+                tag_name = item.get("tag_name") or ""
+                assets = item.get("assets") or []
+                zip_asset = None
+                for asset in assets:
+                    asset_name = asset.get("name") or ""
+                    download_url = asset.get("browser_download_url") or ""
+                    # 只认"手动上传的附件" (releases/download/... 直连可下, 2026-08-18 实测);
+                    # Gitee 自动生成的 tag 源码包 (archive/refs/tags/...zip) 会走挑战页,
+                    # 拿不到真实 zip, 必须跳过
+                    if (asset_name.lower().endswith(".zip")
+                            and download_url
+                            and "/releases/download/" in download_url):
+                        zip_asset = asset
+                        break
+                if not zip_asset:
+                    self.log("跳过 Gitee 发布版 %s (无手动上传的 zip 附件)" % (tag_name or "未知"))
+                    continue
+                self.log("Gitee 发布版最新版本: %s (附件 %s, 直连下载)"
+                         % (tag_name, zip_asset.get("name")))
+                return {
+                    "tag_name": tag_name,
+                    "name": item.get("name") or tag_name,
+                    "body": item.get("body") or "来自 Gitee 发布版 (GitHub 连不通时的镜像源)。",
+                    "published_at": item.get("created_at") or "",
+                    "assets": [{
+                        "name": zip_asset.get("name"),
+                        "browser_download_url": zip_asset.get("browser_download_url"),
+                        "size": 0,   # Gitee 附件不返回大小, 传 0 跳过大小校验
+                    }],
+                    "source": "gitee_release",
+                }
+            self.log("Gitee 发布版列表无可用 zip 附件")
+            return None
+        except Exception as error:
+            self.log("查询 Gitee 发布版失败: %s" % error)
+            return None
+
+    # ------------------------------------------------------------------
+    # Gitee 整仓快照下载: git 智能 HTTP 协议克隆 (绕过 archive JS 挑战页)
+    # ------------------------------------------------------------------
+    def green_gitee_clone_tree(self, dest_dir):
+        """通过 git 智能 HTTP 协议克隆 Gitee 仓库分支到 dest_dir。
+        背景 (2026-08-18): Gitee 的 archive zip 地址 (repository/archive/master.zip)
+        会返回带 JS 轮询的挑战页 (window._info / window._paths), 纯 urllib 拿不到
+        真实 zip (checkURL 验证信息会过期)。改用 git 协议端点:
+            1. GET  /<repo>.git/info/refs?service=git-upload-pack   取分支 head sha
+            2. POST /<repo>.git/git-upload-pack                     取 pack 数据
+            3. 解析 pack 对象 (含 REF_DELTA / OFS_DELTA 还原), 按 tree 落盘
+        等价于下载整仓快照, 且只依赖标准库 (hashlib/struct/zlib/urllib)。
+        返回落盘的文件数; 失败抛异常, 由调用方统一提示手动下载地址。
+        本方法为只读远端操作, 不改动程序目录 (dest_dir 由调用方传入)"""
+        # ---- 1. 取分支 head sha ----
+        info_refs_url = ("https://gitee.com/%s.git/info/refs?service=git-upload-pack"
+                         % GITEE_REPO)
+        self.log("正在通过 git 协议获取 Gitee 仓库分支信息: %s" % info_refs_url)
+        refs_data = self._gitee_http_get(info_refs_url)
+        head_sha = self._gitee_refs_head_sha(refs_data, GITEE_BRANCH)
+        if not head_sha:
+            raise RuntimeError("Gitee 仓库未找到分支 %s" % GITEE_BRANCH)
+        self.log("Gitee 分支 %s 最新提交: %s" % (GITEE_BRANCH, head_sha))
+        # ---- 2. 拉取 pack ----
+        upload_pack_url = "https://gitee.com/%s.git/git-upload-pack" % GITEE_REPO
+        self.log("正在从 Gitee 拉取仓库数据 (pack) ...")
+        pack_data = self._gitee_fetch_pack(upload_pack_url, head_sha)
+        self.log("已获取 pack 数据 %.1f MB, 正在解析对象 ..." % (len(pack_data) / 1024.0 / 1024.0))
+        # ---- 3. 解析对象 + checkout 落盘 ----
+        file_count = self._gitee_checkout(head_sha, pack_data, dest_dir)
+        self.log("Gitee 整仓克隆完成: 落盘 %d 个文件到 %s" % (file_count, dest_dir))
+        return file_count
+
+    def _gitee_http_get(self, url):
+        """GET 请求 (git 协议端点), 返回响应字节; 失败抛异常"""
+        ssl_context = ssl.create_default_context()
+        request = urllib.request.Request(
+            url, headers={"User-Agent": "DSH-Launcher/%s (git-upload-pack)"
+                           % GREEN_VERSION})
+        with urllib.request.urlopen(request, context=ssl_context, timeout=60) as response:
+            return response.read()
+
+    def _gitee_http_post_pack(self, url, payload):
+        """POST git-upload-pack 请求, 返回响应字节; 失败抛异常"""
+        ssl_context = ssl.create_default_context()
+        request = urllib.request.Request(
+            url, data=payload,
+            headers={"User-Agent": "DSH-Launcher/%s (git-upload-pack)" % GREEN_VERSION,
+                     "Content-Type": "application/x-git-upload-pack-request"})
+        with urllib.request.urlopen(request, context=ssl_context, timeout=120) as response:
+            return response.read()
+
+    def _gitee_refs_head_sha(self, refs_data, branch_name):
+        """解析 /info/refs 的 pkt-line 响应, 返回指定分支的 head sha (十六进制串);
+        找不到返回空串"""
+        lines, _ = self._gitee_pkt_lines(refs_data)
+        for line in lines:
+            text = line.decode("utf-8", "replace")
+            if ("refs/heads/%s" % branch_name) in text:
+                return text.split(" ", 1)[0].strip()
+        return ""
+
+    def _gitee_pkt_lines(self, data):
+        """解析 pkt-line 流: 每行 = [4字节hex长度][内容(含结尾换行)]; 长度含 4 字节长度头。
+        返回 (行内容列表, 解析结束位置)"""
+        lines = []
+        position = 0
+        while position + 4 <= len(data):
+            length = int(data[position:position + 4], 16)
+            if length == 0:      # flush 空行
+                position += 4
+                continue
+            position += 4
+            lines.append(data[position:position + length - 4])
+            position += length - 4
+        return lines, position
+
+    def _gitee_fetch_pack(self, upload_pack_url, head_sha):
+        """构造 git upload-pack 请求体 (want + done), 拉取 pack 数据
+        (响应里 NAK 之后的 PACK 段)"""
+        want_line = ("want %s\n" % head_sha).encode("utf-8")
+        # pkt-line: [4字节hex长度][内容]; 长度 = 4 + 内容字节数
+        payload = b"%04x%s00000009done\n" % (len(want_line) + 4, want_line)
+        response = self._gitee_http_post_pack(upload_pack_url, payload)
+        pack_start = response.find(b"PACK")
+        if pack_start < 0:
+            raise RuntimeError("git 响应里没有 PACK 数据: %s" % response[:200])
+        return response[pack_start:]
+
+    def _gitee_parse_object_header(self, data, position):
+        """读取 pack 对象头: 返回 (type, size, 内容起始位置)"""
+        byte_value = data[position]
+        position += 1
+        object_type = (byte_value >> 4) & 7
+        size = byte_value & 15
+        shift = 4
+        while byte_value & 0x80:
+            byte_value = data[position]
+            position += 1
+            size |= (byte_value & 0x7F) << shift
+            shift += 7
+        return object_type, size, position
+
+    def _gitee_read_varint_size(self, data, position):
+        """git 对象头的大小字段 / delta 源目标大小: 小端 7bit 分组, 高位置续位。
+        返回 (size, 读取后的新位置)"""
+        shift = 0
+        size = 0
+        while True:
+            byte_value = data[position]
+            position += 1
+            size |= (byte_value & 0x7F) << shift
+            shift += 7
+            if not byte_value & 0x80:
+                break
+        return size, position
+
+    def _gitee_read_ofs_delta_offset(self, data, position):
+        """ofs-delta 的负偏移编码: 大端 7bit 分组。返回 (offset, 读取后的新位置)"""
+        offset = 0
+        while True:
+            byte_value = data[position]
+            position += 1
+            offset = (offset << 7) | (byte_value & 0x7F)
+            if not byte_value & 0x80:
+                break
+        return offset, position
+
+    def _gitee_object_hash(self, object_type_name, content):
+        """计算 git 对象 sha1: sha1("<type> <size>\\0<content>")"""
+        header = ("%s %d\0" % (object_type_name, len(content))).encode("ascii")
+        return hashlib.sha1(header + content).digest()
+
+    def _gitee_type_name(self, object_type):
+        """pack 对象类型号 -> 类型名 (delta 还原后沿用基对象类型)"""
+        return {1: "commit", 2: "tree", 3: "blob", 4: "tag"}.get(object_type, "blob")
+
+    def _gitee_apply_delta(self, base_data, delta_data):
+        """解 delta 指令流, 返回重建后的对象内容"""
+        position = 0
+        source_size, position = self._gitee_read_varint_size(delta_data, position)
+        target_size, position = self._gitee_read_varint_size(delta_data, position)
+        result = bytearray()
+        while position < len(delta_data):
+            opcode = delta_data[position]
+            position += 1
+            if opcode & 0x80:      # copy 指令: 从 base 复制
+                copy_offset = 0
+                copy_size = 0
+                shift = 0
+                for index in range(4):
+                    if opcode & (1 << index):
+                        copy_offset |= delta_data[position] << (index * 8)
+                        position += 1
+                for index in range(3):
+                    if opcode & (0x10 << index):
+                        copy_size |= delta_data[position] << (index * 8)
+                        position += 1
+                if copy_size == 0:
+                    copy_size = 0x10000
+                result.extend(base_data[copy_offset:copy_offset + copy_size])
+            elif opcode:           # 插入指令: 字面量
+                result.extend(delta_data[position:position + opcode])
+                position += opcode
+            else:
+                raise RuntimeError("delta 指令流非法: opcode=0")
+        return bytes(result)
+
+    def _gitee_parse_pack(self, pack_data):
+        """解析 pack 数据: 返回 raw_objects 列表, 每项 (type, payload, start_position)。
+        payload 含义 (按类型区分):
+            - 普通对象 (commit/tree/blob/tag): 解压后的完整内容
+            - REF_DELTA (type 7): (base_sha20, delta解压数据)  前置 20 字节未压缩
+            - OFS_DELTA (type 6): (offset, delta解压数据)      前置 varint 未压缩
+        位置推进用 zlib 流实际消耗字节数 (zlib 流末尾后的剩余在 unused_data)"""
+        if pack_data[:4] != b"PACK":
+            raise RuntimeError("非法 pack 头")
+        version, count = struct.unpack(">II", pack_data[4:12])
+        if version not in (2, 3):
+            raise RuntimeError("不支持的 pack 版本 %d" % version)
+        position = 12
+        raw_objects = []
+        for index in range(count):
+            start_position = position
+            try:
+                object_type, size, position = self._gitee_parse_object_header(
+                    pack_data, position)
+            except IndexError:
+                raise RuntimeError("对象 %d 头部越界 (pos=%d total=%d)" % (
+                    index, start_position, len(pack_data)))
+            try:
+                if object_type == 7:      # OBJ_REF_DELTA
+                    base_sha = pack_data[position:position + 20]
+                    if len(base_sha) < 20:
+                        raise RuntimeError("对象 %d REF_DELTA 的 base sha 越界" % index)
+                    position += 20
+                    decompressor = zlib.decompressobj()
+                    delta_data = decompressor.decompress(pack_data[position:])
+                    consumed = len(pack_data) - position - len(decompressor.unused_data)
+                    if consumed <= 0:
+                        raise RuntimeError("对象 %d REF_DELTA 未消耗数据" % index)
+                    position += consumed
+                    payload = (base_sha, delta_data)
+                elif object_type == 6:    # OBJ_OFS_DELTA
+                    offset, position = self._gitee_read_ofs_delta_offset(
+                        pack_data, position)
+                    decompressor = zlib.decompressobj()
+                    delta_data = decompressor.decompress(pack_data[position:])
+                    consumed = len(pack_data) - position - len(decompressor.unused_data)
+                    if consumed <= 0:
+                        raise RuntimeError("对象 %d OFS_DELTA 未消耗数据" % index)
+                    position += consumed
+                    payload = (offset, delta_data)
+                else:                     # 普通对象 (commit/tree/blob/tag)
+                    decompressor = zlib.decompressobj()
+                    content = decompressor.decompress(pack_data[position:])
+                    consumed = len(pack_data) - position - len(decompressor.unused_data)
+                    if consumed <= 0:
+                        raise RuntimeError("对象 %d 未消耗数据" % index)
+                    position += consumed
+                    payload = content
+            except zlib.error as error:
+                raise RuntimeError("对象 %d 解压失败 (%s): pos=%d" % (
+                    index, error, position))
+            raw_objects.append((object_type, payload, start_position))
+        return raw_objects
+
+    def _gitee_checkout(self, head_sha, pack_data, dest_dir):
+        """解析 pack 全部对象 (含 delta 还原), 按 head commit 的 tree 落盘到 dest_dir。
+        返回落盘文件数"""
+        raw_objects = self._gitee_parse_pack(pack_data)
+        objects_by_sha = {}     # 20字节sha -> (type, content)
+        objects_by_index = {}   # pack内序号 -> (type, content)
+        pending_ref_delta = []  # [(index, base_sha, delta_data)]
+        for index, (object_type, payload, start_position) in enumerate(raw_objects):
+            if object_type == 7:      # REF_DELTA: 基对象可能后置, 进待解队列
+                base_sha, delta_data = payload
+                pending_ref_delta.append((index, base_sha, delta_data))
+            elif object_type == 6:    # OFS_DELTA: 负偏移相对本对象起始位置
+                offset, delta_data = payload
+                base_offset = start_position - offset
+                base_index = None
+                for index2, (_, _, obj_position) in enumerate(raw_objects):
+                    if obj_position == base_offset:
+                        base_index = index2
+                        break
+                if base_index is None:
+                    raise RuntimeError("ofs-delta 基线对象未定位 (offset=%d)" % offset)
+                base_type, base_content = objects_by_index[base_index]
+                resolved = self._gitee_apply_delta(base_content, delta_data)
+                objects_by_index[index] = (base_type, resolved)
+                objects_by_sha[self._gitee_object_hash(
+                    self._gitee_type_name(base_type), resolved)] = (base_type, resolved)
+            else:                     # 普通对象
+                content = payload
+                objects_by_index[index] = (object_type, content)
+                objects_by_sha[self._gitee_object_hash(
+                    self._gitee_type_name(object_type), content)] = (object_type, content)
+        # 解析 ref-delta (基对象可能后置, 循环直到全部解析或无法推进)
+        while pending_ref_delta:
+            progress = False
+            remaining = []
+            for index, base_sha, delta_data in pending_ref_delta:
+                if base_sha in objects_by_sha:
+                    base_type, base_content = objects_by_sha[base_sha]
+                    resolved = self._gitee_apply_delta(base_content, delta_data)
+                    objects_by_index[index] = (base_type, resolved)
+                    objects_by_sha[self._gitee_object_hash(
+                        self._gitee_type_name(base_type), resolved)] = (base_type, resolved)
+                    progress = True
+                else:
+                    remaining.append((index, base_sha, delta_data))
+            if not progress and remaining:
+                raise RuntimeError("ref-delta 基对象缺失, 无法还原 (%d 个)" % len(remaining))
+            pending_ref_delta = remaining
+        # 定位 head commit -> 根 tree -> 递归落盘
+        head_digest = bytes.fromhex(head_sha)
+        if head_digest not in objects_by_sha:
+            raise RuntimeError("pack 里未找到 head 提交对象")
+        commit_type, commit_content = objects_by_sha[head_digest]
+        commit_text = commit_content.decode("utf-8", "replace")
+        tree_line = [line for line in commit_text.split("\n") if line.startswith("tree ")]
+        if not tree_line:
+            raise RuntimeError("head 提交对象里没有 tree 字段")
+        tree_sha = bytes.fromhex(tree_line[0].split(" ", 1)[1].strip())
+        file_count = [0]
+        self._gitee_write_tree(objects_by_sha, tree_sha, dest_dir, file_count)
+        return file_count[0]
+
+    def _gitee_write_tree(self, objects_by_sha, tree_sha, base_path, file_count):
+        """递归把 tree 对象落盘为文件 (跳过 submodule)"""
+        tree_type, tree_content = objects_by_sha[tree_sha]
+        position = 0
+        while position < len(tree_content):
+            space_index = tree_content.index(b" ", position)
+            mode = tree_content[position:space_index].decode("ascii")
+            position = space_index + 1
+            null_index = tree_content.index(b"\0", position)
+            name = tree_content[position:null_index].decode("utf-8", "replace")
+            position = null_index + 1
+            child_sha = tree_content[position:position + 20]
+            position += 20
+            child_path = os.path.join(base_path, name)
+            if mode == "40000":      # 子目录
+                os.makedirs(child_path, exist_ok=True)
+                self._gitee_write_tree(objects_by_sha, child_sha, child_path, file_count)
+            elif mode == "160000":   # submodule, 跳过
+                continue
+            else:                    # blob (100644 / 100755 / 120000 symlink)
+                blob_type, blob_content = objects_by_sha[child_sha]
+                os.makedirs(os.path.dirname(child_path), exist_ok=True)
+                with open(child_path, "wb") as file_handle:
+                    file_handle.write(blob_content)
+                if mode == "100755":
+                    try:
+                        os.chmod(child_path, 0o755)
+                    except OSError:
+                        pass
+                file_count[0] += 1
 
     def green_release_version(self, release_info):
         """从 Release 信息取版本号 (去掉 tag 的 v 前缀, 如 v1.0.1 -> 1.0.1)"""
@@ -799,11 +1290,20 @@ class Launcher:
         return tag[1:] if tag.startswith("v") else tag
 
     def green_find_zip_asset(self, release_info):
-        """从 Release assets 里匹配绿色版分发 zip 资产。
+        """从版本信息里匹配绿色版分发 zip 资产。
+        - GitHub 通道: 匹配 GREEN_ZIP_PREFIX + .zip 前缀的 Release 资产
+        - Gitee 通道 : 整仓快照/发布版 asset 名不含该前缀, 直接取唯一 .zip 资产
+        (source 为 "gitee" 或 "gitee_release" 都按 Gitee 规则匹配)
         返回元组 (资产名, 下载URL, 文件大小), 找不到返回 None"""
         assets = release_info.get("assets") or []
+        is_gitee = release_info.get("source") in ("gitee", "gitee_release")
         for asset in assets:
             asset_name = asset.get("name") or ""
+            if is_gitee:
+                if asset_name.lower().endswith(".zip"):
+                    return (asset_name, asset.get("browser_download_url") or "",
+                            asset.get("size") or 0)
+                continue
             if asset_name.startswith(GREEN_ZIP_PREFIX) and asset_name.lower().endswith(".zip"):
                 return (asset_name, asset.get("browser_download_url") or "",
                         asset.get("size") or 0)
@@ -882,153 +1382,106 @@ class Launcher:
                 shutil.move(misplaced_path, correct_path)
                 self.log("归位错位 skill 目录: %s -> skills\\%s" % (skill_name, skill_name))
 
-    def prepare_green_update(self, new_zip_path):
-        """准备覆盖安装: 解压分发 zip 到 runtime/update/extracted, 检测内容根目录,
-        修正旧版错位目录结构, 生成 update_apply.bat (由启动器在退出后执行覆盖)。
-        返回元组 (内容根目录, bat 路径); 失败抛异常"""
+    def prepare_update_content_root(self, release_info, target_dir):
+        """按更新来源准备"新版内容根目录", 返回该目录路径 (供 prepare_green_update 覆盖)。
+        - github       : 下载分发 zip -> 解压 -> 检测内容根目录 (带/不带外层文件夹均兼容)
+        - gitee_release: Gitee 发布版 zip 附件直连下载 (releases/download/... 不走挑战页,
+                         2026-08-18 实测), 流程与 github 相同
+        - gitee        : 整仓快照 -> git 智能 HTTP 协议克隆到 target_dir
+                         (Gitee 无 Release 时的兜底; archive zip 会返回 JS 挑战页拿不到
+                         真实 zip, 必须走 git 协议端点, 见 green_gitee_clone_tree)
+        失败抛异常, 由调用方统一提示手动下载地址"""
+        source = release_info.get("source") or "github"
+        # 先清空目标目录, 避免上一次更新尝试残留旧文件被带进覆盖
+        if os.path.exists(target_dir):
+            shutil.rmtree(target_dir, ignore_errors=True)
+        os.makedirs(target_dir, exist_ok=True)
+        if source == "gitee":
+            self.log("更新来源为 Gitee 整仓快照, 正在通过 git 协议克隆整仓 ...")
+            # green_gitee_clone_tree 直接克隆到 target_dir (无外层嵌套), 返回落盘文件数;
+            # 内容根目录即 target_dir 本身
+            self.green_gitee_clone_tree(target_dir)
+            self.log("更新内容根目录: %s" % target_dir)
+            return target_dir
+        # GitHub / Gitee 发布版: 下载 zip -> 解压 -> 检测内容根目录
+        asset = self.green_find_zip_asset(release_info)
+        if asset is None:
+            raise RuntimeError("未找到匹配的绿色版分发 zip 资产")
+        asset_name, download_url, asset_size = asset
+        target_path = os.path.join(GREEN_UPDATE_DIR, asset_name)
+        self.download_green_update(download_url, target_path, asset_size)
+        self._safe_extract_zip(target_path, target_dir)
+        content_root = self._detect_zip_content_root(target_dir)
+        self.log("更新内容根目录: %s" % content_root)
+        return content_root
+
+    def prepare_green_update(self, content_root, new_version="", manual_zip_url="",
+                             source="github"):
+        """准备覆盖安装: 校验内容根目录, 修正旧版错位目录结构, 生成 update_job.json
+        (由独立更新程序 DSH_Update.exe 在启动器退出后执行覆盖; 任务文件里带上手动下载
+        地址供失败时提示)。
+        content_root: 新版内容根目录 (由 prepare_update_content_root 按来源准备:
+            GitHub=zip 解压, Gitee=git 协议克隆整仓, 见 green_gitee_clone_tree)。
+        source: 更新来源 ("github" 或 "gitee"), 决定失败时给用户的"手动发布页"地址。
+        返回元组 (内容根目录, job 文件路径); 失败抛异常"""
         update_dir = GREEN_UPDATE_DIR
         os.makedirs(update_dir, exist_ok=True)
-        # 1. 解压 (先清空旧的解压目录, 避免残留旧文件)
-        extracted_dir = os.path.join(update_dir, "extracted")
-        if os.path.exists(extracted_dir):
-            shutil.rmtree(extracted_dir, ignore_errors=True)
-        os.makedirs(extracted_dir, exist_ok=True)
-        self.log("正在解压更新包到 %s ..." % extracted_dir)
-        self._safe_extract_zip(new_zip_path, extracted_dir)
-        # 2. 检测内容根目录 (兼容带/不带一层外层文件夹两种 zip 形态)
-        content_root = self._detect_zip_content_root(extracted_dir)
-        self.log("更新内容根目录: %s" % content_root)
-        # 2.5. 修正旧版错误 zip 的插件/skill 错位目录 (需求 #21)
+        # 1. 校验内容根目录 (zip 解压或 git 克隆的产物)
+        if not os.path.isdir(content_root):
+            raise RuntimeError("更新内容根目录不存在: %s" % content_root)
+        # 2. 修正旧版错误 zip 的插件/skill 错位目录 (需求 #21)
         self._normalize_update_structure(content_root)
-        # 3. 生成覆盖安装脚本 (纯 ASCII + CRLF, 遵循 .bat 规范)
-        bat_path = os.path.join(update_dir, "update_apply.bat")
-        self._write_update_bat(bat_path, content_root)
-        self.log("覆盖安装脚本已生成: %s" % bat_path)
-        return content_root, bat_path
+        # 3. 生成更新任务文件 (JSON), 由 DSH_Update.exe 读取执行
+        if source in ("gitee", "gitee_release"):
+            manual_release_page = GITEE_REPO_PAGE_URL   # Gitee 提示去仓库页 (含发布版入口)
+        else:
+            manual_release_page = "https://github.com/%s/releases/latest" % GITHUB_REPO
+        job_path = os.path.join(update_dir, "update_job.json")
+        job_data = {
+            "base_dir": BASE_DIR,                       # 程序根目录 (覆盖目标)
+            "content_root": content_root,               # 新版内容根目录 (来源)
+            "backup_dir": os.path.join(update_dir, "backup"),  # 旧文件备份目录
+            "relaunch_mode": "bat" if not self._is_frozen() else "exe",  # 重启入口形态
+            "new_version": new_version,                 # 新版本号 (状态窗口显示)
+            # 失败时给用户手动下载覆盖源文件的地址 (用户需求 2026-08-18)
+            "manual_release_url": manual_release_page,
+            "manual_zip_url": manual_zip_url,
+        }
+        with open(job_path, "w", encoding="utf-8") as file_handle:
+            json.dump(job_data, file_handle, ensure_ascii=False, indent=2)
+        self.log("更新任务文件已生成: %s" % job_path)
+        return content_root, job_path
 
-    def _write_update_bat(self, bat_path, content_root):
-        """生成 update_apply.bat (纯 ASCII + CRLF, 避免 Windows cmd 编码问题)。
-        脚本在启动器完全退出后执行: 等待进程退出 -> 备份旧文件 -> robocopy 覆盖 ->
-        跳过 config.json(用户配置) 与 runtime/(用户数据/已装环境) -> 重新启动新版。
+    def launch_update_agent(self, job_path):
+        """以分离进程方式启动独立更新程序 (DSH_Update.exe, 兜底用内置 python 跑
+        update_agent.py), 使其脱离启动器进程树: 启动器随后退出, 由更新程序在独立
+        进程里完成 等本体退出 -> 备份 -> 覆盖 -> 重启, 失败时弹窗给出手动下载地址。
 
-        延迟统一用 wscript + sleep_helper.vbs 实现, 不用 ping/timeout/choice:
-        - timeout/choice 在 stdin 被重定向(DEVNULL)时直接报错退出, 根本睡不了;
-        - 分离进程(无控制台)里调用 ping.exe 这类控制台程序, Windows 会为它
-          新建一个控制台窗口, 逐次弹出闪烁; 且若系统 ping.exe 损坏(0xc0000142),
-          还会反复弹错误框, 把安装卡在等待循环里;
-        - wscript.exe 是 GUI 子系统(调用时不会新建控制台窗口)且 Windows 全自带,
-          WScript.Sleep 延迟精确, 不依赖任何可能损坏的外部 exe。"""
-        vbs_path = os.path.join(os.path.dirname(bat_path), "sleep_helper.vbs")
-        with open(vbs_path, "w", encoding="ascii", newline="") as vbs_handle:
-            vbs_handle.write("WScript.Sleep CLng(WScript.Arguments(0))\r\n")
-        relaunch_flag = "bat" if not self._is_frozen() else "exe"
-        bat_lines = [
-            # (启动器 PID 由 launch_update_script 以命令行参数传入, 目前不再用于等待(见 step 1))
-            "@echo off",
-            "rem ============================================================",
-            "rem  DeepSeek Harness Green Edition Overlay Installer",
-            "rem  Generated automatically, do NOT edit.",
-            "rem  Run after the launcher fully exits: backup -> overwrite -> relaunch.",
-            "rem  Args: %1=launcher PID(unused, kept for compat)  %2=content root",
-            "rem        %3=program root  %4=relaunch mode (bat|exe)",
-            "rem ============================================================",
-            "title DeepSeek Harness Green Update",
-            "set \"LAUNCHER_PID=%~1\"",
-            "set \"CONTENT_DIR=%~2\"",
-            "set \"BASE_DIR=%~3\"",
-            "set \"REL=%~4\"",
-            "",
-            "rem ---- 1. wait for launcher to exit and release file locks ----",
-            "rem (poll the exe lock via rename trick.  DO NOT poll the PID: once the",
-            "rem  launcher exits its PID is freed and may be REUSED by another process,",
-            "rem  so tasklist would match forever -> infinite wait.  The exe file lock",
-            "rem  is exactly what blocks the overwrite, so polling it is both reliable",
-            "rem  and fast.  Use top-level labels only, no goto inside parens blocks.)",
-            "rem     running as .exe:  poll until DSH_Launcher.exe can be renamed",
-            "rem     running as .py:    no lock to poll, just sleep a moment",
-            "if not exist \"%BASE_DIR%\\DSH_Launcher.exe\" goto :script_sleep",
-            "set /a TRIES=0",
-            ":wait_unlock",
-            "set /a TRIES+=1",
-            "if %TRIES% GEQ 60 goto :script_sleep",
-            "ren \"%BASE_DIR%\\DSH_Launcher.exe\" \"%BASE_DIR%\\.DSH_Launcher.exe.upd\" 2>nul",
-            "if errorlevel 1 goto :still_locked",
-            "rem unlock detected: restore the original name immediately",
-            "ren \"%BASE_DIR%\\.DSH_Launcher.exe.upd\" \"%BASE_DIR%\\DSH_Launcher.exe\" 2>nul",
-            "goto :after_wait",
-            ":still_locked",
-            "rem (sleep via wscript helper: ping/timeout/choice all fail in a",
-            "rem  detached no-console process with redirected stdin - ping would",
-            "rem  also flash console windows and error out if the system ping.exe",
-            "rem  is broken (0xc0000142).  wscript is GUI-subsystem: no window.)",
-            "wscript.exe \"%~dp0sleep_helper.vbs\" 1000",
-            "goto :wait_unlock",
-            ":script_sleep",
-            "rem give the launcher a moment to exit and release handles",
-            "wscript.exe \"%~dp0sleep_helper.vbs\" 2500",
-            ":after_wait",
-            "rem crash-safety: remove any leftover rename marker",
-            "if exist \"%BASE_DIR%\\.DSH_Launcher.exe.upd\" del /q \"%BASE_DIR%\\.DSH_Launcher.exe.upd\"",
-            "",
-            "rem ---- 2. backup old files that will be replaced to runtime\\update\\backup ----",
-            "set \"BACKUP_DIR=%~dp0backup\"",
-            "if not exist \"%BACKUP_DIR%\" mkdir \"%BACKUP_DIR%\"",
-            "if exist \"%BASE_DIR%\\launcher.py\" copy /y \"%BASE_DIR%\\launcher.py\" \"%BACKUP_DIR%\\launcher.py\" >nul 2>&1",
-            "if exist \"%BASE_DIR%\\DSH_Launcher.exe\" copy /y \"%BASE_DIR%\\DSH_Launcher.exe\" \"%BACKUP_DIR%\\DSH_Launcher.exe\" >nul 2>&1",
-            "if exist \"%BASE_DIR%\\start.bat\" copy /y \"%BASE_DIR%\\start.bat\" \"%BACKUP_DIR%\\start.bat\" >nul 2>&1",
-            "if exist \"%BASE_DIR%\\stop.bat\" copy /y \"%BASE_DIR%\\stop.bat\" \"%BACKUP_DIR%\\stop.bat\" >nul 2>&1",
-            "if exist \"%BASE_DIR%\\config.json\" copy /y \"%BASE_DIR%\\config.json\" \"%BACKUP_DIR%\\config.json\" >nul 2>&1",
-            "",
-            "rem ---- 2.5. remove legacy misplaced plugin/skill dirs at program root ----",
-            "rem (old release zips packed the plugin folders at the zip root without the",
-            "rem  plugins/ or skills/ prefix, so robocopy dropped them at the program root.",
-            "rem  Correct location is under plugins/ and skills/ - clean these leftovers up.",
-            "rem  Only touches these known legacy dirs, never user data/config.)",
-            "if exist \"%BASE_DIR%\\dsh-archive-purge\" rmdir /s /q \"%BASE_DIR%\\dsh-archive-purge\"",
-            "if exist \"%BASE_DIR%\\dsh-file-browser\" rmdir /s /q \"%BASE_DIR%\\dsh-file-browser\"",
-            "if exist \"%BASE_DIR%\\dsh-session-rewind\" rmdir /s /q \"%BASE_DIR%\\dsh-session-rewind\"",
-            "if exist \"%BASE_DIR%\\dsh-deploy-maintain\" rmdir /s /q \"%BASE_DIR%\\dsh-deploy-maintain\"",
-            "",
-            "rem ---- 3. overlay: copy new content into program root ----",
-            "rem     skip config.json (keep user config) and runtime/.git (user data/repo)",
-            "robocopy \"%CONTENT_DIR%\" \"%BASE_DIR%\" /E /XF config.json /XD runtime .git /NFL /NDL /NJH /NJS /NP >nul",
-            "set \"RC=%ERRORLEVEL%\"",
-            "if %RC% GEQ 8 goto :failed",
-            "",
-            "rem ---- 4. relaunch the new launcher (guard: only if target exists) ----",
-            "rem (start on a missing file pops an error dialog and blocks cmd forever)",
-            "if /i \"%REL%\"==\"bat\" (",
-            "  if exist \"%BASE_DIR%\\start.bat\" start \"\" \"%BASE_DIR%\\start.bat\"",
-            ") else (",
-            "  if exist \"%BASE_DIR%\\DSH_Launcher.exe\" start \"\" \"%BASE_DIR%\\DSH_Launcher.exe\"",
-            ")",
-            "echo Update done.",
-            "exit /b 0",
-            "",
-            ":failed",
-            "echo Update failed (robocopy errorlevel %RC%). Backup kept in %BACKUP_DIR%.",
-            "exit /b 1",
-        ]
-        bat_text = "\r\n".join(bat_lines) + "\r\n"
-        with open(bat_path, "w", encoding="ascii", newline="") as file_handle:
-            file_handle.write(bat_text)
-
-    def launch_update_script(self, bat_path, content_root):
-        """以分离进程方式启动覆盖安装脚本, 使其脱离启动器进程树:
-        启动器随后退出, 该 bat 仍能存活并完成文件覆盖 (解决 exe/py 被锁定无法自替换的问题)"""
+        之所以用独立更新程序而不是 bat/自覆盖: 运行中的 DSH_Launcher.exe 被 Windows
+        锁定, 无法原地替换; 更新程序启动后先把自己复制到 runtime/tmp 再从副本运行,
+        连 DSH_Update.exe 自身也能被新版覆盖。"""
+        update_exe = os.path.join(BASE_DIR, "DSH_Update.exe")
+        if os.path.isfile(update_exe):
+            # 首选独立更新程序 (绿色版自带, 不依赖系统 python / cmd)
+            command_line = [update_exe, "--apply", job_path]
+        else:
+            # 兜底: 用内置便携 python 直接跑 update_agent.py
+            python_exe = self.find_python_exe()
+            if python_exe is None:
+                raise RuntimeError(
+                    "程序目录缺少 DSH_Update.exe 且找不到内置 Python, 无法自动更新。"
+                    "请到 GitHub Release 手动下载新版覆盖。")
+            script_path = os.path.join(BASE_DIR, "update_agent.py")
+            if not os.path.isfile(script_path):
+                raise RuntimeError("程序目录缺少 update_agent.py, 无法自动更新。")
+            command_line = [python_exe, script_path, "--apply", job_path]
         if sys.platform == "win32":
             creation_flags = (subprocess.DETACHED_PROCESS |
                               subprocess.CREATE_NEW_PROCESS_GROUP)
-            relaunch_flag = "bat" if not self._is_frozen() else "exe"
-            command_line = ["cmd.exe", "/c", bat_path,
-                            str(os.getpid()), content_root, BASE_DIR, relaunch_flag]
         else:
-            # 非 Windows: 用 nohup 分离进程 (绿色便携主要面向 Windows, 这里做兜底)
-            command_line = ["sh", "-c",
-                            '"%s" "%s" "%s" "%s" >/dev/null 2>&1 &' % (
-                                bat_path, os.getpid(), content_root, BASE_DIR)]
+            # 非 Windows: 普通后台启动 (绿色便携主要面向 Windows, 这里做兜底)
             creation_flags = 0
-        self.log("正在启动覆盖安装脚本 (启动器即将退出) ...")
+        self.log("正在启动独立更新程序 (启动器即将退出) ...")
         subprocess.Popen(command_line, creationflags=creation_flags,
                          cwd=BASE_DIR, close_fds=True,
                          stdin=subprocess.DEVNULL,
@@ -2910,7 +3363,7 @@ def run_gui():
         about_window = tk.Toplevel(root)
         about_window.title("关于")
         about_window.resizable(False, False)
-        about_window.geometry("480x500")
+        about_window.geometry("480x520")
         about_window.transient(root)    # 依附主窗口
         about_window.grab_set()         # 模态, 关闭前不能操作主窗口
 
@@ -2925,7 +3378,8 @@ def run_gui():
             ("作者", "刘俊亨"),
             ("版本号", "v" + GREEN_VERSION),
             ("版本日期", GREEN_VERSION_DATE),
-            ("本仓库", "https://github.com/LiuJunheng/DeepSeekHarnessGreen"),
+            ("GitHub 仓库", "github.com/LiuJunheng/DeepSeekHarnessGreen"),
+            ("Gitee 仓库", "gitee.com/liujunheng/DeepSeekHarnessGreen"),
             ("官方 dsh", "@deepseek-ai/dsh (DeepSeek Harness)"),
             ("官方仓库", "https://github.com/deepseek-ai/deepseek-harness"),
         ]
@@ -2960,8 +3414,10 @@ def run_gui():
             webbrowser.open(url)
         button_row = ttk.Frame(about_window)
         button_row.pack(pady=14)
-        ttk.Button(button_row, text="打开本仓库", command=lambda: open_link(
+        ttk.Button(button_row, text="打开 GitHub 仓库", command=lambda: open_link(
             "https://github.com/LiuJunheng/DeepSeekHarnessGreen")).pack(side="left", padx=4)
+        ttk.Button(button_row, text="打开 Gitee 仓库", command=lambda: open_link(
+            "https://gitee.com/liujunheng/DeepSeekHarnessGreen")).pack(side="left", padx=4)
         ttk.Button(button_row, text="打开官方仓库", command=lambda: open_link(
             "https://github.com/deepseek-ai/deepseek-harness")).pack(side="left", padx=4)
         ttk.Button(button_row, text="关闭", command=about_window.destroy).pack(side="left", padx=4)
@@ -3369,14 +3825,48 @@ def run_gui():
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=worker, daemon=True).start()
 
+    def on_cleanup_update():
+        """清空绿色版更新暂存目录 (runtime/update): 暂存 zip / 解压内容 / 覆盖前旧文件备份 / 任务文件"""
+        if is_busy[0]:
+            return
+        choose = messagebox.askyesno(
+            "清理更新",
+            "将清空更新暂存目录 (runtime/update),\n"
+            "包括: 暂存的新版 zip、解压内容、覆盖前的旧文件备份、更新任务文件。\n\n"
+            "若更新程序正在运行中, 被占用的文件会跳过, 不影响更新。是否继续?",
+            icon="warning")
+        if not choose:
+            append_log("用户取消清理更新")
+            return
+        removed_count = app.cleanup_update_files()
+        messagebox.showinfo("清理更新", "已清理更新目录, 共删除 %d 项。" % removed_count)
+        append_log("已清理更新目录, 删除 %d 项" % removed_count)
+
+    def on_cleanup_backup():
+        """清空统一备份目录 (runtime/backup) 与旧版散落的 dsh-backup-* 目录"""
+        if is_busy[0]:
+            return
+        choose = messagebox.askyesno(
+            "清理备份",
+            "将清空备份目录 (runtime/backup),\n"
+            "包括: 更新 dsh 前自动备份的旧版本目录, 以及旧版散落的 dsh-backup-* 残留。\n\n"
+            "清理后无法回退旧版本! 是否继续?",
+            icon="warning")
+        if not choose:
+            append_log("用户取消清理备份")
+            return
+        removed_count = app.cleanup_backup_files()
+        messagebox.showinfo("清理备份", "已清理备份目录, 共删除 %d 项。" % removed_count)
+        append_log("已清理备份目录, 删除 %d 项" % removed_count)
+
     def ask_update(current_version, latest_version):
         """发现新版本时弹出确认框, 让用户选择 更新 / 不更新
-        更新前会自动备份当前版本到 runtime/dsh-backup-<版本>"""
+        更新前会自动备份当前版本到 runtime/backup/dsh-<版本>"""
         choose = messagebox.askyesno(
             "发现新版本",
             "当前版本: %s\n最新版本: %s\n\n是否立即更新?\n\n"
-            "更新前会自动备份当前版本到 runtime/dsh-backup-<版本>,\n"
-            "旧版本备份不会自动删除, 可随时手动清理。" % (current_version, latest_version),
+            "更新前会自动备份当前版本到 runtime/backup/dsh-<版本>,\n"
+            "旧版本备份不会自动删除, 可随时在「数据维护」里一键清理。" % (current_version, latest_version),
             icon="question")
         if not choose:
             append_log("用户选择暂不更新")
@@ -3391,7 +3881,7 @@ def run_gui():
                 new_version = app.update_dsh()
                 root.after(0, lambda: messagebox.showinfo(
                     "更新完成", "dsh 已更新到版本: %s\n\n"
-                    "旧版本已备份, 如需回退或清理请查看 runtime 目录。" % new_version))
+                    "旧版本已备份到 runtime/backup, 可在「数据维护」里一键清理。" % new_version))
             except Exception as error:
                 root.after(0, lambda: messagebox.showerror("更新失败", str(error)))
             finally:
@@ -3401,7 +3891,8 @@ def run_gui():
     # -------------------------------------------------------------------------
     # 绿色版外围更新 (自更新通道, 与上面的官方核心更新完全独立):
     # 查询 GitHub Release -> 对比版本 -> 下载 zip 到 runtime/update 暂存 ->
-    # 解压并生成 update_apply.bat -> 退出启动器 -> 由 bat 完成覆盖安装后自动重启。
+    # 解压并生成 update_job.json -> 启动独立更新程序 DSH_Update.exe -> 启动器退出 ->
+    # 由更新程序完成覆盖安装 (等本体退出/备份/覆盖/重启), 失败时弹窗给出手动下载地址。
     # 绝不触碰 runtime/ 与用户自定义的 config.json, 保证与官方核心更新互不干扰。
     # -------------------------------------------------------------------------
     def on_check_green_update():
@@ -3453,39 +3944,46 @@ def run_gui():
         release_note = (release_info.get("body") or "").strip() or "(无更新说明)"
         if len(release_note) > 400:
             release_note = release_note[:400] + " ..."
+        is_gitee_source = (release_info.get("source") or "") in ("gitee", "gitee_release")
+        source_hint = ("\n\n注意: GitHub 通道连不通, 本次更新来自 Gitee 镜像源"
+                       " (发布版 zip / 整仓快照, 与 GitHub 发货内容一致)。") if is_gitee_source else ""
         choose = messagebox.askyesno(
             "发现新绿色版",
-            "当前版本: v%s\n最新版本: v%s\n\n更新说明:\n%s\n\n"
+            "当前版本: v%s\n最新版本: v%s\n\n更新说明:\n%s%s\n\n"
             "是否下载并更新?\n\n更新流程: 下载到 runtime/update 暂存 → 退出启动器 → "
             "自动覆盖安装 → 重启。\n不替换 config.json(你的设置) 与 runtime/(你的数据)。"
-            % (local_version, latest_version, release_note),
+            % (local_version, latest_version, release_note, source_hint),
             icon="question")
         if not choose:
             append_log("用户选择暂不更新绿色版")
             set_busy(False)
             return
-        # 用户确认下载, 后台执行 (下载 + 解压 + 生成覆盖脚本)
+        # 用户确认下载, 后台执行 (按来源准备内容根目录 + 生成更新任务)
         set_busy(True)
         status_text.set("正在下载绿色版更新 ...")
         append_log("--- 开始下载绿色版更新: %s ---" % asset_name)
         def download_worker():
             try:
-                target_path = os.path.join(GREEN_UPDATE_DIR, asset_name)
-                app.download_green_update(download_url, target_path, asset_size)
-                content_root, bat_path = app.prepare_green_update(target_path)
+                source = release_info.get("source") or "github"
+                # 按来源准备内容根目录: GitHub=下载zip解压, Gitee=git协议克隆整仓
+                extracted_dir = os.path.join(GREEN_UPDATE_DIR, "extracted")
+                content_root = app.prepare_update_content_root(
+                    release_info, extracted_dir)
+                content_root, job_path = app.prepare_green_update(
+                    content_root, latest_version, download_url, source)
                 root.after(0, lambda: ask_apply_green_update(
-                    content_root, bat_path))
+                    content_root, job_path))
             except Exception as error:
                 root.after(0, lambda: messagebox.showerror("下载绿色版更新失败", str(error)))
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=download_worker, daemon=True).start()
 
-    def ask_apply_green_update(content_root, bat_path):
-        """下载与准备完成: 提示用户将退出启动器并覆盖安装, 确认后启动脚本并退出"""
+    def ask_apply_green_update(content_root, job_path):
+        """下载与准备完成: 提示用户将退出启动器并覆盖安装, 确认后启动独立更新程序并退出"""
         choose = messagebox.askyesno(
             "准备完成",
             "新版已下载并准备就绪。\n\n"
-            "接下来将退出启动器, 由后台脚本自动完成覆盖安装, 然后重新启动。\n"
+            "接下来将退出启动器, 由独立更新程序自动完成覆盖安装, 然后重新启动。\n"
             "旧文件会自动备份到 runtime/update/backup/ (可手动回退)。\n\n是否继续?",
             icon="question")
         if not choose:
@@ -3493,7 +3991,7 @@ def run_gui():
             set_busy(False)
             return
         try:
-            app.launch_update_script(bat_path, content_root)
+            app.launch_update_agent(job_path)
             # 脚本已分离启动, 启动器随即退出; 不重置 busy(窗口即将销毁)
             append_log("绿色版更新脚本已启动, 启动器即将退出 ...")
             on_close(confirm=False)
@@ -3981,6 +4479,18 @@ def run_gui():
     ttk.Label(maintenance_frame,
               text="弹出会话列表, 勾选(可全选)后可恢复(取消归档)或永久删除选中的会话(日志+注册表条目)",
               foreground="#a04040").pack(side="left", padx=(12, 8))
+    # 清理维护: 清空更新暂存目录 / 统一备份目录 (独立文件夹集中管理)
+    cleanup_row = ttk.Frame(maintenance_frame)
+    cleanup_row.pack(fill="x", padx=8, pady=(0, 6))
+    cleanup_update_btn = ttk.Button(cleanup_row, text="清理更新",
+                                    command=on_cleanup_update)
+    cleanup_update_btn.pack(side="left", padx=(0, 8))
+    cleanup_backup_btn = ttk.Button(cleanup_row, text="清理备份",
+                                    command=on_cleanup_backup)
+    cleanup_backup_btn.pack(side="left", padx=(0, 8))
+    ttk.Label(cleanup_row,
+              text="清空 runtime/update (更新暂存) 与 runtime/backup (旧版备份) 文件夹",
+              foreground="#606060").pack(side="left", padx=(4, 8))
 
     # 初始刷新状态
     refresh_status()

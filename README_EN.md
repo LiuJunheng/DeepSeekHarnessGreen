@@ -71,7 +71,7 @@ DeepSeekHarnessLauncher/
 | Start Service | Launch the dsh web service and auto-open the browser (doesn't open a new page if the UI is already open) | Environment ready & service not running |
 | Stop Service | Stop the dsh service | Service running |
 | Open UI | Manually open the dsh UI in the browser (**always opens a new page**, not limited by single-page dedup) | Service running |
-| Check Update | Query the latest dsh version on npm; if newer, prompt you to update; backs up the old version to `runtime/dsh-backup-<version>` first (non-destructive, deletable) | Environment installed & service not running |
+| Check Update | Query the latest dsh version on npm; if newer, prompt you to update; backs up the old version to `runtime/backup/dsh-<version>` first (non-destructive, one-click cleanup under Maintenance) | Environment installed & service not running |
 | Check Green Update | Query this project's latest GitHub Release (the green edition's outer layer: launcher/plugins/docs); when found → download to `runtime/update/` → exit the launcher → auto-overwrite and restart. **Does NOT replace `config.json` (your settings) or `runtime/` (your data)**; old files are backed up to `runtime/update/backup/`. See Section 7 | Service not running |
 | Plugin Manager | Open plugin management window: view installed plugins, search plugins (npm registry + GitHub official `dsh-plugin` topic), install/remove plugins (see Section 5) | Environment ready |
 | Data Maintenance | Main window「Data Maintenance」section (stop the service first): **Session Manager** button → session list, **tick (all/individual)** to **restore (unarchive)** or **permanently delete** selected sessions, see Section 6 | After service stopped |
@@ -149,7 +149,7 @@ You can also change the mirror and port in the launcher UI 【Settings】(networ
 >
 > Packed contents (consistent with the GitHub repo): `launcher.py`, `start.bat`, `stop.bat`, `build_exe.bat`, `DSH_Launcher.exe`, `DSH_Launcher.ico`, `config.json`, `README.md`, `README_EN.md`, `LICENSE`, `plugins/`, `skills/dsh-deploy-maintain/` (`DSH_Launcher.exe` is also tracked in the GitHub repo, same source as the Release; `DEV_NOTES.md` and `.gitignore` are dev-side files, not shipped).
 
-- **Latest download** (GitHub Release, tag `v1.0.7`): <https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
+- **Latest download** (GitHub Release, tag `v1.0.8`): <https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
 - Repository: <https://github.com/LiuJunheng/DeepSeekHarnessGreen>
 
 Three steps on a new machine:
@@ -240,15 +240,17 @@ This green edition supports **two fully independent, non-interfering update chan
 | Channel | What it updates | Entry | Update source |
 |---------|-----------------|-------|---------------|
 | Official core | dsh itself (the npm package in `runtime/dsh/`) | 「Check Update」 | Official npm / GitHub |
-| Green-edition outer layer | launcher `launcher.py` / `DSH_Launcher.exe` / `plugins/` / docs etc. | 「Check Green Update」 | This project's GitHub Release |
+| Green-edition outer layer | launcher `launcher.py` / `DSH_Launcher.exe` / `plugins/` / docs etc. | 「Check Green Update」 | This project's GitHub Release (auto-falls back to a Gitee mirror when GitHub is unreachable) |
 
 Each channel judges its own version, downloads its own updates, and backs up separately — **they never touch each other**: core updates only touch `runtime/dsh/`, outer updates only touch the program root (skipping `config.json` and `runtime/`).
 
 ### Green-Edition Outer-Layer Update Flow
-1. Click「Check Green Update」(stop the service first) → query the latest GitHub Release (official API falls back to a domestic mirror on failure).
-2. If newer, a dialog shows the version comparison and update notes → after confirming, download the distribution zip into `runtime/update/` (with progress, size verified).
-3. Auto-extract and generate the overwrite-install script (`runtime/update/update_apply.bat`).
-4. After confirming, **exit the launcher**, and the background script completes automatically: wait for the file lock to release → back up old files to `runtime/update/backup/` → overwrite the program root (skipping `config.json` / `runtime/` / `.git`) → auto-restart the new launcher.
+1. Click「Check Green Update」(stop the service first) → query the latest GitHub Release (official API falls back to a domestic mirror, then to **Gitee** — two tiers: if a Gitee release exists, its manually-uploaded zip asset is downloaded directly; otherwise the whole repo is cloned over the git smart-HTTP protocol; dev-side files like `DEV_NOTES.md`/`.gitignore` are skipped so the result matches the GitHub channel).
+2. If newer, a dialog shows the version comparison and update notes (the source — GitHub or Gitee — is indicated) → after confirming, fetch the new content into `runtime/update/extracted/`:
+   - **GitHub source / Gitee release**: download the distribution zip (with progress, size verified) → safe-extract (Gitee's manually-uploaded release assets download directly, no challenge page);
+   - **Gitee whole-repo snapshot (fallback when no release)**: Gitee's whole-repo zip URL returns a JS challenge page (not a real zip), so the launcher clones the whole repo over the **git smart-HTTP protocol** (equivalent to a snapshot, using only Python stdlib).
+3. Write the update job file (`runtime/update/update_job.json`).
+4. After confirming, **exit the launcher**, and the standalone updater (`DSH_Update.exe`) completes everything in its own process: it copies itself to `runtime/tmp` and runs from the copy (so it can replace itself too) → waits for the file lock to release → backs up old files to `runtime/update/backup/` → overwrites the program root (skipping `config.json` / `runtime/` / `.git`) → auto-restarts the new launcher. On failure it shows a dialog with manual download links (GitHub release page / Gitee repo page + zip direct link).
 
 ### Safety & Rollback
 - **Does NOT replace** `config.json` (your custom port/mirror settings) or `runtime/` (your session data / installed environment).

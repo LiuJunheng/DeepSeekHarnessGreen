@@ -16,8 +16,10 @@ DeepSeekHarnessLauncher/
 ├── stop.bat               # 双击这个停止服务
 ├── launcher.py            # 核心：tkinter 图形界面 + 自动环境准备
 ├── DSH_Launcher.exe       # ★ 双击这个开始（exe 版，无需装 Python）
+├── update_agent.py        # 独立更新程序源码（打包为 DSH_Update.exe）
+├── DSH_Update.exe         # ★ 独立更新程序：本体退出后由它完成覆盖安装并重启
 ├── DSH_Launcher.ico       # 启动器专属图标（绿色小鲸鱼，窗口/托盘/exe 三处统一）
-├── build_exe.bat          # 将 launcher.py 打包为 exe 的工具
+├── build_exe.bat          # 将 launcher.py / update_agent.py 打包为 exe 的工具
 ├── config.json            # 配置（镜像源 / 端口 / Node / Python 版本）
 ├── runtime/               # ★ 首次运行自动生成，全部本地数据都在这（绿色整合）
 │   ├── node/              # 便携版 Node.js（自动下载）
@@ -65,8 +67,8 @@ DeepSeekHarnessLauncher/
 | 启动服务 | 拉起 dsh web 服务并自动开浏览器（界面已在浏览器中打开则不重复开新页） | 环境已就绪且服务未运行 |
 | 停止服务 | 停止 dsh 服务 | 服务运行中 |
 | 打开界面 | 手动在浏览器打开 dsh 界面（**必定打开新页面**，不受单页面去重限制） | 服务运行中 |
-| 检查更新 | 查询 npm 上 dsh 最新版本，有新版则弹窗让您选择是否更新；更新前自动备份旧版本到 `runtime/dsh-backup-<版本>`，不覆盖、可手动删除 | 环境已安装且服务未运行 |
-| 检查绿色版更新 | 查询本项目 GitHub 最新 Release（本绿色版外围：启动器/插件/文档等）；发现新版 → 下载到 `runtime/update/` 暂存 → 退出启动器 → 自动覆盖安装并重启。**不替换 `config.json`（你的设置）与 `runtime/`（你的数据）**，旧文件自动备份到 `runtime/update/backup/`，详见第六章 | 服务未运行 |
+| 检查更新 | 查询 npm 上 dsh 最新版本，有新版则弹窗让您选择是否更新；更新前自动备份旧版本到 `runtime/backup/dsh-<版本>`，不覆盖、可在「数据维护」一键清理 | 环境已安装且服务未运行 |
+| 检查绿色版更新 | 查询本项目 GitHub 最新 Release（本绿色版外围：启动器/插件/文档等）；发现新版 → 下载到 `runtime/update/` 暂存 → **退出启动器 → 由独立更新程序 `DSH_Update.exe` 完成覆盖安装并重启**（它会等本体退出、备份旧文件、覆盖新版、再启动）；若更新失败会弹窗提示**手动下载地址**（GitHub 发布页 + 更新包直链）。**不替换 `config.json`（你的设置）与 `runtime/`（你的数据）**，旧文件自动备份到 `runtime/update/backup/`，详见第六章 | 服务未运行 |
 | 插件管理 | 弹出插件管理窗口：查看已安装插件、搜索插件（npm 注册表 + GitHub 官方 `dsh-plugin` 话题页）、安装 / 移除插件（详见第五章） | 环境已就绪 |
 | 数据维护区 | 主窗口「数据维护」区（需先停止服务）：**会话管理**按钮 → 弹出会话列表，**勾选（可全选/单选）**后可**恢复（取消归档）**或**永久删除**选中的会话，详见第六章 | 服务停止后 |
 | 刷新状态 | 手动重新检测环境与服务状态 | 任何时候 |
@@ -148,9 +150,9 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 ### 轻量分发 zip（精简在线版，约 8MB）
 > 相较"整目录迁移"，此 zip **不含 `runtime/`（不带已下载的环境与会话）**，新机联网后由启动器自动下载 Node / Python / dsh，体积小、适合放到 GitHub Release 分发。
 >
-> 打包内容与 GitHub 仓库（main 分支）**保持一致**：`launcher.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`DSH_Launcher.ico`、`config.json`、`README.md`、`README_EN.md`、`LICENSE`、`plugins/`、`skills/dsh-deploy-maintain/`（`DSH_Launcher.exe` 也上传 GitHub 仓库，与 Release 同源；`DEV_NOTES.md` 与 `.gitignore` 是开发侧文件，不进 release）。
+> 打包内容与 GitHub 仓库（main 分支）**保持一致**：`launcher.py`、`update_agent.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`DSH_Update.exe`、`DSH_Launcher.ico`、`config.json`、`README.md`、`README_EN.md`、`LICENSE`、`plugins/`、`skills/dsh-deploy-maintain/`（`DSH_Launcher.exe` / `DSH_Update.exe` 也上传 GitHub 仓库，与 Release 同源；`DEV_NOTES.md` 与 `.gitignore` 是开发侧文件，不进 release）。
 
-- **最新下载**（GitHub Release，tag `v1.0.7`）：<https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
+- **最新下载**（GitHub Release，tag `v1.0.8`）：<https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
 - 仓库：<https://github.com/LiuJunheng/DeepSeekHarnessGreen>
 
 新机使用三步：
@@ -160,7 +162,7 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 
 重新生成该 zip（在项目根目录 PowerShell 执行）：
 ```powershell
-Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, DSH_Launcher.ico, config.json, README.md, README_EN.md, LICENSE, "plugins", "skills" -DestinationPath DSH_Launcher_GreenPortable_Online_<日期>.zip -CompressionLevel Optimal
+Compress-Archive -Path launcher.py, update_agent.py, start.bat, stop.bat, build_exe.bat, DSH_Launcher.exe, DSH_Update.exe, DSH_Launcher.ico, config.json, README.md, README_EN.md, LICENSE, "plugins", "skills" -DestinationPath DSH_Launcher_GreenPortable_Online_<日期>.zip -CompressionLevel Optimal
 ```
 > **重要（zip 目录结构）**：`-Path` 里的插件/skill 必须传**目录名** `"plugins"` / `"skills"`（zip 内保留 `plugins/`、`skills/` 前缀）。**不能**传 `"plugins\dsh-archive-purge"` 这种子路径——`Compress-Archive` 会把该目录直接打在 zip 根、**丢掉 `plugins/` 前缀**，更新覆盖时会把插件错位拷到程序根目录（详见 DEV_NOTES 需求 #21）。打包后建议用 `tar -tf xxx.zip`（或资源管理器打开）确认 zip 根下有 `plugins/`、`skills/` 文件夹且 `launcher.py` 等文件。
 >
@@ -241,21 +243,26 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 | 通道 | 更新对象 | 入口 | 更新源 |
 |------|----------|------|--------|
 | 官方核心 | dsh 本体（`runtime/dsh/` 的 npm 包） | 「检查更新」 | 官方 npm / GitHub |
-| 绿色版外围 | 启动器 `launcher.py` / `DSH_Launcher.exe` / `plugins/` / 文档等 | 「检查绿色版更新」 | 本项目 GitHub Release |
+| 绿色版外围 | 启动器 `launcher.py` / `DSH_Launcher.exe` / `plugins/` / 文档等 | 「检查绿色版更新」 | 本项目 GitHub Release（连不通时自动转 Gitee 镜像） |
 
 两条通道各自判断版本、各自下载、各自备份，**绝不互相触碰**：核心更新只动 `runtime/dsh/`，外围更新只动程序根目录（并跳过 `config.json` 与 `runtime/`），互不干扰、互不依赖。
 
 ### 绿色版外围更新流程
-1. 点「检查绿色版更新」（需先停止服务）→ 查询 GitHub 最新 Release（官方 API 失败自动降级国内镜像）。
-2. 有新版则弹窗显示版本对比与更新说明 → 确认后下载分发 zip 到 `runtime/update/`（带进度、校验大小）。
-3. 自动解压并生成覆盖安装脚本（`runtime/update/update_apply.bat`）。
-4. 确认后**退出启动器**，由后台脚本自动完成：等待文件锁释放 → 备份旧文件到 `runtime/update/backup/` → 覆盖程序根目录（跳过 `config.json` / `runtime/` / `.git`）→ 自动重启新版启动器。
+1. 点「检查绿色版更新」（需先停止服务）→ 查询 GitHub 最新 Release（官方 API 失败自动降级国内镜像，再失败自动转 **Gitee**——两级策略：有发布版优先用发布版 zip 附件直连下载，无发布版才回退 git 协议克隆整仓快照；覆盖时统一跳过 `DEV_NOTES.md`/`.gitignore` 等开发侧文件，保证与 GitHub 更新结果一致）。
+2. 有新版则弹窗显示版本对比与更新说明（更新来源为 GitHub 或 Gitee 会分别提示）→ 确认后获取新版内容到 `runtime/update/extracted/`：
+   - **GitHub 来源 / Gitee 发布版**：下载分发 zip（带进度、校验大小）→ 安全解压（Gitee 手动上传的 release 附件实测可直连下载，不走挑战页）；
+   - **Gitee 整仓快照（无发布版时兜底）**：Gitee 的整仓 zip 下载地址会返回 JS 挑战页拿不到真实包，启动器改用 **git 智能 HTTP 协议克隆整仓**（等效整仓快照，只依赖 Python 标准库）。
+3. 生成**更新任务文件**（`runtime/update/update_job.json`，内含新版路径与手动下载地址）。
+4. 确认后**退出启动器**，启动独立更新程序 `DSH_Update.exe` 完成后续全部动作：
+   等本体退出并释放文件锁 → 备份旧文件到 `runtime/update/backup/` → 覆盖程序根目录（跳过 `config.json` / `runtime/` / `.git`，连 `DSH_Update.exe` 自身也会先复制到 `runtime/tmp` 再从副本运行，保证自己能替换成新版）→ 自动重启新版启动器。
+5. 全程有独立进度窗口显示状态；**若失败会弹窗说明原因，并给出手动下载地址**（GitHub 发布页 / Gitee 仓库页 + 更新包直链），程序不受影响可继续使用当前版本。
 
 ### 安全与回退
 - **不替换** `config.json`（你自定义的端口/镜像设置）与 `runtime/`（你的会话数据 / 已装环境）。
 - 覆盖前旧文件自动备份到 `runtime/update/backup/`，新版有问题可手动复制回根目录回退。
 - 分发 zip 命名约定：`DSH_Launcher_GreenPortable_Online_<日期>_v<版本>.zip`，Release tag 为 `v<版本>`（当前 `v1.0.8`）。
 - 内置插件源码随绿色版更新，但**已安装**到 `runtime/dsh-home/profiles/web` 的插件副本是 pnpm 拷贝，需到「插件管理」重新安装本地插件才生效。
+- **手动更新方式（自动更新失败时的备选）**：打开 GitHub 发布页下载最新 zip → 解压 → 把解压得到的文件**覆盖**到程序根目录（**不要**覆盖 `config.json` 与 `runtime/` 文件夹）→ 重新双击启动。
 
 ## 八、内置 Python 与 exe 打包
 
@@ -273,10 +280,12 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 > 注：exe 与 start.bat 共用同一套 `runtime/`，二选一使用即可，数据完全互通。
 
 ### 重新打包 exe
-改过 `launcher.py` 后想更新 exe，双击 **build_exe.bat** 即可：
+改过 `launcher.py` / `update_agent.py` 后想更新 exe，双击 **build_exe.bat** 即可：
 1. 自动定位 Python（内置优先，其次系统）
 2. 本地安装 PyInstaller 到 `runtime/pyinstaller`（清华镜像，不动系统环境、不用 C 盘）
 3. 打包单文件 `dist\DSH_Launcher.exe` 并复制到项目根目录
+4. 同时打包独立更新程序 `dist\DSH_Update.exe` 并复制到项目根目录
+5. 打包时会自动把内置的 VC 运行库（`vcruntime140.dll` / `vcruntime140_1.dll` / `vcruntime140_threads.dll`）一并打进两个 exe，目标机器无需另装 VC++ 运行库（详见下方"常见问题"末行）
 
 ### 手动下载内置 Python（可选）
 若不想等自动下载，可手动把 python-build-standalone 的
@@ -310,6 +319,8 @@ Compress-Archive -Path launcher.py, start.bat, stop.bat, build_exe.bat, DSH_Laun
 | dsh 网页打不开 | 看 `runtime/server.log`；确认防火墙没拦 127.0.0.1 |
 | 设置 API Key 时报 `EPERM: rename denied` | 偶发，属安全软件（如火绒）实时扫描与写文件并发冲突。重试一次即可保存成功；若频繁出现，把 `DeepSeekHarnessLauncher` 目录加入安全软件白名单 |
 | 安装插件时日志报 `SyntaxError: Unexpected token '\ufeff'` | 该 npm 包的 `package.json` 带了 UTF-8 BOM（发布者的编码问题），dsh 的 JSON 解析会崩溃。已内置修复：启动器会在插件命令前自动清除这些 BOM 并重试，正常重试后即可装成功 |
+| exe 双击报 `Failed to load Python DLL ... 找不到指定的模块` | 与"是否用内置 python"无关——exe 启动时会把**内嵌**的 python310.dll 解压到 `%TEMP%\MEIxxxx` 再加载（PyInstaller 正常机制）。报错是目标机器缺新版 VC++ 运行库导致。绿色版已修复：最新 exe 已把 `vcruntime140_1.dll`、`vcruntime140_threads.dll` 等一并打进包里。目标机器处理：直接把新 `DSH_Launcher.exe` **和 `DSH_Update.exe`** 一起复制覆盖旧文件（免安装），或装一次微软 VC++ 2015-2022 运行库 |
+| 绿色版更新失败 / 更新后没生效 | 独立更新程序会弹窗说明失败原因，并给出手动下载地址（GitHub 发布页 + 更新包直链）。备选：打开 GitHub 发布页下载最新 zip → 解压 → 把解压得到的文件覆盖到程序根目录（**不要**覆盖 `config.json` 与 `runtime/` 文件夹）→ 重新双击启动 |
 
 ## 十二、开源协议
 
