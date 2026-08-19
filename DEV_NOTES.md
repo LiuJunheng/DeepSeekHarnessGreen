@@ -831,6 +831,15 @@
     - **处理**：① 删除正文"操作按钮"表格下方的 `> **专属图标**：...（绿色小鲸鱼 / 不再是 PyInstaller 默认图标）` 引用块；② 目录树里 `DSH_Launcher.ico` 的注释由"启动器专属图标（绿色小鲸鱼，窗口/托盘/exe 三处统一）"改为中性描述 `启动器图标（窗口 / 系统托盘 / exe 使用）`，保留"这个文件是干嘛的"事实，去掉营销措辞。
     - **经验**：README 里区分**"用户需要的事实"**（图标用的是本文件、窗口/托盘/exe 都用它）与**"项目自我标榜"**（小鲸鱼萌、不再是默认图标、一眼区分）。前者保留（帮助用户了解文件用途），后者去掉（不提供使用价值、纯氛围感）。同理可推广到其它"专属 / 一眼 / 不再是默认"类形容——凡是只说给作者爽、对用户无动作指导的，都该删。README_EN 待同步。
 
+81. **【发布】v1.0.11 发布：Gitee 下载兜底 + README 营销化优化（2026-08-20）**：
+    - **动机**：v1.0.10 在另一台电脑整包覆盖时丢了 #75 的 Gitee 下载兜底代码，本工作区已重加（见 #75/#76），并用 `git rebase` 把远程 v1.0.10 发布提交合并进本地（避免 merge 噪音、历史线性）；README 做了营销化优化（亮点速览/插件一览/章节整合/常见问题与专属图标精简，见 #76-#80）。这批改动 commit 推 GitHub 后要对外放 Release 供绿色版自更新。
+    - **新增/变更内容**：① 恢复 `prepare_update_content_root` 的 GitHub 下载失败自动切 Gitee 重试 + `download_worker` 取 source 顺序（#75）；② README 优化全量落盘；③ 版本号升 `1.0.11`、日期 2026年08月20日（launcher.py `GREEN_VERSION` 唯一来源，About/更新查询沿用）；④ 重打包 `DSH_Launcher.exe`/`DSH_Update.exe`（含兜底 + 版本号）。
+    - **发布约定更新（v1.0.11 起）**：**Release 只上传一个绿色 zip** `DSH_Launcher_GreenPortable_Online_<日期>_v<版本>.zip`——插件（`plugins/`）与技能（`skills/dsh-deploy-maintain/`）本身已包含在绿色 zip 内，**不再单独打 skill/插件 zip CHOT 上传**（用户明确要求，替代 v1.0.10 的"3 个 zip 过渡"做法）。
+    - **构建流程（实测）**：`build_exe.bat` 重打两个 exe（PyInstaller 6.22，`runtime\python\python\python.exe`，约 17 秒/个）→ 改 `runtime/tmp/build_release_zip.py` 的 `GREEN_VERSION=1.0.11`、`GREEN_DATE=20260820`，并按新约定**删除 `build_skill_zip` 函数与 main 里的 skill 调用**（zip 内仍打 `plugins/`、`skills/dsh-deploy-maintain/` 目录）→ 运行生成 `DSH_Launcher_GreenPortable_Online_20260820_v1.0.11.zip`（17.6MB，14 根目录成员：12 顶层文件 + plugins + skills），校验通过。
+    - **提交推送**：改动 `launcher.py`、`runtime/tmp/build_release_zip.py`、DEV_NOTES 一并 commit；打 tag `v1.0.11` 指向该提交并 push GitHub（tag 需与 `GREEN_VERSION` 一致、带 v 前缀）。Gitee 由用户自行配置镜像同步，**不手动 push**。
+    - **发布（后续）**：GitHub Release `v1.0.11` 上传上述绿色 zip（用 `GH_TOKEN`，API 或托管工具）。**重复提醒**：Gitee 上传同名附件前须先删旧附件才覆盖（避坑 #72）；本机未代理时 github push/传资产易被墙，需代理或重试（#74）。
+    - **经验（冲大小）**：构建 zip 前先 `Get-ChildItem *.zip` 看清根目录里有哪些 zip；`.gitignore` 的 `DSH_Launcher_*.zip` 已排除绿色 zip 不入仓库，无需 `git rm`；改 `build_release_zip.py` 只改版本/日期即可，功能（deflate、顶层目录保留、SKIP 开发侧文件）稳定复用。
+
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验
