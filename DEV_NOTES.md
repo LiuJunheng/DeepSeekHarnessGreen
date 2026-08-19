@@ -839,6 +839,15 @@
     - **提交推送**：改动 `launcher.py`、`runtime/tmp/build_release_zip.py`、DEV_NOTES 一并 commit；打 tag `v1.0.11` 指向该提交并 push GitHub（tag 需与 `GREEN_VERSION` 一致、带 v 前缀）。Gitee 由用户自行配置镜像同步，**不手动 push**。
     - **发布（后续）**：GitHub Release `v1.0.11` 上传上述绿色 zip（用 `GH_TOKEN`，API 或托管工具）。**重复提醒**：Gitee 上传同名附件前须先删旧附件才覆盖（避坑 #72）；本机未代理时 github push/传资产易被墙，需代理或重试（#74）。
     - **经验（冲大小）**：构建 zip 前先 `Get-ChildItem *.zip` 看清根目录里有哪些 zip；`.gitignore` 的 `DSH_Launcher_*.zip` 已排除绿色 zip 不入仓库，无需 `git rm`；改 `build_release_zip.py` 只改版本/日期即可，功能（deflate、顶层目录保留、SKIP 开发侧文件）稳定复用。
+82. **【发布】v1.0.11 手动上传 Gitee Release + 同步英文 README（2026-08-20，需求 #48 延伸）**：
+    - **背景（用户明确）**：Gitee 已设镜像同步 GitHub 仓库，**代码与 tag 会自动同步、不用手动 push**；但 **Gitee 的 Release 不会同步、必须手动上传 zip**；v1.0.11 起 Release 只上传一个绿色 zip。
+    - **Gitee Release 手动上传（实测方法，用 Gitee 私密令牌 Personal Access Token）**：
+      1. 确认 tag 已镜像到 Gitee：`git ls-remote gitee | Select-String v1.0.11`（`git ls-remote gitee` 走本地已配的 gitee remote；只读无需令牌）。比对 `refs/tags/v1.0.11^{}` 指向的 commit 与本地 commit 一致即到位。
+      2. 查是否已有同名 release：`GET /api/v5/repos/{owner}/{repo}/releases?access_token=...&per_page=20`（Gitee 返回顺序并非创建时间序，勿凭第 0 项判断；按 tag_name 过滤）。
+      3. 创建：`POST /api/v5/repos/{owner}/{repo}/releases`，JSON body 含 `access_token`/`tag_name`/`target_commitish`/`name`/`body`/`prerelease`（`Content-Type: application/json;charset=UTF-8`）。返回 `id` 与 assets（tag 会自动带上 `v1.0.11.zip`/`v1.0.11.tar.gz` 两个源码归档）。
+      4. 上传附件：`POST /api/v5/repos/{owner}/{repo}/releases/{release_id}/attach_files?access_token=...&name=<文件名>` + `--form "file=@<绝对路径>;<文件名>"`，成功返回 `browser_download_url`（`https://gitee.com/.../releases/download/<tag>/<zip>`）。
+      - 若之前 Gitee 已传同名附件，需先删旧附件再传（#72）。**令牌含在临时 JSON 里，用完立即删除该临时文件**。本机未代理时 GitHub 侧会网络限速（用 `git -c http.postBuffer=52428800 push` 去 lowSpeed 超时多试几次；直连会 Connection reset，代理上传又 <1000B/s，需耐心重试）。
+    - **同步英文 README**：README_EN.md 全量按中文优化版对齐——新增 Highlights；插件章节整合（管理维护 + 内置 6 插件一览表 + 按功能分组详解，补 `dsh-sidebar-lite`）；目录树补 `update_agent.py`/`DSH_Update.exe`；删除"专属图标"营销描述与发布侧打包命令（Compress-Archive 等）细节；FAQ 精简；开源协议统一 Apache-2.0（去掉原 dsh-session-rewind 单独 MIT 说明）；版本引用升至 v1.0.11。中文 README 仍为维护主体、随版本发布翻译一次。
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
