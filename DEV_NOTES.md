@@ -774,6 +774,7 @@
 
 74. **【发布】v1.0.10 发布：新增会话导入插件 + 防火墙端口自动放行 + 局域网 http 兼容（2026-08-19）**：
     - **背景**：自 v1.0.9 后累积三块实质变更，且 GitHub 上 `v1.0.9` 已占用，按惯例升 **v1.0.10** 双平台分发。
+    - **精简约定（本次是最后一次并发 3 个 zip）**：自 **v1.0.11 起**，**不再单独把插件/技能打 zip 上传 Release**——插件（`plugins/`）与技能（`skills/dsh-deploy-maintain/`）本身在仓库里、也已在绿色 zip 内，Release 只上传**一个**绿色 zip。本版仍按老方式上传了 3 个 zip（绿色 zip + 技能 zip + 插件 zip）作为过渡。
     - **version 变更（共 6 处）**：`launcher.py` 的 `GREEN_VERSION` → `1.0.10`、`GREEN_VERSION_DATE` → 2026年08月19日；README.md / README_EN.md 的"最新下载 tag"与"当前版本"各 2 处共 4 处同步（不含 v 前缀）。
     - **新增·内置插件 dsh-session-import（会话导入）**：`plugins/dsh-session-import/`（client.js + index.js + cordis.patch.yml + README），支持把旧会话批量导入新库，随绿色版分发，需到「插件管理」重新安装本地插件才生效（pnpm 拷贝）。
     - **新增·防火墙端口自动放行（需求 #54）**：launcher 启动时检测 3080 监听进程（node.exe）并按程序写入放行规则，解决局域网手机连不上问题；`py_compile` 通过、生产环境手动执行验证 exit=0、`Test-NetConnection 局域网IP -Port 3080` 返回 `TcpTestSucceeded: True`。
