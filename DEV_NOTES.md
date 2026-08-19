@@ -772,6 +772,16 @@
     - **批量跟帖（2026-08-18）**：用 GraphQL search（`repo:deepseek-ai/deepseek-harness 403/transport failure/pickDirectory/Chrome...`）在官方 Discussions 搜到 90+ 条相关帖子，正文核对后确认 **7 条为同一问题**（Chrome/Chromium 剥离 loopback Origin 端口 → 信任围栏按含端口 host 精确比较 → 全部 /api 403）：#313 / #1119 / #910 / #894 / #1188 / #1323 / #2009。已逐条自动跟帖（中英双语，含 BUG 帖 #3106 地址 + 绿色版方案与双平台仓库），跟帖前先查该帖是否已有本账号评论防重复。**经验**：批量跟帖同问题帖子前先 `search` 关键字 + 读正文核对（避免误跟"403 但不同根因"如 API 额度 403），且必须做"本账号是否已跟过"的去重检查。
     - **发帖要点（可复用）**：① 官方 Discussion 只能 GraphQL 建（`mutation { createDiscussion(input:{repositoryId, categoryId, title, body}) }`，repo/category 的 node id 用 `repository(owner,name){id}` 与 `discussionCategories{id}` 先查）；② 建 Discussion 需要 token 对目标仓库有权限——**fine-grained token 即使有 `repo` 也只对"已选仓库"生效，对外部仓库（deepseek-ai）报 `Resource not accessible by integration`；classic PAT 带 `repo` scope 可对外部公共仓库建 Discussion**；③ body 中文字符走独立 UTF-8 文件 + `[System.Text.Encoding]::UTF8.GetBytes` 字节流（同避坑 #66）；④ 帖子正文从用户视角写好根因、复现、修复建议，附官方代码行号与推荐 diff，官方维护者能直接定位。
 
+74. **【发布】v1.0.10 发布：新增会话导入插件 + 防火墙端口自动放行 + 局域网 http 兼容（2026-08-19）**：
+    - **背景**：自 v1.0.9 后累积三块实质变更，且 GitHub 上 `v1.0.9` 已占用，按惯例升 **v1.0.10** 双平台分发。
+    - **version 变更（共 6 处）**：`launcher.py` 的 `GREEN_VERSION` → `1.0.10`、`GREEN_VERSION_DATE` → 2026年08月19日；README.md / README_EN.md 的"最新下载 tag"与"当前版本"各 2 处共 4 处同步（不含 v 前缀）。
+    - **新增·内置插件 dsh-session-import（会话导入）**：`plugins/dsh-session-import/`（client.js + index.js + cordis.patch.yml + README），支持把旧会话批量导入新库，随绿色版分发，需到「插件管理」重新安装本地插件才生效（pnpm 拷贝）。
+    - **新增·防火墙端口自动放行（需求 #54）**：launcher 启动时检测 3080 监听进程（node.exe）并按程序写入放行规则，解决局域网手机连不上问题；`py_compile` 通过、生产环境手动执行验证 exit=0、`Test-NetConnection 局域网IP -Port 3080` 返回 `TcpTestSucceeded: True`。
+    - **修复·局域网 http 下会话记录/工作区异常**：非安全上下文（http + 非回环 IP）下 `crypto.randomUUID` 缺失，`launcher.py` 打补丁注入基于 `getRandomValues` 的 polyfill 兜底。
+    - **重打包**：`build_exe.bat` 重打 `DSH_Launcher.exe` / `DSH_Update.exe`；绿色 zip 用 `runtime/tmp/build_release_zip.py` 打包（保留 `plugins/`、`skills/dsh-deploy-maintain/` 顶层目录，排除 `DEV_NOTES.md`/`.gitignore`），并发 3 个 zip（绿色 zip + 技能 zip + 会话导入插件 zip）。
+    - **双平台分发**：GitHub Release `v1.0.10`（`GH_TOKEN` 可用）+ Gitee Release（`GITEE_TOKEN` 需用户提供后配置）。**重复：Gitee 上传附件前必须先按 attachment id 删除同名旧附件再上传**，否则同名附件不覆盖（避坑 #72）；建 Release 必须带 `target_commitish=master`（否则 400）。
+    - **发布结果（2026-08-19 实测）**：待推送源码与 tag 至 GitHub + Gitee 的 master，并创建双平台 `v1.0.10` Release、上传绿色 zip + 技能 zip + 插件 zip 资产。
+
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验
