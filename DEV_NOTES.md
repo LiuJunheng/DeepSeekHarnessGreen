@@ -780,7 +780,7 @@
     - **修复·局域网 http 下会话记录/工作区异常**：非安全上下文（http + 非回环 IP）下 `crypto.randomUUID` 缺失，`launcher.py` 打补丁注入基于 `getRandomValues` 的 polyfill 兜底。
     - **重打包**：`build_exe.bat` 重打 `DSH_Launcher.exe` / `DSH_Update.exe`；绿色 zip 用 `runtime/tmp/build_release_zip.py` 打包（保留 `plugins/`、`skills/dsh-deploy-maintain/` 顶层目录，排除 `DEV_NOTES.md`/`.gitignore`），并发 3 个 zip（绿色 zip + 技能 zip + 会话导入插件 zip）。
     - **双平台分发**：GitHub Release `v1.0.10`（`GH_TOKEN` 可用）+ Gitee Release（`GITEE_TOKEN` 需用户提供后配置）。**重复：Gitee 上传附件前必须先按 attachment id 删除同名旧附件再上传**，否则同名附件不覆盖（避坑 #72）；建 Release 必须带 `target_commitish=master`（否则 400）。
-    - **发布结果（2026-08-19 实测）**：待推送源码与 tag 至 GitHub + Gitee 的 master，并创建双平台 `v1.0.10` Release、上传绿色 zip + 技能 zip + 插件 zip 资产。
+    - **发布结果（2026-08-19 实测）**：源码与 tag v1.0.10 已推送 GitHub + Gitee 的 master；双平台 `v1.0.10` Release 均已创建并上传 3 个 zip：GitHub Release id=372932572（assets=3）、Gitee Release id=821885（assets=3 个手动 zip + Gitee 自动生成的 v1.0.10.zip/tar.gz 源码包）。**网络避坑**：本机未代理前 `github.com` / `uploads.github.com` 被墙（普通 git push 与 Release 资产上传走不通，仅 `api.github.com` 可达，只适合 Git Data API 推源码）；开全局代理后可正常 git push + 传资产，但少数大体积 push 会因连接被代理中断而**需重试一次**。Gitee push 认证用 `https://oauth2:<token>@gitee.com/<owner>/<repo>.git`（用 `用户名:token@` 会报 `token username invalid` 403）。
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
