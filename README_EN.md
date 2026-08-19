@@ -38,7 +38,7 @@ DeepSeekHarnessLauncher/
 │   ├── tmp/               # Temporary files
 │   ├── server.pid         # Service process ID
 │   └── server.log         # Service runtime log
-├── plugins/               # Built-in plugin sources (dsh-archive-purge / dsh-session-rewind / dsh-file-browser / dsh-usage-stats)
+├── plugins/               # Built-in plugin sources (dsh-archive-purge / dsh-session-rewind / dsh-file-browser / dsh-usage-stats / dsh-session-import)
 ├── skills/                # This project's DSH experience Skill (installed to TRAE global skills)
 └── README.md
 ```
@@ -223,6 +223,11 @@ The launcher's `plugins/` ships with **`dsh-archive-purge`**: after installing a
 
 ### Companion: Built-in「Session Rewind」WebUI Plugin
 The launcher's `plugins/` ships with **`dsh-session-rewind`**: solves the problem of dsh sessions being **permanently poisoned** after a tool-run crash (`Cannot read properties of undefined (reading 'prepare')`) — the crashed turn leaves orphan `tool_calls` in the log, and every later turn is rejected with API 400. After installing and restarting the service, the WebUI「Settings → Session Rewind」can: list all sessions →「Analyze」any session (per-turn info: user question / step count / tool-call count / error-code stats / completeness) → click「Rewind to here」on any **completed** turn, which calls the official `session.fork` to derive a **clean continuation session** from that turn and opens it automatically (the original session is kept and can be cleaned up later via「Session Manager」). The UI is **card-based layout** (session titles and user-question descriptions each take a full row and are fully readable, with workspace/creation time/steps/tool calls below, in the same style as usage stats). It's a pure plugin (modifies no official files); install via「Plugin Manager → Install from local plugin folder…」selecting `plugins/dsh-session-rewind` (CLI equivalent: `python launcher.py --install-plugin plugins\dsh-session-rewind`). See [plugins/dsh-session-rewind/README.md](plugins/dsh-session-rewind/README.md).
+
+### Built-in Plugin: dsh-session-import (session import)
+The launcher's `plugins/` ships with **`dsh-session-import`**: import a session ZIP exported by the「Session log」button (`dsh-session-<id>.zip`, from the official `GET /api/session.export`) or a single `.jsonl` log back into this machine — the inverse of the official export. After installing and restarting the service, go to WebUI「Settings → Session Import」and pick a file: it auto-detects ZIP (via the `PK` magic) or plain JSONL, validates the session header (version/fields), then writes back under `runtime/dsh-home/sessions/<project>/<sessionId>/` keyed by the log header's `cwd` (zstd frames byte-identical to the official persistence backend), stores `media/` attachments content-addressed in the attachment store, and attaches the session to the matching workspace (sessions whose `cwd` directory does not exist here stay in「Ungrouped」but still appear in the session list). Re-importing the same session id is skipped and never overwrites. It's a pure plugin (modifies no official files); install via「Plugin Manager → Install from local plugin folder…」selecting `plugins/dsh-session-import` (CLI equivalent: `python launcher.py --install-plugin plugins\dsh-session-import`). See [plugins/dsh-session-import/README.md](plugins/dsh-session-import/README.md).
+
+> Note: import is "restore/view" semantics — the session appears in the list for viewing history, but there is no generic official UI entry to "continue chatting from that session"; projection metadata such as titles is filled in later by DSH, so it may briefly show「(Untitled)」.
 
 ### Built-in Plugin: dsh-usage-stats (usage stats + per-turn "this turn tokens")
 The launcher's `plugins/` ships with **`dsh-usage-stats`** (v0.2.0, one plugin with two feature surfaces, installed/uninstalled together):

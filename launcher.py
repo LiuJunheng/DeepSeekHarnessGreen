@@ -1850,7 +1850,7 @@ class Launcher:
     def bundled_plugin_dirs(self):
         """返回程序目录 plugins/ 下所有内置插件目录 (含 package.json 的子目录)。
         内置插件 (dsh-archive-purge / dsh-session-rewind / dsh-file-browser /
-        dsh-usage-stats) 以源码形式随绿色版一起发布, 需要时用 file: 本地安装。"""
+        dsh-usage-stats / dsh-session-import) 以源码形式随绿色版一起发布, 需要时用 file: 本地安装。"""
         result = []
         plugins_root = os.path.join(BASE_DIR, "plugins")
         if not os.path.isdir(plugins_root):
@@ -2361,6 +2361,42 @@ class Launcher:
             pass
         return result
 
+    def ensure_firewall_port(self, port):
+        """为局域网访问放行指定 TCP 端口入站 (Windows 防火墙, 幂等可重复)。
+        背景 (2026-08-18, 需求 #54): 局域网模式下服务由 node.exe 监听 3080, 但旧版
+        防火墙规则按"程序 (dsh_launcher.exe)"放行, 只对该 exe 生效, node.exe 入站
+        仍被拦, 导致手机连不上。绿色版要在任意电脑都能用, 必须改成按端口放行, 并在
+        每次启动服务前自动确保规则存在, 而不是依赖用户手动设置。
+        已存在同名规则 (同名多条 netsh 会累加, 会重复报已存在), 故先按名删除再新增,
+        保证每次调用都能落到"端口级 TCP 放行"的最终状态; 删除失败(规则不存在)忽略。
+        需管理员权限; 无权限/非 Windows/命令失败时仅记日志, 不阻断主流程。
+        """
+        if sys.platform != "win32":
+            return False
+        rule_name = "DSH Green 3080 %d" % port
+        # 先清理同名旧规则 (无则忽略), 再新增端口级放行
+        try:
+            subprocess.call(
+                ["netsh", "advfirewall", "firewall", "delete", "rule", "name=%s" % rule_name],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            pass
+        try:
+            command = ["netsh", "advfirewall", "firewall", "add", "rule",
+                       "name=%s" % rule_name, "dir=in", "action=allow",
+                       "protocol=TCP", "localport=%d" % port]
+            result = subprocess.call(command, stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL)
+            if result != 0:
+                self.log("[警告] 无法写入 Windows 防火墙放行规则 (需要管理员权限): "
+                         "局域网访问端口 %d 可能不可达" % port)
+                return False
+            self.log("已放行 Windows 防火墙端口 %d (入站 TCP, 局域网可访问)" % port)
+            return True
+        except OSError as error:
+            self.log("[警告] 写入 Windows 防火墙规则出错: %s" % error)
+            return False
+
     # ---------- WebUI 单页面去重 (心跳检测) ----------
     def _ui_beacon_token(self):
         """读取(或生成并持久化)心跳令牌, 防止其它本地页面伪造"界面已打开"的上报"""
@@ -2565,6 +2601,14 @@ class Launcher:
         if not lan_api_patched:
             self.log("[警告] client-connection 局域网补丁未生效: 局域网模式 /api 可能报 403 "
                      "(本机模式不受影响); 可重启服务重试")
+
+        # 局域网模式下为 Web 端口自动放行防火墙 (按端口放行, 任意电脑绿色版可用, 幂等)
+        if self.config.get("dsh_host", "127.0.0.1") == "0.0.0.0":
+            try:
+                web_port = int(self.config.get("dsh_port", 3080))
+            except (ValueError, TypeError):
+                web_port = 3080
+            self.ensure_firewall_port(web_port)
 
         command = self.build_server_command()
         self.log("启动命令: %s" % " ".join(command))

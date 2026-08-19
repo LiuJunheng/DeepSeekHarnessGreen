@@ -1,0 +1,26 @@
+{
+  "name": "dsh-session-import",
+  "version": "0.1.0",
+  "description": "在 WebUI 设置页提供「会话导入」：上传官方导出的会话 ZIP（或原始 .jsonl），校验后写回 DSH 持久化目录并挂到对应工作区",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "license": "MIT"
+}

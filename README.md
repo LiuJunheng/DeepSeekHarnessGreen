@@ -34,7 +34,7 @@ DeepSeekHarnessLauncher/
 │   ├── tmp/               # 临时文件
 │   ├── server.pid         # 服务进程号
 │   └── server.log         # 服务运行日志
-├── plugins/               # 内置插件源码（dsh-archive-purge 清理归档 / dsh-session-rewind 会话回退 / dsh-file-browser 文件浏览 / dsh-usage-stats 用量统计）
+├── plugins/               # 内置插件源码（dsh-archive-purge 清理归档 / dsh-session-rewind 会话回退 / dsh-file-browser 文件浏览 / dsh-usage-stats 用量统计 / dsh-session-import 会话导入）
 ├── skills/                # 本项目的 DSH 经验 Skill（已安装到 TRAE 全局 skills）
 └── README.md / README_EN.md  # 中文说明（维护主体）/ 英文说明（随版本更新翻译一次）
 ```
@@ -226,6 +226,11 @@ Compress-Archive -Path launcher.py, update_agent.py, start.bat, stop.bat, build_
 
 ### 配套：内置「会话回退」WebUI 插件
 启动器 `plugins/` 下自带 **`dsh-session-rewind`** 插件：解决 dsh 会话被工具运行时失效（`Cannot read properties of undefined (reading 'prepare')`）**永久毒化**的问题——崩溃回合会在日志里留下孤儿 `tool_calls`，之后每一轮都被 API 400 拒绝。安装并重启服务后，WebUI「设置 → 会话回退」可：列出全部会话 →「分析」任意会话（逐回合信息：用户问题 / 步骤数 / 工具调用数 / 错误码统计 / 是否完成）→ 在任意一个**已完成**回合上点「回退到此」，调用官方 `session.fork` 从该回合之后派生一个**干净的续接会话**并自动打开（原会话保留，可再交「会话管理」清理）。界面为**卡片式布局**（会话标题、用户问题描述均独占整行完整可读，下方显示工作区/创建时间/步骤/工具调用等具体信息，与用量统计同风格）。它是纯插件（不修改任何官方文件），通过「插件管理 → 选择本地插件文件夹安装…」选择 `plugins/dsh-session-rewind` 目录安装即可（命令行等价物：`python launcher.py --install-plugin plugins\dsh-session-rewind`），详见 [plugins/dsh-session-rewind/README.md](plugins/dsh-session-rewind/README.md)。
+
+### 内置插件：dsh-session-import（会话导入）
+启动器 `plugins/` 下自带 **`dsh-session-import`** 插件：把「Session log」按钮导出的会话 ZIP（`dsh-session-<id>.zip`，来自官方 `GET /api/session.export`）或单个 `.jsonl` 日志**导入回本机**，与官方导出互逆。安装并重启服务后，WebUI「设置 → 会话导入」选择文件即可：自动识别 ZIP（`PK` 魔数）或明文 JSONL，校验会话 header（版本 / 字段）后按日志头部的 `cwd` 写回 `runtime/dsh-home/sessions/<项目>/<会话ID>/`（zstd 帧与官方持久化后端逐字节一致），`media/` 附件按内容寻址写回附件库，并把会话挂到对应工作区（cwd 目录本机不存在时留在「未分组」，仍会出现在会话列表）；重复导入同一会话自动跳过、不覆盖。它是纯插件（不修改任何官方文件），通过「插件管理 → 选择本地插件文件夹安装…」选择 `plugins/dsh-session-import` 目录安装即可（命令行等价物：`python launcher.py --install-plugin plugins\dsh-session-import`），详见 [plugins/dsh-session-import/README.md](plugins/dsh-session-import/README.md)。
+
+> 说明：导入是「恢复/查看」语义——会话出现在列表可查看历史，但官方没有「从该会话继续聊」的通用入口；标题等投影元数据由 DSH 后续补齐，刚导入时可能显示「(无标题)」。
 
 ### 内置插件：dsh-usage-stats（用量统计 + 消息行「本次token」）
 启动器 `plugins/` 下自带 **`dsh-usage-stats`** 插件（v0.2.0，一个插件两个功能面，统一安装/卸载）：

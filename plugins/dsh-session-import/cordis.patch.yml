@@ -1,0 +1,5 @@
+# dsh-session-import bundle patch: 把本插件作为一行插入 profile 插件树。
+# 格式与官方 bundle / 其它内置插件 (dsh-archive-purge 等) 完全一致。
+- insert:
+    - id: session-import
+      name: dsh-session-import

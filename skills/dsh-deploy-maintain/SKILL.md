@@ -277,6 +277,15 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 - **易混**：`randomUUID` 缺失（本文）与「浏览器无 `crypto`」不同——`getRandomValues` 在非安全上下文仍暴露，故用它做兜底可行；不要假设 `crypto` 整体不存在（那样连 getRandomValues 都没得用，得先 `globalThis.crypto = ...` 兜底）。
 - **验证**：项目便携版 Python 3 `py_compile` 通过（**不要用系统 python——可能是 2.7，`nonlocal` 会误报语法错**，本项目校验统一用 `runtime\python\python\python.exe -m py_compile`）；注入 JS 片 `node --check` 通过；重启服务 + 内网 IP Ctrl+F5 强刷新再测会话列表/添加工作区。
 
+### 3.13 局域网手机连不上 / Windows 防火墙自动放行端口（launcher.ensure_firewall_port，2026-08-18，需求 #54）
+
+- **现象**：局域网模式（`dsh_host=0.0.0.0`）下电脑本机浏览器正常、手机用内网 IP 打不开；`netstat` 已显示 `0.0.0.0:3080 LISTENING`，`ipconfig` 本机局域网 IP 正常，网络 DomainAuthenticated、防火墙规则无分域遗漏——但手机就是连不上。
+- **根因**：既有防火墙规则 `dsh_launcher` 是**按「程序（dsh_launcher.exe）」放行**，而实际监听 3080 的是 **`node.exe`**（官方 dsh 是 node 进程）。Windows 按程序放行只对该 exe 生效 → `node.exe` 入站无放行记录，局域网流量被防火墙丢弃；本机能连是回环流量不走防火墙入站过滤。
+- **排错铁律**：先 `netstat -ano | findstr :端口` 确认监听地址与监听进程 → `tasklist /FI "PID eq <pid>"` 确认是 node.exe 还是别的 → 再 `netsh advfirewall firewall show rule name=xxx` 看是"按端口"还是"按程序"放行。**只要按程序放行且程序 ≠ 监听进程，就是漏放行。**
+- **修法（绿色版通用，非一次性手工）**：launcher.py 新增 `ensure_firewall_port(port)`，**按端口放行**（TCP localport），对同规则名**先 delete 再 add**（同名多条 netsh 会累加重复）保证幂等落到最终态；`start_server()` 仅当 `dsh_host==0.0.0.0` 时调用（本机模式不开放），这样任意电脑跑绿色版都能在启动时自动放行，不依赖用户手动配置防火墙。
+- **关键坑**：`subprocess.call` 里 `stdout/stderr=DEVNULL` + 检查返回码判断成败；无管理员权限/非 Windows 时仅记警告**不阻断主流程**；netsh 成功后 `exit=0`。
+- **验证**：`py_compile` 通过；生产同命令执行 `exit=0` 规则成功写入；`Test-NetConnection <本机局域网IP> -Port 3080` 返回 `TcpTestSucceeded: True`。**局限**：本机连本机局域网 IP 多走回环协议栈，未严格走防火墙入站过滤，最终必须用手机实测内网 IP 打开。
+
 ## 四、DSH 插件开发（双端加载 + 路由注册）
 
 ### 4.1 插件 = npm 包 + 双入口（最容易漏）
