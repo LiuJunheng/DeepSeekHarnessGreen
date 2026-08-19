@@ -267,6 +267,16 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 - **验证（runtime/tmp/smoke_port_cleanup.py，3 场景全 PASS）**：① 端口空闲→不动；② 普通进程（命令行无 dsh 特征）→ 不误杀、进程存活；③ 带 `bin.js web --port` 特征的占用进程 → 清理数 1、进程终止、端口释放。测试用 `Launcher.__new__(Launcher)` + 覆盖 `obj.log` 即可免 GUI 实例化。
 - **注意**：改 `launcher.py` 后必须重打包 `DSH_Launcher.exe`（`build_exe.bat`）GUI 才生效；命令行 `python launcher.py --start` 直接跑源码不受影响。
 
+### 3.12 局域网 http 下 crypto.randomUUID 缺失 → 会话记录/工作区异常（2026-08-18，需求 #53）
+
+- **现象**：局域网模式用内网 IP（`http://192.168.x.x:3080`）打开，界面正常但**会话记录拉不到、添加工作区报 `crypto.randomUUID is not a function`**；同一模式下 `127.0.0.1` 打开则正常。
+- **根因**：`crypto.randomUUID()` 是浏览器 Web API，**只在 secure context（HTTPS 或 localhost/127.0.0.1 环回）下存在**。内网 IP 走普通 HTTP 时页面非安全上下文，`window.crypto.randomUUID` 为 `undefined`，一调即抛 TypeError。官方 `dsh-client-connection/lib/client.js` 两处裸调（`MessageId(crypto.randomUUID())`、`mintRpcId()->RpcId(crypto.randomUUID())`）全踩；官方自己 6366 行写的 `randomUuid()`（`getRandomValues` 兜底）生产路径没用到。
+- **修法（launcher.py，纯前端注入，1 方法 + 2 调用点）**：新增 `patch_frontend_uuid()`，向 WebUI `index.html` 注入幂等 `crypto.randomUUID` polyfill（`<!-- dsh-launcher-uuid-polyfill:start/end -->` 标记包裹）。polyfill 条件：`crypto` 存在且 `getRandomValues` 可调且 `randomUUID` 缺失才注入；用 `getRandomValues(new Uint8Array(16))` + `bytes[6]=&0x0f|0x40`（v4 版本位）+`bytes[8]=&0x3f|0x80`（variant），`toString(16)` 补 `0` 拼 8-4-4-4-12。注入点优先 `</head>` 前（早于官方 bundle）、兜底 `</body>` 前。调用点：`install_dsh()`（重装自动补）+ `start_server()`（每次就绪）。
+- **关键坑 1**：若注入在主 `<script>` 之后、官方 bundle 加载期间才执行，`crypto.randomUUID` 一旦在模块顶层就被调用会来不及；故**尽量插 `</head>` 前**。实测本修复用 getRandomValues 生成 `911522b9-...`、`v4=true`、variant 正确。
+- **关键坑 2**：`@deepseek-ai/dsh-client-connection/lib/client.js` 是**官方 node_modules 文件**，任何直接改它的补丁升级重装会还原；前端 index.html 注入同样会被重装覆盖，所以必须走 `patch_frontend_uuid()`（安装/启动各兜一次）而非一次性手工改。
+- **易混**：`randomUUID` 缺失（本文）与「浏览器无 `crypto`」不同——`getRandomValues` 在非安全上下文仍暴露，故用它做兜底可行；不要假设 `crypto` 整体不存在（那样连 getRandomValues 都没得用，得先 `globalThis.crypto = ...` 兜底）。
+- **验证**：项目便携版 Python 3 `py_compile` 通过（**不要用系统 python——可能是 2.7，`nonlocal` 会误报语法错**，本项目校验统一用 `runtime\python\python\python.exe -m py_compile`）；注入 JS 片 `node --check` 通过；重启服务 + 内网 IP Ctrl+F5 强刷新再测会话列表/添加工作区。
+
 ## 四、DSH 插件开发（双端加载 + 路由注册）
 
 ### 4.1 插件 = npm 包 + 双入口（最容易漏）

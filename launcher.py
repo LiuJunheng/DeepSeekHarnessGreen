@@ -212,6 +212,10 @@ UI_BEACON_PATH = "/__dsh_ui_alive"            # 心跳上报路径
 UI_BEACON_TOKEN_FILE = os.path.join(RUNTIME_DIR, "ui-beacon.token")   # 心跳令牌文件 (防伪造上报)
 UI_BEACON_MARKER_START = "<!-- dsh-launcher-ui-beacon:start -->"     # 注入标记(起)
 UI_BEACON_MARKER_END = "<!-- dsh-launcher-ui-beacon:end -->"         # 注入标记(止)
+# crypto.randomUUID polyfill 注入标记 (局域网 http 访问不是 secure context, 该 API 缺失,
+# 见 2026-08-18 需求 #47; 用 getRandomValues 兜底实现 RFC4122 v4, 幂等可重复)
+UI_UUID_MARKER_START = "<!-- dsh-launcher-uuid-polyfill:start -->"   # 注入标记(起)
+UI_UUID_MARKER_END = "<!-- dsh-launcher-uuid-polyfill:end -->"       # 注入标记(止)
 
 # GitHub 官方 dsh 插件话题页 (插件发现入口, 仅作辅助来源; 国内网络可能无法直连)
 GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
@@ -662,6 +666,7 @@ class Launcher:
 
         self.log("dsh 安装成功 (版本: %s)" % self.dsh_version())
         self.patch_frontend()   # 安装/升级后注入 WebUI 心跳脚本 (单页面去重)
+        self.patch_frontend_uuid()  # 安装/升级后注入 crypto.randomUUID polyfill (局域网 http 用)
         self.patch_web_startup()  # 安装/升级后补丁 startup.js, 放开 --host 0.0.0.0 (局域网访问)
         self.patch_lan_trust()    # 安装/升级后补丁 resolveLanTrust, 支持「只信任填写的主机」
         # 局域网 /api 补丁 (pickDirectory 等特权 API 不再 403)。失败时给出醒目提示,
@@ -2463,6 +2468,77 @@ class Launcher:
                  % (port, UI_BEACON_PING_INTERVAL))
         return True
 
+    def patch_frontend_uuid(self):
+        """向 WebUI 前端 index.html 注入 crypto.randomUUID polyfill (幂等, 可重复调用)。
+        背景 (2026-08-18, 需求 #47): crypto.randomUUID() 是浏览器 Web API, 只在
+        secure context (HTTPS 或 localhost/127.0.0.1 环回地址) 下存在。局域网模式下用
+        内网 IP (如 http://192.168.x.x:3080) 普通 HTTP 访问时, 页面不被视为安全上下文,
+        crypto.randomUUID 为 undefined, 官方客户端在 dsh-client-connection 的
+        MessageId(crypto.randomUUID()) 与 mintRpcId()->RpcId(crypto.randomUUID()) 两处
+        直接调用会抛 "crypto.randomUUID is not a function", 导致会话消息/RPC 全断,
+        UA 现象就是"会话记录获取不到、添加工作区报错"; 而 127.0.0.1 属环回故正常。
+        解决: 用 getRandomValues (官方 randomUuid 同思路, 非安全上下文也可用) 兜底实现
+        RFC4122 v4, 仅在 crypto.randomUUID 缺失时注入, 已有则不重复。dsh 升级重装后
+        由 install_dsh() 自动重新注入。返回 True 表示就绪, False 表示文件不可写/不存在。
+        """
+        index_path = self.frontend_index_path()
+        if not os.path.isfile(index_path):
+            return False
+        helper = (
+            "          var dshCryptoSrc = globalThis.crypto;\n"
+            "          if (dshCryptoSrc && typeof dshCryptoSrc.getRandomValues === 'function'\n"
+            "              && typeof dshCryptoSrc.randomUUID !== 'function') {\n"
+            "            function dshRandomUUID() {\n"
+            "              var bytes = dshCryptoSrc.getRandomValues(new Uint8Array(16));\n"
+            "              bytes[6] = (bytes[6] & 0x0f) | 0x40;   // RFC4122 v4 版本字段\n"
+            "              bytes[8] = (bytes[8] & 0x3f) | 0x80;   // variant 10xx\n"
+            "              var hexList = [];\n"
+            "              for (var i = 0; i < 16; i++) {\n"
+            "                var part = bytes[i].toString(16);\n"
+            "                if (part.length < 2) part = '0' + part;\n"
+            "                hexList.push(part);\n"
+            "              }\n"
+            "              var hex = hexList.join('');\n"
+            "              return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-'\n"
+            "                + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-'\n"
+            "                + hex.slice(20);\n"
+            "            }\n"
+            "            dshCryptoSrc.randomUUID = dshRandomUUID;\n"
+            "          }\n"
+        )
+        uuid_block = (
+            "%s\n"
+            "<script>\n"
+            "(function () {\n"
+            "  try {\n"
+            "%s"
+            "  } catch (e) {}\n"
+            "})();\n"
+            "</script>\n"
+            "%s" % (UI_UUID_MARKER_START, helper, UI_UUID_MARKER_END))
+        try:
+            with open(index_path, "r", encoding="utf-8") as file_handle:
+                html = file_handle.read()
+        except OSError:
+            return False
+        # 幂等: 已注入过直接返回, 避免重复
+        if UI_UUID_MARKER_START in html:
+            return True
+        # 优先插到 </head> 前 (越靠前越早在官方 bundle 前执行), 否则兜底插到 </body> 前
+        if "</head>" in html:
+            html = html.replace("</head>", uuid_block + "\n</head>", 1)
+        elif "</body>" in html:
+            html = html.replace("</body>", uuid_block + "\n</body>", 1)
+        else:
+            html = html + "\n" + uuid_block
+        try:
+            with open(index_path, "w", encoding="utf-8") as file_handle:
+                file_handle.write(html)
+        except OSError:
+            return False
+        self.log("已向 WebUI 注入 crypto.randomUUID polyfill (局域网 http 访问不再缺失)")
+        return True
+
     def start_server(self, open_browser=True):
         """启动 dsh web 服务, 可选自动打开浏览器"""
         if self.is_server_running():
@@ -2480,6 +2556,7 @@ class Launcher:
         self.log("正在准备环境 ...")
         self.prepare_all()
         self.patch_frontend()             # 确保前端已注入心跳脚本 (dsh 升级重装后自动补齐)
+        self.patch_frontend_uuid()        # 确保 crypto.randomUUID polyfill 已注入 (局域网 http 用)
         self.patch_web_startup()          # 确保 startup.js 已补丁 (dsh 升级重装后自动补齐, 局域网绑定用)
         self.patch_lan_trust()            # 确保 resolveLanTrust 已补丁 (受信任主机精确语义)
         # 确保 /api 通道在局域网模式下可用 (pickDirectory 等特权 API 不再 403);

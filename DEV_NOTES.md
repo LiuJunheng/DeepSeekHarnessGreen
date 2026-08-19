@@ -262,6 +262,12 @@
     - **改动（launcher.py）**：① 新增常量 `BACKUP_DIR = runtime/backup`（统一备份目录）；`backup_dsh()` 备份路径改为 `BACKUP_DIR/dsh-<版本>`（同名加时间戳后缀）；② 新增 `cleanup_update_files()`（清空 `runtime/update`：暂存 zip / 解压 / 覆盖前旧文件备份 / 任务文件）与 `cleanup_backup_files()`（清空 `runtime/backup` + **顺带清旧版散落的 `runtime/dsh-backup-*` 残留**，兼容老用户），共用 `_clear_directory_contents()`（保留目录本身、被占用文件 ignore 不阻断）；③ GUI「数据维护」区新增「清理更新」「清理备份」按钮（askyesno 二次确认 + 删除项数结果弹窗），文案同步改为 `runtime/backup/dsh-<版本>`。
     - **注意**：`runtime/update/backup`（绿色版覆盖前的旧文件备份）仍属更新流程内部，不动；清理的是更新暂存目录整体内容。
     - **验证**：`runtime/tmp/smoke_cleanup.py` 八项 PASS——backup_dsh 落到统一目录且内容复制完整、清理更新/备份删除项 > 0 且目录保留、旧散落 `dsh-backup-*` 被清除、空目录再次清理幂等返回 0；`py_compile` 通过；`test_green_update.py` 16 项仍全绿。skill zip（Skill-dsh-deploy-maintain.zip）已同步重打包并校验关键字。
+53. **【局域网 http 下 crypto.randomUUID 缺失】WebUI 报 `crypto.randomUUID is not a function`，会话记录/添加工作区异常（2026-08-18）**：
+    - **现象**：局域网模式下用内网 IP（`http://192.168.x.x:3080`）打开界面正常显示，但左侧**会话记录获取不到**、**添加工作区报 `crypto.randomUUID is not a function`**；同一局域网模式下用 `127.0.0.1` 打开则一切正常。
+    - **根因**：`crypto.randomUUID()` 是浏览器 Web API，**只在 secure context（安全上下文，即 HTTPS，或 localhost/127.0.0.1 环回地址）下才存在**。用内网 IP 走**普通 HTTP** 访问时，页面不被视为安全上下文，`window.crypto.randomUUID` 为 `undefined`，一调用就抛 TypeError。官方客户端 `dsh-client-connection/lib/client.js` 里两处直接裸调：① `MessageId(crypto.randomUUID())` 创建会话消息（→ 会话记录拉不起来）；② `mintRpcId() -> RpcId(crypto.randomUUID())` RPC 握手 id（→ 整个 /api 交互、工作区新增全断）。讽刺的是官方自己 6366 行写了个 `randomUuid()`（用 `getRandomValues`，注释明确「非安全上下文下浏览器仍暴露 getRandomValues」）但生产路径没用它。
+    - **修复（launcher.py）**：新增 `patch_frontend_uuid()`，向 WebUI `index.html` 注入 **crypto.randomUUID 幂等 polyfill**（`<!-- dsh-launcher-uuid-polyfill:start/end -->` 标记包裹），逻辑：若 `crypto` 存在且 `getRandomValues` 可调且 `randomUUID` **缺失**时，用 `getRandomValues` 实现 **RFC 4122 v4**（`bytes[6] = &0x0f|0x40` 版本位、`bytes[8] = &0x3f|0x80` variant 位，`toString(16)` 补齐两位，拼标准 8-4-4-4-12 格式）。注入点优先插到 `</head>` 前（越靠前越早于官方 bundle 执行），无则兜底 `</body>` 前。调用点两处：`install_dsh()`（升级重装后自动补）与 `start_server()`（每次启动保证就绪），均在 `patch_frontend()` 心跳脚本注入之后。
+    - **验证**：`py_compile`（项目便携版 Python 3，非系统 Python 2）通过；注入 JS 片段用 `node --check` 语法通过；运行时用 node 模拟「无 randomUUID 的 crypto」环境实际调用，生成 `911522b9-f57a-42e7-b43f-3917e31ac332`，`v4=true`、variant 字段正确—— polyfill 语义正确。
+    - **验证状态**：代码完成，需**重启 DSH 服务**（让 `patch_frontend_uuid()` 更新 index.html）后，用内网 IP 强刷（Ctrl+F5）再测会话列表与添加工作区；localhost 正常不受影响。
 
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
