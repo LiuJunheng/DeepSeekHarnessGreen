@@ -25,5 +25,5 @@
     "lib",
     "cordis.patch.yml"
   ],
-  "license": "MIT"
+  "license": "Apache-2.0"
 }

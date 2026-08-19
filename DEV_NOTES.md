@@ -783,6 +783,54 @@
     - **双平台分发**：GitHub Release `v1.0.10`（`GH_TOKEN` 可用）+ Gitee Release（`GITEE_TOKEN` 需用户提供后配置）。**重复：Gitee 上传附件前必须先按 attachment id 删除同名旧附件再上传**，否则同名附件不覆盖（避坑 #72）；建 Release 必须带 `target_commitish=master`（否则 400）。
     - **发布结果（2026-08-19 实测）**：源码与 tag v1.0.10 已推送 GitHub + Gitee 的 master；双平台 `v1.0.10` Release 均已创建并上传 3 个 zip：GitHub Release id=372932572（assets=3）、Gitee Release id=821885（assets=3 个手动 zip + Gitee 自动生成的 v1.0.10.zip/tar.gz 源码包）。**网络避坑**：本机未代理前 `github.com` / `uploads.github.com` 被墙（普通 git push 与 Release 资产上传走不通，仅 `api.github.com` 可达，只适合 Git Data API 推源码）；开全局代理后可正常 git push + 传资产，但少数大体积 push 会因连接被代理中断而**需重试一次**。Gitee push 认证用 `https://oauth2:<token>@gitee.com/<owner>/<repo>.git`（用 `用户名:token@` 会报 `token username invalid` 403）。
 
+75. **【修复】GitHub 下载 zip 失败后自动切 Gitee 兜底未生效（2026-08-19）**：
+    - **用户反馈**：多次更新都只连 GitHub，GitHub zip 下载失败后仍只是 GitHub，之前做的"失败自动替换 Gitee"没生效。日志显示：查询 `api.github.com/releases/latest` 成功拿到 v1.0.10（能查到版本号），但 `releases/download/v1.0.10/...zip` 大文件下载走不通。
+    - **根因（定位）**：之前只在"**查询阶段**"做了 Gitee 兜底——`green_latest_release()` 里 GitHub API/镜像 API 连不通时才切 Gitee（`green_gitee_latest`）。但**下载阶段** `prepare_update_content_root` 里 `download_green_update` 直接 download GitHub 的 asset URL，抛异常就被 `download_worker` 的 except 捕获、直接弹窗报错，**没有 Gitee 兜底**。于是"api.github.com 可达但 releases/download 被墙"这个典型场景就永远卡在 GitHub。
+    - **修复**：在 `prepare_update_content_root` 的 GitHub 下载包一层 try/except——下载异常后调用 `green_gitee_latest()` 拿 Gitee 镜像（优先"发布版 zip 附件直连"，无附件回退整仓快照 git 克隆），再用 `green_find_zip_asset` 取 zip 重新下载；带**防降级**判断：Gitee 版本号低于目标版本则放弃切换（回到原始报错），避免 Gitee 落后时装回旧版；成功后把 `release_info["source"]` 改写为 `gitee_release`，`download_worker` 改为在 `prepare_update_content_root` **之后**再取 `source`，保证失败提示/覆盖来源与真实下载源一致（不会切了 Gitee 还提示去 GitHub 手动下）。
+    - **避坑经验**：① "查询可达" ≠ "下载可达"——`api.github.com` 的 JSON 小请求能通、`releases/download` 的大文件流常被墙，**兜底必须覆盖到实际下载这一步**，不能只做查询兜底；② 旁路切换要带版本防降级，避免改错渠道装了旧版；③ 更新来源（source）若在中间被改写，后续取值点要放在改写之后，否则日志/失败提示与真实来源不一致。
+    - **待办**：需用 `build_exe.bat` 重打包 `DSH_Launcher.exe` 后再分发，本次改的是源码 `launcher.py`，已运行的 exe 还是旧逻辑。
+
+76. **【复盘+README 优化】1.0.10 整包覆盖导致 Gitee 兜底丢失，重加 + 统一插件许可证/README 营销化（2026-08-19）**：
+    - **背景**：用户在另一台电脑上发布了 v1.0.10，整包覆盖回本机，把 Gitee 下载兜底的 `launcher.py` 代码改动与 SKILL 下载兜底经验一并覆盖掉（DEV_NOTES #75 还在）。
+    - **1.0.10 新增点（git diff 核对的未提交改动）**：① `crypto.randomUUID` undefined 时向前端 index.html 注入 RFC4122 v4 polyfill（`patch_frontend_uuid` + `UI_UUID_*_MARKER`，需求 #47，局域网 http 非安全上下文下 session/RPC 全断）；② 局域网 0.0.0.0 模式下 `ensure_firewall_port` 用 netsh 按端口放行入站 TCP（先按名删旧规则再新增，需管理员、失败仅记日志，需求 #54）；③ 版本号升 1.0.10 / 日期 2026-08-19；④ 新增内置插件 `dsh-session-import`（会话导入，官方导出的互逆）；⑤ README/README_EN/DEV_NOTES/SKILL 相应更新。
+    - **重新落地**：把 launcher.py 的 Gitee 下载兜底（见 #75）逐字加回 `prepare_update_content_root`（try/except→`green_gitee_latest`→防降级→改写 source）、`download_worker` 的取 source 顺序，SKILL 的兜底经验段也补回。
+    - **痛点积累**：**跨机协作、整包覆盖回办公机时，本地未提交的改动会被一批旧的覆盖掉**——发布前一定要 `git diff` + `git log` 核对，或先把改动 commit，避免线上/他机版本吞掉本机已修好的 bug 修复。
+    - **README 优化（营销化 + 统一协议）**：
+      - 顶部新增**「亮点速览」**：双击即用 / 绿色便携 / 多源下载自动降级（含 Gitee 两级兜底）/ 内置 6 款插件 / 局域网远程（自动放行防火墙端口）/ 双通道独立自更新。
+      - **内置插件集中一处列出**：「五、插件与会话管理」下新增「内置插件一览」表格（6 款：dsh-file-browser / dsh-archive-purge / dsh-session-rewind / dsh-session-import / dsh-usage-stats / dsh-sidebar-lite），每款一句话 + README 链接 + 安装方式，作为唯一清单；目录树 plugins/ 注释也收敛为"6 款见内置插件一览"。
+      - **开源协议统一**：删掉"dsh-session-rewind 单独 MIT"的割裂表述，改为**整个绿色版 + 全部内置插件统一 Apache-2.0**；6 款插件 `package.json` 的 `license` 从 MIT 改为 Apache-2.0，删除 `plugins/dsh-session-rewind/LICENSE`（MIT 文本）。
+      - 顺手修掉章节编号重复「九」的笔误（DSH 经验 Skill 改为「十」）。
+    - **待确认/注意**：`dsh-sidebar-lite` 是第三方插件（omdsh-dev/DSH-better-sidebar）的精简复刻，其 license 已一并置为 Apache-2.0；若原插件为 GPL 类传染性协议，需作者复核 license 归属与合规（本清单只是单点声明）。README_EN 尚未同步本次中文调整，按惯例随下次发布一次性翻译更新。
+
+77. **【README 精简（发布侧细节移出）】2026-08-19**：
+    - **亮点速览合并**：原独立条目「多源下载 + 自动降级」本质是"安装环境 + 自动更新"的一部分，不是独立卖点 → 并入「绿色便携」（内置便携 Node/Python，下载国内镜像优先、连不上自动回退官方）与「两通道独立自更新」（GitHub 连不通自动转 Gitee 镜像），删掉独立亮点条目，避免重复堆砌。
+    - **发布侧打包细节从 README 移出**：删除「轻量分发 zip」下的**重新生成 zip 的 PowerShell `Compress-Archive` 命令**、**zip 目录结构注意事项**（`plugins`/`skills` 必须传目录名、避免 `plugins\dsh-xxx` 子路径，原本是避坑 #21）、**skills\*.zip 需在打包前移出的补充说明**（原本是避坑 #66 相关实测）。这些是**发布者打包流程**，使用者无需知晓，README 面向使用者的定位不应包含；改为一句轻说明「该 zip 由作者打包维护并随 Release 分发，使用者仅需下载解压」。
+    - **经验**：README 是**使用者**文档、DEV_NOTES 是**开发者/发布者**文档——打包命令、zip 结构校验、目录约定等"操作细节"应留在 DEV_NOTES，README 只留用户拿到的结果（下载入口 + 使用三步）。文档分流，避免把内部流程当卖点写给用户。原命令/校验细节仍以本条 + #21/#66 为准，不再放 README。
+
+78. **【README 第5/6章整合】插件 + 数据维护合一（2026-08-19）**：
+    - **动机**：原「五、插件管理」与「六、数据维护」两章都在讲插件/会话功能，且 6 款内置插件的详解被拆散在五章末尾和六章各处（列表在五、详解散落），逻辑割裂、读者要多处跳。
+    - **整合方案**：合并为新「五、插件与会话管理」，统一收拢为五层：
+      1. **内置插件一览**（6 款表格）——唯一清单；
+      2. **内置插件详解（按功能分组）**——新增 `####` 分组的二级标题归类，把 6 款拆成三组：`聊天与文件增强`（dsh-file-browser / dsh-sidebar-lite）、`会话数据管理`（dsh-archive-purge / dsh-session-rewind / dsh-session-import）、`用量统计`（dsh-usage-stats）；每条自带"详见 README"链接与常见问题带过去；
+      3. **数据维护（恢复 / 永久删除归档会话）**——原第六章主体（含 dsh 官方无此功能的说明、操作表格、三来源清理、注意事项），并新增一句与 dsh-archive-purge 的分工提示（WebUI 只读、启动器执行删除/恢复）；
+      4. **插件管理窗口布局**——原封不动；
+      5. **说明**——原封不动。
+    - **章节编号顺延**：删掉独立"六、数据维护"后，后续章节 `七→` 逐级前移：绿色版自更新成为「六」，内置 Python 与 exe 打包「七」，安全说明「八」，DSH 经验 Skill「九」，常见问题「十」，开源协议「十一」。同步修正交叉引用：界面按钮「数据维护区」原"详见第六章"→"详见第五章「数据维护」"、插件一览"Apache→"见第十一章"。
+    - **避坑（markdown 大段编辑）**：用整段 old_string 一次替换"深+浅"两章会因中间含表格/长文本易漏匹配；改用**两段式**：① 先替换第五章标题与插入新内容到"插件管理窗口布局"前；② 再把旧第六章整段（从旧的 dsh-file-browser 详解到 `## 七、绿色版自更新` 之前的中介内容）一次性删除，锚点用章节标题本身，稳妥。**多标题并行改编号后务必 grep 全部 `^##` 核对连续性**（本轮就出现一次并行替换未落盘、章节号重复的假象，重查定位到是其中两条没真正写进去）。
+    - **再次调整（第五章次序）**：把「插件管理窗口布局」+「说明」两节合并重写为**「插件的管理与维护」**一节，并**移到第五章开头**（在"内置插件一览"之前）——理由是"如何管理维护插件（查看/搜索/安装/移除/启停）"是用户最常见操作，应放最前；而"有哪些插件、各功能"随后再用一览表 + 分组详解讲。重写时**刻意弱化"窗口左右区域叫什么"的布局描述**，改为按**管理动作**组织（查看已装 / 从搜索列表装 / 手动指定安装 / 装在哪儿 / 自动编排 / 其它提示），聚焦"有什么功能、怎么增删插件"，不再报窗口术语。原"布局"与"说明"的信息点全部保留进本节。交叉引用「插件管理」按钮行"详见第五章"仍正确。README_EN 待同步。
+    - **README_EN 待同步**：本次中文结构调整 + 整合 + 章节编号前移，英文版需随下次发布一次性翻译对齐。
+
+79. **【README 常见问题精简】只留"用户可自行解决"类（2026-08-19）**：
+    - **动机**：第10章「常见问题」表格混入了几条**已被绿色版主动修复**的 bug——① 网页报 Failed to fetch（dsh stdin 关闭静默退出，已修复为常驻守护）；② 插件安装报 `SyntaxError: Unexpected token '\ufeff'`（package.json UTF-8 BOM，已内置自动清除重试）；③ exe 报 `Failed to load Python DLL`（新版已把 VC 运行库打进包）。这些条目在新版上用户已基本不会再遇到，留在"常见问题"反而误导。
+    - **处理**：删除上述 3 条；保留 9 条"用户遇到时**可自行解决**"的使用/环境类问题：找不到 Python、下载 Node 慢、安装 dsh 慢、端口被占用、想彻底卸载、ACL temp root 工作区冲突、网页打不开、`EPERM: rename denied`（安全软件并发）、绿色版更新失败给出手动地址。
+    - **经验**：README 常见问题表应**只收录用户侧能自救的操作问题**（改配置 / 换镜像 / 白名单 / 手动覆盖等）；已由程序修复的 bug 不再占版面（`Failed to load Python DLL` 等彻底修好的连"旧版提示"也舍去，避免打扰新用户）。被删的 3 条细节仍完整保留于 DEV_NOTES 对应避坑（#67 VC 运行库、BOM 解码、服务常驻守护均有条）。
+    - **README_EN 待同步**：首次出现的"英文表行同步"也需随下次发布翻译时一并裁掉这 3 行。
+
+80. **【README 去除"专属图标"营销描述】2026-08-19**：
+    - **动机**：顶部目录树注释与"操作按钮"表格后各有一处把"自定义绿色小鲸鱼图标（DSH_Launcher.ico）"当作**营销亮点**展示（强调"窗口/托盘/exe 三处统一""不再是 PyInstaller 默认图标"）。这属于**无关痛痒的自夸**，不是用户需要的使用信息，占据版面还显廉价。
+    - **处理**：① 删除正文"操作按钮"表格下方的 `> **专属图标**：...（绿色小鲸鱼 / 不再是 PyInstaller 默认图标）` 引用块；② 目录树里 `DSH_Launcher.ico` 的注释由"启动器专属图标（绿色小鲸鱼，窗口/托盘/exe 三处统一）"改为中性描述 `启动器图标（窗口 / 系统托盘 / exe 使用）`，保留"这个文件是干嘛的"事实，去掉营销措辞。
+    - **经验**：README 里区分**"用户需要的事实"**（图标用的是本文件、窗口/托盘/exe 都用它）与**"项目自我标榜"**（小鲸鱼萌、不再是默认图标、一眼区分）。前者保留（帮助用户了解文件用途），后者去掉（不提供使用价值、纯氛围感）。同理可推广到其它"专属 / 一眼 / 不再是默认"类形容——凡是只说给作者爽、对用户无动作指导的，都该删。README_EN 待同步。
+
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验

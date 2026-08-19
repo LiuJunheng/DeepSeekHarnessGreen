@@ -1398,7 +1398,10 @@ class Launcher:
         - gitee        : 整仓快照 -> git 智能 HTTP 协议克隆到 target_dir
                          (Gitee 无 Release 时的兜底; archive zip 会返回 JS 挑战页拿不到
                          真实 zip, 必须走 git 协议端点, 见 green_gitee_clone_tree)
-        失败抛异常, 由调用方统一提示手动下载地址"""
+        失败抛异常, 由调用方统一提示手动下载地址。
+        注: 当 source 为 github 且实际下载 zip 失败时 (查询可达但 releases/download
+        走不通), 会自动切换 Gitee 镜像源重试同版本 (见下方 download_green_update
+        try/except 段, 用户需求 2026-08-19)。"""
         source = release_info.get("source") or "github"
         # 先清空目标目录, 避免上一次更新尝试残留旧文件被带进覆盖
         if os.path.exists(target_dir):
@@ -1411,13 +1414,52 @@ class Launcher:
             self.green_gitee_clone_tree(target_dir)
             self.log("更新内容根目录: %s" % target_dir)
             return target_dir
-        # GitHub / Gitee 发布版: 下载 zip -> 解压 -> 检测内容根目录
+        # GitHub 发布版: 下载 zip -> 解压 -> 检测内容根目录
+        # (下面的下载失败自动切换 Gitee 镜像, 见 prepare_update_content_root 开头注释)
         asset = self.green_find_zip_asset(release_info)
         if asset is None:
             raise RuntimeError("未找到匹配的绿色版分发 zip 资产")
         asset_name, download_url, asset_size = asset
         target_path = os.path.join(GREEN_UPDATE_DIR, asset_name)
-        self.download_green_update(download_url, target_path, asset_size)
+        try:
+            self.download_green_update(download_url, target_path, asset_size)
+        except Exception as download_error:
+            # 钩子: 若已是 Gitee 来源再失败则直接抛 (避免递归切换)
+            is_gitee_now = source in ("gitee", "gitee_release")
+            if is_gitee_now:
+                raise
+            # ===== 用户需求 (2026-08-19): GitHub 下载失败 -> 自动替换 Gitee 重试 =====
+            # 场景: 查询阶段 api.github.com 可达能查到最新版本号, 但实际下载 zip 时
+            # releases/download 走不通 (不同网络路径), 导致一直卡在 GitHub 反复失败。
+            # 这里在首次下载异常后自动改用 Gitee 镜像源重新拉取同版本 zip。
+            self.log("GitHub 下载失败: %s, 自动切换 Gitee 镜像源重试同版本 ..."
+                     % download_error)
+            gitee_info = self.green_gitee_latest()
+            if gitee_info is None:
+                self.log("Gitee 镜像源不可用, 放弃自动切换 (回到原始报错)")
+                raise download_error
+            # 防降级: 只接受版本号 >= 本次想下载的版本, 避免 Gitee 落后时装回旧版
+            try:
+                want_version = self.green_release_version(release_info)
+                gitee_version = self.green_release_version(gitee_info)
+                if (want_version and gitee_version
+                        and self._green_version_greater(want_version, gitee_version)):
+                    self.log("Gitee 镜像源版本 v%s 低于目标 v%s, 放弃自动切换"
+                             % (gitee_version, want_version))
+                    raise download_error
+            except Exception:
+                pass  # 版本比对失败不阻断, 直接用 Gitee 结果
+            gitee_asset = self.green_find_zip_asset(gitee_info)
+            if gitee_asset is None:
+                self.log("Gitee 镜像源无可用 zip 资产, 放弃自动切换")
+                raise download_error
+            gitee_name, gitee_url, gitee_size = gitee_asset
+            asset_name, download_url, asset_size = (gitee_name, gitee_url, gitee_size)
+            target_path = os.path.join(GREEN_UPDATE_DIR, asset_name)
+            self.log("已切换 Gitee 镜像源, 开始下载: %s" % gitee_url)
+            self.download_green_update(gitee_url, target_path, gitee_size)
+            # 成功后把来源记为 Gitee, 供后续失败提示与覆盖来源保持一致
+            release_info["source"] = "gitee_release"
         self._safe_extract_zip(target_path, target_dir)
         content_root = self._detect_zip_content_root(target_dir)
         self.log("更新内容根目录: %s" % content_root)
@@ -4088,11 +4130,14 @@ def run_gui():
         append_log("--- 开始下载绿色版更新: %s ---" % asset_name)
         def download_worker():
             try:
-                source = release_info.get("source") or "github"
-                # 按来源准备内容根目录: GitHub=下载zip解压, Gitee=git协议克隆整仓
+                # 按来源准备内容根目录: GitHub=下载zip解压, Gitee=git协议克隆整仓。
+                # prepare_update_content_root 内部若发生"GitHub 下载失败自动切 Gitee",
+                # 会改写 release_info["source"], 因此 source 必须在调用后再取,
+                # 保证后续失败提示/覆盖来源与真实下载源一致。
                 extracted_dir = os.path.join(GREEN_UPDATE_DIR, "extracted")
                 content_root = app.prepare_update_content_root(
                     release_info, extracted_dir)
+                source = release_info.get("source") or "github"
                 content_root, job_path = app.prepare_green_update(
                     content_root, latest_version, download_url, source)
                 root.after(0, lambda: ask_apply_green_update(
