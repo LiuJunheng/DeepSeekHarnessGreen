@@ -424,6 +424,30 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 - **字符按钮（如 `⌂`）在部分字体/浏览器渲染成空白/方框看不清**——WebUI 侧字符按钮要优先用**内联 SVG**（如 Material 房子 `M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z`），再配文字标签（如「目录」）+ 高 26px + 主题强调色边框（`--dsw-alias-accent`）更醒目；`title` 提示显示实际跳转的目标路径，悬停即可确认。
 - 注意「工作区根」与「dsh 进程 cwd」是两个概念；凡涉及"用户工作目录"的默认/兜底路径，权威来源 = `workspaceRegistry`。
 
+### 4.12 「添加工作区」目录选择器难用：官方原生选择器在网络绑定下被屏蔽，纯插件改不动，只能走官方装配（2026-08-20，详见 DEV_NOTES 需求 #84）
+
+用户反馈 WebUI「添加工作区」目录对话框把路径折叠成只剩"主目录"、默认落 C 盘、找不到偏好文件夹；诉求是**盘符切换 + 常驻完整路径 + 可编辑路径**。三层结论：
+
+- **根因**：dsh 官方有**两套**目录选择器——`-browse`（内嵌 React 对话框，"主目录"折叠版）与 `-native`（`host.pickDirectory` 拉起 Windows 原生文件夹对话框：盘符切换/完整路径/快速访问全有）。装配由 `directory-picker-auto` 启动时 `resolveDirectoryPickerBackend` 决定：**`bindHost ≠ 127.0.0.1`（本绿色版局域网 `0.0.0.0`）时无条件退回 `browse`**（`dsh-host-directory-picker-auto/lib/index.js`）。所以局域网模式恒用 browse 版。
+- **插件不可行**：两套都注册进 ui-workspace 两个 directory-flow 洞（`conversation.hero.workspace.directoryFlow` / `sidebar.workspaces.directoryFlow`），槽位是 **`single` 单占位**，官方文档明说"再挂第二个流程包加载期失败"。要改官方目录选择器 UI，**任何"用插件自定义"的方案都不可行**，别浪费时间。
+- **想给原生对话框**：只能走官方装配——不改源码、配置覆盖把选择器钉到 `-native`（`@deepseek-ai/dsh-host-directory-picker-native` + `@deepseek-ai/dsh-client-ui-directory-picker-native`）。取舍：该 README 标注"仅限本地 Host 载体"，局域网时原生对话框弹在**运行 launcher 的电脑屏幕**上。
+- **本项目决策（用户明确，2026-08-20）**：满足"不改官方代码、不做补丁"前提下改不动 → **放弃，目录选择器保持现状（browse）**，不做任何代码/装配改动。
+
+### 4.13 侧栏「任务」页看似没绑定：`jobsBySession` 只覆盖后台 job，普通对话恒空；用官方 `SessionSummary` 做 AI 状态卡（2026-08-20，避坑 #64 的延伸，DEV_NOTES 需求 #85）
+
+用户反馈侧栏「任务」页"实际没绑定到任何东西、没有任何输出和显示"。要区分两类"空白"，根因和处理完全不同：
+
+- **后台任务列表 `jobsBySession[sessionId]` 恒空是正常现象，不是没绑定**：官方这个字段只在 AI 调用 `job_*` 类工具（长任务/后台脚本）时由 session/jobs 帧填充，**普通对话永远为空**。别以为"绑上就有内容"，数据源本身对普通对话为空。
+- **真正该"绑定"的是激活会话的元信息**：切到该数据源，明确展示 **AI 当前任务目标 / 进度 / 会话工作目录**。数据来源是官方会话列表 store 的 `SessionSummary`（`dsh-client-runtime` 的 `SessionListState`），字段：`displayTitle`=当前任务目标、`running`=是否执行中、`completed`=是否已完成、`cwd`=会话工作目录。
+
+关键技术点（前端 `plugins/dsh-sidebar-lite/lib/client.js`）：
+
+- 快照取法：`const snapshot = ctx.sessions.list.getSnapshot();`（不要直接用 `sessionId` 判空）。官方投影 `projectList()` 把 `current` / `byId` / `jobsBySession` 放在**同一个快照**里：`sessionId = snapshot.current`、`jobs = snapshot.jobsBySession[sessionId]`、`activeSummary = snapshot.byId[sessionId]`——三者同源同键，一次取齐。
+- `byId` 的键是 **`sessionId`**（不是 `id`），值是 `SessionSummary` 对象，`displayTitle/running/completed/cwd` 都在上面；`displayTitle` 为空时兜底成"（未命名）"。
+- 状态徽标由 `running`/`completed` 派生：执行中=蓝点（加 `@keyframes` 呼吸动画提示"正在推进"）、已完成=绿点、空闲=灰点。**自定义动画 keyframes 必须自己注入**（本文档 `injectStyles` 的 style 块里加 `@keyframes dsl-pulse{0%,100%{opacity:1}50%{opacity:.25}}`），否则引用了不存在的动画名，蓝点不会闪。
+- **无会话 / 无后台任务要给明确的中文空态提示**（"未选择会话，无法显示 AI 的当前任务状态"、"当前没有后台任务运行"），否则用户会误以为"没绑定到东西"。
+- 同样是"空"，要分清是**数据源空**（jobs 普通对话恒空，属正常）还是**取值字段空**（取错字段→静默空）。前者给空态文案，后者才是 bug（见避坑 #64 的 `current` vs `sessionId`）。
+
 ## 五、验证与排查速查表
 
 | 症状 | 首选排查动作 |

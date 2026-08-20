@@ -892,6 +892,29 @@
     - **版本号**：launcher.py `GREEN_VERSION` 1.0.11→1.0.12；README / README_EN 版本引用同步升至 v1.0.12。已重建 `DSH_Launcher.exe` / `DSH_Update.exe`（PyInstaller，不含 UPX）。
     - **待办（Gitee）**：`GITEE_TOKEN` 未配置于当前 shell，Gitee 上传需要用户提供令牌后执行；GitHub 侧 `GH_TOKEN` 已配置可直发。
 
+84. **【勘察结论·目录选择器】"添加工作区"目录选择器难用：官方原生选择器被 `-auto` 在网络绑定下屏蔽，纯插件无法替换，已决定保持现状（2026-08-20）**：
+    - **用户诉求**：WebUI「添加工作区」的目录选择对话框上方把路径折叠成只剩"主目录"，且默认落到 C 盘，找不到偏好文件夹；希望有**盘符切换 + 常驻显示完整路径 + 可编辑路径**。
+    - **勘察三层结论**：
+      1. **根因**：dsh 官方自带**两套**目录选择器——`-browse`（内嵌 React 对话框，就是"主目录"折叠版）与 `-native`（调 `host.pickDirectory` 拉起 Windows 原生 IFileOpenDialog：盘符切换/完整路径/快速访问全有）。装配由 `directory-picker-auto` 启动时自适应决定（`dsh-host-directory-picker-auto/lib/index.js` 的 `resolveDirectoryPickerBackend`）：**绑定非 `127.0.0.1`（即本绿色版局域网 `0.0.0.0`）时无条件退回 `browse`**，Windows 回环才会 `native`。所以局域网模式下用户总看到难用的 browse 版。
+      2. **插件不可行**：两套选择器都向 ui-workspace 的两个 directory-flow 洞（`conversation.hero.workspace.directoryFlow` / `sidebar.workspaces.directoryFlow`）注册，槽位是 **`single`（单占位）**，官方文档明说"再挂第二个流程包会在加载期失败"。自研插件无法可靠地增强/替换官方 browse 对话框。
+      3. **非补丁启用原生**：不改官方源码、仅换装配（配置覆盖把选择器钉到官方原生对 `-native` 后端 + `-client-ui-directory-picker-native` 前端）即可得到 Windows 系统文件夹对话框；代价是局域网时原生对话框弹在运行 launcher 的那台电脑屏幕上（`-native` README"仅限本地 Host 载体"）。
+    - **决策（用户明确）**：优先满足"不改官方代码、不做补丁"前提 → 纯插件改不动 → **放弃本次优化，目录选择器保持现状（browse）**。不做任何代码/装配改动。
+    - **避坑经验（可复用）**：① `bindHost ≠ 127.0.0.1` 时官方强制 browse，是"原生对话框出不来"的根因，别在官方文件里找 native 误判为缺失；② 目录-flow 洞是 `single` 槽、被官方包占死，**任何"用插件自定义官方目录选择器"的改动都不可行**；③ 想给用户原生对话框只能走官方装配切换（启用 `-native`），属"保持官方"，非插件、非补丁，且带"对话框弹在宿主机屏幕"的取舍。
+85. **【dsh-sidebar-lite】任务页升级为「AI 状态卡」：明确当前任务目标 / 进度 / 会话工作目录（2026-08-20，承接避坑 #64）**：
+    - **用户诉求**：侧栏「任务」页"实际没绑定到任何东西、没有任何输出和显示"，并希望明确**AI 当前任务进度与目标**。
+    - **根因**：任务页数据源是官方 list store 的 `jobsBySession[sessionId]`，该字段**只在 AI 调用 `job_*` 类工具（长任务/后台脚本）产生 session/jobs 帧时才填充，普通对话恒为空**——所以任务页"永远没东西"，而非没绑定。避坑 #64 修好了取值字段（`current` vs `sessionId`），但数据源本身对普通对话为空的问题依旧。
+    - **改法（仅 `plugins/dsh-sidebar-lite/lib/client.js`）**：
+      1. 在 `SidebarShell` 里新增 `activeSummary = snapshot.byId[sessionId]`——官方会话快照 `byId` 值是 `SessionSummary`（含 `displayTitle`=当前任务目标、`running`=是否执行中、`completed`=是否已完成、`cwd`=会话工作目录，见 `dsh-client-runtime` 的 `SessionListState`）。该快照由 `ctx.sessions.list.getSnapshot()` 返回，`current`/`byId`/`jobsBySession` 同在（projectList 投影）。
+      2. 重写 `TasksView`：顶部加 **AI 状态卡**（目标任务 + 状态徽标 + 工作目录），状态由 `running`/`completed` 派生：执行中=蓝点呼吸动画、已完成=绿点、空闲=灰点；无会话/无后台任务给**明确的中文提示**（"未选择会话"/"当前没有后台任务运行"），消除"看着像没绑定"的错觉。后台任务列表保留原「输出/停止」能力。
+      3. 注入 `@keyframes dsl-pulse` 呼吸动画（状态卡蓝点闪烁提示「AI 正在推进」）。
+    - **验证状态**：`node --check` 语法通过；`byId`/`current`/字段名均已对照 `dsh-client-runtime` 仓库源码核实（`projectList()` 投影 `byId` 到 `SessionSummary`）。刷新 WebUI 即热重载生效，可人工打开侧栏「任务」页看状态卡。
+86. **【发布】v1.0.13 发布：侧栏任务页升级 AI 状态卡（目标/进度/工作目录）（2026-08-20）**：
+    - **动机 + 用户实测反馈**：需求 #85 侧栏任务页 AI 状态卡改动经用户实测 OK，于今日发布 v1.0.13。
+    - **发布约定**（沿用 v1.0.12）：Release 只上传一个绿色 zip `DSH_Launcher_GreenPortable_Online_20260820_v1.0.13.zip`。打包脚本 `runtime/tmp/build_release_zip_v1013.py`。
+    - **版本号**：launcher.py `GREEN_VERSION` 1.0.12→1.0.13；README / README_EN 版本引用同步升至 v1.0.13+v1.0.13。已重建 `DSH_Launcher.exe` / `DSH_Update.exe`（PyInstaller，不含 UPX）。
+    - **config.json 默认绑定（用户本次决策变更）**：发布版默认 `dsh_host` 由 `0.0.0.0`（v1.0.10~v1.0.12 的局域网开箱默认）**改回 `127.0.0.1`（仅本机）**，更安全；用户如需局域网访问再自行切 `0.0.0.0`。这与历史发布默认不同，属用户本意，非测试残留。
+    - **上传**：GitHub（GH_TOKEN 已配）+ Gitee（用户提供的 PAT）双平台 Release。Gitee 代码/tag 由镜像自动同步，Release 手动上传 zip（方法见 #82）。
+
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验

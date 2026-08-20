@@ -273,7 +273,9 @@ window.__ModuleLoader__.load({
 				"font:14px/1 ui-monospace,Menlo,monospace;padding:6px 8px;}" +
 				"#" + N + "-host ::-webkit-scrollbar{width:8px;height:8px;}" +
 				"#" + N + "-host ::-webkit-scrollbar-thumb{background:#c9c9c9;border-radius:4px;}" +
-				"#root{margin-right:var(" + CSS_VAR + ",0px);transition:margin-right .18s ease;}";
+				"#root{margin-right:var(" + CSS_VAR + ",0px);transition:margin-right .18s ease;}" +
+				/* 状态卡蓝点呼吸动画: 执行中提示「AI 正在推进」。 */
+				"@keyframes dsl-pulse{0%,100%{opacity:1}50%{opacity:.25}}";
 			document.head.appendChild(style);
 		}
 
@@ -797,7 +799,7 @@ window.__ModuleLoader__.load({
 
 		// ---- 任务管理 (后台任务) ----
 
-		function TasksView({ scope, jobs }) {
+		function TasksView({ scope, jobs, active }) {
 			// 展开查看输出时用 objectMap 缓存每个任务的输出文本与错误。
 			const [outputText, setOutputText] = react.useState({});
 			const [busyId, setBusyId] = react.useState(null);
@@ -827,27 +829,62 @@ window.__ModuleLoader__.load({
 			};
 
 			const list = jobs || [];
-			if (list.length === 0) {
-				return react.createElement("div", { key: "empty", style: { padding: 12, fontSize: 12, color: "#8a8f98" } }, "暂无后台任务。AI 调用 job 类工具 (如长任务/脚本) 后, 会在此列出。");
+
+			// ---- 顶部: 当前激活会话的「AI 状态卡」(明确 AI 当前任务目标与进度) ----
+			// 数据来源是官方会话列表 store 的 SessionSummary: displayTitle=当前任务目标,
+			// running=是否在执行中, completed=是否已完成, cwd=会话工作目录。
+			const hasSession = !!active;
+			const goalTitle = (active && active.displayTitle && active.displayTitle !== "") ? active.displayTitle : "（未命名）";
+			const isRunning = !!(active && active.running);
+			const isCompleted = !!(active && active.completed);
+
+			// 状态徽标: 执行中蓝点闪烁提示「正在推进」, 空闲灰点, 已完成绿点。
+			let status = { text: "未选择会话", color: "#8a8f98", dot: "#c9c9c9", pulse: false };
+			if (hasSession) {
+				if (isRunning) status = { text: "AI 正在执行当前任务…", color: "#1a56db", dot: "#1a56db", pulse: true };
+				else if (isCompleted) status = { text: "已完成", color: "#16a34a", dot: "#16a34a", pulse: false };
+				else status = { text: "空闲 · 等待新的指令", color: "#5f6672", dot: "#8a8f98", pulse: false };
 			}
 
-			return react.createElement("div", { key: "jobs", style: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "auto" } }, list.map((job) => {
-				const currentOutput = outputText[job.id] || null;
-				const statusLabel = job.status || "unknown";
-				return react.createElement("div", { key: job.id, style: { borderBottom: "1px solid var(--dsw-alias-stroke-default,#eee)", padding: "8px" } }, [
-					react.createElement("div", { key: "row", style: { display: "flex", alignItems: "center", gap: 6 } }, [
-						react.createElement("span", { key: "st", style: { fontSize: 11, padding: "1px 6px", borderRadius: 3, background: statusLabel === "running" ? "#e8f0fe" : "#ececec", color: statusLabel === "running" ? "#1a56db" : "#5f6672" } }, statusLabel),
-						react.createElement("span", { key: "id", style: { flex: 1, minWidth: 0, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", userSelect: "none" }, title: job.title || job.id }, (job.title || job.id)),
-						react.createElement("button", { key: "out", type: "button", disabled: busyId === job.id, style: { cursor: busyId === job.id ? "default" : "pointer", fontSize: 11, padding: "2px 6px" }, onClick: () => loadOutput(job), title: "查看 AI 读取到的输出" }, "输出"),
-						react.createElement("button", { key: "kill", type: "button", disabled: busyId === job.id, style: { cursor: busyId === job.id ? "default" : "pointer", fontSize: 11, padding: "2px 6px" }, onClick: () => killJob(job), title: "停止该任务" }, "停止"),
+			return react.createElement("div", { key: "tasks", style: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "auto" } }, [
+				// 状态卡: 明确 AI 当前任务与进度。
+				react.createElement("div", { key: "status", style: { margin: "8px 8px 4px", padding: 10, border: "1px solid var(--dsw-alias-stroke-default,#e5e5e5)", borderRadius: 8, background: "var(--dsw-alias-fill-solid,#ffffff)" } }, [
+					react.createElement("div", { key: "goal", style: { fontSize: 12.5, fontWeight: 600, color: "var(--dsw-alias-label-primary,#1f2329)", wordBreak: "break-all", lineHeight: 1.4 } }, "目标 / 当前任务: " + goalTitle),
+					react.createElement("div", { key: "st", style: { display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 12, color: status.color } }, [
+						react.createElement("span", { key: "dot", style: { width: 8, height: 8, borderRadius: "50%", background: status.dot, flex: "none", animation: status.pulse ? "dsl-pulse 1.2s ease-in-out infinite" : undefined } }),
+						react.createElement("span", { key: "t", style: { fontWeight: 600 } }, status.text),
 					]),
-					currentOutput !== null && react.createElement("div", { key: "body", style: { marginTop: 6, padding: 6, background: "#f6f7f8", borderRadius: 4 } }, [
-						currentOutput.error !== null
-							? react.createElement("div", { key: "e", style: { fontSize: 11, color: "#c0392b" } }, "操作失败: " + currentOutput.error)
-							: react.createElement("pre", { key: "o", style: { margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-all", fontSize: 11, lineHeight: 1.5 } }, currentOutput.text),
-					]),
-				]);
-			}));
+					(hasSession && active && active.cwd) ? react.createElement("div", { key: "cwd", style: { marginTop: 6, fontSize: 11, color: "#8a8f98", wordBreak: "break-all" }, title: active.cwd }, "工作目录: " + active.cwd) : null,
+				]),
+
+				// 后台任务标题行。
+				react.createElement("div", { key: "jobshead", style: { display: "flex", alignItems: "center", gap: 6, padding: "8px 10px 4px", fontSize: 12, fontWeight: 600, color: "var(--dsw-alias-label-primary,#1f2329)" } }, "后台任务" + (list.length > 0 ? " (" + list.length + ")" : "")),
+
+				// 无会话 / 无后台任务 的提示 (避免看起来像"没绑定到东西")。
+				react.createElement("div", { key: "jobsbody", style: { padding: "4px 10px 10px", display: "flex", flexDirection: "column", gap: 4 } }, [
+					(!hasSession) && react.createElement("div", { key: "nosess", style: { fontSize: 12, color: "#8a8f98" } }, "未选择会话, 无法显示 AI 的当前任务状态。"),
+					(hasSession && list.length === 0) && react.createElement("div", { key: "empty", style: { fontSize: 12, color: "#8a8f98" } }, "当前没有后台任务运行。"),
+				]),
+
+				// 后台任务列表 (仅 AI 调 job_* 类工具时才有; 恒空属正常)。
+				hasSession && list.map((job) => {
+					const currentOutput = outputText[job.id] || null;
+					const statusLabel = job.status || "unknown";
+					return react.createElement("div", { key: job.id, style: { borderBottom: "1px solid var(--dsw-alias-stroke-default,#eee)", padding: "8px 10px" } }, [
+						react.createElement("div", { key: "row", style: { display: "flex", alignItems: "center", gap: 6 } }, [
+							react.createElement("span", { key: "st", style: { fontSize: 11, padding: "1px 6px", borderRadius: 3, background: statusLabel === "running" ? "#e8f0fe" : "#ececec", color: statusLabel === "running" ? "#1a56db" : "#5f6672" } }, statusLabel),
+							react.createElement("span", { key: "id", style: { flex: 1, minWidth: 0, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", userSelect: "none" }, title: job.title || job.id }, (job.title || job.id)),
+							react.createElement("button", { key: "out", type: "button", disabled: busyId === job.id, style: { cursor: busyId === job.id ? "default" : "pointer", fontSize: 11, padding: "2px 6px", flex: "none" }, onClick: () => loadOutput(job), title: "查看 AI 读取到的输出" }, "输出"),
+							react.createElement("button", { key: "kill", type: "button", disabled: busyId === job.id, style: { cursor: busyId === job.id ? "default" : "pointer", fontSize: 11, padding: "2px 6px", flex: "none" }, onClick: () => killJob(job), title: "停止该任务" }, "停止"),
+						]),
+						currentOutput !== null && react.createElement("div", { key: "body", style: { marginTop: 6, padding: 6, background: "#f6f7f8", borderRadius: 4 } }, [
+							currentOutput.error !== null
+								? react.createElement("div", { key: "e", style: { fontSize: 11, color: "#c0392b" } }, "操作失败: " + currentOutput.error)
+								: react.createElement("pre", { key: "o", style: { margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-all", fontSize: 11, lineHeight: 1.5 } }, currentOutput.text),
+						]),
+					]);
+				}),
+			]);
 		}
 
 		// ---- 侧边栏外壳 (折叠 + Tab 切换) ----
@@ -915,7 +952,13 @@ window.__ModuleLoader__.load({
 			const sessionId = (snapshot && (snapshot.current || snapshot.sessionId)) || null;
 			const summaryCwd = sessionId ? ((snapshot && snapshot.byId && snapshot.byId[sessionId] && snapshot.byId[sessionId].cwd) || undefined) : undefined;
 			// 后台任务列表 (官方 session/jobs 推送镜像, 与 better-sidebar 同一数据源)。
+			// 注意: 该字段只在 AI 调用 job_* 类工具 (长任务/后台脚本) 产生 session/jobs 帧时
+			// 才会被填充, 普通对话恒为空 —— 旧任务页"永远没显示"的根因就在于此。
 			const jobs = (snapshot && snapshot.jobsBySession && sessionId && snapshot.jobsBySession[sessionId]) || [];
+			// 激活会话的元信息 (目标/状态来源): byId 里的 SessionSummary 含
+			// displayTitle (当前任务目标)、running (是否在执行)、cwd、completed (是否已完成),
+			// 用于在任务页明确展示 AI 当前任务进度与目标。
+			const activeSummary = sessionId ? ((snapshot && snapshot.byId && snapshot.byId[sessionId]) || null) : null;
 
 			// 已做过"无会话兜底根解析"的标记: 只兜底一次, 避免频繁轮询宿主端点根。
 			const fallbackResolved = react.useRef(false);
@@ -1006,7 +1049,7 @@ window.__ModuleLoader__.load({
 						: tab === "terminal"
 						? react.createElement(TerminalView, { key: "te", scope, tab: "1" })
 						: tab === "tasks"
-						? react.createElement(TasksView, { key: "ta", scope, jobs })
+						? react.createElement(TasksView, { key: "ta", scope, jobs, active: activeSummary })
 						: react.createElement(BrowserView, { key: "br", scope }),
 				]),
 			]);
