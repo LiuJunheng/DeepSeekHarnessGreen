@@ -5,8 +5,8 @@ DeepSeek Harness 绿色整合版启动器 (Python 标准库实现, 无第三方�
 作用:
     1. 自动检测 / 下载便携版 Node.js 到 runtime/node
     2. 自动在 runtime/dsh 下本地安装 @deepseek-ai/dsh 包
-    3. 启动 dsh web 本地服务, 并自动打开浏览器 (界面已在浏览器中打开则不重复开新页)
-    4. 提供 tkinter 图形界面 (启动 / 停止 / 打开界面 / 日志)
+    3. 启动 dsh web 本地服务, 并按默认打开方式打开界面 (独立桌面窗口/网页窗口)
+    4. 提供 tkinter 图形界面 (启动 / 停止 / 桌面窗口 / 网页窗口 / 日志)
     5. 所有数据 (Node, dsh, DSH_HOME) 都放在本目录 runtime 下, 完全绿色便携
     6. WebUI 单页面去重: 向前端注入心跳脚本, 自动打开时检测到界面已打开就不再重复
        打开新页面; 手动点「打开界面」不受此限制, 必定打开新页面
@@ -88,6 +88,14 @@ SINGLE_INSTANCE_MUTEX = "DSH_Launcher_GreenPortable_SingleInstance"
 ERROR_ALREADY_EXISTS = 183              # CreateMutexW 返回该错误码表示互斥量已存在
 _SINGLE_INSTANCE_MUTEX_HANDLE = None    # 模块级持有互斥量句柄, 防止被 GC 提前释放
 
+# 桌面版 (desktop-shell.py) 是"固定单实例程序"的身份标记常量:
+# 它启动时把自身 PID 写入 desktop_shell.pid, launcher 读该文件 + 校验进程存活即判定其在线,
+# 用于排重, 不再依赖 WebUI 心跳 (网页版才需要心跳)。窗口标题与 desktop-shell.py 保持一致。
+DESKTOP_WINDOW_TITLE = "DeepSeek Harness 桌面版"
+DESKTOP_SHELL_PID_FILE = os.path.join(RUNTIME_DIR, "desktop_shell.pid")
+STILL_ACTIVE = 259          # GetExitCodeProcess 返回该值表示进程仍在运行
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
 
 def _acquire_single_instance(mutex_name=SINGLE_INSTANCE_MUTEX):
     """创建命名互斥量实现单实例 (2026-08-16):
@@ -144,8 +152,11 @@ DEFAULT_CONFIG = {
     "dsh_host": "127.0.0.1",     # dsh web 服务绑定地址: "127.0.0.1"=仅本机 / "0.0.0.0"=局域网可访问
     "trusted_hosts": [],         # 受信任主机列表 (host 或 host:port); 空=局域网模式自动信任全部局域网, 非空=只信任填写的
     "dsh_package": "@deepseek-ai/dsh",   # dsh 包名
-    # 启动服务后是否自动打开 WebUI 浏览器页面 (False 则只启动服务, 需手动点「打开界面」)
+    # 启动服务后是否自动打开 WebUI 页面 (False 则只启动服务, 需手动点「桌面窗口/网页窗口」)
     "auto_open_browser": True,
+    # 打开界面的默认方式: "desktop"=独立桌面窗口(内嵌 WebView2, 完全脱离浏览器) /
+    # "browser"=系统浏览器网页窗口。自动打开与「桌面窗口/网页窗口」都沿用该默认, 也可单独指定。
+    "open_method": "desktop",
     # WebUI 页面心跳上报端口: 页面打开后会定期向该端口上报心跳,
     # 启动器据此判断"界面已打开"并避免重复打开新页面 (详见 UI_ALIVE_WINDOW)
     "ui_beacon_port": 3081,
@@ -201,8 +212,8 @@ DEFAULT_PROFILE = "web"
 # 原理: 启动器向 WebUI 前端 index.html 注入一小段心跳脚本, 页面打开后每
 # UI_BEACON_PING_INTERVAL 秒向启动器的本地心跳服务上报一次; 启动器在自动打开
 # 浏览器前检查: 若最近 UI_ALIVE_WINDOW 秒内收到过心跳, 说明界面已打开, 跳过。
-# 该检查只约束自动打开 (启动服务后自动开页 / 命令行 --start 自动开页);
-# 手动点 GUI「打开界面」不受此限制, 必定打开新页面 (open_ui(force=True))。
+# 该去重只按"同一种方式"进行: 若当前默认打开方式(桌面窗/网页窗)已有页面在运行,
+# 则跳转/复用该页面, 绝不另开; 另一种方式不自动打开 (open_ui 内部统一拦截)。
 # dsh 升级重装后由 patch_frontend() 自动重新注入 (见 install_dsh 末尾)。
 # ---------------------------------------------------------------------------
 UI_BEACON_PORT = 3081            # 心跳上报端口 (config.json 的 ui_beacon_port 可覆盖)
@@ -2304,6 +2315,11 @@ class Launcher:
             raise RuntimeError("未找到 dsh 入口文件: %s" % dsh_js)
         port = int(self.config.get("dsh_port", 3080))
         command = [node_exe, dsh_js, "web", "--port", str(port)]
+        # 官方 dsh 在服务就绪后默认会自动打开系统默认浏览器 (openBrowser 默认 true,
+        # 仅加了 --no-open 才关闭)。界面打开方式由启动器 open_ui 统一接管
+        # (桌面壳/网页窗口, 按 config.open_method), 故强制 --no-open,
+        # 否则会"官方自动开一个浏览器 + 我们又开一个界面"双开。
+        command.append("--no-open")
         # 绑定地址: 默认 127.0.0.1 (仅本机); 局域网模式为 0.0.0.0 (需 startup.js 补丁放开)
         dsh_host = str(self.config.get("dsh_host", "127.0.0.1")).strip()
         if dsh_host:
@@ -2891,11 +2907,7 @@ class Launcher:
                 for lan_ip in self.lan_addresses():
                     self.log("局域网访问地址: http://%s:%d (其他电脑浏览器打开)" % (lan_ip, port))
             if open_browser:
-                if self.ui_is_open():
-                    self.log("检测到 WebUI 已在浏览器中打开, 不再重复打开新页面 (可点「打开界面」手动打开)")
-                else:
-                    self.log("正在打开浏览器 ...")
-                    webbrowser.open(url)
+                self.open_ui(force=False)   # 按默认打开方式(桌面窗口/网页窗口)自动打开; 已打开则内部跳过
 
     def wait_ready(self, port):
         """阻塞等待服务端口就绪, 成功返回 True, 超时返回 False"""
@@ -3297,18 +3309,200 @@ class Launcher:
                                    0 if s["archived"] else 1, s["id"]))
         return result
 
-    def open_ui(self, force=False):
-        """在浏览器中打开 dsh 界面。
-        force=False (自动打开, 如服务启动后自动开页): 若界面已在浏览器中打开则跳过,
-        避免多次重启累积重复标签页;
-        force=True (手动点「打开界面」): 必定打开新页面, 不受"最近打开过"去重限制"""
-        self._ensure_ui_beacon_server()
-        port = int(self.config.get("dsh_port", 3080))
-        url = "http://127.0.0.1:%d" % port
-        if not force and self.ui_is_open():
-            self.log("WebUI 已在浏览器中打开, 不再重复打开新页面: %s" % url)
+    def _read_desktop_shell_pid(self):
+        """读取桌面壳记录的 PID (单实例身份); 无记录/非法返回 0。"""
+        try:
+            with open(DESKTOP_SHELL_PID_FILE, "r", encoding="utf-8") as file_handle:
+                return int(file_handle.read().strip())
+        except (OSError, ValueError):
+            return 0
+
+    def _write_desktop_shell_pid(self, pid):
+        """把刚启动的桌面壳进程 PID 落盘 (供后续 _desktop_shell_alive 判重)。写失败仅失去快速判重, 不致命。"""
+        try:
+            os.makedirs(RUNTIME_DIR, exist_ok=True)
+            with open(DESKTOP_SHELL_PID_FILE, "w", encoding="utf-8") as file_handle:
+                file_handle.write(str(pid))
+        except OSError:
+            pass
+
+    def _desktop_shell_alive(self):
+        """桌面壳是否"单实例在线": 读 PID 文件 + 用 Win32 校验该进程是否存活。
+
+        桌面版是固定一个程序, 用"进程身份"判比 WebUI 心跳更可靠 (心跳需要的
+        前端 index.html 可能没注入 / 网页版才需要)。非 Windows 或不存活一律判假。
+        """
+        pid = self._read_desktop_shell_pid()
+        if pid <= 0 or sys.platform != "win32":
+            return False
+        try:
+            kernel32 = ctypes.windll.kernel32
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+            kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE,
+                                                    ctypes.POINTER(ctypes.c_uint32)]
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            process_handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
+                                                  False, pid)
+            if not process_handle:
+                return False
+            try:
+                exit_code = ctypes.c_uint32(0)
+                if not kernel32.GetExitCodeProcess(process_handle,
+                                                   ctypes.byref(exit_code)):
+                    return False
+                return exit_code.value == STILL_ACTIVE
+            finally:
+                kernel32.CloseHandle(process_handle)
+        except Exception:
+            return False
+
+    def _focus_desktop_window(self):
+        """尽力让已存在的桌面壳窗口回到前台 (找不到窗口则返回 False, 由调用方决定是否重建)。
+
+        桌面版是固定单实例, 手动再点「桌面窗口」时在线则聚焦, 不重复新建。
+        Returns:
+            bool: True 表示找到并尝试激活了既有窗口。
+        """
+        if sys.platform != "win32":
+            return False
+        try:
+            user32 = ctypes.windll.user32
+            user32.FindWindowW.restype = wintypes.HWND
+            user32.FindWindowW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+            user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+            user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+            window_handle = user32.FindWindowW(None, DESKTOP_WINDOW_TITLE)
+            if not window_handle:
+                return False
+            user32.ShowWindow(window_handle, 9)   # SW_RESTORE: 最小化/隐藏则还原
+            user32.SetForegroundWindow(window_handle)   # 尽力置前, 失败也无碍
+            return True
+        except Exception:
+            return False
+
+    def _find_pythonw(self):
+        """定位便携版 pythonw.exe (GUI 子系统, 无控制台窗口); 找不到时回退系统 pythonw。
+
+        绿色版优先取 runtime/python 下的 pythonw.exe, 保证桌面壳子进程不附属于任何
+        cmd 控制台, 从根上避免启动时闪现一下黑色终端窗口。
+        Returns:
+            str: pythonw 可执行文件绝对路径; 找不到返回 None。
+        """
+        candidates = [
+            os.path.join(BASE_DIR, "runtime", "python", "python", "pythonw.exe"),
+            os.path.join(BASE_DIR, "runtime", "python", "pythonw.exe"),
+        ]
+        for candidate in candidates:
+            if os.path.isfile(candidate):
+                return candidate
+        return sys.executable if sys.executable.lower().endswith("pythonw.exe") else None
+
+    def launch_desktop_shell(self):
+        """启动绿色版内嵌 WebView2 的独立桌面窗口 (完全脱离浏览器)。
+
+        由绿色版根目录 desktop-shell.py 承担: 自检/自装 pywebview(WebView2 后端),
+        再以 pythonw.exe(GUI 子系统)无控制台方式运行拎起独立桌面窗口。
+        优先用 subprocess 直启 pythonw + desktop-shell.py, 不经过 .bat,
+        从而不闪现任何 cmd 黑窗; 找不到 pythonw/pywebview 时才回退 .bat。
+        """
+        shell_script = os.path.join(BASE_DIR, "desktop-shell.py")
+        pythonw_exe = self._find_pythonw()
+        url = "http://127.0.0.1:%d" % int(self.config.get("dsh_port", 3080))
+        if pythonw_exe and os.path.isfile(shell_script):
+            creation_flags = 0
+            if sys.platform == "win32":
+                creation_flags = subprocess.CREATE_NO_WINDOW
+            try:
+                shell_process = subprocess.Popen(
+                    [pythonw_exe, shell_script],
+                    cwd=BASE_DIR,
+                    creationflags=creation_flags,
+                )
+                # 立即把 PID 落盘: 桌面版是固定单实例, launcher 据此判重(而非心跳)。
+                self._write_desktop_shell_pid(shell_process.pid)
+                self.log("正在打开独立桌面窗口 (WebView2 桌面版, 无控制台) ...")
+                return
+            except Exception as error:
+                self.log("启动桌面窗口失败, 回退到 bat/浏览器: %s" % error)
+        # 兜底: bat 存在则用"双击"方式(会闪一下 cmd), 否则直接浏览器
+        bat_path = os.path.join(BASE_DIR, "desktop-shell.bat")
+        if os.path.exists(bat_path):
+            self.log("正在打开独立桌面窗口 (WebView2 桌面版) ...")
+            try:
+                os.startfile(bat_path)   # ShellExecute 按"双击"方式运行, 不阻塞本进程
+            except Exception as error:
+                self.log("启动桌面窗口失败, 改用系统浏览器: %s" % error)
+                webbrowser.open(url)
             return
-        self.log("正在打开界面: %s" % url)
+        self.log("未找到 desktop-shell.bat, 改用系统浏览器打开: %s" % url)
+        webbrowser.open(url)
+
+    def _ui_open_state(self, write_method=None):
+        """持久化"当前正在使用的界面方式", 返回最近记录的方式; 传 write_method 时先落盘。
+
+        说明: 心跳检测(ui_is_open)只能判断"有一个界面在线", 区分不了那个界面是
+        桌面窗口还是浏览器。于是把"上一次以哪种方式打开"写进 runtime 下的临时文件,
+        配合心跳即可断定当前在线的是桌面窗还是网页窗——即使启动器重启过也能对上。
+        Returns:
+            "desktop" / "browser" / None(从未记录)。
+        """
+        state_file = os.path.join(RUNTIME_DIR, "ui_open_method.txt")
+        if write_method is not None:
+            try:
+                os.makedirs(RUNTIME_DIR, exist_ok=True)
+                with open(state_file, "w", encoding="utf-8") as file_handle:
+                    file_handle.write(write_method)
+            except OSError:
+                pass
+            return write_method
+        try:
+            with open(state_file, "r", encoding="utf-8") as file_handle:
+                value = file_handle.read().strip()
+            return value if value in ("desktop", "browser") else None
+        except OSError:
+            return None
+
+    def open_ui(self, force=False, method=None):
+        """打开 dsh 界面。
+
+        - 打开方式 = method(手动指定) 或 config.open_method(默认)。
+        - **手动打开(force=True)不排重**：桌面版在线则聚焦已有窗口、不在线则新建;
+          网页版直接 webbrowser.open(同地址会自动复用/聚焦已有标签)。反复点按钮不会
+          再被"已存在"挡住。
+        - **自动打开(force=False)才排重**：桌面版用"进程 PID 身份"判(固定单实例,
+          不用心跳)；网页版用心跳 + 记录的上次打开方式判，已打开则跳过不重复新建。
+        - 只认一种打开方式，绝不顺带开另一种 —— 根治"选桌面却还弹浏览器 / 双开"。
+        """
+        self._ensure_ui_beacon_server()
+        open_method = method or self.config.get("open_method", "desktop")
+        url = "http://127.0.0.1:%d" % int(self.config.get("dsh_port", 3080))
+
+        if open_method == "desktop":
+            # 桌面版是固定单实例程序: 用进程PID身份判在线, 不用/不依赖 WebUI 心跳。
+            if self._desktop_shell_alive():
+                if force:
+                    # 手动点「桌面窗口」: 已有则聚焦, 让用户"点了就看见", 不重复新建。
+                    if self._focus_desktop_window():
+                        self.log("独立桌面窗口已在运行, 已聚焦到该窗口")
+                        return
+                    # 找不到窗口(残留PID) → 按无窗口重建
+                    self.log("桌面壳进程在但窗口丢失, 重新打开桌面窗口")
+                else:
+                    # 自动打开: 已在线则排重跳过, 不重复新建。
+                    self.log("独立桌面窗口已在运行, 不再重复新建 (自动打开)")
+                    return
+            self._ui_open_state("desktop")
+            self.launch_desktop_shell()
+            return
+
+        # ---- 网页版(浏览器): 同地址 webbrowser.open 本身就会复用/聚焦已开标签 ----
+        self._ui_open_state("browser")
+        if not force and self.ui_is_open() and self._ui_open_state() == "browser":
+            self.log("WebUI 网页窗口已在运行, 已切换到该页面: %s" % url)
+            webbrowser.open(url)
+            return
+        self.log("正在打开界面(网页窗口): %s" % url)
         webbrowser.open(url)
 
     def on_exit(self):
@@ -3616,8 +3810,8 @@ def run_gui():
 
     root = tk.Tk()
     root.title(WINDOW_TITLE)
-    root.geometry("920x780")
-    root.minsize(760, 660)
+    root.geometry("1160x780")
+    root.minsize(1000, 660)
 
     # ---------- 窗口图标 (2026-08-16): 自定义 DSH 绿色小鲸鱼图标, 缺失时静默降级 ----------
     icon_path = get_icon_path()
@@ -3834,6 +4028,7 @@ def run_gui():
         """安装环境 (Node + dsh, 含内置 Python)"""
         if is_busy[0]:
             return
+        sync_gui(silent=True)   # 安装/下载前也按界面当前填入值落盘 (含镜像源), 所见即所得
         set_busy(True)
         status_text.set("正在安装环境 ...")
         status_indicator.itemconfig(dot, fill="#f59e0b")   # 黄色闪烁
@@ -3863,27 +4058,13 @@ def run_gui():
     def on_start():
         """启动服务
 
-        同步页面网络设置: 用户可能改了「局域网/本机」绑定或受信任主机却没点
-        「保存设置」就直接启动, 若不同步, 服务仍按旧的 config 绑定 (如仍只绑
-        127.0.0.1), 但界面上却显示「局域网」, 造成"显示 =/= 实际"的误判。
-        这里启动前先把界面当前的网络设置同步进 config 并落盘 (转换规则与
-        「保存设置」完全一致, 但不弹校验框/提示, 静默落盘)。
+        「所见即所得」: 用户可能改了网络/常规设置却没点「保存设置」就直接启动,
+        这里启动前把界面当前填入的全部设置同步进 config 并落盘 (静默, 不弹框),
+        保证界面上显示的值就是实际绑定的值 (端口/绑定/受信任主机/镜像/打开方式等)。
         """
         if is_busy[0]:
             return
-        try:
-            raw_bind = bind_var.get()
-            app.config["dsh_host"] = ("0.0.0.0" if "局域网" in raw_bind else "127.0.0.1")
-            trusted_list = []
-            for item in trusted_var.get().replace("，", ",").split(","):
-                item = item.strip()
-                if item:
-                    trusted_list.append(item)
-            app.config["trusted_hosts"] = trusted_list
-            app.save_config()
-        except Exception as error:
-            # 网络设置同步失败只警告不阻断: 服务仍按已有 config 启动
-            append_log("[警告] 启动前同步网络设置失败, 已按原配置启动: %s" % error)
+        sync_gui(silent=True)   # 端口非法仅警告不阻断, 沿用旧端口
         set_busy(True)
         status_text.set("正在启动服务 ...")
         status_indicator.itemconfig(dot, fill="#f59e0b")
@@ -4152,9 +4333,10 @@ def run_gui():
         # 初始加载
         refresh()
 
-    def on_open():
-        """手动在浏览器中打开 dsh 界面 (必定打开新页面, 不受单页面去重拦截)"""
-        app.open_ui(force=True)
+    def on_open(method):
+        """手动按指定方式打开 dsh 界面 (必定打开, 不受单页面去重拦截)。
+        method: "desktop"=独立桌面窗口(WebView2壳) / "browser"=系统浏览器。"""
+        app.open_ui(force=True, method=method)
 
     def on_check_update():
         """检查 dsh 是否有新版本, 有则弹窗让用户选择 更新 / 不更新"""
@@ -4931,7 +5113,11 @@ def run_gui():
     stop_btn = ttk.Button(button_frame, text="停止服务", command=on_stop)
     stop_btn.pack(side="left", padx=8)
 
-    ttk.Button(button_frame, text="打开界面", command=on_open).pack(side="left", padx=8)
+    # 分隔: 打开界面 → 桌面窗口 / 网页窗口 两项 (可分别手动打开)
+    ttk.Button(button_frame, text="桌面窗口",
+               command=lambda: on_open("desktop")).pack(side="left", padx=(0, 8))
+    ttk.Button(button_frame, text="网页窗口",
+               command=lambda: on_open("browser")).pack(side="left", padx=8)
 
     update_btn = ttk.Button(button_frame, text="检查更新", command=on_check_update)
     update_btn.pack(side="left", padx=8)
@@ -4968,9 +5154,15 @@ def run_gui():
     # 初始刷新状态
     refresh_status()
 
-    # ---------- 网络设置区 (局域网远程访问) ----------
-    network_frame = ttk.LabelFrame(root, text="网络设置 (局域网远程访问)")
-    network_frame.pack(fill="x", padx=14, pady=(0, 8))
+    # ---------- 配置区: 「网络设置」左、「常规设置」右 (左右分栏, 总宽控制在窗口默认宽 ~1280 内) ----------
+    config_area = ttk.Frame(root)
+    config_area.pack(fill="x", padx=14, pady=(0, 8))
+    config_area.columnconfigure(0, weight=1)   # 左列: 网络设置
+    config_area.columnconfigure(1, weight=1)   # 右列: 常规设置
+
+    # ===== 左: 网络设置 (局域网远程访问) =====
+    network_frame = ttk.LabelFrame(config_area, text="网络设置 (局域网远程访问)")
+    network_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
 
     ttk.Label(network_frame, text="服务绑定:").grid(row=0, column=0, padx=8, pady=6, sticky="w")
     bind_var = tk.StringVar(value=("局域网 (允许局域网访问 0.0.0.0)"
@@ -4988,60 +5180,99 @@ def run_gui():
     trusted_entry.grid(row=1, column=1, padx=8, pady=6, sticky="w")
 
     ttk.Label(network_frame,
-              text="受信任主机: 可空, 逗号分隔的 host 或 host:port。不填=绑定局域网时自动信任全部局域网 IP;"
-                   " 填了任意一个=只信任填写的地址, 不再自动全局域网放行。",
-              foreground="#606060").grid(row=2, column=0, columnspan=2,
-                                          padx=8, pady=(0, 6), sticky="w")
+              text="受信任主机: 可空, 逗号分隔的 host 或 host:port。\n"
+                   "不填=绑定局域网时自动信任全部局域网 IP; 填了任意一个=只信任填写的地址,\n"
+                   "不再自动全局域网放行。",
+              foreground="#606060", justify="left", wraplength=430).grid(
+                  row=2, column=0, columnspan=2, padx=8, pady=(0, 6), sticky="w")
 
-    # ---------- 设置区 ----------
-    settings_frame = ttk.LabelFrame(root, text="设置")
-    settings_frame.pack(fill="x", padx=14, pady=(0, 8))
+    # ===== 右: 常规设置 =====
+    settings_frame = ttk.LabelFrame(config_area, text="常规设置")
+    settings_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
 
-    ttk.Label(settings_frame, text="镜像源:").grid(row=0, column=0, padx=8, pady=6, sticky="w")
     mirror_var = tk.StringVar(value={"auto": "自动 (国内优先, 失败回退官方)",
                                      "cn": "国内 (npmmirror)",
                                      "official": "官方 (npmjs.org)"}.get(app.config["mirror"], "自动"))
     mirror_choices = ["自动 (国内优先, 失败回退官方)", "国内 (npmmirror)", "官方 (npmjs.org)"]
     mirror_combo = ttk.Combobox(settings_frame, textvariable=mirror_var,
                                 values=mirror_choices, state="readonly", width=30)
+    ttk.Label(settings_frame, text="镜像源:").grid(row=0, column=0, padx=8, pady=6, sticky="w")
+    # 常规设置里让「镜像源」与「端口」同一行并列, 善用横向宽度, 压缩纵向高度
     mirror_combo.grid(row=0, column=1, padx=8, pady=6, sticky="w")
 
-    ttk.Label(settings_frame, text="端口:").grid(row=1, column=0, padx=8, pady=6, sticky="w")
+    ttk.Label(settings_frame, text="端口:").grid(row=0, column=2, padx=(16, 0), pady=6, sticky="w")
     port_var = tk.StringVar(value=str(app.config["dsh_port"]))
-    port_entry = ttk.Entry(settings_frame, textvariable=port_var, width=12)
-    port_entry.grid(row=1, column=1, padx=8, pady=6, sticky="w")
+    port_entry = ttk.Entry(settings_frame, textvariable=port_var, width=10)
+    port_entry.grid(row=0, column=3, padx=8, pady=6, sticky="w")
+
+    # 默认打开方式: 影响「启动服务后自动打开」与单击按钮时的默认方式 (也可在按钮区单独指定)。
+    # 注意: 下拉选项是中文, 初始值必须也用中文标签, 否则选项框显示出英文 desktop/browser 对不上。
+    open_method_var = tk.StringVar(
+        value=("独立桌面窗口 (内嵌 WebView2)"
+               if app.config.get("open_method", "desktop") == "desktop"
+               else "网页窗口 (系统浏览器)"))
+    ttk.Label(settings_frame, text="默认打开方式:").grid(row=1, column=0, padx=8, pady=6, sticky="w")
+    open_method_choices = ["独立桌面窗口 (内嵌 WebView2)", "网页窗口 (系统浏览器)"]
+    open_method_combo = ttk.Combobox(settings_frame, textvariable=open_method_var,
+                                     values=open_method_choices, state="readonly", width=30)
+    open_method_combo.grid(row=1, column=1, padx=8, pady=6, sticky="w")
 
     auto_open_var = tk.BooleanVar(value=bool(app.config.get("auto_open_browser", True)))
-    ttk.Checkbutton(settings_frame, text="启动服务后自动打开浏览器 (已打开则不重复开新页)",
-                    variable=auto_open_var).grid(row=2, column=0, columnspan=2,
+    ttk.Checkbutton(settings_frame,
+                    text="启动服务后自动打开界面 (按默认方式打开, 已打开则不重复开新页)",
+                    variable=auto_open_var).grid(row=2, column=0, columnspan=4,
                                                  padx=8, pady=4, sticky="w")
 
-    def on_save():
+    def sync_gui(silent=False):
+        """把界面当前填入的值("所见")同步进 config 并落盘("所得")。
+
+        统一了「保存设置 / 启动服务前 / 安装下载前」三处的同步逻辑, 保证
+        "界面上看到的值就是实际在用的值"——用户改了没点保存, 启动或安装时
+        也会按最新输入自动落盘后再操作。
+
+        silent=True (启动/安装前的自动同步): 端口非法时只记警告不阻断(沿用旧端口),
+        不弹对话框; 否则(手动保存)端口非法弹错误框并返回 False 中止。
+        """
         try:
-            new_port = int(port_var.get().strip())
-            if new_port < 1 or new_port > 65535:
+            raw_port = port_var.get().strip()
+            new_port = int(raw_port) if raw_port else None
+            if new_port is not None and not (1 <= new_port <= 65535):
                 raise ValueError("端口范围 1-65535")
+            if new_port is not None:
+                app.config["dsh_port"] = new_port
         except ValueError as error:
-            messagebox.showerror("设置错误", "端口无效: %s" % error)
-            return
-        app.config["dsh_port"] = new_port
-        app.config["auto_open_browser"] = bool(auto_open_var.get())
-        raw = mirror_var.get()
-        app.config["mirror"] = "cn" if "国内" in raw else ("official" if "官方" in raw else "auto")
+            if not silent:
+                messagebox.showerror("设置错误", "端口无效: %s" % error)
+                return False
+            append_log("[警告] 端口无效, 本次未改动端口: %s" % error)
         # 网络设置: 服务绑定 (仅允许 127.0.0.1 / 0.0.0.0) + 受信任主机 (逗号/空白分隔, 去空)
-        raw_bind = bind_var.get()
-        app.config["dsh_host"] = "0.0.0.0" if "局域网" in raw_bind else "127.0.0.1"
+        app.config["dsh_host"] = ("0.0.0.0" if "局域网" in bind_var.get() else "127.0.0.1")
         trusted_list = []
         for item in trusted_var.get().replace("，", ",").split(","):
             item = item.strip()
             if item:
                 trusted_list.append(item)
         app.config["trusted_hosts"] = trusted_list
+        # 常规设置: 镜像源 / 默认打开方式 / 自动打开
+        raw = mirror_var.get()
+        app.config["mirror"] = "cn" if "国内" in raw else ("official" if "官方" in raw else "auto")
+        open_raw = open_method_var.get()
+        app.config["open_method"] = ("desktop" if "桌面" in open_raw else "browser")
+        app.config["auto_open_browser"] = bool(auto_open_var.get())
         app.save_config()
-        messagebox.showinfo("设置已保存", "配置已保存。下次启动服务时生效。")
+        return True
 
-    ttk.Button(settings_frame, text="保存设置", command=on_save).grid(
-        row=1, column=1, padx=(180, 8), pady=6, sticky="e")
+    def on_save():
+        """手动「保存设置」: 同步两块并将结果落盘"""
+        if sync_gui(silent=False):
+            messagebox.showinfo("设置已保存", "配置已保存。下次启动服务时生效。")
+
+    # ===== 保存设置 (「网络设置」与「常规设置」共同, 放在两块下方统一提交) =====
+    settings_action = ttk.Frame(root)
+    settings_action.pack(fill="x", padx=14, pady=(0, 8))
+    ttk.Label(settings_action, text="改动后即使不点保存, 启动服务或安装下载时也会自动按最新填入值落盘生效",
+              foreground="#606060").pack(side="left", padx=8)
+    ttk.Button(settings_action, text="保存设置", command=on_save).pack(side="right", padx=8)
 
     # ---------- 日志文本框 ----------
     log_frame = ttk.LabelFrame(root, text="运行日志")
@@ -5165,10 +5396,7 @@ def main():
                     for lan_ip in app.lan_addresses():
                         print("局域网访问地址: http://%s:%d (其他电脑浏览器打开)" % (lan_ip, port))
                 if app.config.get("auto_open_browser", True):
-                    if app.ui_is_open():
-                        print("检测到 WebUI 已在浏览器中打开, 不再重复打开新页面")
-                    else:
-                        webbrowser.open("http://127.0.0.1:%d" % port)
+                    app.open_ui(force=False)   # 按默认打开方式(桌面窗口/网页窗口)打开
             # 守护模式: 保持本进程存活以维持服务子进程的 stdin 管道打开,
             # 否则 dsh 会因读到 stdin EOF 而退出。服务退出后本进程随之返回。
             if started and app.server_process is not None:

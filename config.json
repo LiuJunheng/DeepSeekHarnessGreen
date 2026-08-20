@@ -8,6 +8,7 @@
   "trusted_hosts": [],
   "dsh_package": "@deepseek-ai/dsh",
   "auto_open_browser": true,
+  "open_method": "desktop",
   "ui_beacon_port": 3081,
   "tmp_dir": "",
   "default_workspace": ""

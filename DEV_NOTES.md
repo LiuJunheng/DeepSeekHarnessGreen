@@ -315,6 +315,11 @@
     - **改法**：`on_start()` 在启动前先把界面当前的网络设置同步进 `app.config` 并 `app.save_config()` 落盘 — 转换规则与 `on_save()` 完全一致（`bind_var.get()` 含"局域网"→ `dsh_host="0.0.0.0"` 否则 `127.0.0.1`；`trusted_var` 按 `，`/`,` 分隔去空 → `trusted_hosts`），**但不弹校验框/提示, 静默落盘**。同步仅在网络两项（绑定+受信任主机）内做, 不改端口/镜像/自动开页（那几项无"界面显示 vs 实际"的同样歧义, 且端口还涉及校验逻辑, 保持显式保存）。`except` 时只 `append_log("[警告] 启动前同步网络设置失败, 已按原配置启动: ...")` 不阻断启动。
     - 命名注意：`on_start`（定义于 ~3863）引用 `bind_var`/`trusted_var`（定义于 ~4956，同在 `run_gui` 内）——都是 `run_gui` 的嵌套函数局部变量, 闭包在**调用时**才解析, 按钮点击时这些变量已赋值, 正常可用。
     - 验证：`py_compile`（Python 3.10）通过 / 未真机点「启动服务」实测同步生效 / 未重建 exe。
+62. **【更新通用 skill 包 python-tkinter-desktop-dev.zip：输出栏滚动层标配 + pythonw 防孤儿】（2026-08-20）**：应要求把 #59/#60 等本项目实测经验反哺进 `skills/python-tkinter-desktop-dev.zip`（通用 Tkinter skill，TRAE 技能格式）。
+    - **新增 5.14「输出栏必须配滚动层（标配要求）」**：凡是内容会变多/换行的输出栏（日志、结果、差异、富文本、Treeview）都必须配垂直滚动条；给出 Text+Scrollbar 双向绑定标准模板（`yscrollcommand=scrollbar.set` + `scrollbar.config(command=log_text.yview)`）；避坑：互相引用要"先建控件再 config 补绑定"（否则 NameError）、`state="disabled"` 不影响 `see("end")`、Treeview 同理、自动滚到底与用户回看冲突的改进、后台写日志 `after(0)` 线程安全。
+    - **新增 6.11「启动用 pythonw 无控制台：避免关 cmd 杀 GUI、服务变孤儿」**：提炼 #60 的根因与方案（python.exe 控制台子系统=cmd 即进程本体、被强杀走不到 on_close、Popen 派生子进程变孤儿；start.bat 优先 pythonw + `start ""` 闪退窗口；PyInstaller 必须 `--windowed`；服务型 GUI 关闭三选一；子进程管理 `--stop`/`terminate`/`taskkill /T /F`、孤儿清理用 `netstat` 定位 PID）。
+    - 同步更新：7.5 BAT 规范补"启动 GUI 一律优先 pythonw"提醒、checklists/dev_checklist.md 补 2 条检查项、README.md 核心内容+更新历史、SKILL.md 版本日期。
+    - **打包**：按 TRAE 规范重新打包 `python-tkinter-desktop-dev.zip`（根目录 `python-tkinter-desktop-dev/`，SKILL.md UTF-8 无 BOM、frontmatter `---`、无 manifest.json/`__pycache__`/`.pyc`、文件名全英文），共 20 条目。zip 被 `.gitignore` 忽略不入库（本地 skill 库交付物）。
 
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
@@ -914,6 +919,155 @@
     - **版本号**：launcher.py `GREEN_VERSION` 1.0.12→1.0.13；README / README_EN 版本引用同步升至 v1.0.13+v1.0.13。已重建 `DSH_Launcher.exe` / `DSH_Update.exe`（PyInstaller，不含 UPX）。
     - **config.json 默认绑定（用户本次决策变更）**：发布版默认 `dsh_host` 由 `0.0.0.0`（v1.0.10~v1.0.12 的局域网开箱默认）**改回 `127.0.0.1`（仅本机）**，更安全；用户如需局域网访问再自行切 `0.0.0.0`。这与历史发布默认不同，属用户本意，非测试残留。
     - **上传**：GitHub（GH_TOKEN 已配）+ Gitee（用户提供的 PAT）双平台 Release。Gitee 代码/tag 由镜像自动同步，Release 手动上传 zip（方法见 #82）。
+87. **【研究】dsh-desktop-plugin 工作机制解剖 + 「桌面壳」功能复刻立项（2026-08-20）**：
+    - **用户诉求**：装了 `dsh-desktop-plugin` 但"打不开"，想搞清它怎么工作、能否自研一个作为绿色版一部分的"桌面壳"。
+    - **定位**：该插件是 npm 包 `dsh-desktop-plugin@1.5.10`（已进 profile `bundles` 激活），源码 `runtime/dsh-home/profiles/web/node_modules/dsh-desktop-plugin/src/`。
+    - **工作机制（源码全读）**：
+      1. 激活时 `ensureInstalled`：拉取 GitHub Releases `RAFOLIE/dsh-desktop-windowos` 的 exe → 写 `%LOCALAPPDATA%\Programs\dsh-desktop-windowos\dsh-desktop-windowos.exe`（**默认系统路径，非绿色版**）；exe 是 4.8MB 轻量托盘壳，它在内部连 `127.0.0.1:3080` 打开 DSH WebUI。
+      2. 用 PowerShell/COM 建桌面 `.lnk`「DeepSeek Harness」+ 写 `.url`「DeepSeek Harness Web」打开 `http://127.0.0.1:3080`。
+      3. 注册 `desktop_launch` 模型工具（对话即可安装拉起）；下载走 直连→环境代理→探测本机代理端口→GitHub 镜像，带 sha256/size 校验。
+    - **实测现状**：exe 已下载成功到系统 `%LOCALAPPDATA%`；但 **桌面 `.lnk` 快捷方式不存在**（`Test-Path` = False）——`apply()` 里建快捷方式失败经 `.catch` 吞掉只记日志，故表现"装了但没入口/双击无效"；且写系统路径，绿色版搬移后指向失效。
+    - **结论**：可复刻。方案（推荐轻量壳）：不下载外部 exe，把绿色版**现成 WebUI 直接关进桌面壳**（绿色版路径优先、可随绿色版迁移，无 GitHub 网络依赖）。
+    - **实现要点（待落地）**：①以绿色版 `dsh_host`/`dsh_port`(默认 3080)为访问入口；②窗口实现二选一：默认系统浏览器(最稳零依赖) 或 WebView2/Chromium 无边框应用窗口(像桌面 App)；③建桌面快捷方式/开始菜单项指向绿色版内启动器或 url。本需求暂为研究/立项，未产出代码。
+88. **【实现】dsh-green-desktop 插件：绿色版「桌面版」入口（可选安装，不碰浏览器访问方式）（2026-08-20）**：
+    - **用户定案**：独立桌面应用更好，但要做成**插件形式**——绿色版照旧用浏览器开网址即可；**装了这个插件才额外多一个桌面入口**。据此落地为 `plugins/dsh-green-desktop/`（承接 #87 立项）。
+    - **成果物**：
+      1. `plugins/dsh-green-desktop/`：宿主端插件。`lib/index.js` 纯宿主端（只依赖 node 内置 fs/path/url/child_process），定位绿色版根目录（从插件安装位置逐级向上找含 `config.json` 的目录）→ 用 PowerShell + `WScript.Shell` 在桌面建「DeepSeek Harness 桌面版」快捷方式，指向根目录 `desktop-open.bat`。`cordis.patch.yml` 装配（insert 一行：id `green-desktop`），`dsh.bundle.patch` 声明使其进 profile bundles，随其它内置插件一样用 `file:` 本地安装。**未注册对话工具**：dsh 核心与既有内置插件均未暴露可直接复用的工具注册 API（`ctx.tools` 经查 dsh lib 与仓库源码均无对应实现，自造 API 有加载失败风险），故只保留"桌面快捷方式 + 启动 bat"这条最稳路径，对话拉起可后续再补。
+      2. `desktop-open.bat`（绿色版根目录）：双击后 `cd` 到自身目录，粗解析 `config.json` 拿 `dsh_host`/`dsh_port`（默认 127.0.0.1:3080），优先定位 Edge（x86/x64 两个稳定路径），`start "" msedge.exe --app=http://HOST:PORT` 弹**独立无边框窗口**（无地址栏、任务栏独立图标，形似原生桌面 App）；无 Edge 则 `start` 系统默认浏览器兜底。**⚠️ `--app=URL` 绝不能加引号**（此参数带引号 Edge 会忽略、退回普通浏览器且不跳转，见需求 #89）。
+      3. `runtime/tmp/build_release_zip_v1013.py`（后续发布脚本）：`GREEN_FILES` 追加 `desktop-open.bat`；`plugins/` 目录本来就整包随绿色 zip 分发，`dsh-green-desktop/` 自动带上。
+    - **避坑**：
+      - **插件的 .js 必须是纯 JS，不能带 TS 类型注解**（本项目插件由 node 直接加载，非 tsc 编译）：首版写了 `function locateGreenRoot(): string`、`: Promise<void>` 等，`node --check` 直接 SyntaxError。已全部去掉类型注解改为 JSDoc 注释式写法（与其它内置插件一致）。
+      - **别用 `homedir()\Desktop` 判快捷方式是否存在**：目标机桌面常被 OneDrive/重定向（实测 `D:\junheng.liu\Desktop`），`homedir()` 与真实桌面不一致，判定会失准。改为**每次都重建**快捷方式（隐藏 PowerShell 一条命令，代价极小），顺便保证绿色版整体迁移后快捷方式目标自动跟随最新路径。
+      - 每次激活都建快捷方式后需 `spawn("powershell", ...)` 一次，包 `windowsHide: true + stdio: ignore`，失败仅 `logger.warn`，不阻塞 DSH 启动（复用 dsh-desktop-plugin 的"短暂失败吞日志"教训里"不阻塞"的一侧，同时对用户可见）。
+    - **安装/验证状态**：已通过启动器 `install_plugin` 用 `file:` 装入 `web` profile（自动 reconcile 进 dependencies + bundles）；用 mock ctx 单测 `apply()` 生效（定位到 `E:\DeepSeekHarnessLauncher\`、真实桌面 `Test-Path` = True 新建了快捷方式，指向 `desktop-open.bat`）。dsh 服务未运行，实际加载在下次启动服务后激活。
+    - **遗留决策点**：官方 `dsh-desktop-plugin@1.5.10` 仍装在 live profile 且 enabled（broken、重复、写系统路径）。是否从 profile 移除、或仅禁用，待与用户确认后再执行（避免未经确认动用户已装的软件）。
+89. **【修复】桌面版入口"只开浏览器却不弹独立窗口也不跳转"（2026-08-20，承接 #88）**：
+    - **用户反馈**：双击「DeepSeek Harness 桌面版」启动后并没有展示桌面样子，只是打开了浏览器、还不自动跳转到网址。
+    - **根因**：`desktop-open.bat` 里 `start "" msedge.exe --app="http://HOST:PORT"` 给 URL 加了引号。Chromium 系浏览器对 `--app=` 带引号的参数会**整个忽略**，退回普通浏览器模式启动，且 URL 不作为导航目标 → "只开了浏览器、不跳转、无独立窗口"，与用户现象完全吻合。
+    - **修复（desktop-open.bat）**：
+      1. **去掉 `--app=` 的引号**：`--app=http://%DSH_HOST%:%DSH_PORT%`（浏览器路径仍带引号，仅 URL 参数不带引号）。这是让 `--app` 真正生效、弹独立无边框窗口的关键。
+      2. **扩展浏览器探测**：除 Edge x86/x64 两个路径外，增加 Chrome x86/x64 两个路径作为备选；都没有才用 `start "" http://...` 走系统默认浏览器兜底。
+      3. **绑定地址归一化**：解析出的 `dsh_host` 为 `0.0.0.0` 或 `::` 时归一化为 `127.0.0.1`（这两个地址浏览器本地访问不到）。
+    - **验证**：`config.json` 粗解析正确（HOST=127.0.0.1、PORT=3080）；Edge 主进程本就在运行（`--no-startup-window`），直接启动 `msedge.exe --app=http://127.0.0.1:3080` 后 `Get-Process msedge | ? MainWindowTitle` 能看到标题为 `127.0.0.1` 的独立窗口——即 `--app` 已生效并导航到 WebUI。**注意**：Edge 已有进程时，app 窗口会**复用既有浏览器主进程**（进程命令行不会新增 `--app`，因为新窗口不产生新浏览器进程），故不能靠"进程命令行含 `--app=`"来判断是否成功，要看**窗口标题**。
+90. **【实现】「桌面版」升级为内嵌 WebView2 的内核壳：完全脱离浏览器开 WebUI（2026-08-20，承接 #88/#89）**：
+    - **用户诉求**：`--app` 依赖系统里预先装好的 Edge/Chrome，缺失或行为不同就不可靠；要求**完全脱离浏览器本身**去做桌面壳。
+    - **调查**：官方 `dsh-desktop-windowos.exe` 实为 **4.8MB 单文件 WebView2 壳**（版本 1.6.7），本机 `C:\Program Files (x86)\Microsoft\EdgeWebView`（WebView2 Runtime）存在——即官方正解就是内嵌系统 WebView2，不依赖浏览器进程。我们复刻此路线。
+    - **技术选型（Python，贴合本项目）**：**pywebview**——Windows 后端 = `WinForms / Chromium`，本质是内嵌 WebView2(Runtime)。只要系统有 WebView2 Runtime（Win10/11 普遍自带或随任一应用安装）就能弹**真正独立桌面窗口**，完全脱离 Edge/Chrome 浏览器进程与外观。便携 python 内 `pip install pywebview pythonnet`（pythonnet/clr_loader 用于在 Windows 加载 WebView2，均有 cp310 win_amd64 wheel，本机镜像安装成功）。
+    - **产物**：
+      1. `desktop-shell.py`（绿色版根目录）：读 `config.json` 拿 `dsh_host`/`dsh_port`（默认 127.0.0.1:3080，归一化 `0.0.0.0`/`::`→`127.0.0.1`）→ 检测 WebView2 Runtime → 存在则 `webview.create_window(...)+start()`弹窗；缺失或初始化失败则 `webbrowser.open()` 回退系统浏览器（保证始终可用）。
+      2. `desktop-shell.bat`（ASCII 全英文）：定位便携 python → 首次若缺 pywebview 则 `pip install`（实时可见）→ `pythonw.exe`（无控制台）拉起 `desktop-shell.py`（双击像原生 App，不弹 cmd 黑窗）。
+      3. 插件 `dsh-green-desktop/lib/index.js`：桌面快捷方式改**首选指向 `desktop-shell.bat`**，绿色版缺壳时才回退 `desktop-open.bat`。已同步 live profile 拷贝（`node --check` 通过；下次 dsh 服务启动重建快捷方式即指向新壳）。
+      4. `runtime/tmp/build_release_zip_v1013.py`：`GREEN_FILES` 追加 `desktop-shell.py`、`desktop-shell.bat`。
+    - **验证**：import 自检 `read_server_address()=('127.0.0.1',3080)`、`webview_runtime_present()=True`；临时 `http.server 3080` + `python desktop-shell.py` 端到端，日志 `[DSH Shell] 正在弹出 WebView2 桌面窗口...` 稳定无报错；内核可行性先由单独脚本实证 `[pywebview] Using WinForms / Chromium` + `loaded event fired`。`--app` 方案仍以 `desktop-open.bat` 保留（WebView2 缺失的手动兜底）。
+    - **注意**：绿色 zip 为**在线版，不含 `runtime/`**（node/python/dsh 首次在线装），故 pywebview 不预制在包里，由 `desktop-shell.bat` **首次自动在线安装**（与 launcher 首次装 dsh 同思路），地址默认走 aliyun 镜像。
+    - **遗留**：真机确认 `desktop-shell.bat` 双击弹窗效果；确认后续是否随新版本发布。
+
+91. **【实现】桌面版改为绿色版自带 + 启动器原生打开方式（2026-08-20，承接 #90）**：
+    - **用户诉求转变**：`dsh-green-desktop` 插件只能在绿色版环境用、本质是套本地 `desktop-shell.bat` 的壳，没必要做成插件；应**改成绿色版原生自带**，且启动器里能**直接点开「独立桌面窗口」还是「网页窗口」**，**默认打开方式可配置**，并**重新排版 GUI**。
+    - **技术决策／与 #90 的衔接**：
+      1. 绿色版根目录 `desktop-shell.py` + `desktop-shell.bat` 本就是随包文件，不是逻辑依赖插件——它们就是“内置”的。真正的“插件”只负责往桌面放一个 `.lnk` 快捷方式这一个副作用，价值有限。
+      2. 移除 `plugins/dsh-green-desktop/` 源目录（不再随包发布、不再自动安装）；live profile 已装的 `node_modules/dsh-green-desktop` 拷贝暂保留（其快捷方式仍指向原生 `desktop-shell.bat`，无害）。桌面入口能力收敛到**启动器自带**。
+    - **launcher.py 改动**：
+      1. `DEFAULT_CONFIG` 新增 `"open_method": "desktop"`（注释注明 desktop=独立桌面窗口 WebView2 / browser=系统浏览器）。
+      2. 新增 `Launcher.launch_desktop_shell()`：`os.startfile(desktop-shell.bat)` 以“双击”方式拉起（ShellExecute 最稳，不阻塞），壳缺失时 `webbrowser.open()` 回退。
+      3. 改写 `open_ui(force=False, method=None)`：method 缺省用 `config.open_method`；`if not force and self.ui_is_open(): return`（保留单页面去重，只约束自动打开）；按 open_method 分发 desktop→launch_desktop_shell / browser→webbrowser。
+      4. 自动打开路径全部改走 `open_ui(force=False)`：`start_server`、`wait_and_open`、GUI `on_start`、命令行 `--start` 四处分发的 browser 逻辑归一到一个入口，自动打开跟随默认打开方式。
+      5. **GUI 重排版**：配置区避免两栏过宽截断，改为**纵向堆叠**（上=网络设置，下=常规设置，各自独立 LabelFrame）；「保存设置」按钮两块**共用**，放在两者下方统一提交（并提示"同时写入网络设置与常规设置"）；常规设置新增「默认打开方式」下拉（独立桌面窗口/网页窗口），保存写入 `open_method`；「自动打开浏览器」勾选文案改为「启动服务后自动打开界面(按默认方式打开…)」；按钮区把原「打开界面」拆成「桌面窗口」与「网页窗口」两个按钮，分别 `open_ui(force=True, method=...)`。
+    - **验证**：便携 python `py_compile launcher.py` 通过（注意本机 `python` 是 2.7，必须用 `runtime/python/python/python.exe` 或 `py -3` 编译）。
+    - **遗留**：live profile 里已装的 `dsh-green-desktop` 拷贝与桌面 `.lnk` 是否移除，待用户确认；下次发布打包时 `plugins/` 已不含该插件。
+
+92. **【实现】GUI 排版微调 + 「所见即所得」设置同步（2026-08-20，承接 #91）**：
+    - **网络设置**：描述文字改为可换行（`wraplength=430` + `justify="left"`）以收窄宽度；选项框保持靠左。
+    - **常规设置**：`镜像源` 与 `端口` 同一行**并列**布局，善用横向宽度、压缩纵向高度；`默认打开方式` 下拉初始值改用**中文标签**（原误用了英文 `desktop/browser`，与中文选项对不上）。
+    - **「所见即所得」**：抽出统一函数 `sync_gui(silent=False)`，把界面当前填入的端口/绑定/受信任主机/镜像/打开方式/自动打开整体写进 config 并落盘；`保存设置 / on_start / on_install` 三处共用——意味着**用户改了没点保存就启动服务或安装下载，也会按最新输入自动落盘后再操作**，界面显示即实际在用值。silent 模式端口非法只警告不阻断（沿用旧端口），手动保存则弹错并中止。
+    - **验证**：便携 python `py_compile` 通过。
+
+93. **【修正】配置区最终版：左右分栏但总宽受控 + 「存桌面仍开浏览器」根因（2026-08-20，承接 #92）**：
+    - **UI 定稿**：经过 #91 左右（太宽 → 右栏被截）、#92 上下（用户又想回左右）来回后，定稿为——`config_area` 用**左右两栏 + `columnconfigure(0/1, weight=1)`**，窗口默认 `geometry("1160x780")` / `minsize(1000,660)`，**两栏合计 ≤ ~1280** 不超界面默认宽；网络设置描述文字 `wraplength=430` 换行避免撑宽；左=网络设置、右=常规设置（常规设置内含镜像源+端口同行并列）。
+    - **「存了默认桌面还是开浏览器」根因**：非逻辑 bug，而是**测试用的 `DSH_Launcher.exe` 是旧版 v1.0.13**——它压根没有 `open_method`/桌面壳逻辑，启动后自动打开永远走 `webbrowser.open`。代码里 `start_server→wait_and_open→open_ui(force=False)→(config.open_method=desktop)→launch_desktop_shell→os.startfile(desktop-shell.bat)→WebView2 窗口` 这条链在新源码是通的。已用 `build_exe.bat` 相同的 PyInstaller 命令行**本地重建 DSH_Launcher.exe**（9.25MB，仅本地 Build+Copy，未升版本、未打包、未上传）。
+    - **提醒**：`python -m PyInstaller` 在命令行里要 `set PYTHONPATH=..\runtime\pyinstaller` 才能找到模块（build_exe.bat 里已设）。
+
+94. **【修正】start.bat 启动「选默认桌面却仍开浏览器」根因 + 去重改为按打开方式 + 镜像默认 auto（2026-08-20，承接 #93）**：
+    - **现象**：用 `start.bat` 打开 GUI，`默认打开方式`选「独立桌面窗口」，`启动服务`后仍自动打开浏览器标签页。
+    - **根因（代码级，区别于 #93 的旧 exe）**：`open_ui(force=False)` 的去重用**全局** `ui_is_open()`（WebUI 心跳在线即 True）。此前曾用浏览器手动打开过页面，该浏览器标签仍在上报心跳 → `ui_is_open()` 返回 True → `open_ui` 直接 return（跳过了 `launch_desktop_shell`），于是只剩旧浏览器标签，「看起来还是开了浏览器」，而实际上桌面窗口根本没被打开。
+    - **修复（launcher.py）**：去重改为**按打开方式区分**：
+      1. `__init__` 新增 `self._last_open_method = None`，记录本进程上次实际打开的界面方式（desktop/browser）。
+      2. `open_ui` 中去重条件改为 `if not force and self._last_open_method == open_method and self.ui_is_open(): return`——**只有“同一种方式且已在线”才去重**；用户选桌面窗口时即便旧浏览器标签仍在心跳，也会照常 `launch_desktop_shell` 弹出 WebView2 桌面窗口（反之亦然）。
+      3. 打开前记录 `self._last_open_method = open_method`。
+    - **镜像默认 auto**：`config.json` 的 `mirror` 从 `"cn"` 改为 `"auto"`；`resolve_mirror()` 对 `auto` 返回 `("cn", True)`（国内优先、失败回退官方，详见 #15）；GUI 镜像下拉「自动 (国内优先, 失败回退官方)」默认选中即 `auto`。已在 config.json 落盘。
+    - **验证**：便携 python `py_compile launcher.py` 通过（本机系统 `python` 是 2.7，必须用 `runtime/python/python/python.exe`）。
+    - **遗留**：真机复验 `start.bat` 启动→服务→桌面窗口链路；`mirror` 默认 `auto` 是否影响其它机器第一次安装的首选源（现为国内优先，符合"默认自动"）。
+
+95. **【修正】界面"只认一种打开方式"单一化 + 移除废弃的 desktop-open.bat（2026-08-20，承接 #94）**：
+    - **现象**：选默认「独立桌面窗口」后，桌面窗口弹出来了，但同时浏览器界面也被弹了一次。
+    - **排查结论（真机取证）**：仅一个启动器进程（`pythonw launcher.py`，PID 51552）、pywebview 已装、服务端口 3080 当时未监听；`desktop-shell.py/bat` 在 WebView2 正常时只弹桌面窗、异常时才回退浏览器，单次调用不会"桌面+浏览器"同弹。残留的 `desktop-open.bat` 只作为 desktop-shell.bat 的**失败兜底**存在（会把用户导向浏览器），已无任何正常用户路径，属无用旧内容。
+    - **改动**：
+      1. **单一界面方式规则（launcher.py `open_ui` 重写）**：先定当前方式（`config.open_method` 或手动指定）；若"该方式页面"已在运行→**跳转/复用**（网页方式 `webbrowser.open` 同地址自动聚焦已有标签；桌面窗口则**不再重复新建**）；否则新建该方式页面。**另一种方式绝不自动打开**——从根上消除"桌面+浏览器同弹"。`force` 参数改为语义保留、不再"无条件重开"，防止手动按钮重复堆窗口。
+      2. **持久化"当前在用的界面方式"**：新增 `_ui_open_state()`，把"上次以哪种方式打开"写入 `runtime/ui_open_method.txt`。配合心跳（只能判"有页面在线"、辨不出桌面/网页），重启启动器后也能对上"现在在线的是桌面窗还是网页窗"。
+      3. **删除 `desktop-open.bat`**：`desktop-shell.bat` 依赖安装失败兜底改为直接 `start "" "http://127.0.0.1:3080"`（系统默认浏览器）；`runtime/tmp/build_release_zip_v1013.py` 的 `GREEN_FILES` 移除该项；`skills/dsh-deploy-maintain/SKILL.md` 4.14 标注 `--app` 方案已废弃、桌面入口统一用 WebView2 桌面壳。
+    - **避坑（承 #93/#94）**：光区分"是否打开"(beacon) 不够，还必须区分"以哪种方式打开"（持久化 `ui_open_method.txt`），才能正确实现"该方式没开才开、开了就跳，另一种不开"。
+    - **验证**：便携 python `py_compile launcher.py` 通过；`go (Grep) desktop-open.bat` 全仓仅剩历史 DEV_NOTES 与 SKILL.md 的废弃说明，无活动脚本引用。
+    - **遗留**：真机复验"选桌面→启动→仅弹桌面窗、不再弹浏览器"；重启启动器后 `runtime/ui_open_method.txt` 能对上当前在线界面；旧桌面 `.lnk`/`node_modules\dsh-green-desktop` 是否移除待用户确认。
+96. **【清理】彻底移除 dsh-green-desktop 与官方 dsh-desktop-plugin 全部遗留（2026-08-20，承接 #95/#91/#88，用户要求）**：
+    - **背景**：用户要求"dsh-green-desktop 遗留 + 第三方(dsh-desktop-plugin)留下的一起清掉，包括 C 盘三方安装残留"。
+    - **执行清单**：
+      1. `runtime/dsh-home/profiles/web/package.json`：从 `disabled` 中删除 `dsh-desktop-plugin`（`dependencies` 里此前已无该条目）。
+      2. C 盘官方三方目录 `%LOCALAPPDATA%\Programs\dsh-desktop-windowos`（含 `dsh-desktop-windowos.exe`）→ 递归删除。
+      3. 桌面 `DeepSeek Harness 桌面版.lnk` → 删除（用户桌面由 OneDrive 重定向，`Desktop`/`OneDrive\Desktop` 均已确认无残留）。
+      4. `node_modules` 确认无 `dsh-green-desktop`、`dsh-desktop-plugin`。
+      5. C 盘 npm 全局及 `AppData\ProgramData` 等位置扫描确认无三方安装残留。
+      6. `desktop-shell.bat` 顶部过时注释（仍写"由 dsh-green-desktop 插件创建的快捷方式"）改为泛指"指向本文件的桌面快捷方式"。
+      7. `skills/dsh-deploy-maintain/SKILL.md` 4.14 的"清理取舍"条目由"待用户拍板"更新为"已彻底清理"及最终操作明细。
+    - **结果**：桌面独立窗口入口统一只剩内置 `desktop-shell.bat/.py`；官方外置 exe、快捷方式、依赖/禁用引用、node_modules 全部清除；全仓 grep 仅剩 DEV_NOTES 历史记录与 SKILL 避坑说明（保留），无活动引用。
+    - **遗留**：`dsh-desktop-plugin` 在 live profile 的 `disabled` 引用已移除，但若该插件名曾在某次 install 时被真正"启用安装"过，需下一次 install_dsh/reconcile_bundles 收敛依赖确认；如需重建 `DSH_Launcher.exe` 再做。（发布/上传等任何对外操作须先经用户确认。）
+
+97. **【修复】启动"双界面"根因=官方 dsh 默认自动打开浏览器 (2026-08-20, 用户实测"选桌面=桌面+网页、选网页=2网页")**：
+    - **现象**：点「启动服务」后同时弹两个界面——其中一个**一定是系统浏览器网页**，另一个才是启动器里自选的界面（桌面壳/网页）。
+    - **排查**：启动器自动打开只有一条入口（`on_start→start_server→wait_and_open→open_ui`），`desktop-shell.py` 单开一窗，config 也正常（open_method=desktop）。顺着"固定有一个网页"这条线追到**官方 dsh-web-app 自身**：
+      - `dsh-web-app/lib/startup.js`: `option("--no-open", ...)`、`openBrowser: options.open`（默认为 true）。
+      - `dsh-web-app/lib/index.js`: `openBrowser: z.boolean().default(true)`；第 174 行 `handoffBrowser = config.openBrowser && ...`，第 201 行 `handoffBrowser` 为真时 `internals.openBrowser(webUrl)` 自动拉起系统默认浏览器。
+      - 结论：**官方 dsh 服务就绪后默认就会自动打开系统浏览器**，而我们 `build_server_command` 之前没加 `--no-open` → "官方自动浏览器 + 我们自选界面"双开。
+    - **改动**（launcher.py `build_server_command`）：启动命令末尾统一追加 `--no-open`，让官方不再自动开浏览器；界面打开完全交给启动器 `open_ui`（按 config.open_method）。
+    - **避坑（通用）**：当你用启动器接管"打开界面"职责、却包了一层带官方 web 服务的 product 时，**务必给官方服务加 `--no-open` 之类关闭自动打开浏览器的开关**，否则会"官方默认浏览器 + 你的界面"双开。这也是为什么要先"列全所有会启动界面的地方"，再逐个确认，别只盯着自己的 open_ui。
+    - **验证**：便携 python `py_compile` 通过；需真机复现确认"默认桌面→仅弹桌面壳、默认网页→仅弹一个网页、不再双开"。
+    98. **【优化】绿色版桌面窗口三连：鲸鱼图标 / 无 cmd 闪窗 / 服务未启动固定提示页 (2026-08-20)**：
+    - **背景**：用户实测后提三点：桌面窗口用的是默认图标；打开桌面页会闪一下 cmd 黑窗；服务未启动时打开桌面页默认显示"连接失败"网页，希望给固定提示。
+    - **改动**：
+      1. **无闪窗**（launcher.py `launch_desktop_shell` + `_find_pythonw`）：优先 `subprocess.Popen([pythonw.exe, desktop-shell.py], creationflags=CREATE_NO_WINDOW)` 直启桌面壳，绕过 desktop-shell.bat 的 cmd 黑窗；pythonw/pywebview 找不到时才回退 bat/浏览器。
+      2. **鲸鱼图标**（desktop-shell.py `apply_window_icon`）：pywebview(WinForms) 的 `webview.start(icon=...)` 仅支持 GTK/QT，Windows 需用 Win32 `FindWindowW` 找窗口句柄 + `LoadImageW` 载入 `DSH_Launcher.ico` + `SendMessageW(WM_SETICON, ICON_BIG/ICON_SMALL)` 换图标（后台线程轮询等窗口出现）。
+      3. **未启动提示页**（desktop-shell.py `open_in_shell_window`/`port_listening`/`PLACEHOLDER_HTML`）：打开前先 `socket.connect_ex` 探测 dsh 端口；未就绪则显示"请先启动服务器"的固定提示页（深绿渐变+鲸鱼 emoji），后台每 1.5s 轮询端口，一旦就绪自动跳真实界面，不再是"连接失败"。⚠️ 初版写法是在 `webview.start()` **之前**调 `load_url(data:...)`，真机实测会挂死窗口初始化（`Main window failed to start`），最终改成"用提示页 URL 作为 create_window 首屏 + 在 start(func) 窗口就绪回调里轮询"，详见 #99。
+      4. 顺带：desktop-shell.py 新增 `ensure_pywebview()` 自举——pywebview 缺失时用便携 python `pip install` 静默后台安装后再拉起，不再只依赖 bat 首次安装。
+    - **避坑（通用）**：给 webview 窗口换图标，先查**该后端的 start() 是否支持 icon 参数**（pywebview WinForms 不支持、只 GTK/QT），不支持就手动走 Win32 `WM_SETICON`；"官方/开源 dev server 默认自动开浏览器"此类**自带行为**要显式关闭（承接 #97）；包装第三方 GUI 后端做成"看起来原生"时，`pythonw`(无控制台) + `CREATE_NO_WINDOW` 最省事，能彻底去掉 cmd 闪窗。
+    - **验证**：便携 python `py_compile launcher.py desktop-shell.py` 通过；需真机复现确认：默认桌面→弹桌面窗且不闪 cmd、标题栏/任务栏为鲸鱼图标、服务未启动时先显提示页、服务起来后自动载入。
+    - **遗留**：重建 `DSH_Launcher.exe` 再真机复验（涉及对外构建，须先经用户确认）。
+
+99. **【修正】pywebview 窗口起不来的真根因：`start()` 之前不能调 `load_url()`（2026-08-20，真机实测推翻 #98 初版写法）**：
+    - **现象**：按 #98 初版（`open_in_shell_window` 里先 `window.load_url(提示页)` 再 `webview.start()`）真机跑 `desktop-shell.py`，进程几秒后消失、控制台只见 `WebViewException('Main window failed to start')` 并**回退到系统默认浏览器**——这解释了用户"为什么一直看到连接失败的网页 / 默认图标"：桌面窗根本没起来，全程就是浏览器标签页。
+    - **排查（二分定位，逐个去掉差异项）**：
+      1. `create_window(title, 'about:blank')` + `start()` → 窗口正常。
+      2. `create_window(title, 真实不可达 http url)` + `start()` → 窗口正常（初始 URL 不可达不致命）。
+      3. 上面再加"**start 前** `load_url(data:提示页)`"→ 窗口起不来、进程挂住/退出。**锁定就是这步**。
+    - **根因**：pywebview/WinForms（WebView2）在 `webview.start()` **之前**调用 `window.load_url()` 会打断原生窗口的创建流程，使其初始化失败/挂起。
+    - **改正**（desktop-shell.py `open_in_shell_window`）：
+      - 先同步 `port_listening(port)` 判断服务是否就绪；
+      - 未就绪时**直接把提示页 `data:` URL 作为 `create_window` 的初始地址**（首屏就是提示页，不会先闪一下"连接失败"）；
+      - 就绪与否的后续动作全部放进 **`webview.start(func)` 的 window-ready 回调**里做（未就绪则后台轮询端口，起来后 `load_url(server_url)` 切真实界面）；
+      - 图标仍用独立的 `apply_window_icon` 后台线程轮询找窗口设置。
+    - **避坑（通用）**：包装 pywebview 时，**凡是"窗口起来后要做的导航/初始化"，一律放在 `webview.start(func)` 的窗口就绪回调里，绝不放在 start() 之前调用 `load_url`**。真机失败信息往往被上层 `except Exception` 吞成一句 `Main window failed to start`，要看真因就用**控制台 python.exe + 完整 traceback** 跑，别用 pythonw（无 stderr）。判断"某后端是否支持某操作"以**实机行为**为准，不要只看目录/版本号（本机 `webview_runtime_present()` 查到 EdgeWebView 目录还在，但窗口照样起不来）。
+    - **验证（实机，用户可复核）**：便携 `pythonw.exe desktop-shell.py` 弹出 "DeepSeek Harness 桌面版" 窗口且进程常驻、响应中；服务未启动时首屏即绿色"服务器尚未启动"提示页；标题栏/任务栏应用鲸鱼图标；进程不再回退浏览器。
+    - **遗留**：重建 `DSH_Launcher.exe` 后，走启动器 GUI「打开桌面页面」按钮再复核一遍入口链路。
+
+100. **【修正】打开去重改为分机制：手动(force)不拦截 + 桌面版用进程PID身份排重、不再用心跳（2026-08-20，用户反馈"频繁手动打开被挡/提示已存在"）**：
+    - **现象**：用户手动点「打开界面→桌面窗口」按钮，频繁点会提示/日志"独立桌面窗口已在运行, 不再重复新建"，被"已存在"挡住；且认为**桌面版是固定一个程序，本可用记录 id(进程身份) 判断，不该用心跳**。
+    - **根因**：
+      1. 手动按钮 `on_open(method)` 传 `open_ui(force=True)`，但旧 `open_ui` 签名里 `force` 只是"语义保留"，deop 分支照样走 `if self.ui_is_open() and self._ui_open_state()==open_method` → 命中就 return，**手动被当成自动一样拦截**。
+      2. 桌面版是**固定单实例**（一个 pythonw 进程 + 一个 WebView2 窗），而心跳(`ui_is_open`，3081 beacon) 需要前端 has 已注入、且区分不了是 desktop 还是 browser——用它对桌面版判重既绕又不准。
+    - **改动**：
+      - **桌面版身份**：desktop-shell.py 窗口起来前 `write_pid_file()` 把 `os.getpid()` 写入 `runtime/desktop_shell.pid`，窗口关闭/失败 `finally remove_pid_file()`；launcher 加 `_read/_write_desktop_shell_pid()` + `_desktop_shell_alive()`（用 Win32 `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` + `GetExitCodeProcess==STILL_ACTIVE` 判进程存活）+ `_focus_desktop_window()`（`FindWindowW(标题)` + `ShowWindow(SW_RESTORE)` + `SetForegroundWindow`)。
+      - **`launch_desktop_shell`**：`subprocess.Popen` 时拿到进程对象，`_write_desktop_shell_pid(pid)` 立即落盘（desktop-shell.py 自写 pid 作双保险）。
+      - **`open_ui` 重写**：`force=True`(手动) 不排重——桌面版在线则聚焦已有窗口、不在线新建；网页版直接 `webbrowser.open`(同址自动复用/聚焦标签)。`force=False`(自动) 才排重——桌面版用 `_desktop_shell_alive()`、网页版用心跳+记录方式。
+    - **避坑（通用）**：给一个"会因外层状态是否活着而决定是否拦截"的打开动作时，**手动 vs 自动要分开走**（手动永远回应、自动才排重），别让 `force` 只是个摆设；"固定单实例程序"的在线判定直接用**进程身份**（pid 文件 + 进程存活探测）最贴切，**别用页面心跳**去猜——心跳是给"多实例/多标签页"的网页版用的。判进程死活别只凭 pid 文件是否存在（进程可能被强杀留下残留），要用 `OpenProcess+GetExitCodeProcess` 真验一次；找不到窗口但 pid 活着(残留)时降级重建而非死认。
+    - **验证（实机）**：启动 desktop-shell 写出的 pid 与 pythonw 实际 pid 一致；`OpenProcess` 判存活返回 True；强杀进程后同 pid 文件仍在但判为 False（兜底重建）；py_compile 通过。需 run launcher 真机复核：手动反复点「桌面窗口」→ 只在窗口在线时聚焦、不在线时新建，不再被"已存在"挡；自动打开(force=False)仍只开一个。
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
