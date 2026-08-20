@@ -1081,6 +1081,7 @@
     - **绿色 zip**：`DSH_Launcher_GreenPortable_Online_20260820_v1.0.14.zip`（~17.6MB），含 plugins/、skills/dsh-deploy-maintain/、desktop-shell*；**不含** runtime/、DEV_NOTES、.gitignore（用 `tar -tf` 复核顶层）。
     - **发布脚本（runtime/tmp，不进 git）**：`build_release_zip_v1014.py` / `github_release_v1014.py`（读 `GH_TOKEN`） / `gitee_release_v1014.py`（读 `GITEE_TOKEN`），全部由 v1013 复制改版本号而来；release body 用三国风文案。
     - **异常**：`cmd /c` 在 Windows safety 层被禁 → 用等价的 PyInstaller 命令行 或 `/`；`build_exe.bat` 结尾 `pause` 在自动化里会卡住，应直接跑核心命令而非整批。
+    - **双平台发布落地（2026-08-20）**：`git push` 已含 v1.0.14 标签（本地与 origin 均存在）；`github_release_v1014.py` 创建 Release id=373844035 并上传 zip（17,668,369 B）成功；`gitee_release_v1014.py` 用 `GITEE_TOKEN=457b...d977` 创建 id=834538 并上传 HTTP 201 成功。**触发本次任务的流程**：主提交完成后 push master + tag v1.0.14（Everything up-to-date，即此前已推）→ GitHub 脚本 → Gitee 脚本需临时注入 `GITEE_TOKEN`（Gitee 比 GitHub 多一封签 token 头，用 `Authorization: token <PAT>` 表单方式提交 asset 时返回 201 即成功）。
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
