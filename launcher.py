@@ -239,7 +239,7 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
 GREEN_VERSION = "1.0.14"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
-GREEN_VERSION_DATE = "2026年08月20日"               # 绿色版版本日期
+GREEN_VERSION_DATE = "2026年08月21日"               # 绿色版版本日期
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
 GREEN_RELEASE_MIRROR = ("https://mirror.nju.edu.cn/github-release/%s/latest"
@@ -1036,11 +1036,24 @@ class Launcher:
 
     def green_latest_release(self):
         """查询本绿色版最新版本信息 (只读, 不改动本地)。
-        通道优先级: GitHub 官方 Releases API -> 国内镜像 -> Gitee 整仓快照兜底
-        (Gitee 没有 Release, 从 master 分支 launcher.py 提取 GREEN_VERSION 当版本号,
+
+        通道优先级跟随下载源设置 (config.mirror) 分流 (用户需求 2026-08-20):
+        - 官方源 (official)      : GitHub API -> 国内镜像 -> Gitee 兜底
+        - 国内源 / 自动 (cn/auto) : Gitee 优先 (发布版 zip 直连) -> GitHub API ->
+                                   国内镜像 兜底 (国内玩家默认走 Gitee 更快更稳)
+        (Gitee 没有 Release 时从 master 分支 launcher.py 提取 GREEN_VERSION 当版本号,
         下载源是整仓 zip)。全部失败返回 None。
         返回 dict: tag_name / name / body / published_at / assets / source
-        (source = "github" 或 "gitee", 供界面区分更新来源与手动提示地址)"""
+        (source = "github" 或 "gitee"/"gitee_release", 供界面区分更新来源与手动提示地址)"""
+        mirror, _is_auto = self.resolve_mirror()
+        prefer_gitee = (mirror == "cn")   # auto 默认先试国内, 与 cn 同样优先 Gitee
+        if prefer_gitee:
+            # ---- 国内源/自动: 先试 Gitee (发布版 zip 直连, 国内快) ----
+            gitee_info = self.green_gitee_latest()
+            if gitee_info is not None:
+                return gitee_info
+            self.log("Gitee 优先通道不可用, 回退 GitHub 官方通道 ...")
+        # ---- GitHub 官方通道 (含国内镜像) ----
         url_list = [GREEN_RELEASE_API, GREEN_RELEASE_MIRROR]
         ssl_context = ssl.create_default_context()
         for url in url_list:
@@ -1058,7 +1071,11 @@ class Launcher:
                 self.log("该地址返回的 Release 为空: %s" % url)
             except Exception as error:
                 self.log("查询 Release 失败 [%s]: %s" % (url, error))
-        # GitHub 与国内镜像都不可达 -> 自动切换 Gitee 整仓快照兜底
+        if prefer_gitee:
+            # 国内源/自动: Gitee 已先试过失败, 这里 GitHub 也失败 -> 整体不可达
+            self.log("Gitee 与 GitHub Release 通道全部不可达, 无法获取最新版本")
+            return None
+        # 官方源: GitHub 与国内镜像都不可达 -> 自动切换 Gitee 整仓快照兜底
         self.log("GitHub Release 通道全部不可达, 自动切换 Gitee 镜像源 ...")
         return self.green_gitee_latest()
 
@@ -1144,7 +1161,7 @@ class Launcher:
                 return {
                     "tag_name": tag_name,
                     "name": item.get("name") or tag_name,
-                    "body": item.get("body") or "来自 Gitee 发布版 (GitHub 连不通时的镜像源)。",
+                    "body": item.get("body") or "来自 Gitee 发布版 (国内源优先时的首选镜像, 与 GitHub 发货内容一致)。",
                     "published_at": item.get("created_at") or "",
                     "assets": [{
                         "name": zip_asset.get("name"),
@@ -2280,7 +2297,7 @@ class Launcher:
             self.log("预置默认工作区失败(不影响启动): %s" % error)
 
     def prepare_all(self):
-        """一键准备全部环境 (内置 Python + Node + dsh), 供启动前调用。
+        """一键准备全部环境 (内置 Python + Node + dsh + 内置插件 + 桌面版依赖), 供启动前调用。
         返回内置 Python 是否就绪 (True/False)。Node/dsh 失败会抛异常; 仅 Python 属
         可降级项 —— dsh 服务由 Node 运行, 缺失内置 Python 不影响启动服务, 但 start.bat
         脚本版需要它, 故以布尔返回让调用方能看到"python 失败"而不是假装都装好了。"""
@@ -2302,7 +2319,64 @@ class Launcher:
         else:
             self.log("环境准备完成, 但内置便携 Python 下载失败 (不影响 dsh 服务; "
                      "可后续点「安装环境」重试, 或用 start.bat 走系统 Python 兜底)")
+        # 桌面版依赖 (pywebview, WebView2 后端): 便携 python 就绪时一并装好,
+        # 让【安装环境】一次到位; 之后点「桌面窗口」不再静默补装 (幂等, 已装跳过)。
+        if python_ok:
+            self.prepare_desktop_deps()
         return python_ok
+
+    def _desktop_deps_ready(self, python_exe):
+        """探测便携 python 是否已装好桌面版依赖 (pywebview 可 import)。
+
+        桌面版 = desktop-shell.py 的内嵌 WebView2 独立窗口, 依赖 pywebview(pythonnet)。
+        用"python -c import webview"以运行时为准探测, 避免只看目录是否存在。
+        Args:
+            python_exe (str): 便携 python 可执行文件绝对路径。
+        Returns:
+            bool: True 表示 pywebview 可用。
+        """
+        try:
+            probe_result = subprocess.run(
+                [python_exe, "-c", "import webview"],
+                capture_output=True, timeout=30)
+            return probe_result.returncode == 0
+        except Exception:
+            return False
+
+    def prepare_desktop_deps(self):
+        """确保桌面版依赖 (pywebview + pythonnet) 装进便携 python; 已装直接返回。
+
+        由【安装环境】与【打开桌面窗口】前调用: 未装则自动 pip 安装
+        (带实时进度日志, 非静默), 装不上返回 False (浏览器方式不受影响)。
+        Returns:
+            bool: True 表示桌面版依赖已就绪。
+        """
+        python_exe = self.find_python_exe()
+        if python_exe is None:
+            self.log("未找到便携 Python, 无法安装桌面版依赖 (桌面版需先点「安装环境」)")
+            return False
+        if self._desktop_deps_ready(python_exe):
+            self.log("桌面版依赖已就绪 (pywebview)")
+            return True
+        self.log("未检测到桌面版依赖 pywebview, 开始自动安装 (首次约需几十秒, 仅桌面版需要) ...")
+        pip_command = [
+            python_exe, "-m", "pip", "install",
+            "pywebview", "pythonnet",
+            "--index-url", "https://mirrors.aliyun.com/pypi/simple/",
+            "--no-warn-script-location",
+        ]
+        try:
+            return_code, _output = self._stream_subprocess(
+                pip_command, cwd=os.path.dirname(python_exe), env=dict(os.environ),
+                timeout=300, log_prefix="pip: ", heartbeat_interval=60)
+        except subprocess.TimeoutExpired:
+            self.log("桌面版依赖安装超时, 可稍后点「桌面窗口」重试 (浏览器方式不受影响)")
+            return False
+        if return_code != 0 or not self._desktop_deps_ready(python_exe):
+            self.log("桌面版依赖安装失败, 可稍后重试 (浏览器方式不受影响)")
+            return False
+        self.log("桌面版依赖安装成功, 可正常使用独立桌面窗口")
+        return True
 
     # ---------- 服务启动 / 停止 ----------
     def build_server_command(self):
@@ -3409,6 +3483,12 @@ class Launcher:
         shell_script = os.path.join(BASE_DIR, "desktop-shell.py")
         pythonw_exe = self._find_pythonw()
         url = "http://127.0.0.1:%d" % int(self.config.get("dsh_port", 3080))
+        # 启动前先在 GUI 层确保桌面版依赖 (pywebview) 就绪: 缺失则带进度自动安装,
+        # 不再静默由子进程后台补装; 装不上/无便携 python 时明确提示并回退浏览器。
+        if not self.prepare_desktop_deps():
+            self.log("桌面版依赖未就绪, 改用系统浏览器打开界面: %s" % url)
+            webbrowser.open(url)
+            return
         if pythonw_exe and os.path.isfile(shell_script):
             creation_flags = 0
             if sys.platform == "win32":
@@ -4597,8 +4677,19 @@ def run_gui():
         if len(release_note) > 400:
             release_note = release_note[:400] + " ..."
         is_gitee_source = (release_info.get("source") or "") in ("gitee", "gitee_release")
-        source_hint = ("\n\n注意: GitHub 通道连不通, 本次更新来自 Gitee 镜像源"
-                       " (发布版 zip / 整仓快照, 与 GitHub 发货内容一致)。") if is_gitee_source else ""
+        # 提示文案按"下载源设置 + 实际来源"区分语义 (用户需求 2026-08-20):
+        # 国内源/自动: 主动优先走 Gitee, 文案用"国内源优先"而非"GitHub 连不通";
+        # 官方源    : 仅在 Gitee 兜底时提示"GitHub 通道连不通"。
+        prefer_gitee = (app.resolve_mirror()[0] == "cn")
+        if is_gitee_source:
+            if prefer_gitee:
+                source_hint = ("\n\n本次更新来自 Gitee 镜像源 (国内源优先, 发布版 zip 直连, "
+                               "与 GitHub 发货内容一致)。")
+            else:
+                source_hint = ("\n\n注意: GitHub 通道连不通, 本次更新来自 Gitee 镜像源"
+                               " (发布版 zip / 整仓快照, 与 GitHub 发货内容一致)。")
+        else:
+            source_hint = ""
         choose = messagebox.askyesno(
             "发现新绿色版",
             "当前版本: v%s\n最新版本: v%s\n\n更新说明:\n%s%s\n\n"

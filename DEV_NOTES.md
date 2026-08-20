@@ -114,7 +114,7 @@
       - **超时保持兼容**：`process.wait(timeout=...)` 超时后 `process.kill()` 再抛 `subprocess.TimeoutExpired`（与原 `subprocess.run(timeout=...)` 行为一致）；读取线程用 `join(timeout=5)` 限时等待，避免子进程派生的孙进程仍持有管道句柄导致 join 永久阻塞（输出内容已完整收集，不影响返回）。
       - **行前缀**：`log_prefix` 区分来源（dsh/pnpm 用 `"npm: "`，插件命令用 `"plugin: "`）。
     - **三处接入**：`install_dsh()`（首次装 dsh）、`install_pnpm()`（装 pnpm，保留 timeout=300）、`run_plugin_command.execute_once()`（插件安装/移除/启停，保留 timeout=600，返回 `(退出码, 输出文本)` 契约不变）。
-    - **注意（2026-08-20 修正认知）**：npm 在 stdout 非 TTY（管道）时确实不走花哨进度条，但**默认日志级别 `notice` 下，`npm http fetch` 这类逐包下载输出是被抑制的**——它只在**下载全部完成后**才吐一行 `added N packages`，下载那几分钟是静默的。所以单靠 #30 的"流式逐行"仍会让用户看不到安装中的进度、误以为卡死；真正让下载过程实时可见的是给安装命令加 `--loglevel=http`（见需求 #58，2026-08-20）。
+    - **注意**：npm 在 stdout 非 TTY（管道）时不会输出花哨进度条，而是逐行 `npm notice`/`added N packages` 文本——所以逐行显示即能看到进度与耗时。
     - 验证：`runtime/tmp/test_stream_subprocess.py`（模拟 5 行间隔输出 + stderr + 退出码 3）PASS——逐行实时收到（约 1.0s 全程）、前缀正确、退出码与完整输出正确。
 31. **局域网远程访问 WebUI（2026-08-16）**：用户希望服务端部署在一台电脑，WebUI 从局域网内其它电脑的浏览器远程打开（未来还可能用 WebUI 连不同地址的服务器）。已确认决策：**直接绑定 `0.0.0.0`**（推荐）+ **GUI「网络设置」区 + config.json** 双配置入口 + **整个局域网开放**（信任围栏自动信任全网段 IP，属预期权衡）。改动：
     - **配置项**：`DEFAULT_CONFIG` 新增 `dsh_host`（默认 `127.0.0.1`；`"0.0.0.0"`=局域网可访问）与 `trusted_hosts`（list，默认空；host 或 host:port，追加到 `--trusted-host`）。`trusted_hosts` 语义：**空=局域网模式自动信任全部局域网 IP；填了任意一个=只信任显式填写的地址**（见下「精确语义补丁」）。
@@ -279,47 +279,6 @@
     - **客户端 `lib/client.js`**：`settings.section` 插槽注册「会话导入」页（与 archive-purge 同款）：文件选择（accept .zip/.jsonl）→ `fetch` 直传文件字节（非 multipart，服务端按原始 body 读）→ 展示结果（会话 id / 写入份数 / 附件统计 / 跳过列表 / 工作区）。
     - **关键点**：① 写盘路径必须让官方 `assertStoredIdentity` 通过——文件必须落在 `logPath(root, meta.cwd, meta.id, compression)`，即 `projectKey`/`encodeSegment` 两个编码函数要逐字符复刻（分隔符折叠为 `-`、非安全字符 `~XXXX` 大写十六进制、`--...--` 包裹）；② `session.list` 会合并冷（持久化）会话，导入后**无需重启即可在会话列表看到**；③ 不写投影缓存（title 等由 DSH 后续补齐，刚导入可能短暂显示「(无标题)」）；④ 宿主插件可以 `import` 官方包（`@deepseek-ai/dsh-session`）和 fflate——但在**插件源码目录**直接跑脚本会解析失败（fflate 在 `runtime/dsh/node_modules`，pnpm 只在**已安装副本**所在层做了提升/软链），验证必须指向 `profiles/web/node_modules/dsh-session-import/` 副本；⑤ `importPayload` 单独导出，便于离服务独立测试。
     - **验证**：`node --check` 通过；`runtime/tmp/session-import-test-run.mjs` 25 项往返测试全过（ZIP 导入 / 子会话 / 附件 sha256 落盘 / 工作区挂载 / 幂等跳过 / 明文 JSONL / 根编码探测 / 坏输入拒绝，直连**已安装副本**）；`dsh --profile web --dump-config`（设 DSH_HOME）插件树合成 `- id: session-import`；`python launcher.py --install-plugin file:E:/.../plugins/dsh-session-import` 安装后重启服务，`GET /__dsh/session-import/health`（带头）返回 `{"ok":true,"plugin":"dsh-session-import"}`，WebUI 设置页出现「会话导入」。
-56. **【dsh 核心更新改为优先走 npm：latest / next 双版本可选】（2026-08-20）**：
-    - **背景**：官方真正发布 dsh 走的是 **npm registry**（`pnpm run build` 后把每个包发 npm），GitHub Releases 只是壳、不传资产不打 tag，官方新版本（如 `0.1.0-rc.8`）常发在 **next** 标签上。原绿色版「检查更新」查的却是 npm 的 `latest` 一个值，拿不到预发布；手动下载 build 不必要。用户要求：**更新逻辑优先去 npm 找，并把 latest 和 next 分别列出来给用户选择**。
-    - **改动（launcher.py）**：
-      1. 新增 `dsh_dist_tags()`：`npm view @deepseek-ai/dsh dist-tags --json` 一次读出 `latest` 与 `next` 两个标签，返回 `{"latest": str|None, "next": str|None}`；查询/解析失败返回 `None`。
-      2. 新增 `_npm_view()`：统一封装 `npm view` 查询（与安装相同的便携 Node/mirror 参数），`query` 按空格拆成独立 argv（修复「`dist-tags --json` 当单个参数传给 npm 失败」的避坑）。`dsh_latest_version()` 与 `dsh_dist_tags()` 都复用它。
-      3. `install_dsh(package_spec)` 支持传 `@deepseek-ai/dsh@<版本>` 或 `@deepseek-ai/dsh@next` 指定版本/标签；`prepare_dsh(force, package_spec)` 透传。
-      4. `update_dsh(target_version)`：None 时装 latest（保持旧行为）；否则装指定版本。流程保持 备份→强制重装，备份失败即中止防数据丢失。
-      5. GUI「检查更新」（`on_check_update`）：改调 `dsh_dist_tags()`，把 `latest`/`next`（按 稳定版 在前、预发布 在后顺序）**去重且忽略与当前相同者**后，`ask_update()` 弹窗**各给一个按钮**，用户点哪个就 `start_update_to(target_version)` 装哪个；两者都与当前一致则提示「已是最新版本」，「暂不更新」可取消。
-    - **避坑**：① `dist-tags --json` 必须拆成独立 argv（`query.split()`），整串当单参数 npm 会报用法错误导致 `dsh_dist_tags()` 返回 None；② npm view 的 registry 参数要与安装一致（镜像源），否则查到的可能不是用户所选镜像的版本快照；③ 备份成功后才重装，避免更新中途失败丢版本。
-    - **验证**：`py_compile`（项目便携 Python 3）通过；冒烟脚本 `runtime/tmp/smoke_dist_tags.py` 直连 npmmirror 查得 `{"latest":"0.1.0-rc.7","next":"0.1.0-rc.8"}`。尚未重建 DSH_Launcher.exe、未实测真正装回 rc.8，需更新前确认路径再发版。
-57. **【检查更新误报 / 升级前需确认并看说明】（2026-08-20，需求 #56 的两处修正）**：
-    - **问题 ① 误报已是最新**：用户为稳定版 c7（`0.1.0-rc.7`），点「检查更新」仍提示 c7 可更新并又下载覆盖了一次。根因：`on_check_update` 构建候选时只按版本字符串去重、**没跟当前已装版本比较**，latest==当前（都是 rc.7）也照样进候选。
-      - **改法**：构建候选时用 `app._green_version_greater(version, current_version)` **只保留比当前更新的版本**，相同或更旧的记日志跳过；全部都不更新时提示「已是最新版本: <当前>（当前没有更新的发布）」。
-    - **问题 ② 点版本即装，无确认与说明**：原 `ask_update` 里点某版本按钮直接 `start_update_to`，没有确认步骤也不展示内容。用户要求：**点选某版本后，先显示该版本的更新描述，再点「确认升级」才真正开始**。
-      - **改法**：新增 `confirm_upgrade()` 二级确认对话框——展示 当前版本 / 目标版本 / 目标版本的更新说明（后台线程加载，避免网络查询卡 GUI），底部「确认升级」「取消」；`ask_update` 的版本按钮改为进入 `confirm_upgrade`，确认后才 `start_update_to`。新增 `dsh_version_notes(version)` 负责取更新说明。
-    - **dsh_version_notes 取值避坑（重要，2026-08-20 修正）**：**官方 GitHub Releases 上每个版本都带发布说明（release note body，tag 形如 `dsh-v<version>`，含中英文 changelog）**，这是更新描述的正确来源。第一版误用 `npm view ... readme` 取——**npm 包 readme 字段是空的**，导致用户看到「未获取到更新描述」（rc8 无、rc7 实际有）。修正后：`dsh_version_notes(version)` **优先调用 `dsh_version_notes_from_github(version)`**，批量拉 `api.github.com/repos/deepseek-ai/deepseek-harness/releases?per_page=30`，按 tag/name（去掉 `v` 前缀）匹配目标版本，命中则返回 release body（截断 6000 字符）；**GitHub 网络失败/未命中才回退** npm registry 元数据拼装（描述/发布时间/主页 + 提示到主页看文档）。
-      - 避坑：GitHub tag 形如 `dsh-v0.1.0-rc.8`，匹配时把 `version` 与 `tag_name`/`name` 都做 `lstrip("v")` 再去比对，避免硬编码前缀；release body 较长，截断防弹窗卡顿；GitHub API 需带 `User-Agent` 头。
-    - **验证**：`py_compile` 通过；`runtime/tmp/smoke_ver_cmp.py`（版本比较 rc.8>rc.7 为 True、同版本为 False）；rc.7 与 rc.8 的 `dsh_version_notes()` 均成功拉到官方 changelog（中英文全文）。尚未重建 exe、未实测真机 UI 弹窗交互。
-58. **【npm 安装过程仍看不到进度：非 TTY 下 npm 默认抑制逐包下载输出】（2026-08-20，需求 #30 的补充修正）**：用户反馈经启动器更新 dsh 时，即便有命令行窗口，npm 安装过程依旧长时间无任何输出，装几分钟像卡死。排查确认：`_stream_subprocess` 的流式逐行转发**没有问题**——只要 npm 吐了内容就一定会实时显示；真正原因是 **npm 在 stdout 非 TTY（管道，`subprocess.PIPE`）时，默认日志级别 `notice` 会抑制 `npm http fetch` 这类逐包下载输出**，只在全部下载完成后才打印一行 `added N packages in Xs`，所以下载期间管道里什么都没有。
-    - **改法**：`install_dsh()` 的 `install_options` 增加 `--loglevel=http`，让**每个包的 HTTP 下载完成时实时吐一行**（`npm http fetch GET 200 <url> <耗时>`）。选 `http` 而非 `verbose` 的原因：`http` 是逐包一行、量适中且平稳（下载并行，每秒约几行），既能让进度可见又不会刷爆日志框/GUI 卡顿；`verbose` 会跑 reify 内部调试日志（每秒数百行），`root.after(0)` 排队刷 Text 组件反而会把界面拖卡，适得其反。
-    - **生效范围**：`install_dsh()` 同时服务「首次安装」（`prepare_dsh`）与「更新」（`update_dsh` → `prepare_dsh(force=True)`），两者都受益。
-    - **未动**：`_npm_view` 用的是快速查询（60s 超时、秒回），默认级别足够，不改。
-    - 验证：`py_compile`（Python 3.10）通过。未真机跑一次完整 npm install / 未重建 exe。
-59. **【npm 安装到 reify/安装链接阶段仍会静默 → 加"空闲心跳"】（2026-08-20，需求 #58 实测后的补充）**：`--loglevel=http` 真机实测生效——刚上手 `npm http fetch GET 200 ...` 元数据逐行实时刷新，用户能看到进度。但元数据抓完后进入 **reify（安装/链接）阶段：把各包写入 node_modules + 跑安装脚本，全是本地磁盘 I/O、没有网络请求**，而 `http` 日志级别只显示网络抓取，所以这一段又长时间静默（在那一行 `fetch dsh-web` 后卡了很久没动静），和需求 #30/#58 之前的"看着像卡死"是同一类问题、只是时机更靠后。**任何绑定网络/日志的 npm 级别都救不了这段纯 I/O 静默**（`verbose`/`silly` 虽能刷满，但 reify 内部日志每秒数百行，经 `root.after(0)` 排队刷 Text 组件会把 GUI 拖卡，不采纳）。
-    - **改法**：给 `_stream_subprocess()` 增加可选参数 `heartbeat_interval`（秒，默认 `None`=关闭）。开启后，后台心跳线程在「子进程仍在运行 且 距上次输出已超过间隔」时，打一条日志 `[进度] 已运行 N 秒, 命令仍在执行 (暂无新输出, 请继续等待) ...` 并重置计时；**正常有输出时绝不打扰**（静默才心跳）。`process.wait(timeout)` 的超时/终止语义原样保留（心跳用独立 daemon 线程，主流程无感；`finally` 置 `alive_flag=False` 结束心跳线程）。`install_dsh()` 传 `heartbeat_interval=60`：大安装时每 **60 秒**静默就有一条心跳，用户明确知道"在跑、没卡死"。间隔最初取 15s，用户反馈太频繁会刷屏，故调成 60s 一次（2026-08-20）。
-    - **经验分层总结**：① 有网络输出（npm 抓元数据/下载包）→ `--loglevel=http`（#58）实时显示；② 无网络输出的纯 I/O 阶段（reify/安装链接）→ 靠启动器自身 `heartbeat_interval` 空闲心跳（本条）；③ 既不想刷爆 GUI、又不想装一半没提示，两招配合即可。
-- 验证：`py_compile`（Python 3.10）通过。未真机跑完整安装看心跳节奏 / 未重建 exe。
-60. **【start.bat 关 cmd 会把整个 GUI+托盘一起关掉, 但 dsh 服务却变孤儿继续跑 → 改用 pythonw】(2026-08-20)**：通过 bat 打开时, 会出现一个 cmd 窗口 + 绿色版程序。这个 **cmd 窗口(=控制台)就是启动器进程本体**: `start.bat` 原先用 `python.exe`(控制台子系统)跑 GUI, 控制台窗口附带在启动器进程上; 一旦用户关掉它, Windows 会**直接终止整个 python 进程**(GUI+托盘一起没了), 而 dsh 服务是独立的 node 子进程不受牵连, 于是表现为"程序关了、托盘任务栏没了、但服务还在跑", 与"关闭要二次确认 + 不关服务要有托盘入口"的期望冲突。**根因是控制台子系统进程被强杀, 走不到 tkinter 的 on_close(WM_DELETE_WINDOW)**。
-    - **改法①(根治控制台问题)**: `start.bat` 优先用 `pythonw.exe`(GUI 子系统, 无控制台)启动——`start.bat` 自身 `start "" "<pythonw>" launcher.py` 后立刻返回让 cmd 窗口自行关闭; 之后只留 GUI+托盘, **根本没有可误关的 cmd 窗口**, 从源头消除"关 cmd 杀进程"。只有拿到 pythonw 才走 python.exe 回退(仅系统 Python 场景, 罕见)。打包的 exe 早已是 `--windowed`(无控制台), 同理不受影响。
-    - **改法②(关闭三选一)**: `on_close()` 由原 `askyesno`(是否退出) 改为自绘模态三选一 `ask_close_choice()`: 「退出并停止服务」(走原逻辑) / 「最小化到托盘(服务继续)」→ 调 `minimize_to_tray()` 保留任务栏+托盘入口、`return` 不退出 / 「取消」→ 原样返回。这样"不关服务"时托盘/任务栏入口都还在, 可随时恢复, 满足期望。`confirm=False`(绿色版自更新流程)仍直接走退出, 不多问。
-    - 说明: 若此前已产生孤儿 dsh 服务进程, 可重开启动器点「停止服务」, 或命令行 `python launcher.py --stop` 结束, 不属本次改动范围。
-    - 验证: `py_compile`（Python 3.10）通过 / 未真机双击 start.bat 验证无 cmd 窗口、未重建 exe。
-61. **【改了「局域网」没点保存就启动, 界面显示与实际不符 → 启动前自动同步网络设置】(2026-08-20)**：用户在「网络设置」下拉把绑定改成「局域网」但**没点「保存设置」**就直接点「启动服务」。之前启动服务只读 `app.config`（旧值 127.0.0.1），服务还是只绑本机，但界面上下拉仍显示「局域网」——用户误以为局域网已生效。**根因：GUI 下拉/t条目是"待保存"的内存临时值, 启动服务却直接用已落盘的 config, 两者脱节。**
-    - **改法**：`on_start()` 在启动前先把界面当前的网络设置同步进 `app.config` 并 `app.save_config()` 落盘 — 转换规则与 `on_save()` 完全一致（`bind_var.get()` 含"局域网"→ `dsh_host="0.0.0.0"` 否则 `127.0.0.1`；`trusted_var` 按 `，`/`,` 分隔去空 → `trusted_hosts`），**但不弹校验框/提示, 静默落盘**。同步仅在网络两项（绑定+受信任主机）内做, 不改端口/镜像/自动开页（那几项无"界面显示 vs 实际"的同样歧义, 且端口还涉及校验逻辑, 保持显式保存）。`except` 时只 `append_log("[警告] 启动前同步网络设置失败, 已按原配置启动: ...")` 不阻断启动。
-    - 命名注意：`on_start`（定义于 ~3863）引用 `bind_var`/`trusted_var`（定义于 ~4956，同在 `run_gui` 内）——都是 `run_gui` 的嵌套函数局部变量, 闭包在**调用时**才解析, 按钮点击时这些变量已赋值, 正常可用。
-    - 验证：`py_compile`（Python 3.10）通过 / 未真机点「启动服务」实测同步生效 / 未重建 exe。
-62. **【更新通用 skill 包 python-tkinter-desktop-dev.zip：输出栏滚动层标配 + pythonw 防孤儿】（2026-08-20）**：应要求把 #59/#60 等本项目实测经验反哺进 `skills/python-tkinter-desktop-dev.zip`（通用 Tkinter skill，TRAE 技能格式）。
-    - **新增 5.14「输出栏必须配滚动层（标配要求）」**：凡是内容会变多/换行的输出栏（日志、结果、差异、富文本、Treeview）都必须配垂直滚动条；给出 Text+Scrollbar 双向绑定标准模板（`yscrollcommand=scrollbar.set` + `scrollbar.config(command=log_text.yview)`）；避坑：互相引用要"先建控件再 config 补绑定"（否则 NameError）、`state="disabled"` 不影响 `see("end")`、Treeview 同理、自动滚到底与用户回看冲突的改进、后台写日志 `after(0)` 线程安全。
-    - **新增 6.11「启动用 pythonw 无控制台：避免关 cmd 杀 GUI、服务变孤儿」**：提炼 #60 的根因与方案（python.exe 控制台子系统=cmd 即进程本体、被强杀走不到 on_close、Popen 派生子进程变孤儿；start.bat 优先 pythonw + `start ""` 闪退窗口；PyInstaller 必须 `--windowed`；服务型 GUI 关闭三选一；子进程管理 `--stop`/`terminate`/`taskkill /T /F`、孤儿清理用 `netstat` 定位 PID）。
-    - 同步更新：7.5 BAT 规范补"启动 GUI 一律优先 pythonw"提醒、checklists/dev_checklist.md 补 2 条检查项、README.md 核心内容+更新历史、SKILL.md 版本日期。
-    - **打包**：按 TRAE 规范重新打包 `python-tkinter-desktop-dev.zip`（根目录 `python-tkinter-desktop-dev/`，SKILL.md UTF-8 无 BOM、frontmatter `---`、无 manifest.json/`__pycache__`/`.pyc`、文件名全英文），共 20 条目。zip 被 `.gitignore` 忽略不入库（本地 skill 库交付物）。
 
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
@@ -327,7 +286,7 @@
 | 依赖 | 仅 Python 标准库（tkinter / urllib / subprocess / zipfile / tarfile / webbrowser / socket），零第三方依赖 |
 | 便携 Node | 自动下载 `node-v22.20.0` 到 `runtime/node`；国内 `registry.npmmirror.com/-/binary/node/...`，官方 `nodejs.org/dist/...`；zip（win）或 tar.gz（linux） |
 | dsh 安装 | 优先 `node.exe npm-cli.js install --prefix runtime/dsh @deepseek-ai/dsh`（用便携 Node 自带 npm），按镜像附 `--registry`；`install_dsh()` 只负责安装，`prepare_dsh(force)` 负责"缺失则装/强制重装"；输出经 `_stream_subprocess()` **实时逐行**显示进度（需求 #30） |
-| dsh 更新 | 更新逻辑已改为**优先走 npm**（对齐官方发布渠道，需求 #56）：`dsh_dist_tags()` 用 `npm view ... dist-tags --json` 同时读 `latest` 与 `next` 两个标签（官方正式版在 latest、预发布在 next）；GUI「检查更新」把两者都列出来，用户点对应的按钮选装哪个版本；`update_dsh(target_version)` = 备份→强制重装指定版本；备份统一到 `runtime/backup/dsh-<版本>`（同名加时间戳后缀），备份失败自动中止避免数据丢失 |
+| dsh 更新 | `dsh_latest_version()` 用 `npm view @deepseek-ai/dsh version` 只读查最新版；`backup_dsh()` 把旧版拷到统一备份目录 `runtime/backup/dsh-<版本>`（同名加时间戳后缀）；`update_dsh()` = 查询→备份→强制重装，备份失败即中止避免数据丢失 |
 | dsh 启动 | 直接调 `node <dsh>/node_modules/@deepseek-ai/dsh/lib/bin.js web --port 3080` |
 | 数据隔离 | 环境变量 `DSH_HOME=runtime/dsh-home`，会话/配置/存储全部落在程序目录 |
 | 绿色整合 | `build_env()` 把 npm 缓存/用户配置、pnpm home/store、TEMP/TMP 全部重定向到本地 `runtime/` 下（见下） |
@@ -381,7 +340,6 @@
 5. **Python 官方 embeddable 版不含 tkinter**：给用户说明必须装完整版 python.org 安装包，否则 GUI 起不来（launcher 已做了 ImportError 兜底提示）。
 6. **CLI 模式后台线程陷阱**：`wait_and_open` 是 daemon 线程，`--start` 主进程退出后线程会消失，所以 CLI 模式要**同步** `wait_ready()` 再开浏览器；GUI 模式则用线程即可。
 7. **首次 npm install dsh 较慢**（沙箱实测约 3 分钟、587 个包），界面提示"请耐心等待"。原实现只回显最后 15 行（用户看不到进度），**已改为实时逐行输出**（需求 #30）：npm 每行信息（`npm notice`/`added N packages`）会立即出现在日志框，用户可看到进度确认未卡住。
-   - **（2026-08-20 避坑补充）**：但**非 TTY（管道）下 npm 默认级别 `notice` 会抑制逐包下载输出**，下载那几分钟仍然静默、像卡死。`_stream_subprocess` 只负责"转发 npm 吐出的内容"，并不会变出内容。**必须给安装命令加 `--loglevel=http`**（逐包下行一行、让进度真实可见）——见需求 #58。若日后仍有"无输出"，优先怀疑 npm 自身在当前日志级别下没吐内容，而不是显示侧问题。
 8. **冷启动重复检测**：再次 `--start` 时通过 PID 文件 + 进程存在性判断"已在运行"，避免重复起服务。
 9. **便携 Node 里 npm 的位置分平台**：Linux/Mac 的 tar.gz 里 npm 在 `lib/node_modules/npm/bin/npm-cli.js`，Windows 的 zip 里在 `node_modules/npm/bin/npm-cli.js`。`find_npm_cli()` 必须两个路径都探测，否则会误退回系统 npm（已实测修复：现在日志显示"使用便携 Node 自带的 npm"）。
 10. **npm 缓存默认写 `~/.npm`**：要让 npm 真正绿色，必须在 `install` 命令带 `--cache runtime/npm-cache`，并在环境变量设 `npm_config_cache`（实测重定向后缓存约 196MB 落在本地 runtime/npm-cache，HOME 下 `~/.npm`/`~/.pnpm-store`/`~/.local/share/pnpm` 均未产生）。
@@ -890,136 +848,41 @@
       4. 上传附件：`POST /api/v5/repos/{owner}/{repo}/releases/{release_id}/attach_files?access_token=...&name=<文件名>` + `--form "file=@<绝对路径>;<文件名>"`，成功返回 `browser_download_url`（`https://gitee.com/.../releases/download/<tag>/<zip>`）。
       - 若之前 Gitee 已传同名附件，需先删旧附件再传（#72）。**令牌含在临时 JSON 里，用完立即删除该临时文件**。本机未代理时 GitHub 侧会网络限速（用 `git -c http.postBuffer=52428800 push` 去 lowSpeed 超时多试几次；直连会 Connection reset，代理上传又 <1000B/s，需耐心重试）。
     - **同步英文 README**：README_EN.md 全量按中文优化版对齐——新增 Highlights；插件章节整合（管理维护 + 内置 6 插件一览表 + 按功能分组详解，补 `dsh-sidebar-lite`）；目录树补 `update_agent.py`/`DSH_Update.exe`；删除"专属图标"营销描述与发布侧打包命令（Compress-Archive 等）细节；FAQ 精简；开源协议统一 Apache-2.0（去掉原 dsh-session-rewind 单独 MIT 说明）；版本引用升至 v1.0.11。中文 README 仍为维护主体、随版本发布翻译一次。
-83. **【发布】v1.0.12 发布：dsh 核心更新逻辑优化（npm 双版本可选 + 只提示更新的版本 + 两段式确认升级）（2026-08-20）**：
-    - **动机**：自 v1.0.11 后累积三块 dsh 更新逻辑优化（需求 #56/#57）：① 更新优先走 npm 并列出 `latest`/`next` 双版本给用户选择；② 检查更新**只提示比当前已装版本更新的版本**（修复"已是 stable 还提示再次覆盖"的误报）；③ 点选版本后先弹 `confirm_upgrade()` 展示该版本更新说明再确认升级。
-    - **更新说明来源**：官方 **GitHub Releases** 每版本都带 release note（tag 形如 `dsh-v<version>`，中英文 changelog）；`dsh_version_notes_from_github()` 优先拉它，GitHub 失败才回退 npm registry 元数据。**别用 npm readme（字段为空）**。
-    - **发布约定**（沿用 v1.0.11）：**Release 只上传一个绿色 zip** `DSH_Launcher_GreenPortable_Online_20260820_v1.0.12.zip`（已含 plugins/、skills/）。打包脚本 `runtime/tmp/build_release_zip_v1012.py`。
-    - **版本号**：launcher.py `GREEN_VERSION` 1.0.11→1.0.12；README / README_EN 版本引用同步升至 v1.0.12。已重建 `DSH_Launcher.exe` / `DSH_Update.exe`（PyInstaller，不含 UPX）。
-    - **待办（Gitee）**：`GITEE_TOKEN` 未配置于当前 shell，Gitee 上传需要用户提供令牌后执行；GitHub 侧 `GH_TOKEN` 已配置可直发。
+83. **【发布纪律】版本日期强制=制作当天，禁止手工预写（2026-08-20，用户明确）**：
+    - **背景**：用户发现 v1.0.11 的 GUI 右上角【关于】弹窗日期与 zip 名都是「8月20日」，但包是在 8月19日晚上做的——原因是 launcher.py `GREEN_VERSION_DATE` 和 build_release_zip.py `GREEN_DATE` 都是**手工预写**的「20260820」，恰好在时间跨过 0 点后与系统当前日期撞上，观感像实时计算。用户明确要求：**下次发版的版本日期必须保持「制作当天」的真实日期**。
+    - **要点**：版本日期 ≠ 实时获取（GUI 一直显示制作那天的固定值，不能随运行日期漂移）；也 ≠ 手工预写未来/过去日期。正确值 = **构建当天的真实日期**，构建后固化进源码/exe/zip 三处。
+    - **修法（build_release_zip.py）**：`GREEN_DATE = datetime.datetime.now().strftime("%Y%m%d")` 自动取构建当天；新增 `sync_launcher_version_date()` 在打包前把 launcher.py 的 `GREEN_VERSION_DATE` 自动回写为构建当天（`20260820 -> 2026年08月20日`），确保打进 zip 的 launcher.py 与 zip 名同日期；main 顺序改为「先回写再打包」，末尾提示若 launcher.py 有变请重跑 build_exe.bat 使两个 exe 的日期与构建一致。补充 `import datetime`/`import re`。
+    - **发版操作顺序（下次照做）**：① 改 launcher.py `GREEN_VERSION`（唯一版本来源）→ ② 跑 build_exe.bat 重打两个 exe（打包时固化当天日期）→ ③ 跑 build_release_zip.py 自动生成当天日期 zip 并回写 launcher.py → ④ 若②③顺序颠倒，③会提示重跑②保持 exe 日期一致 → ⑤ GitHub + Gitee 手动上传该 zip。
+84. **【桌面版】GUI 层检查/安装 pywebview 依赖（2026-08-20，用户需求）**：
+    - **背景**：新增桌面版（desktop-shell.py 内嵌 WebView2 独立窗口）后，其 pywebview/pythonnet 依赖原先**只靠 desktop-shell.bat 手动双击才装**；从 GUI 点【安装环境】不装，从 GUI 点【桌面窗口】也只是静默拉起子进程、由 desktop-shell.py 后台 `ensure_pywebview()` 静默 pip 安装——无 GUI 进度、无失败提示，且实测发现 site-packages 里 pythonnet 有、webview 缺失（目录列表易被误判为已装）。用户明确要求：**GUI 点【安装环境】也要装桌面版依赖；GUI 点【桌面窗口】也要先检查安装**。
+    - **修法（launcher.py）**：新增 `prepare_desktop_deps()`（幂等）：先用 `_desktop_deps_ready()` 以 `python -c "import webview"` 运行时为准探测（避免只看目录存在与否误判），未装则用便携 python 的 pip 装 `pywebview pythonnet`（`--index-url https://mirrors.aliyun.com/pypi/simple/`，走 `_stream_subprocess` 实时进度日志 + 60s 心跳，非静默），超时/失败返回 False 并明确提示"浏览器方式不受影响"。
+    - **接入点①**：`prepare_all()` 末尾在 `python_ok` 时调用 `prepare_desktop_deps()` → 点【安装环境】一次到位；`prepare_all` 在启动服务前也调用，因已装跳过故幂等。
+    - **接入点②**：`launch_desktop_shell()` 开头先 `prepare_desktop_deps()`，未就绪则 log 提示并 `webbrowser.open` 回退浏览器，**不再静默由子进程补装**（desktop-shell.py 的 `ensure_pywebview()` 保留为.bat 直启路径的兜底）。
+    - **经验**：判断 pywebview 是否已装不能只看 `Lib/site-packages/webview` 目录（目录列表易截断/误判），用 `python -c "import webview"` 的退出码最可靠；桌面依赖装在便携 python 里（绿色便携原则），不写系统 python。
+85. **【绿色版更新】国内源/自动优先走 Gitee（2026-08-20，用户需求）**：
+    - **背景**：此前绿色版更新通道顺序写死为 `GitHub API → 国内镜像 → Gitee 兜底`，不跟随 config.mirror 设置；国内玩家明明选了"国内/自动"，仍优先打 GitHub Releases（慢/不稳），Gitee 只在全部失败时才兜底。
+    - **修法（launcher.py）**：`green_latest_release()` 开头按 `resolve_mirror()` 分流：`mirror == "cn"`（含 auto 默认）→ **先 `green_gitee_latest()`（发布版 zip 直连 / 整仓快照）**，成功即返回，失败才回退 GitHub API → 国内镜像；`mirror == "official"` → 维持原 GitHub 优先顺序。`confirm_green_update()` 的 source_hint 文案也按"国内源优先"与"官方源兜底"区分（国内源不再显示"GitHub 通道连不通"的误导文案）。
+    - **经验**：绿色版更新通道与 npm/python 镜像一样，应尊重 config.mirror（auto/cn/official）；Gitee 兜底逻辑从"最后才用"提升为"国内源首选"，需同步保证 Gitee Release 每次发布都手动上传 zip（Release 不随镜像同步，见 #82）。
 
-84. **【勘察结论·目录选择器】"添加工作区"目录选择器难用：官方原生选择器被 `-auto` 在网络绑定下屏蔽，纯插件无法替换，已决定保持现状（2026-08-20）**：
-    - **用户诉求**：WebUI「添加工作区」的目录选择对话框上方把路径折叠成只剩"主目录"，且默认落到 C 盘，找不到偏好文件夹；希望有**盘符切换 + 常驻显示完整路径 + 可编辑路径**。
-    - **勘察三层结论**：
-      1. **根因**：dsh 官方自带**两套**目录选择器——`-browse`（内嵌 React 对话框，就是"主目录"折叠版）与 `-native`（调 `host.pickDirectory` 拉起 Windows 原生 IFileOpenDialog：盘符切换/完整路径/快速访问全有）。装配由 `directory-picker-auto` 启动时自适应决定（`dsh-host-directory-picker-auto/lib/index.js` 的 `resolveDirectoryPickerBackend`）：**绑定非 `127.0.0.1`（即本绿色版局域网 `0.0.0.0`）时无条件退回 `browse`**，Windows 回环才会 `native`。所以局域网模式下用户总看到难用的 browse 版。
-      2. **插件不可行**：两套选择器都向 ui-workspace 的两个 directory-flow 洞（`conversation.hero.workspace.directoryFlow` / `sidebar.workspaces.directoryFlow`）注册，槽位是 **`single`（单占位）**，官方文档明说"再挂第二个流程包会在加载期失败"。自研插件无法可靠地增强/替换官方 browse 对话框。
-      3. **非补丁启用原生**：不改官方源码、仅换装配（配置覆盖把选择器钉到官方原生对 `-native` 后端 + `-client-ui-directory-picker-native` 前端）即可得到 Windows 系统文件夹对话框；代价是局域网时原生对话框弹在运行 launcher 的那台电脑屏幕上（`-native` README"仅限本地 Host 载体"）。
-    - **决策（用户明确）**：优先满足"不改官方代码、不做补丁"前提 → 纯插件改不动 → **放弃本次优化，目录选择器保持现状（browse）**。不做任何代码/装配改动。
-    - **避坑经验（可复用）**：① `bindHost ≠ 127.0.0.1` 时官方强制 browse，是"原生对话框出不来"的根因，别在官方文件里找 native 误判为缺失；② 目录-flow 洞是 `single` 槽、被官方包占死，**任何"用插件自定义官方目录选择器"的改动都不可行**；③ 想给用户原生对话框只能走官方装配切换（启用 `-native`），属"保持官方"，非插件、非补丁，且带"对话框弹在宿主机屏幕"的取舍。
-85. **【dsh-sidebar-lite】任务页升级为「AI 状态卡」：明确当前任务目标 / 进度 / 会话工作目录（2026-08-20，承接避坑 #64）**：
-    - **用户诉求**：侧栏「任务」页"实际没绑定到任何东西、没有任何输出和显示"，并希望明确**AI 当前任务进度与目标**。
-    - **根因**：任务页数据源是官方 list store 的 `jobsBySession[sessionId]`，该字段**只在 AI 调用 `job_*` 类工具（长任务/后台脚本）产生 session/jobs 帧时才填充，普通对话恒为空**——所以任务页"永远没东西"，而非没绑定。避坑 #64 修好了取值字段（`current` vs `sessionId`），但数据源本身对普通对话为空的问题依旧。
-    - **改法（仅 `plugins/dsh-sidebar-lite/lib/client.js`）**：
-      1. 在 `SidebarShell` 里新增 `activeSummary = snapshot.byId[sessionId]`——官方会话快照 `byId` 值是 `SessionSummary`（含 `displayTitle`=当前任务目标、`running`=是否执行中、`completed`=是否已完成、`cwd`=会话工作目录，见 `dsh-client-runtime` 的 `SessionListState`）。该快照由 `ctx.sessions.list.getSnapshot()` 返回，`current`/`byId`/`jobsBySession` 同在（projectList 投影）。
-      2. 重写 `TasksView`：顶部加 **AI 状态卡**（目标任务 + 状态徽标 + 工作目录），状态由 `running`/`completed` 派生：执行中=蓝点呼吸动画、已完成=绿点、空闲=灰点；无会话/无后台任务给**明确的中文提示**（"未选择会话"/"当前没有后台任务运行"），消除"看着像没绑定"的错觉。后台任务列表保留原「输出/停止」能力。
-      3. 注入 `@keyframes dsl-pulse` 呼吸动画（状态卡蓝点闪烁提示「AI 正在推进」）。
-    - **验证状态**：`node --check` 语法通过；`byId`/`current`/字段名均已对照 `dsh-client-runtime` 仓库源码核实（`projectList()` 投影 `byId` 到 `SessionSummary`）。刷新 WebUI 即热重载生效，可人工打开侧栏「任务」页看状态卡。
 86. **【发布】v1.0.13 发布：侧栏任务页升级 AI 状态卡（目标/进度/工作目录）（2026-08-20）**：
     - **动机 + 用户实测反馈**：需求 #85 侧栏任务页 AI 状态卡改动经用户实测 OK，于今日发布 v1.0.13。
-    - **发布约定**（沿用 v1.0.12）：Release 只上传一个绿色 zip `DSH_Launcher_GreenPortable_Online_20260820_v1.0.13.zip`。打包脚本 `runtime/tmp/build_release_zip_v1013.py`。
-    - **版本号**：launcher.py `GREEN_VERSION` 1.0.12→1.0.13；README / README_EN 版本引用同步升至 v1.0.13+v1.0.13。已重建 `DSH_Launcher.exe` / `DSH_Update.exe`（PyInstaller，不含 UPX）。
+    - **发布约定**（沿用 v1.0.12）：Release 只上传一个绿色 zip `DSH_Launcher_GreenPortable_Online_20260820_v1.0.13.zip`。
+    - **版本号**：launcher.py `GREEN_VERSION` 1.0.12→1.0.13；README / README_EN 版本引用同步升至 v1.0.13。已重建 `DSH_Launcher.exe` / `DSH_Update.exe`（PyInstaller，不含 UPX）。
     - **config.json 默认绑定（用户本次决策变更）**：发布版默认 `dsh_host` 由 `0.0.0.0`（v1.0.10~v1.0.12 的局域网开箱默认）**改回 `127.0.0.1`（仅本机）**，更安全；用户如需局域网访问再自行切 `0.0.0.0`。这与历史发布默认不同，属用户本意，非测试残留。
     - **上传**：GitHub（GH_TOKEN 已配）+ Gitee（用户提供的 PAT）双平台 Release。Gitee 代码/tag 由镜像自动同步，Release 手动上传 zip（方法见 #82）。
-87. **【研究】dsh-desktop-plugin 工作机制解剖 + 「桌面壳」功能复刻立项（2026-08-20）**：
-    - **用户诉求**：装了 `dsh-desktop-plugin` 但"打不开"，想搞清它怎么工作、能否自研一个作为绿色版一部分的"桌面壳"。
-    - **定位**：该插件是 npm 包 `dsh-desktop-plugin@1.5.10`（已进 profile `bundles` 激活），源码 `runtime/dsh-home/profiles/web/node_modules/dsh-desktop-plugin/src/`。
-    - **工作机制（源码全读）**：
-      1. 激活时 `ensureInstalled`：拉取 GitHub Releases `RAFOLIE/dsh-desktop-windowos` 的 exe → 写 `%LOCALAPPDATA%\Programs\dsh-desktop-windowos\dsh-desktop-windowos.exe`（**默认系统路径，非绿色版**）；exe 是 4.8MB 轻量托盘壳，它在内部连 `127.0.0.1:3080` 打开 DSH WebUI。
-      2. 用 PowerShell/COM 建桌面 `.lnk`「DeepSeek Harness」+ 写 `.url`「DeepSeek Harness Web」打开 `http://127.0.0.1:3080`。
-      3. 注册 `desktop_launch` 模型工具（对话即可安装拉起）；下载走 直连→环境代理→探测本机代理端口→GitHub 镜像，带 sha256/size 校验。
-    - **实测现状**：exe 已下载成功到系统 `%LOCALAPPDATA%`；但 **桌面 `.lnk` 快捷方式不存在**（`Test-Path` = False）——`apply()` 里建快捷方式失败经 `.catch` 吞掉只记日志，故表现"装了但没入口/双击无效"；且写系统路径，绿色版搬移后指向失效。
-    - **结论**：可复刻。方案（推荐轻量壳）：不下载外部 exe，把绿色版**现成 WebUI 直接关进桌面壳**（绿色版路径优先、可随绿色版迁移，无 GitHub 网络依赖）。
-    - **实现要点（待落地）**：①以绿色版 `dsh_host`/`dsh_port`(默认 3080)为访问入口；②窗口实现二选一：默认系统浏览器(最稳零依赖) 或 WebView2/Chromium 无边框应用窗口(像桌面 App)；③建桌面快捷方式/开始菜单项指向绿色版内启动器或 url。本需求暂为研究/立项，未产出代码。
-88. **【实现】dsh-green-desktop 插件：绿色版「桌面版」入口（可选安装，不碰浏览器访问方式）（2026-08-20）**：
-    - **用户定案**：独立桌面应用更好，但要做成**插件形式**——绿色版照旧用浏览器开网址即可；**装了这个插件才额外多一个桌面入口**。据此落地为 `plugins/dsh-green-desktop/`（承接 #87 立项）。
-    - **成果物**：
-      1. `plugins/dsh-green-desktop/`：宿主端插件。`lib/index.js` 纯宿主端（只依赖 node 内置 fs/path/url/child_process），定位绿色版根目录（从插件安装位置逐级向上找含 `config.json` 的目录）→ 用 PowerShell + `WScript.Shell` 在桌面建「DeepSeek Harness 桌面版」快捷方式，指向根目录 `desktop-open.bat`。`cordis.patch.yml` 装配（insert 一行：id `green-desktop`），`dsh.bundle.patch` 声明使其进 profile bundles，随其它内置插件一样用 `file:` 本地安装。**未注册对话工具**：dsh 核心与既有内置插件均未暴露可直接复用的工具注册 API（`ctx.tools` 经查 dsh lib 与仓库源码均无对应实现，自造 API 有加载失败风险），故只保留"桌面快捷方式 + 启动 bat"这条最稳路径，对话拉起可后续再补。
-      2. `desktop-open.bat`（绿色版根目录）：双击后 `cd` 到自身目录，粗解析 `config.json` 拿 `dsh_host`/`dsh_port`（默认 127.0.0.1:3080），优先定位 Edge（x86/x64 两个稳定路径），`start "" msedge.exe --app=http://HOST:PORT` 弹**独立无边框窗口**（无地址栏、任务栏独立图标，形似原生桌面 App）；无 Edge 则 `start` 系统默认浏览器兜底。**⚠️ `--app=URL` 绝不能加引号**（此参数带引号 Edge 会忽略、退回普通浏览器且不跳转，见需求 #89）。
-      3. `runtime/tmp/build_release_zip_v1013.py`（后续发布脚本）：`GREEN_FILES` 追加 `desktop-open.bat`；`plugins/` 目录本来就整包随绿色 zip 分发，`dsh-green-desktop/` 自动带上。
-    - **避坑**：
-      - **插件的 .js 必须是纯 JS，不能带 TS 类型注解**（本项目插件由 node 直接加载，非 tsc 编译）：首版写了 `function locateGreenRoot(): string`、`: Promise<void>` 等，`node --check` 直接 SyntaxError。已全部去掉类型注解改为 JSDoc 注释式写法（与其它内置插件一致）。
-      - **别用 `homedir()\Desktop` 判快捷方式是否存在**：目标机桌面常被 OneDrive/重定向（实测 `D:\junheng.liu\Desktop`），`homedir()` 与真实桌面不一致，判定会失准。改为**每次都重建**快捷方式（隐藏 PowerShell 一条命令，代价极小），顺便保证绿色版整体迁移后快捷方式目标自动跟随最新路径。
-      - 每次激活都建快捷方式后需 `spawn("powershell", ...)` 一次，包 `windowsHide: true + stdio: ignore`，失败仅 `logger.warn`，不阻塞 DSH 启动（复用 dsh-desktop-plugin 的"短暂失败吞日志"教训里"不阻塞"的一侧，同时对用户可见）。
-    - **安装/验证状态**：已通过启动器 `install_plugin` 用 `file:` 装入 `web` profile（自动 reconcile 进 dependencies + bundles）；用 mock ctx 单测 `apply()` 生效（定位到 `E:\DeepSeekHarnessLauncher\`、真实桌面 `Test-Path` = True 新建了快捷方式，指向 `desktop-open.bat`）。dsh 服务未运行，实际加载在下次启动服务后激活。
-    - **遗留决策点**：官方 `dsh-desktop-plugin@1.5.10` 仍装在 live profile 且 enabled（broken、重复、写系统路径）。是否从 profile 移除、或仅禁用，待与用户确认后再执行（避免未经确认动用户已装的软件）。
-89. **【修复】桌面版入口"只开浏览器却不弹独立窗口也不跳转"（2026-08-20，承接 #88）**：
-    - **用户反馈**：双击「DeepSeek Harness 桌面版」启动后并没有展示桌面样子，只是打开了浏览器、还不自动跳转到网址。
-    - **根因**：`desktop-open.bat` 里 `start "" msedge.exe --app="http://HOST:PORT"` 给 URL 加了引号。Chromium 系浏览器对 `--app=` 带引号的参数会**整个忽略**，退回普通浏览器模式启动，且 URL 不作为导航目标 → "只开了浏览器、不跳转、无独立窗口"，与用户现象完全吻合。
-    - **修复（desktop-open.bat）**：
-      1. **去掉 `--app=` 的引号**：`--app=http://%DSH_HOST%:%DSH_PORT%`（浏览器路径仍带引号，仅 URL 参数不带引号）。这是让 `--app` 真正生效、弹独立无边框窗口的关键。
-      2. **扩展浏览器探测**：除 Edge x86/x64 两个路径外，增加 Chrome x86/x64 两个路径作为备选；都没有才用 `start "" http://...` 走系统默认浏览器兜底。
-      3. **绑定地址归一化**：解析出的 `dsh_host` 为 `0.0.0.0` 或 `::` 时归一化为 `127.0.0.1`（这两个地址浏览器本地访问不到）。
-    - **验证**：`config.json` 粗解析正确（HOST=127.0.0.1、PORT=3080）；Edge 主进程本就在运行（`--no-startup-window`），直接启动 `msedge.exe --app=http://127.0.0.1:3080` 后 `Get-Process msedge | ? MainWindowTitle` 能看到标题为 `127.0.0.1` 的独立窗口——即 `--app` 已生效并导航到 WebUI。**注意**：Edge 已有进程时，app 窗口会**复用既有浏览器主进程**（进程命令行不会新增 `--app`，因为新窗口不产生新浏览器进程），故不能靠"进程命令行含 `--app=`"来判断是否成功，要看**窗口标题**。
-90. **【实现】「桌面版」升级为内嵌 WebView2 的内核壳：完全脱离浏览器开 WebUI（2026-08-20，承接 #88/#89）**：
-    - **用户诉求**：`--app` 依赖系统里预先装好的 Edge/Chrome，缺失或行为不同就不可靠；要求**完全脱离浏览器本身**去做桌面壳。
-    - **调查**：官方 `dsh-desktop-windowos.exe` 实为 **4.8MB 单文件 WebView2 壳**（版本 1.6.7），本机 `C:\Program Files (x86)\Microsoft\EdgeWebView`（WebView2 Runtime）存在——即官方正解就是内嵌系统 WebView2，不依赖浏览器进程。我们复刻此路线。
-    - **技术选型（Python，贴合本项目）**：**pywebview**——Windows 后端 = `WinForms / Chromium`，本质是内嵌 WebView2(Runtime)。只要系统有 WebView2 Runtime（Win10/11 普遍自带或随任一应用安装）就能弹**真正独立桌面窗口**，完全脱离 Edge/Chrome 浏览器进程与外观。便携 python 内 `pip install pywebview pythonnet`（pythonnet/clr_loader 用于在 Windows 加载 WebView2，均有 cp310 win_amd64 wheel，本机镜像安装成功）。
-    - **产物**：
-      1. `desktop-shell.py`（绿色版根目录）：读 `config.json` 拿 `dsh_host`/`dsh_port`（默认 127.0.0.1:3080，归一化 `0.0.0.0`/`::`→`127.0.0.1`）→ 检测 WebView2 Runtime → 存在则 `webview.create_window(...)+start()`弹窗；缺失或初始化失败则 `webbrowser.open()` 回退系统浏览器（保证始终可用）。
-      2. `desktop-shell.bat`（ASCII 全英文）：定位便携 python → 首次若缺 pywebview 则 `pip install`（实时可见）→ `pythonw.exe`（无控制台）拉起 `desktop-shell.py`（双击像原生 App，不弹 cmd 黑窗）。
-      3. 插件 `dsh-green-desktop/lib/index.js`：桌面快捷方式改**首选指向 `desktop-shell.bat`**，绿色版缺壳时才回退 `desktop-open.bat`。已同步 live profile 拷贝（`node --check` 通过；下次 dsh 服务启动重建快捷方式即指向新壳）。
-      4. `runtime/tmp/build_release_zip_v1013.py`：`GREEN_FILES` 追加 `desktop-shell.py`、`desktop-shell.bat`。
-    - **验证**：import 自检 `read_server_address()=('127.0.0.1',3080)`、`webview_runtime_present()=True`；临时 `http.server 3080` + `python desktop-shell.py` 端到端，日志 `[DSH Shell] 正在弹出 WebView2 桌面窗口...` 稳定无报错；内核可行性先由单独脚本实证 `[pywebview] Using WinForms / Chromium` + `loaded event fired`。`--app` 方案仍以 `desktop-open.bat` 保留（WebView2 缺失的手动兜底）。
-    - **注意**：绿色 zip 为**在线版，不含 `runtime/`**（node/python/dsh 首次在线装），故 pywebview 不预制在包里，由 `desktop-shell.bat` **首次自动在线安装**（与 launcher 首次装 dsh 同思路），地址默认走 aliyun 镜像。
-    - **遗留**：真机确认 `desktop-shell.bat` 双击弹窗效果；确认后续是否随新版本发布。
 
-91. **【实现】桌面版改为绿色版自带 + 启动器原生打开方式（2026-08-20，承接 #90）**：
-    - **用户诉求转变**：`dsh-green-desktop` 插件只能在绿色版环境用、本质是套本地 `desktop-shell.bat` 的壳，没必要做成插件；应**改成绿色版原生自带**，且启动器里能**直接点开「独立桌面窗口」还是「网页窗口」**，**默认打开方式可配置**，并**重新排版 GUI**。
-    - **技术决策／与 #90 的衔接**：
-      1. 绿色版根目录 `desktop-shell.py` + `desktop-shell.bat` 本就是随包文件，不是逻辑依赖插件——它们就是“内置”的。真正的“插件”只负责往桌面放一个 `.lnk` 快捷方式这一个副作用，价值有限。
-      2. 移除 `plugins/dsh-green-desktop/` 源目录（不再随包发布、不再自动安装）；live profile 已装的 `node_modules/dsh-green-desktop` 拷贝暂保留（其快捷方式仍指向原生 `desktop-shell.bat`，无害）。桌面入口能力收敛到**启动器自带**。
-    - **launcher.py 改动**：
-      1. `DEFAULT_CONFIG` 新增 `"open_method": "desktop"`（注释注明 desktop=独立桌面窗口 WebView2 / browser=系统浏览器）。
-      2. 新增 `Launcher.launch_desktop_shell()`：`os.startfile(desktop-shell.bat)` 以“双击”方式拉起（ShellExecute 最稳，不阻塞），壳缺失时 `webbrowser.open()` 回退。
-      3. 改写 `open_ui(force=False, method=None)`：method 缺省用 `config.open_method`；`if not force and self.ui_is_open(): return`（保留单页面去重，只约束自动打开）；按 open_method 分发 desktop→launch_desktop_shell / browser→webbrowser。
-      4. 自动打开路径全部改走 `open_ui(force=False)`：`start_server`、`wait_and_open`、GUI `on_start`、命令行 `--start` 四处分发的 browser 逻辑归一到一个入口，自动打开跟随默认打开方式。
-      5. **GUI 重排版**：配置区避免两栏过宽截断，改为**纵向堆叠**（上=网络设置，下=常规设置，各自独立 LabelFrame）；「保存设置」按钮两块**共用**，放在两者下方统一提交（并提示"同时写入网络设置与常规设置"）；常规设置新增「默认打开方式」下拉（独立桌面窗口/网页窗口），保存写入 `open_method`；「自动打开浏览器」勾选文案改为「启动服务后自动打开界面(按默认方式打开…)」；按钮区把原「打开界面」拆成「桌面窗口」与「网页窗口」两个按钮，分别 `open_ui(force=True, method=...)`。
-    - **验证**：便携 python `py_compile launcher.py` 通过（注意本机 `python` 是 2.7，必须用 `runtime/python/python/python.exe` 或 `py -3` 编译）。
-    - **遗留**：live profile 里已装的 `dsh-green-desktop` 拷贝与桌面 `.lnk` 是否移除，待用户确认；下次发布打包时 `plugins/` 已不含该插件。
-
-92. **【实现】GUI 排版微调 + 「所见即所得」设置同步（2026-08-20，承接 #91）**：
-    - **网络设置**：描述文字改为可换行（`wraplength=430` + `justify="left"`）以收窄宽度；选项框保持靠左。
-    - **常规设置**：`镜像源` 与 `端口` 同一行**并列**布局，善用横向宽度、压缩纵向高度；`默认打开方式` 下拉初始值改用**中文标签**（原误用了英文 `desktop/browser`，与中文选项对不上）。
-    - **「所见即所得」**：抽出统一函数 `sync_gui(silent=False)`，把界面当前填入的端口/绑定/受信任主机/镜像/打开方式/自动打开整体写进 config 并落盘；`保存设置 / on_start / on_install` 三处共用——意味着**用户改了没点保存就启动服务或安装下载，也会按最新输入自动落盘后再操作**，界面显示即实际在用值。silent 模式端口非法只警告不阻断（沿用旧端口），手动保存则弹错并中止。
-    - **验证**：便携 python `py_compile` 通过。
-
-93. **【修正】配置区最终版：左右分栏但总宽受控 + 「存桌面仍开浏览器」根因（2026-08-20，承接 #92）**：
-    - **UI 定稿**：经过 #91 左右（太宽 → 右栏被截）、#92 上下（用户又想回左右）来回后，定稿为——`config_area` 用**左右两栏 + `columnconfigure(0/1, weight=1)`**，窗口默认 `geometry("1160x780")` / `minsize(1000,660)`，**两栏合计 ≤ ~1280** 不超界面默认宽；网络设置描述文字 `wraplength=430` 换行避免撑宽；左=网络设置、右=常规设置（常规设置内含镜像源+端口同行并列）。
-    - **「存了默认桌面还是开浏览器」根因**：非逻辑 bug，而是**测试用的 `DSH_Launcher.exe` 是旧版 v1.0.13**——它压根没有 `open_method`/桌面壳逻辑，启动后自动打开永远走 `webbrowser.open`。代码里 `start_server→wait_and_open→open_ui(force=False)→(config.open_method=desktop)→launch_desktop_shell→os.startfile(desktop-shell.bat)→WebView2 窗口` 这条链在新源码是通的。已用 `build_exe.bat` 相同的 PyInstaller 命令行**本地重建 DSH_Launcher.exe**（9.25MB，仅本地 Build+Copy，未升版本、未打包、未上传）。
-    - **提醒**：`python -m PyInstaller` 在命令行里要 `set PYTHONPATH=..\runtime\pyinstaller` 才能找到模块（build_exe.bat 里已设）。
-
-94. **【修正】start.bat 启动「选默认桌面却仍开浏览器」根因 + 去重改为按打开方式 + 镜像默认 auto（2026-08-20，承接 #93）**：
-    - **现象**：用 `start.bat` 打开 GUI，`默认打开方式`选「独立桌面窗口」，`启动服务`后仍自动打开浏览器标签页。
-    - **根因（代码级，区别于 #93 的旧 exe）**：`open_ui(force=False)` 的去重用**全局** `ui_is_open()`（WebUI 心跳在线即 True）。此前曾用浏览器手动打开过页面，该浏览器标签仍在上报心跳 → `ui_is_open()` 返回 True → `open_ui` 直接 return（跳过了 `launch_desktop_shell`），于是只剩旧浏览器标签，「看起来还是开了浏览器」，而实际上桌面窗口根本没被打开。
-    - **修复（launcher.py）**：去重改为**按打开方式区分**：
-      1. `__init__` 新增 `self._last_open_method = None`，记录本进程上次实际打开的界面方式（desktop/browser）。
-      2. `open_ui` 中去重条件改为 `if not force and self._last_open_method == open_method and self.ui_is_open(): return`——**只有“同一种方式且已在线”才去重**；用户选桌面窗口时即便旧浏览器标签仍在心跳，也会照常 `launch_desktop_shell` 弹出 WebView2 桌面窗口（反之亦然）。
-      3. 打开前记录 `self._last_open_method = open_method`。
-    - **镜像默认 auto**：`config.json` 的 `mirror` 从 `"cn"` 改为 `"auto"`；`resolve_mirror()` 对 `auto` 返回 `("cn", True)`（国内优先、失败回退官方，详见 #15）；GUI 镜像下拉「自动 (国内优先, 失败回退官方)」默认选中即 `auto`。已在 config.json 落盘。
-    - **验证**：便携 python `py_compile launcher.py` 通过（本机系统 `python` 是 2.7，必须用 `runtime/python/python/python.exe`）。
-    - **遗留**：真机复验 `start.bat` 启动→服务→桌面窗口链路；`mirror` 默认 `auto` 是否影响其它机器第一次安装的首选源（现为国内优先，符合"默认自动"）。
-
-95. **【修正】界面"只认一种打开方式"单一化 + 移除废弃的 desktop-open.bat（2026-08-20，承接 #94）**：
-    - **现象**：选默认「独立桌面窗口」后，桌面窗口弹出来了，但同时浏览器界面也被弹了一次。
-    - **排查结论（真机取证）**：仅一个启动器进程（`pythonw launcher.py`，PID 51552）、pywebview 已装、服务端口 3080 当时未监听；`desktop-shell.py/bat` 在 WebView2 正常时只弹桌面窗、异常时才回退浏览器，单次调用不会"桌面+浏览器"同弹。残留的 `desktop-open.bat` 只作为 desktop-shell.bat 的**失败兜底**存在（会把用户导向浏览器），已无任何正常用户路径，属无用旧内容。
-    - **改动**：
-      1. **单一界面方式规则（launcher.py `open_ui` 重写）**：先定当前方式（`config.open_method` 或手动指定）；若"该方式页面"已在运行→**跳转/复用**（网页方式 `webbrowser.open` 同地址自动聚焦已有标签；桌面窗口则**不再重复新建**）；否则新建该方式页面。**另一种方式绝不自动打开**——从根上消除"桌面+浏览器同弹"。`force` 参数改为语义保留、不再"无条件重开"，防止手动按钮重复堆窗口。
-      2. **持久化"当前在用的界面方式"**：新增 `_ui_open_state()`，把"上次以哪种方式打开"写入 `runtime/ui_open_method.txt`。配合心跳（只能判"有页面在线"、辨不出桌面/网页），重启启动器后也能对上"现在在线的是桌面窗还是网页窗"。
-      3. **删除 `desktop-open.bat`**：`desktop-shell.bat` 依赖安装失败兜底改为直接 `start "" "http://127.0.0.1:3080"`（系统默认浏览器）；`runtime/tmp/build_release_zip_v1013.py` 的 `GREEN_FILES` 移除该项；`skills/dsh-deploy-maintain/SKILL.md` 4.14 标注 `--app` 方案已废弃、桌面入口统一用 WebView2 桌面壳。
-    - **避坑（承 #93/#94）**：光区分"是否打开"(beacon) 不够，还必须区分"以哪种方式打开"（持久化 `ui_open_method.txt`），才能正确实现"该方式没开才开、开了就跳，另一种不开"。
-    - **验证**：便携 python `py_compile launcher.py` 通过；`go (Grep) desktop-open.bat` 全仓仅剩历史 DEV_NOTES 与 SKILL.md 的废弃说明，无活动脚本引用。
-    - **遗留**：真机复验"选桌面→启动→仅弹桌面窗、不再弹浏览器"；重启启动器后 `runtime/ui_open_method.txt` 能对上当前在线界面；旧桌面 `.lnk`/`node_modules\dsh-green-desktop` 是否移除待用户确认。
-96. **【清理】彻底移除 dsh-green-desktop 与官方 dsh-desktop-plugin 全部遗留（2026-08-20，承接 #95/#91/#88，用户要求）**：
-    - **背景**：用户要求"dsh-green-desktop 遗留 + 第三方(dsh-desktop-plugin)留下的一起清掉，包括 C 盘三方安装残留"。
-    - **执行清单**：
-      1. `runtime/dsh-home/profiles/web/package.json`：从 `disabled` 中删除 `dsh-desktop-plugin`（`dependencies` 里此前已无该条目）。
-      2. C 盘官方三方目录 `%LOCALAPPDATA%\Programs\dsh-desktop-windowos`（含 `dsh-desktop-windowos.exe`）→ 递归删除。
-      3. 桌面 `DeepSeek Harness 桌面版.lnk` → 删除（用户桌面由 OneDrive 重定向，`Desktop`/`OneDrive\Desktop` 均已确认无残留）。
-      4. `node_modules` 确认无 `dsh-green-desktop`、`dsh-desktop-plugin`。
-      5. C 盘 npm 全局及 `AppData\ProgramData` 等位置扫描确认无三方安装残留。
-      6. `desktop-shell.bat` 顶部过时注释（仍写"由 dsh-green-desktop 插件创建的快捷方式"）改为泛指"指向本文件的桌面快捷方式"。
-      7. `skills/dsh-deploy-maintain/SKILL.md` 4.14 的"清理取舍"条目由"待用户拍板"更新为"已彻底清理"及最终操作明细。
-    - **结果**：桌面独立窗口入口统一只剩内置 `desktop-shell.bat/.py`；官方外置 exe、快捷方式、依赖/禁用引用、node_modules 全部清除；全仓 grep 仅剩 DEV_NOTES 历史记录与 SKILL 避坑说明（保留），无活动引用。
-    - **遗留**：`dsh-desktop-plugin` 在 live profile 的 `disabled` 引用已移除，但若该插件名曾在某次 install 时被真正"启用安装"过，需下一次 install_dsh/reconcile_bundles 收敛依赖确认；如需重建 `DSH_Launcher.exe` 再做。（发布/上传等任何对外操作须先经用户确认。）
+87. **【桌面版】从"浏览器 app 模式"演进到"内嵌 WebView2 内核壳"：最终方案与关键避坑（2026-08-20，整合原 #87~#96 的中间开发过程，只留结论）**：
+    - **最终方案（定稿）**：绿色版**内置** `desktop-shell.py`（pywebview，Windows 后端 = WinForms + Chromium/WebView2）+ `desktop-shell.bat`；launcher 的 `open_ui()` 按 `config.open_method`（默认 `desktop`）分发——desktop 用 `Popen([pythonw.exe, desktop-shell.py], CREATE_NO_WINDOW)` 直启（无 cmd 闪窗），browser 用 `webbrowser.open`；`build_server_command` 统一追加 `--no-open` 关掉官方自动浏览器。官方外置 `dsh-desktop-windowos.exe`（写系统路径）与自研 `dsh-green-desktop` 插件（桌面快捷方式方案）均已移除，桌面入口收敛为绿色版自带。
+    - **演进轨迹（只记结论）**：官方 `dsh-desktop-plugin`（4.8MB 单文件 WebView2 exe，写系统路径、搬移失效）→ 复刻为 `dsh-green-desktop` 插件 + `desktop-open.bat`（`msedge.exe --app=`）→ 实测 `--app` 带引号会失效退回普通浏览器（见避坑①）→ 升级为绿色版自带内嵌 WebView2 内核壳 → 收敛为启动器原生打开方式并移除插件与官方遗留。
+    - **关键避坑（均可复用）**：
+      1. **Chromium `--app=URL` 不能给 URL 加引号**：`--app="http://host:port"` 会被浏览器**整体忽略**、退回普通浏览器且不跳转；且 Edge 已有进程时 app 窗口会复用既有主进程（进程命令行看不到 `--app`），判断成败要看**窗口标题**。
+      2. **pywebview 窗口换图标**：WinForms 后端**支持** `webview.start(icon=...)`——直接读 `webview/platforms/winforms.py` 源码确认（会写进全局 `_state['icon']`，`self.Icon = Icon(...)`），别只信 docstring"仅 GTK/QT"的臆断。自绘 `WM_SETICON` 依赖 `FindWindowW(标题)`，而 **WebView2 会用页面 `<title>` 覆盖窗体标题导致找不到窗口**，只能当双保险。
+      3. **`webview.start()` 之前绝不能调 `load_url()`**：会打断原生窗口创建流程，报 `Main window failed to start` 并静默回退浏览器（真机二分定位锁定）。窗口起来后要做的导航/初始化一律放 `webview.start(func)` 的**窗口就绪回调**里。
+      4. **官方 dsh 默认自动打开浏览器**：`dsh-web-app` 的 `openBrowser` 默认 true，服务就绪就自动拉起系统浏览器 → 启动器接管界面打开时，必须给官方服务加 `--no-open`，否则"官方浏览器 + 自选界面"双开。
+      5. **打开去重分机制**：手动(force)不拦截（永远回应/聚焦），自动(force=False)才排重；桌面版是**固定单实例**，用**进程 PID 身份**排重（`OpenProcess + GetExitCodeProcess` 真验存活，别只凭 pid 文件是否存在），别用页面心跳去猜（心跳是网页版多标签用的）；找不到窗口但 pid 活着（残留）时降级重建。
+      6. **服务未启动的提示页**：打开前先 `socket.connect_ex` 探测端口，未就绪时把固定提示页 `data:` URL 作为 `create_window` 首屏，在 `webview.start(func)` 回调里每秒轮询端口、就绪后 `load_url` 切真实界面——避免显示"连接失败"网页。
+    - **依赖与自举**：pywebview/pythonnet 装在便携 python（绿色便携原则）；`desktop-shell.bat` 首次自动 pip 安装作直启兜底；GUI 层【安装环境】/【桌面窗口】也会自动检查安装（见 #84）。
+    - **清理记录**：官方 `dsh-desktop-plugin` 的依赖/禁用引用、C 盘 `%LOCALAPPDATA%\Programs\dsh-desktop-windowos`、桌面 `.lnk`、node_modules 残留全部清除；`desktop-open.bat` 已删除（桌面壳兜底改为直接 `start "" http://127.0.0.1:3080`）。
 
 97. **【修复】启动"双界面"根因=官方 dsh 默认自动打开浏览器 (2026-08-20, 用户实测"选桌面=桌面+网页、选网页=2网页")**：
     - **现象**：点「启动服务」后同时弹两个界面——其中一个**一定是系统浏览器网页**，另一个才是启动器里自选的界面（桌面壳/网页）。
@@ -1029,45 +892,33 @@
       - 结论：**官方 dsh 服务就绪后默认就会自动打开系统浏览器**，而我们 `build_server_command` 之前没加 `--no-open` → "官方自动浏览器 + 我们自选界面"双开。
     - **改动**（launcher.py `build_server_command`）：启动命令末尾统一追加 `--no-open`，让官方不再自动开浏览器；界面打开完全交给启动器 `open_ui`（按 config.open_method）。
     - **避坑（通用）**：当你用启动器接管"打开界面"职责、却包了一层带官方 web 服务的 product 时，**务必给官方服务加 `--no-open` 之类关闭自动打开浏览器的开关**，否则会"官方默认浏览器 + 你的界面"双开。这也是为什么要先"列全所有会启动界面的地方"，再逐个确认，别只盯着自己的 open_ui。
-    - **验证**：便携 python `py_compile` 通过；需真机复现确认"默认桌面→仅弹桌面壳、默认网页→仅弹一个网页、不再双开"。
-    98. **【优化】绿色版桌面窗口三连：鲸鱼图标 / 无 cmd 闪窗 / 服务未启动固定提示页 (2026-08-20)**：
+
+98. **【优化】绿色版桌面窗口三连：鲸鱼图标 / 无 cmd 闪窗 / 服务未启动固定提示页 (2026-08-20)**：
     - **背景**：用户实测后提三点：桌面窗口用的是默认图标；打开桌面页会闪一下 cmd 黑窗；服务未启动时打开桌面页默认显示"连接失败"网页，希望给固定提示。
     - **改动**：
       1. **无闪窗**（launcher.py `launch_desktop_shell` + `_find_pythonw`）：优先 `subprocess.Popen([pythonw.exe, desktop-shell.py], creationflags=CREATE_NO_WINDOW)` 直启桌面壳，绕过 desktop-shell.bat 的 cmd 黑窗；pythonw/pywebview 找不到时才回退 bat/浏览器。
-      2. **鲸鱼图标**（desktop-shell.py `apply_window_icon`）：pywebview(WinForms) 的 `webview.start(icon=...)` 仅支持 GTK/QT，Windows 需用 Win32 `FindWindowW` 找窗口句柄 + `LoadImageW` 载入 `DSH_Launcher.ico` + `SendMessageW(WM_SETICON, ICON_BIG/ICON_SMALL)` 换图标（后台线程轮询等窗口出现）。
-      3. **未启动提示页**（desktop-shell.py `open_in_shell_window`/`port_listening`/`PLACEHOLDER_HTML`）：打开前先 `socket.connect_ex` 探测 dsh 端口；未就绪则显示"请先启动服务器"的固定提示页（深绿渐变+鲸鱼 emoji），后台每 1.5s 轮询端口，一旦就绪自动跳真实界面，不再是"连接失败"。⚠️ 初版写法是在 `webview.start()` **之前**调 `load_url(data:...)`，真机实测会挂死窗口初始化（`Main window failed to start`），最终改成"用提示页 URL 作为 create_window 首屏 + 在 start(func) 窗口就绪回调里轮询"，详见 #99。
+      2. **鲸鱼图标**（desktop-shell.py）：`webview.start(on_window_ready, icon=icon_path)` 把 `DSH_Launcher.ico` 直接交给 WinForms 窗体（权威方式，不受页面标题覆盖影响）；`WM_SETICON` 自绘保留作双保险（详见 #87 避坑②）。
+      3. **未启动提示页**（desktop-shell.py）：打开前先 `socket.connect_ex` 探测 dsh 端口；未就绪则显示"请先启动服务器"的固定提示页（深绿渐变+鲸鱼 emoji），后台轮询端口，一旦就绪自动跳真实界面（详见 #87 避坑⑥）。
       4. 顺带：desktop-shell.py 新增 `ensure_pywebview()` 自举——pywebview 缺失时用便携 python `pip install` 静默后台安装后再拉起，不再只依赖 bat 首次安装。
-    - **避坑（通用）**：给 webview 窗口换图标，先查**该后端的 start() 是否支持 icon 参数**（pywebview WinForms 不支持、只 GTK/QT），不支持就手动走 Win32 `WM_SETICON`；"官方/开源 dev server 默认自动开浏览器"此类**自带行为**要显式关闭（承接 #97）；包装第三方 GUI 后端做成"看起来原生"时，`pythonw`(无控制台) + `CREATE_NO_WINDOW` 最省事，能彻底去掉 cmd 闪窗。
+    - **避坑（通用）**：包装第三方 GUI 后端做成"看起来原生"时，`pythonw`(无控制台) + `CREATE_NO_WINDOW` 最省事，能彻底去掉 cmd 闪窗。
     - **验证**：便携 python `py_compile launcher.py desktop-shell.py` 通过；需真机复现确认：默认桌面→弹桌面窗且不闪 cmd、标题栏/任务栏为鲸鱼图标、服务未启动时先显提示页、服务起来后自动载入。
-    - **遗留**：重建 `DSH_Launcher.exe` 再真机复验（涉及对外构建，须先经用户确认）。
 
 99. **【修正】pywebview 窗口起不来的真根因：`start()` 之前不能调 `load_url()`（2026-08-20，真机实测推翻 #98 初版写法）**：
     - **现象**：按 #98 初版（`open_in_shell_window` 里先 `window.load_url(提示页)` 再 `webview.start()`）真机跑 `desktop-shell.py`，进程几秒后消失、控制台只见 `WebViewException('Main window failed to start')` 并**回退到系统默认浏览器**——这解释了用户"为什么一直看到连接失败的网页 / 默认图标"：桌面窗根本没起来，全程就是浏览器标签页。
-    - **排查（二分定位，逐个去掉差异项）**：
-      1. `create_window(title, 'about:blank')` + `start()` → 窗口正常。
-      2. `create_window(title, 真实不可达 http url)` + `start()` → 窗口正常（初始 URL 不可达不致命）。
-      3. 上面再加"**start 前** `load_url(data:提示页)`"→ 窗口起不来、进程挂住/退出。**锁定就是这步**。
-    - **根因**：pywebview/WinForms（WebView2）在 `webview.start()` **之前**调用 `window.load_url()` 会打断原生窗口的创建流程，使其初始化失败/挂起。
-    - **改正**（desktop-shell.py `open_in_shell_window`）：
-      - 先同步 `port_listening(port)` 判断服务是否就绪；
-      - 未就绪时**直接把提示页 `data:` URL 作为 `create_window` 的初始地址**（首屏就是提示页，不会先闪一下"连接失败"）；
-      - 就绪与否的后续动作全部放进 **`webview.start(func)` 的 window-ready 回调**里做（未就绪则后台轮询端口，起来后 `load_url(server_url)` 切真实界面）；
-      - 图标仍用独立的 `apply_window_icon` 后台线程轮询找窗口设置。
-    - **避坑（通用）**：包装 pywebview 时，**凡是"窗口起来后要做的导航/初始化"，一律放在 `webview.start(func)` 的窗口就绪回调里，绝不放在 start() 之前调用 `load_url`**。真机失败信息往往被上层 `except Exception` 吞成一句 `Main window failed to start`，要看真因就用**控制台 python.exe + 完整 traceback** 跑，别用 pythonw（无 stderr）。判断"某后端是否支持某操作"以**实机行为**为准，不要只看目录/版本号（本机 `webview_runtime_present()` 查到 EdgeWebView 目录还在，但窗口照样起不来）。
-    - **验证（实机，用户可复核）**：便携 `pythonw.exe desktop-shell.py` 弹出 "DeepSeek Harness 桌面版" 窗口且进程常驻、响应中；服务未启动时首屏即绿色"服务器尚未启动"提示页；标题栏/任务栏应用鲸鱼图标；进程不再回退浏览器。
-    - **遗留**：重建 `DSH_Launcher.exe` 后，走启动器 GUI「打开桌面页面」按钮再复核一遍入口链路。
+    - **根因**：pywebview/WinForms（WebView2）在 `webview.start()` **之前**调用 `window.load_url()` 会打断原生窗口的创建流程，使其初始化失败/挂起（真机二分定位：`create_window+start()` 正常 → 初始 URL 不可达也正常 → 加上"start 前 load_url"就挂，锁定是这步）。
+    - **改正**（desktop-shell.py `open_in_shell_window`）：先同步探测端口 → 未就绪时直接把提示页 `data:` URL 作为 `create_window` 的初始地址（首屏就是提示页）→ 就绪与否的后续动作全部放进 **`webview.start(func)` 的 window-ready 回调**里做。
+    - **避坑（通用）**：包装 pywebview 时，**凡是"窗口起来后要做的导航/初始化"，一律放在 `webview.start(func)` 的窗口就绪回调里，绝不放在 start() 之前调用 `load_url`**。真机失败信息往往被上层 `except Exception` 吞成一句 `Main window failed to start`，要看真因就用**控制台 python.exe + 完整 traceback** 跑，别用 pythonw（无 stderr）。判断"某后端是否支持某操作"以**实机行为**为准，不要只看目录/版本号。
 
 100. **【修正】打开去重改为分机制：手动(force)不拦截 + 桌面版用进程PID身份排重、不再用心跳（2026-08-20，用户反馈"频繁手动打开被挡/提示已存在"）**：
     - **现象**：用户手动点「打开界面→桌面窗口」按钮，频繁点会提示/日志"独立桌面窗口已在运行, 不再重复新建"，被"已存在"挡住；且认为**桌面版是固定一个程序，本可用记录 id(进程身份) 判断，不该用心跳**。
     - **根因**：
-      1. 手动按钮 `on_open(method)` 传 `open_ui(force=True)`，但旧 `open_ui` 签名里 `force` 只是"语义保留"，deop 分支照样走 `if self.ui_is_open() and self._ui_open_state()==open_method` → 命中就 return，**手动被当成自动一样拦截**。
-      2. 桌面版是**固定单实例**（一个 pythonw 进程 + 一个 WebView2 窗），而心跳(`ui_is_open`，3081 beacon) 需要前端 has 已注入、且区分不了是 desktop 还是 browser——用它对桌面版判重既绕又不准。
+      1. 手动按钮 `on_open(method)` 传 `open_ui(force=True)`，但旧 `open_ui` 签名里 `force` 只是"语义保留"，去重分支照样走 `if self.ui_is_open() and self._ui_open_state()==open_method` → 命中就 return，**手动被当成自动一样拦截**。
+      2. 桌面版是**固定单实例**（一个 pythonw 进程 + 一个 WebView2 窗），而心跳(`ui_is_open`，3081 beacon) 需要前端已注入、且区分不了是 desktop 还是 browser——用它对桌面版判重既绕又不准。
     - **改动**：
-      - **桌面版身份**：desktop-shell.py 窗口起来前 `write_pid_file()` 把 `os.getpid()` 写入 `runtime/desktop_shell.pid`，窗口关闭/失败 `finally remove_pid_file()`；launcher 加 `_read/_write_desktop_shell_pid()` + `_desktop_shell_alive()`（用 Win32 `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` + `GetExitCodeProcess==STILL_ACTIVE` 判进程存活）+ `_focus_desktop_window()`（`FindWindowW(标题)` + `ShowWindow(SW_RESTORE)` + `SetForegroundWindow`)。
+      - **桌面版身份**：desktop-shell.py 窗口起来前 `write_pid_file()` 把 `os.getpid()` 写入 `runtime/desktop_shell.pid`，窗口关闭/失败 `finally remove_pid_file()`；launcher 加 `_read/_write_desktop_shell_pid()` + `_desktop_shell_alive()`（Win32 `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` + `GetExitCodeProcess==STILL_ACTIVE` 判存活）+ `_focus_desktop_window()`（`FindWindowW(标题)` + `ShowWindow(SW_RESTORE)` + `SetForegroundWindow`）。
       - **`launch_desktop_shell`**：`subprocess.Popen` 时拿到进程对象，`_write_desktop_shell_pid(pid)` 立即落盘（desktop-shell.py 自写 pid 作双保险）。
       - **`open_ui` 重写**：`force=True`(手动) 不排重——桌面版在线则聚焦已有窗口、不在线新建；网页版直接 `webbrowser.open`(同址自动复用/聚焦标签)。`force=False`(自动) 才排重——桌面版用 `_desktop_shell_alive()`、网页版用心跳+记录方式。
     - **避坑（通用）**：给一个"会因外层状态是否活着而决定是否拦截"的打开动作时，**手动 vs 自动要分开走**（手动永远回应、自动才排重），别让 `force` 只是个摆设；"固定单实例程序"的在线判定直接用**进程身份**（pid 文件 + 进程存活探测）最贴切，**别用页面心跳**去猜——心跳是给"多实例/多标签页"的网页版用的。判进程死活别只凭 pid 文件是否存在（进程可能被强杀留下残留），要用 `OpenProcess+GetExitCodeProcess` 真验一次；找不到窗口但 pid 活着(残留)时降级重建而非死认。
-    - **验证（实机）**：启动 desktop-shell 写出的 pid 与 pythonw 实际 pid 一致；`OpenProcess` 判存活返回 True；强杀进程后同 pid 文件仍在但判为 False（兜底重建）；py_compile 通过。需 run launcher 真机复核：手动反复点「桌面窗口」→ 只在窗口在线时聚焦、不在线时新建，不再被"已存在"挡；自动打开(force=False)仍只开一个。
 
 101. **【修正】桌面窗口图标仍是"默认/原版"的根因：误以为 `webview.start(icon=)` 仅 GTK/QT 支持（2026-08-20，用户反馈"不要默认图标"）**：
     - **现象**：桌面版独立窗口标题栏 + 任务栏图标不是绿色鲸鱼，而是 pythonw 的默认图标。
@@ -1077,11 +928,13 @@
 
 102. **【发布】v1.0.14：桌面版打开去重分机制 + 图标修复落地（2026-08-20，涵盖 #100/#101）**：
     - `GREEN_VERSION` 1.0.13→1.0.14；README / README_EN 版本号同步，且**打包内容清单补入 `desktop-shell.py` / `desktop-shell.bat`**（桌面版是内置文件，绿色 zip 必须随包）。
-    - **重打包 exe**：`DSH_Launcher.exe` / `DSH_Update.exe`（PyInstaller，便携 python + `PYTHONPATH=runtime\pyinstaller`，`--icon` 绿色鲸鱼 + `--add-data` ico + VC 三件套 `--add-binary`，主逻辑同 `build_exe.bat`，只是绕开它的 `pause`）。
-    - **绿色 zip**：`DSH_Launcher_GreenPortable_Online_20260820_v1.0.14.zip`（~17.6MB），含 plugins/、skills/dsh-deploy-maintain/、desktop-shell*；**不含** runtime/、DEV_NOTES、.gitignore（用 `tar -tf` 复核顶层）。
-    - **发布脚本（runtime/tmp，不进 git）**：`build_release_zip_v1014.py` / `github_release_v1014.py`（读 `GH_TOKEN`） / `gitee_release_v1014.py`（读 `GITEE_TOKEN`），全部由 v1013 复制改版本号而来；release body 用三国风文案。
-    - **异常**：`cmd /c` 在 Windows safety 层被禁 → 用等价的 PyInstaller 命令行 或 `/`；`build_exe.bat` 结尾 `pause` 在自动化里会卡住，应直接跑核心命令而非整批。
-    - **双平台发布落地（2026-08-20）**：`git push` 已含 v1.0.14 标签（本地与 origin 均存在）；`github_release_v1014.py` 创建 Release id=373844035 并上传 zip（17,668,369 B）成功；`gitee_release_v1014.py` 用 `GITEE_TOKEN=457b...d977` 创建 id=834538 并上传 HTTP 201 成功。**触发本次任务的流程**：主提交完成后 push master + tag v1.0.14（Everything up-to-date，即此前已推）→ GitHub 脚本 → Gitee 脚本需临时注入 `GITEE_TOKEN`（Gitee 比 GitHub 多一封签 token 头，用 `Authorization: token <PAT>` 表单方式提交 asset 时返回 201 即成功）。
+    - **重打包 exe**：`DSH_Launcher.exe` / `DSH_Update.exe`（PyInstaller，便携 python + `PYTHONPATH=runtime\pyinstaller`，`--icon` 绿色鲸鱼 + `--add-data` ico + VC 三件套 `--add-binary`）。
+    - **绿色 zip**：`DSH_Launcher_GreenPortable_Online_20260820_v1.0.14.zip`（~17.6MB），含 plugins/、skills/dsh-deploy-maintain/、desktop-shell*；**不含** runtime/、DEV_NOTES、.gitignore。
+    - **双平台发布落地（2026-08-20）**：GitHub Release id=373844035 上传 zip（17,668,369 B）成功；Gitee Release id=834538 上传 HTTP 201 成功。Gitee 比 GitHub 多一封签 token 头，用 `Authorization: token <PAT>` 表单方式提交 asset 时返回 201 即成功。
+103. **【发布】v1.0.14 修正版覆盖：GUI 自动装桌面依赖 + 更新源分流落地（2026-08-21，不升版本号，覆盖双平台 Release）**：
+    - 在 v1.0.14 基础上补三处修正：#83（版本日期强制=制作当天）、#84（GUI 层【安装环境】/【桌面窗口】自动检查安装 pywebview 桌面依赖）、#85（国内源/自动优先走 Gitee Release）；因不改版本号，**直接覆盖** GitHub 与 Gitee 的 v1.0.14 Release 资产。
+    - **操作顺序（照做）**：① 改 launcher.py（本批改动）→ ② 重打 `DSH_Launcher.exe`/`DSH_Update.exe`（build_exe.bat 核心命令，避开结尾 pause）→ ③ `runtime/tmp/build_release_zip.py` 把 `GREEN_VERSION` 改成 `1.0.14` 后运行（自动取构建当天 20260821 回写 launcher.py 的 `GREEN_VERSION_DATE`，zip 名为 `_20260821_v1.0.14.zip`）→ ④ git push 仅推 GitHub（Gitee 代码/tag 由镜像自动同步）→ ⑤ 覆盖 GitHub Release 资产（先删旧 asset 再上传，同名会被拒）→ ⑥ 覆盖 Gitee Release 资产（先按 attachment id 删旧附件再传，同名不覆盖，见 #72）。
+    - **注意**：覆盖后自更新版本号仍为 v1.0.14，已装 v1.0.14 的用户不会因版本相同被提示更新；需要强制拿到修正的用户直接下载新 zip 覆盖即可。
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
