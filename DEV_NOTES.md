@@ -935,6 +935,7 @@
     - 在 v1.0.14 基础上补三处修正：#83（版本日期强制=制作当天）、#84（GUI 层【安装环境】/【桌面窗口】自动检查安装 pywebview 桌面依赖）、#85（国内源/自动优先走 Gitee Release）；因不改版本号，**直接覆盖** GitHub 与 Gitee 的 v1.0.14 Release 资产。
     - **操作顺序（照做）**：① 改 launcher.py（本批改动）→ ② 重打 `DSH_Launcher.exe`/`DSH_Update.exe`（build_exe.bat 核心命令，避开结尾 pause）→ ③ `runtime/tmp/build_release_zip.py` 把 `GREEN_VERSION` 改成 `1.0.14` 后运行（自动取构建当天 20260821 回写 launcher.py 的 `GREEN_VERSION_DATE`，zip 名为 `_20260821_v1.0.14.zip`）→ ④ git push 仅推 GitHub（Gitee 代码/tag 由镜像自动同步）→ ⑤ 覆盖 GitHub Release 资产（先删旧 asset 再上传，同名会被拒）→ ⑥ 覆盖 Gitee Release 资产（先按 attachment id 删旧附件再传，同名不覆盖，见 #72）。
     - **注意**：覆盖后自更新版本号仍为 v1.0.14，已装 v1.0.14 的用户不会因版本相同被提示更新；需要强制拿到修正的用户直接下载新 zip 覆盖即可。
+    - **落地（2026-08-21 完成）**：按上面操作顺序执行完毕——launcher.py 编译通过；两个 exe 用**回写日期后**的 launcher.py 重建（PyInstaller 命令行避开 build_exe.bat 结尾 pause；`--add-binary` 必须用**绝对路径**，相对路径会从 specpath(build) 解析导致 `Unable to find` 报错）；zip 生成 `DSH_Launcher_GreenPortable_Online_20260821_v1.0.14.zip`（17,663,148 B）；git 提交 c167f46 并 `-c http.postBuffer=52428800 push` 成功；GitHub Release 373844035 删旧资产 522435293（20260820 版）后上传新资产 522496456（state=uploaded）成功；Gitee Release 834538 删旧附件 3072148 后上传新附件 3072325（HTTP 201）成功，两平台 zip 大小一致（17,663,148 B）。本次同时把 config.json 的 dsh_host 保持 `127.0.0.1` 安全默认（工作区曾误改 0.0.0.0，未提交）、删除 `plugins/dsh-session-rewind/LICENSE`（MIT，与其他插件统一用根目录 Apache-2.0，不随包）。
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
