@@ -188,7 +188,7 @@ You can also change the mirror and port in the launcher UI 【Settings】(networ
 > `LICENSE`, `plugins/`, `skills/dsh-deploy-maintain/` (`DSH_Launcher.exe` / `DSH_Update.exe` are also tracked in the GitHub
 > repo, same source as the Release; `DEV_NOTES.md` and `.gitignore` are dev-side files, not shipped).
 
-- **Latest download** (GitHub Release, tag `v1.0.11`): <https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
+- **Latest download** (GitHub Release, tag `v1.0.12`): <https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
 - **Gitee mirror download** (when GitHub is not accessible from your network): <https://gitee.com/liujunheng/DeepSeekHarnessGreen/releases>
 - Repository: <https://github.com/LiuJunheng/DeepSeekHarnessGreen> (GitHub) / <https://gitee.com/liujunheng/DeepSeekHarnessGreen> (Gitee)
 
@@ -402,7 +402,7 @@ core updates only touch `runtime/dsh/`, outer updates only touch the program roo
 - Old files are auto-backed up to `runtime/update/backup/` before overwrite; if the new version has issues you can
   manually copy them back to the root to roll back.
 - Distribution zip naming convention: `DSH_Launcher_GreenPortable_Online_<date>_v<version>.zip`, Release tag `v<version>`
-  (currently `v1.0.11`).
+  (currently `v1.0.12`).
 - Built-in plugin sources update with the green edition, but plugin copies **already installed** into
   `runtime/dsh-home/profiles/web` are pnpm copies; reinstall the local plugins via「Plugin Manager」for them to take effect.
 - **Manual update (fallback when auto-update fails)**: open the GitHub release page, download the latest zip → extract →

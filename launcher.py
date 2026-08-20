@@ -227,7 +227,7 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # 发布流程: 打 tag v{GREEN_VERSION} + Release 资产 DSH_Launcher_GreenPortable_Online_<日期>_v<tag>.zip
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
-GREEN_VERSION = "1.0.11"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
+GREEN_VERSION = "1.0.12"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
 GREEN_VERSION_DATE = "2026年08月20日"               # 绿色版版本日期
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
@@ -623,10 +623,14 @@ class Launcher:
         reader_thread.join(timeout=5)
         return process.returncode, "\n".join(collected_lines)
 
-    def install_dsh(self):
+    def install_dsh(self, package_spec=None):
         """执行 dsh 的 npm 安装 (仅负责安装, 不判断是否已存在)
+        package_spec: 默认为 self.config["dsh_package"] (即装 latest);
+                     可传 "@deepseek-ai/dsh@<版本>" 或 "@deepseek-ai/dsh@next" 指定版本/标签。
         返回 True 表示安装成功; 供 prepare_dsh 首次安装与 update_dsh 更新时复用"""
-        self.log("开始安装 %s ..." % self.config["dsh_package"])
+        if package_spec is None:
+            package_spec = self.config["dsh_package"]
+        self.log("开始安装 %s ..." % package_spec)
         os.makedirs(DSH_DIR, exist_ok=True)
         self.ensure_runtime_dirs()
 
@@ -642,12 +646,10 @@ class Launcher:
         ]
         if npm_cli is not None and node_exe is not None:
             self.log("使用便携 Node 自带的 npm 进行安装")
-            command = [node_exe, npm_cli, "install"] + install_options + [
-                self.config["dsh_package"]]
+            command = [node_exe, npm_cli, "install"] + install_options + [package_spec]
         else:
             self.log("使用系统 npm 进行安装 (请确保已安装 Node.js)")
-            command = ["npm", "install"] + install_options + [
-                self.config["dsh_package"]]
+            command = ["npm", "install"] + install_options + [package_spec]
 
         # 根据镜像配置附加 registry 参数
         mirror, is_auto = self.resolve_mirror()
@@ -677,9 +679,10 @@ class Launcher:
                      "(本机模式不受影响); 可稍后重启服务重试, 或等 dsh 更新后再装一次环境")
         return True
 
-    def prepare_dsh(self, force=False):
+    def prepare_dsh(self, force=False, package_spec=None):
         """确保 dsh 已本地安装, 缺失则自动 npm install
-        参数 force: True 时即使已安装也强制重装 (用于「更新」场景)"""
+        参数 force: True 时即使已安装也强制重装 (用于「更新」场景)
+        参数 package_spec: 传给 install_dsh 的包规格 (默认 None 装 latest)"""
         if not force and self.dsh_installed():
             self.log("dsh 已就绪: %s" % os.path.join(DSH_DIR, DSH_BIN_JS))
             return True
@@ -687,37 +690,162 @@ class Launcher:
             self.log("检测到强制更新, 开始重装 dsh ...")
         else:
             self.log("未检测到 dsh, 开始自动安装 %s ..." % self.config["dsh_package"])
-        return self.install_dsh()
+        return self.install_dsh(package_spec=package_spec)
 
-    def dsh_latest_version(self):
-        """查询 npm 上 @deepseek-ai/dsh 的最新版本号 (只读, 不改动本地)
-        查询失败返回 None"""
-        npm_cli = self.find_npm_cli()
-        node_exe = self.find_node_exe()
-        if npm_cli is None or node_exe is None:
-            self.log("未找到便携 Node, 无法查询最新版本")
+    def _npm_view(self, npm_cli, node_exe, package_spec, query):
+        """执行一次 npm view 查询, 返回原始输出文本; 失败返回 None。
+        供 dsh_latest_version / dsh_dist_tags 复用 (镜像参数与安装一致)。
+        query 可为 "version" 单值, 也可为 "dist-tags --json" 多 token (按空格拆成独立 argv)"""
+        query_args = (query or "").split()
+        if not query_args:
+            self.log("npm view 查询参数为空")
             return None
-        command = [node_exe, npm_cli, "view", self.config["dsh_package"], "version"]
+        command = [node_exe, npm_cli, "view", package_spec] + query_args
         # 根据镜像配置附加 registry 参数 (与安装一致)
         mirror, is_auto = self.resolve_mirror()
         if not is_auto:
             command.append("--registry=%s" % NPM_REGISTRY[mirror])
         env = self.build_env()
         try:
-            self.log("正在查询 dsh 最新版本 ...")
             result = subprocess.run(command, cwd=DSH_DIR, env=env,
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     text=True, encoding="utf-8", errors="replace",
                                     timeout=60)
-            latest = (result.stdout or "").strip().splitlines()[-1].strip()
-            if latest and result.returncode == 0:
-                self.log("npm 上最新版本: %s" % latest)
-                return latest
-            self.log("查询失败, npm 输出: %s" % (result.stdout or result.stderr or ""))
-            return None
+            output = (result.stdout or "").strip()
+            if result.returncode != 0 or not output:
+                self.log("npm view 查询失败, 输出: %s" % (result.stdout or result.stderr or ""))
+                return None
+            return output
         except Exception as error:
-            self.log("查询最新版本失败: %s" % error)
+            self.log("npm view 查询失败: %s" % error)
             return None
+
+    def dsh_latest_version(self):
+        """查询 npm 上 @deepseek-ai/dsh 的 latest 标签版本号 (只读, 不改动本地)
+        查询失败返回 None。注意: 官方 pre-release (如 rc.8) 常发在 next 标签上,
+        用 dsh_dist_tags() 才能同时看到 latest 与 next。"""
+        npm_cli = self.find_npm_cli()
+        node_exe = self.find_node_exe()
+        if npm_cli is None or node_exe is None:
+            self.log("未找到便携 Node, 无法查询最新版本")
+            return None
+        self.log("正在查询 dsh 最新版本 ...")
+        output = self._npm_view(npm_cli, node_exe,
+                                self.config["dsh_package"], "version")
+        if output:
+            self.log("npm 上最新版本 (latest): %s" % output)
+            return output
+        return None
+
+    def dsh_dist_tags(self):
+        """查询 npm 上 @deepseek-ai/dsh 的 latest / next 两个 dist-tag 版本号。
+        返回 dict {"latest": str|None, "next": str|None}; 整体失败返回 None。
+        (官方发布策略: 一般正式在 latest, 预发布在 next)"""
+        npm_cli = self.find_npm_cli()
+        node_exe = self.find_node_exe()
+        if npm_cli is None or node_exe is None:
+            self.log("未找到便携 Node, 无法查询 dist-tags")
+            return None
+        self.log("正在查询 dsh 版本标签 (latest / next) ...")
+        output = self._npm_view(npm_cli, node_exe,
+                                self.config["dsh_package"], "dist-tags --json")
+        if not output:
+            return None
+        try:
+            tags = json.loads(output)
+        except Exception as error:
+            self.log("解析 dist-tags 失败: %s, 原始: %s" % (error, output))
+            return None
+        result = {
+            "latest": tags.get("latest"),
+            "next": tags.get("next"),
+        }
+        self.log("npm dist-tags: latest=%s next=%s"
+                 % (result["latest"], result["next"]))
+        return result
+
+    def dsh_version_notes(self, version):
+        """获取 @deepseek-ai/dsh@<version> 的更新说明, 供「确认升级」对话框展示
+        (需求 #57)。
+        官方在 GitHub Releases 发布每个版本并带发布说明 (release note body,
+        tag 形如 dsh-v0.1.0-rc.X), 这是**更新描述的正确来源**; 而 npm readme 为空。
+        因此: 1) 优先从 GitHub Releases 拉该版本的发布说明;
+        2) 网络失败时才回退到 npm registry 元数据拼装 (描述/发布时间/主页)。
+        返回 str; 两个来源均失败返回 None"""
+        package_name = self.config["dsh_package"]
+        self.log("正在获取 %s@%s 的更新说明 ..." % (package_name, version))
+
+        # 1) 优先: GitHub Releases 的发布说明 (官方带 body)
+        github_notes = self.dsh_version_notes_from_github(version)
+        if github_notes:
+            return github_notes
+        self.log("GitHub 未取到 %s 的发布说明, 回退 npm 元数据" % version)
+
+        # 2) 回退: npm registry 元数据拼装
+        mirror, _is_auto = self.resolve_mirror()
+        registry_root = NPM_REGISTRY[mirror]
+        metadata_url = "%s/%s" % (registry_root, package_name)
+        try:
+            request = urllib.request.Request(
+                metadata_url, headers={"User-Agent": "DSH-Launcher/%s" % GREEN_VERSION})
+            with urllib.request.urlopen(request, timeout=30) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except Exception as error:
+            self.log("获取版本元数据失败: %s" % error)
+            return None
+        description = data.get("description") or ""
+        homepage = data.get("homepage") or ""
+        publish_time = (data.get("time") or {}).get(version) or ""
+        readme = data.get("readme") or ""
+        lines = []
+        if description:
+            lines.append("描述: %s" % description)
+        if publish_time:
+            lines.append("发布时间: %s" % publish_time)
+        if homepage:
+            lines.append("主页: %s" % homepage)
+        if readme:
+            lines.append("说明:")
+            max_len = 2000
+            if len(readme) > max_len:
+                readme = readme[:max_len] + "\n...(README 过长已省略)"
+            lines.append(readme)
+        else:
+            lines.append("(未能获取该版本的发布说明, 可到主页查看官方文档。)")
+        return "\n".join(lines)
+
+    def dsh_version_notes_from_github(self, version):
+        """从官方 GitHub Releases 读取指定版本 (tag 形如 dsh-v<version>) 的
+        发布说明 (release body)。批量拉最近 Releases 再按 tag/name 匹配 version,
+        避免硬编码 tag 前缀导致误判; 返回 str 或 None (含无权限/网络失败)"""
+        owner = "deepseek-ai"
+        repo = "deepseek-harness"
+        api_url = ("https://api.github.com/repos/%s/%s/releases?per_page=30"
+                   % (owner, repo))
+        try:
+            request = urllib.request.Request(
+                api_url, headers={"User-Agent": "DSH-Launcher/%s" % GREEN_VERSION})
+            with urllib.request.urlopen(request, timeout=25) as response:
+                releases = json.loads(response.read().decode("utf-8"))
+        except Exception as error:
+            self.log("GitHub Releases 访问失败: %s" % error)
+            return None
+        target = version.lstrip("v")
+        for release in releases:
+            tag = (release.get("tag_name") or "").lstrip("v")
+            name = (release.get("name") or "").lstrip("v")
+            if target in (tag, name):
+                body = release.get("body") or ""
+                if not body.strip():
+                    self.log("版本 %s 的 GitHub Release body 为空" % version)
+                    return None
+                # 发布说明只取前段, 避免弹窗过长
+                max_len = 6000
+                if len(body) > max_len:
+                    body = body[:max_len] + "\n...(正文过长已省略)"
+                return body.strip()
+        self.log("GitHub Releases 中未找到版本 %s" % version)
+        return None
 
     def backup_dsh(self):
         """把当前已安装的 dsh 目录备份到统一备份目录 BACKUP_DIR/dsh-<版本> 下
@@ -741,18 +869,27 @@ class Launcher:
             self.log("备份失败: %s" % error)
             return None
 
-    def update_dsh(self):
-        """更新 dsh 到最新版: 先备份旧版, 再强制重装最新版
+    def update_dsh(self, target_version=None):
+        """更新 dsh 到目标版本: 先备份旧版, 再强制重装指定版本
+        target_version: None 时装 latest (与旧行为一致); 否则装 target_version 对应版本。
         返回更新后的版本号; 失败抛出异常"""
-        latest = self.dsh_latest_version()
-        if latest is None:
-            raise RuntimeError("无法获取最新版本号, 更新已取消")
-        self.log("当前版本: %s, 将更新到: %s" % (self.dsh_version(), latest))
+        if target_version is None:
+            latest = self.dsh_latest_version()
+            if latest is None:
+                raise RuntimeError("无法获取最新版本号, 更新已取消")
+            package_spec = self.config["dsh_package"]
+            self.log("当前版本: %s, 将更新到 latest: %s"
+                     % (self.dsh_version(), latest))
+        else:
+            package_spec = "%s@%s" % (self.config["dsh_package"], target_version)
+            self.log("当前版本: %s, 将更新到指定版本: %s"
+                     % (self.dsh_version(), target_version))
         backup_dir = self.backup_dsh()
         if backup_dir is None:
             raise RuntimeError("备份旧版本失败, 已取消更新 (避免数据丢失)")
-        # 备份成功后, 强制重装最新版 (prepare_dsh 的 force 会跳过已存在检查)
-        self.prepare_dsh(force=True)
+        # 备份成功后, 强制重装目标版本 (prepare_dsh 的 force 会跳过已存在检查)
+        if not self.prepare_dsh(force=True, package_spec=package_spec):
+            raise RuntimeError("dsh 重装失败, 更新已取消")
         self.log("更新完成, 当前版本: %s" % self.dsh_version())
         self.log("旧版本备份在: %s (可手动删除)" % backup_dir)
         return self.dsh_version()
@@ -3978,15 +4115,37 @@ def run_gui():
         def worker():
             try:
                 current_version = app.dsh_version()
-                latest_version = app.dsh_latest_version()
-                if latest_version is None:
+                tags = app.dsh_dist_tags()
+                if tags is None:
                     root.after(0, lambda: messagebox.showerror(
                         "检查更新", "无法获取最新版本号, 请检查网络后重试。"))
-                elif latest_version == current_version:
-                    root.after(0, lambda: messagebox.showinfo(
-                        "检查更新", "已是最新版本: %s" % current_version))
                 else:
-                    root.after(0, lambda: ask_update(current_version, latest_version))
+                    latest_version = tags.get("latest")
+                    next_version = tags.get("next")
+                    # 汇总「提示目标」: 只保留比当前已装版本更新的候选
+                    # (否则已是 stable(latest) 却仍提示再次覆盖安装, 属误报)。
+                    # 去重 + 忽略与当前相同或更旧者。
+                    candidates = []
+                    seen = set()
+                    for _tag_name, version in (("稳定版(latest)", latest_version),
+                                               ("预发布(next)", next_version)):
+                        if not version or version in seen:
+                            continue
+                        seen.add(version)
+                        if app._green_version_greater(version, current_version):
+                            candidates.append((version, _tag_name))
+                        else:
+                            app.log("跳过与当前相同或更旧的候选 %s (当前: %s)"
+                                    % (version, current_version))
+                    if not candidates:
+                        # latest 与 next 都不比当前更新, 视为已是最新版本
+                        root.after(0, lambda: messagebox.showinfo(
+                            "检查更新",
+                            "已是最新版本: %s\n(当前没有比已安装版本更新的发布。)"
+                            % current_version))
+                    else:
+                        root.after(0, lambda: ask_update(
+                            current_version, candidates))
             finally:
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=worker, daemon=True).start()
@@ -4025,26 +4184,15 @@ def run_gui():
         messagebox.showinfo("清理备份", "已清理备份目录, 共删除 %d 项。" % removed_count)
         append_log("已清理备份目录, 删除 %d 项" % removed_count)
 
-    def ask_update(current_version, latest_version):
-        """发现新版本时弹出确认框, 让用户选择 更新 / 不更新
-        更新前会自动备份当前版本到 runtime/backup/dsh-<版本>"""
-        choose = messagebox.askyesno(
-            "发现新版本",
-            "当前版本: %s\n最新版本: %s\n\n是否立即更新?\n\n"
-            "更新前会自动备份当前版本到 runtime/backup/dsh-<版本>,\n"
-            "旧版本备份不会自动删除, 可随时在「数据维护」里一键清理。" % (current_version, latest_version),
-            icon="question")
-        if not choose:
-            append_log("用户选择暂不更新")
-            return
-        # 用户确认更新, 后台执行 (备份 + 重装)
+    def start_update_to(target_version):
+        """按用户选择的目标版本, 后台执行 备份 + 重装"""
         set_busy(True)
         status_text.set("正在更新 dsh ...")
         status_indicator.itemconfig(dot, fill="#f59e0b")
-        append_log("--- 开始更新 dsh ---")
+        append_log("--- 开始更新 dsh (目标: %s) ---" % target_version)
         def update_worker():
             try:
-                new_version = app.update_dsh()
+                new_version = app.update_dsh(target_version=target_version)
                 root.after(0, lambda: messagebox.showinfo(
                     "更新完成", "dsh 已更新到版本: %s\n\n"
                     "旧版本已备份到 runtime/backup, 可在「数据维护」里一键清理。" % new_version))
@@ -4053,6 +4201,106 @@ def run_gui():
             finally:
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=update_worker, daemon=True).start()
+
+    def confirm_upgrade(current_version, version, tag_name):
+        """点击某个目标版本后弹出「确认升级」: 先展示该版本的更新描述,
+        用户点「确认升级」才真正执行; 点「取消」则回到版本选择/关闭 (需求 #57)。
+        描述在后台线程拉取, 避免网络查询阻塞 GUI"""
+        detail_dialog = tk.Toplevel(root)
+        detail_dialog.title("确认升级")
+        detail_dialog.transient(root)
+        detail_dialog.grab_set()   # 模态
+
+        header_frame = ttk.Frame(detail_dialog, padding=12)
+        header_frame.pack(fill="x")
+        ttk.Label(header_frame, justify="left", text=(
+            "当前版本: %s\n\n将升级到: %s (%s)\n\n该版本的更新描述:" %
+            (current_version, version, tag_name))).pack(anchor="w")
+
+        # 更新描述文本区 (初始加载中, 后台线程查询后填充)
+        notes_text = tk.Text(detail_dialog, height=12, width=72, wrap="word",
+                             state="disabled")
+        notes_text.pack(fill="both", expand=True, padx=12)
+        scrollbar = ttk.Scrollbar(detail_dialog,
+                                  command=notes_text.yview)
+        scrollbar.pack(side="right", fill="y")
+        notes_text.configure(yscrollcommand=scrollbar.set)
+
+        def load_notes():
+            notes = app.dsh_version_notes(version)
+            root.after(0, lambda: fill_notes(notes))
+
+        def fill_notes(notes):
+            notes_text.configure(state="normal")
+            notes_text.delete("1.0", "end")
+            placeholder = ("(未能获取该版本的更新描述, 可直接确认升级。\n"
+                           "目标版本: %s)" % version) if not notes else notes
+            notes_text.insert("1.0", placeholder)
+            notes_text.configure(state="disabled")
+
+        threading.Thread(target=load_notes, daemon=True).start()
+
+        footer_frame = ttk.Frame(detail_dialog, padding=12)
+        footer_frame.pack(fill="x")
+        ttk.Label(footer_frame, justify="left", foreground="#888888", text=(
+            "升级前会自动备份当前版本到 runtime/backup/dsh-<版本>,\n"
+            "旧版本备份不会自动删除, 可随时在「数据维护」里一键清理。")).pack(anchor="w")
+        button_row = ttk.Frame(footer_frame)
+        button_row.pack(side="right")
+        ttk.Button(button_row, text="取消", command=detail_dialog.destroy).pack(side="right")
+        ttk.Button(button_row, text="确认升级", command=lambda: (
+            detail_dialog.destroy(), start_update_to(version))).pack(side="right", padx=6)
+
+        # 居中于主窗口
+        detail_dialog.update_idletasks()
+        pos_x = root.winfo_x() + (root.winfo_width() - detail_dialog.winfo_reqwidth()) // 2
+        pos_y = root.winfo_y() + (root.winfo_height() - detail_dialog.winfo_reqheight()) // 2
+        detail_dialog.geometry("+%d+%d" % (pos_x, pos_y))
+
+    def ask_update(current_version, candidates):
+        """发现新版本时弹出对话框, 列出可选目标版本 (latest / next 不同则分别列出),
+        让用户选择装哪个, 点「暂不更新」则取消。
+        candidates: [(版本, 标签说明), ...], 已按 stable/next 顺序排列。
+        点选某个版本后进入 confirm_upgrade 二次确认 (需求 #57)"""
+        dialog = tk.Toplevel(root)
+        dialog.title("发现新版本")
+        dialog.resizable(False, False)
+        dialog.transient(root)
+        dialog.grab_set()   # 模态: 关闭前主窗口不可操作
+
+        header = ttk.Frame(dialog, padding=12)
+        header.pack(fill="x")
+        ttk.Label(header, text="当前版本: %s\n\n发现以下可更新版本, 请选择要安装的版本:"
+                  % current_version, justify="left").pack(anchor="w")
+
+        button_frame = ttk.Frame(dialog, padding=(12, 0))
+        button_frame.pack(fill="x")
+        for version, tag_name in candidates:
+            row = ttk.Frame(button_frame)
+            row.pack(fill="x", pady=3)
+            ttk.Button(
+                row,
+                text="%s\n%s" % (tag_name, version),
+                command=lambda v=version, t=tag_name: (
+                    dialog.destroy(), confirm_upgrade(current_version, v, t)),
+            ).pack(fill="x")
+
+        footer = ttk.Frame(dialog, padding=12)
+        footer.pack(fill="x")
+        ttk.Label(
+            footer,
+            text="更新前会自动备份当前版本到 runtime/backup/dsh-<版本>,\n"
+                 "旧版本备份不会自动删除, 可随时在「数据维护」里一键清理。",
+            justify="left", foreground="#888888").pack(anchor="w")
+        ttk.Button(footer, text="暂不更新",
+                   command=lambda: (dialog.destroy(),
+                                    append_log("用户选择暂不更新"))).pack(side="right")
+
+        # 居中于主窗口
+        dialog.update_idletasks()
+        pos_x = root.winfo_x() + (root.winfo_width() - dialog.winfo_reqwidth()) // 2
+        pos_y = root.winfo_y() + (root.winfo_height() - dialog.winfo_reqheight()) // 2
+        dialog.geometry("+%d+%d" % (pos_x, pos_y))
 
     # -------------------------------------------------------------------------
     # 绿色版外围更新 (自更新通道, 与上面的官方核心更新完全独立):

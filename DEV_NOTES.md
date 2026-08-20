@@ -279,6 +279,24 @@
     - **客户端 `lib/client.js`**：`settings.section` 插槽注册「会话导入」页（与 archive-purge 同款）：文件选择（accept .zip/.jsonl）→ `fetch` 直传文件字节（非 multipart，服务端按原始 body 读）→ 展示结果（会话 id / 写入份数 / 附件统计 / 跳过列表 / 工作区）。
     - **关键点**：① 写盘路径必须让官方 `assertStoredIdentity` 通过——文件必须落在 `logPath(root, meta.cwd, meta.id, compression)`，即 `projectKey`/`encodeSegment` 两个编码函数要逐字符复刻（分隔符折叠为 `-`、非安全字符 `~XXXX` 大写十六进制、`--...--` 包裹）；② `session.list` 会合并冷（持久化）会话，导入后**无需重启即可在会话列表看到**；③ 不写投影缓存（title 等由 DSH 后续补齐，刚导入可能短暂显示「(无标题)」）；④ 宿主插件可以 `import` 官方包（`@deepseek-ai/dsh-session`）和 fflate——但在**插件源码目录**直接跑脚本会解析失败（fflate 在 `runtime/dsh/node_modules`，pnpm 只在**已安装副本**所在层做了提升/软链），验证必须指向 `profiles/web/node_modules/dsh-session-import/` 副本；⑤ `importPayload` 单独导出，便于离服务独立测试。
     - **验证**：`node --check` 通过；`runtime/tmp/session-import-test-run.mjs` 25 项往返测试全过（ZIP 导入 / 子会话 / 附件 sha256 落盘 / 工作区挂载 / 幂等跳过 / 明文 JSONL / 根编码探测 / 坏输入拒绝，直连**已安装副本**）；`dsh --profile web --dump-config`（设 DSH_HOME）插件树合成 `- id: session-import`；`python launcher.py --install-plugin file:E:/.../plugins/dsh-session-import` 安装后重启服务，`GET /__dsh/session-import/health`（带头）返回 `{"ok":true,"plugin":"dsh-session-import"}`，WebUI 设置页出现「会话导入」。
+56. **【dsh 核心更新改为优先走 npm：latest / next 双版本可选】（2026-08-20）**：
+    - **背景**：官方真正发布 dsh 走的是 **npm registry**（`pnpm run build` 后把每个包发 npm），GitHub Releases 只是壳、不传资产不打 tag，官方新版本（如 `0.1.0-rc.8`）常发在 **next** 标签上。原绿色版「检查更新」查的却是 npm 的 `latest` 一个值，拿不到预发布；手动下载 build 不必要。用户要求：**更新逻辑优先去 npm 找，并把 latest 和 next 分别列出来给用户选择**。
+    - **改动（launcher.py）**：
+      1. 新增 `dsh_dist_tags()`：`npm view @deepseek-ai/dsh dist-tags --json` 一次读出 `latest` 与 `next` 两个标签，返回 `{"latest": str|None, "next": str|None}`；查询/解析失败返回 `None`。
+      2. 新增 `_npm_view()`：统一封装 `npm view` 查询（与安装相同的便携 Node/mirror 参数），`query` 按空格拆成独立 argv（修复「`dist-tags --json` 当单个参数传给 npm 失败」的避坑）。`dsh_latest_version()` 与 `dsh_dist_tags()` 都复用它。
+      3. `install_dsh(package_spec)` 支持传 `@deepseek-ai/dsh@<版本>` 或 `@deepseek-ai/dsh@next` 指定版本/标签；`prepare_dsh(force, package_spec)` 透传。
+      4. `update_dsh(target_version)`：None 时装 latest（保持旧行为）；否则装指定版本。流程保持 备份→强制重装，备份失败即中止防数据丢失。
+      5. GUI「检查更新」（`on_check_update`）：改调 `dsh_dist_tags()`，把 `latest`/`next`（按 稳定版 在前、预发布 在后顺序）**去重且忽略与当前相同者**后，`ask_update()` 弹窗**各给一个按钮**，用户点哪个就 `start_update_to(target_version)` 装哪个；两者都与当前一致则提示「已是最新版本」，「暂不更新」可取消。
+    - **避坑**：① `dist-tags --json` 必须拆成独立 argv（`query.split()`），整串当单参数 npm 会报用法错误导致 `dsh_dist_tags()` 返回 None；② npm view 的 registry 参数要与安装一致（镜像源），否则查到的可能不是用户所选镜像的版本快照；③ 备份成功后才重装，避免更新中途失败丢版本。
+    - **验证**：`py_compile`（项目便携 Python 3）通过；冒烟脚本 `runtime/tmp/smoke_dist_tags.py` 直连 npmmirror 查得 `{"latest":"0.1.0-rc.7","next":"0.1.0-rc.8"}`。尚未重建 DSH_Launcher.exe、未实测真正装回 rc.8，需更新前确认路径再发版。
+57. **【检查更新误报 / 升级前需确认并看说明】（2026-08-20，需求 #56 的两处修正）**：
+    - **问题 ① 误报已是最新**：用户为稳定版 c7（`0.1.0-rc.7`），点「检查更新」仍提示 c7 可更新并又下载覆盖了一次。根因：`on_check_update` 构建候选时只按版本字符串去重、**没跟当前已装版本比较**，latest==当前（都是 rc.7）也照样进候选。
+      - **改法**：构建候选时用 `app._green_version_greater(version, current_version)` **只保留比当前更新的版本**，相同或更旧的记日志跳过；全部都不更新时提示「已是最新版本: <当前>（当前没有更新的发布）」。
+    - **问题 ② 点版本即装，无确认与说明**：原 `ask_update` 里点某版本按钮直接 `start_update_to`，没有确认步骤也不展示内容。用户要求：**点选某版本后，先显示该版本的更新描述，再点「确认升级」才真正开始**。
+      - **改法**：新增 `confirm_upgrade()` 二级确认对话框——展示 当前版本 / 目标版本 / 目标版本的更新说明（后台线程加载，避免网络查询卡 GUI），底部「确认升级」「取消」；`ask_update` 的版本按钮改为进入 `confirm_upgrade`，确认后才 `start_update_to`。新增 `dsh_version_notes(version)` 负责取更新说明。
+    - **dsh_version_notes 取值避坑（重要，2026-08-20 修正）**：**官方 GitHub Releases 上每个版本都带发布说明（release note body，tag 形如 `dsh-v<version>`，含中英文 changelog）**，这是更新描述的正确来源。第一版误用 `npm view ... readme` 取——**npm 包 readme 字段是空的**，导致用户看到「未获取到更新描述」（rc8 无、rc7 实际有）。修正后：`dsh_version_notes(version)` **优先调用 `dsh_version_notes_from_github(version)`**，批量拉 `api.github.com/repos/deepseek-ai/deepseek-harness/releases?per_page=30`，按 tag/name（去掉 `v` 前缀）匹配目标版本，命中则返回 release body（截断 6000 字符）；**GitHub 网络失败/未命中才回退** npm registry 元数据拼装（描述/发布时间/主页 + 提示到主页看文档）。
+      - 避坑：GitHub tag 形如 `dsh-v0.1.0-rc.8`，匹配时把 `version` 与 `tag_name`/`name` 都做 `lstrip("v")` 再去比对，避免硬编码前缀；release body 较长，截断防弹窗卡顿；GitHub API 需带 `User-Agent` 头。
+    - **验证**：`py_compile` 通过；`runtime/tmp/smoke_ver_cmp.py`（版本比较 rc.8>rc.7 为 True、同版本为 False）；rc.7 与 rc.8 的 `dsh_version_notes()` 均成功拉到官方 changelog（中英文全文）。尚未重建 exe、未实测真机 UI 弹窗交互。
 
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
@@ -286,7 +304,7 @@
 | 依赖 | 仅 Python 标准库（tkinter / urllib / subprocess / zipfile / tarfile / webbrowser / socket），零第三方依赖 |
 | 便携 Node | 自动下载 `node-v22.20.0` 到 `runtime/node`；国内 `registry.npmmirror.com/-/binary/node/...`，官方 `nodejs.org/dist/...`；zip（win）或 tar.gz（linux） |
 | dsh 安装 | 优先 `node.exe npm-cli.js install --prefix runtime/dsh @deepseek-ai/dsh`（用便携 Node 自带 npm），按镜像附 `--registry`；`install_dsh()` 只负责安装，`prepare_dsh(force)` 负责"缺失则装/强制重装"；输出经 `_stream_subprocess()` **实时逐行**显示进度（需求 #30） |
-| dsh 更新 | `dsh_latest_version()` 用 `npm view @deepseek-ai/dsh version` 只读查最新版；`backup_dsh()` 把旧版拷到统一备份目录 `runtime/backup/dsh-<版本>`（同名加时间戳后缀）；`update_dsh()` = 查询→备份→强制重装，备份失败即中止避免数据丢失 |
+| dsh 更新 | 更新逻辑已改为**优先走 npm**（对齐官方发布渠道，需求 #56）：`dsh_dist_tags()` 用 `npm view ... dist-tags --json` 同时读 `latest` 与 `next` 两个标签（官方正式版在 latest、预发布在 next）；GUI「检查更新」把两者都列出来，用户点对应的按钮选装哪个版本；`update_dsh(target_version)` = 备份→强制重装指定版本；备份统一到 `runtime/backup/dsh-<版本>`（同名加时间戳后缀），备份失败自动中止避免数据丢失 |
 | dsh 启动 | 直接调 `node <dsh>/node_modules/@deepseek-ai/dsh/lib/bin.js web --port 3080` |
 | 数据隔离 | 环境变量 `DSH_HOME=runtime/dsh-home`，会话/配置/存储全部落在程序目录 |
 | 绿色整合 | `build_env()` 把 npm 缓存/用户配置、pnpm home/store、TEMP/TMP 全部重定向到本地 `runtime/` 下（见下） |
@@ -848,6 +866,12 @@
       4. 上传附件：`POST /api/v5/repos/{owner}/{repo}/releases/{release_id}/attach_files?access_token=...&name=<文件名>` + `--form "file=@<绝对路径>;<文件名>"`，成功返回 `browser_download_url`（`https://gitee.com/.../releases/download/<tag>/<zip>`）。
       - 若之前 Gitee 已传同名附件，需先删旧附件再传（#72）。**令牌含在临时 JSON 里，用完立即删除该临时文件**。本机未代理时 GitHub 侧会网络限速（用 `git -c http.postBuffer=52428800 push` 去 lowSpeed 超时多试几次；直连会 Connection reset，代理上传又 <1000B/s，需耐心重试）。
     - **同步英文 README**：README_EN.md 全量按中文优化版对齐——新增 Highlights；插件章节整合（管理维护 + 内置 6 插件一览表 + 按功能分组详解，补 `dsh-sidebar-lite`）；目录树补 `update_agent.py`/`DSH_Update.exe`；删除"专属图标"营销描述与发布侧打包命令（Compress-Archive 等）细节；FAQ 精简；开源协议统一 Apache-2.0（去掉原 dsh-session-rewind 单独 MIT 说明）；版本引用升至 v1.0.11。中文 README 仍为维护主体、随版本发布翻译一次。
+83. **【发布】v1.0.12 发布：dsh 核心更新逻辑优化（npm 双版本可选 + 只提示更新的版本 + 两段式确认升级）（2026-08-20）**：
+    - **动机**：自 v1.0.11 后累积三块 dsh 更新逻辑优化（需求 #56/#57）：① 更新优先走 npm 并列出 `latest`/`next` 双版本给用户选择；② 检查更新**只提示比当前已装版本更新的版本**（修复"已是 stable 还提示再次覆盖"的误报）；③ 点选版本后先弹 `confirm_upgrade()` 展示该版本更新说明再确认升级。
+    - **更新说明来源**：官方 **GitHub Releases** 每版本都带 release note（tag 形如 `dsh-v<version>`，中英文 changelog）；`dsh_version_notes_from_github()` 优先拉它，GitHub 失败才回退 npm registry 元数据。**别用 npm readme（字段为空）**。
+    - **发布约定**（沿用 v1.0.11）：**Release 只上传一个绿色 zip** `DSH_Launcher_GreenPortable_Online_20260820_v1.0.12.zip`（已含 plugins/、skills/）。打包脚本 `runtime/tmp/build_release_zip_v1012.py`。
+    - **版本号**：launcher.py `GREEN_VERSION` 1.0.11→1.0.12；README / README_EN 版本引用同步升至 v1.0.12。已重建 `DSH_Launcher.exe` / `DSH_Update.exe`（PyInstaller，不含 UPX）。
+    - **待办（Gitee）**：`GITEE_TOKEN` 未配置于当前 shell，Gitee 上传需要用户提供令牌后执行；GitHub 侧 `GH_TOKEN` 已配置可直发。
 
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。

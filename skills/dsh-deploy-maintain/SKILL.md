@@ -87,13 +87,17 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 
 ## 三、日常维护
 
-### 3.1 检查更新（备份优先策略）
+### 3.1 检查更新（备份优先策略 / npm 双版本可选）
 
 - **"装了就永远最新"是错觉**：`prepare_dsh()` 只在缺失时安装，已装就跳过；同步更新的唯一途径是强制重装。
-- `dsh_latest_version()` 用 `npm view @deepseek-ai/dsh version` **只读查询**（复用 find_npm_cli + build_env + 镜像参数，与安装同源），失败返回 `None` 而非抛错。
-- `update_dsh()` 顺序 = 查最新版 → `backup_dsh()` 把旧版拷到统一备份目录 `runtime/backup/dsh-<版本>`（同名加时间戳后缀防覆盖）→ **备份成功后才** `prepare_dsh(force=True)` 强制重装。备份失败直接中止，防止"旧版被覆盖又没装上"的数据丢失。GUI「数据维护」可一键清理更新/备份目录。
+- **更新逻辑优先走 npm（官方真正发布渠道，需求 #56）**：官方 dsh 发版在 npm registry（GitHub Releases 只是壳）。`dsh_dist_tags()` 用 `npm view @deepseek-ai/dsh dist-tags --json` **只读查询**（复用 find_npm_cli + build_env + 镜像参数，与安装同源），一次读出 `latest` 与 `next` 两个标签（官方稳定版在 latest、预发布在 next，如 `{"latest":"0.1.0-rc.7","next":"0.1.0-rc.8"}`），失败返回 `None` 而非抛错。
+- **版本可选 + 只提示更新的版本（需求 #56/#57）**：GUI「检查更新」用 `app._green_version_greater(version, current_version)` **只保留比当前已装版本更新的候选**（否则已是 stable 仍提示再次覆盖，属误报）；latest/next 都列出来（去重；相同/更旧者记日志跳过）。两者都不更新时提示「已是最新版本: <当前>」。
+- **升级两段式确认（需求 #57）**：点某版本按钮先弹出 `confirm_upgrade()` 二级确认框，展示 当前/目标版本 + 该版本更新说明（后台线程加载），点「确认升级」才真正 `update_dsh(target_version)`；「取消」则放弃。`update_dsh(None)` 仍装 latest（兼容旧调用）。
+- **更新说明来源（重要避坑）**：官方 **GitHub Releases** 每个版本都带发布说明（tag 形如 `dsh-v<version>`，中英文 changelog），是正确来源。`dsh_version_notes(version)` 优先 `dsh_version_notes_from_github(version)`（批量拉 releases?per_page=30，按去 `v` 的 tag/name 匹配）；GitHub 失败/未命中才回退 npm registry 元数据。**别用 `npm view readme`——npm 包 readme 是空的**。
+- **查询避坑**：`dist-tags --json` 必须拆成独立 argv（`_npm_view` 内 `query.split()`），整串当单参数传 npm 会报用法错误返回 None；npm view 的 registry 参数要与安装一致（镜像源），否则查到非所选镜像的版本快照。
+- `update_dsh(target_version)` 顺序 = 备份 → **备份成功后才** `prepare_dsh(force=True, package_spec="<pkg>@<版本>")` 强制重装目标版本。备份失败直接中止，防止"旧版被覆盖又没装上"的数据丢失。GUI「数据维护」可一键清理更新/备份目录。
 - 备份目录不自动清理，是否删除交给用户手动管理。
-- 把安装主体抽成 `install_dsh()`，`prepare_dsh(force)` 只做"缺失则装 / 强制重装"分支，首装与更新共用同一代码。
+- 把安装主体抽成 `install_dsh(package_spec)`（支持 `@pkg` / `@pkg@<版本>` / `@pkg@next` 指定标签），`prepare_dsh(force, package_spec)` 只做"缺失则装 / 强制重装"分支，首装与更新共用同一代码。
 
 ### 3.2 插件管理（dsh plugin 依赖 pnpm）
 
