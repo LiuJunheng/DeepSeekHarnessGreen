@@ -1069,6 +1069,12 @@
     - **避坑（通用）**：给一个"会因外层状态是否活着而决定是否拦截"的打开动作时，**手动 vs 自动要分开走**（手动永远回应、自动才排重），别让 `force` 只是个摆设；"固定单实例程序"的在线判定直接用**进程身份**（pid 文件 + 进程存活探测）最贴切，**别用页面心跳**去猜——心跳是给"多实例/多标签页"的网页版用的。判进程死活别只凭 pid 文件是否存在（进程可能被强杀留下残留），要用 `OpenProcess+GetExitCodeProcess` 真验一次；找不到窗口但 pid 活着(残留)时降级重建而非死认。
     - **验证（实机）**：启动 desktop-shell 写出的 pid 与 pythonw 实际 pid 一致；`OpenProcess` 判存活返回 True；强杀进程后同 pid 文件仍在但判为 False（兜底重建）；py_compile 通过。需 run launcher 真机复核：手动反复点「桌面窗口」→ 只在窗口在线时聚焦、不在线时新建，不再被"已存在"挡；自动打开(force=False)仍只开一个。
 
+101. **【修正】桌面窗口图标仍是"默认/原版"的根因：误以为 `webview.start(icon=)` 仅 GTK/QT 支持（2026-08-20，用户反馈"不要默认图标"）**：
+    - **现象**：桌面版独立窗口标题栏 + 任务栏图标不是绿色鲸鱼，而是 pythonw 的默认图标。
+    - **根因（看源码推翻臆断）**：desktop-shell.py 之前**没往 `webview.start()` 传 icon**，只靠自己发的 `WM_SETICON` 消息换图标；而 `WM_SETICON` 依赖 `FindWindowW(标题)` 找窗，**WebView2 加载页面后 `document.title` 会把窗体标题改掉**，轮询找不到 → 图标从未换成功。同时注释里"`icon=` 仅支持 GTK/QT"是**错的**——读 `webview/platforms/winforms.py`：`if _state['icon'] and os.path.isfile: self.Icon = Icon(_state['icon'])`，即 **WinForms 后端本就支持 `webview.start(icon=)`**（会写进全局 `_state['icon']`）；不传时走 else 分支 `ExtractIconW(GetModuleHandleW(None), sys.executable, 0)` → **从 pythonw.exe 挖出默认图标**。
+    - **改动**：`open_in_shell_window` 里 `webview.start(on_window_ready, debug=False, icon=icon_path)` 把绿色鲸鱼 .ico 直接交给 WinForms 窗体（权威方式，不受页面标题覆盖影响）；自绘 `apply_window_icon`(WM_SETICON) 保留作双保险。`icon_path=None`（ico 缺失）时后端才回退默认。
+    - **避坑（通用）**：判断某个三方库接口到底支不支持某参数，**直接翻它 `platforms/` 下的后端源码**确认，别只信 docstring 的笼统默认说明；WinForms 窗体图标首选 `Form.Icon`（或等价地 `webview.start(icon=)`），它比"先找句柄再发 `WM_SETICON` 消息"可靠得多，因为后者依赖窗口标题，而 **WebView2 会用页面 `<title>` 同步覆盖窗体标题**。
+
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验

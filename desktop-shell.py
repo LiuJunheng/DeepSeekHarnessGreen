@@ -312,7 +312,10 @@ def open_in_shell_window(server_url, port, icon_path):
     write_pid_file()
     try:
         # start(func) 进入 GUI 消息循环并阻塞, func 在窗口就绪后于主线程执行。
-        shell_webview_backend.start(on_window_ready, debug=False)
+        # icon=: pywebview 的 WinForms 后端会把该 .ico 直接赋给窗体 Icon
+        # (自绘 WM_SETICON 依赖窗口标题查找, 页面 title 覆盖后可能失效,
+        #  而 start(icon=) 是权威方式); 传 None 时后端才退回 pythonw 默认图标)。
+        shell_webview_backend.start(on_window_ready, debug=False, icon=icon_path)
     finally:
         remove_pid_file()
 
