@@ -582,7 +582,8 @@ class Launcher:
             with tarfile.open(archive_path, "r:gz") as tar_handle:
                 tar_handle.extractall(target_dir)
 
-    def _stream_subprocess(self, command, cwd, env, timeout=None, log_prefix=""):
+    def _stream_subprocess(self, command, cwd, env, timeout=None, log_prefix="",
+                           heartbeat_interval=None):
         """以"实时逐行输出"方式运行子进程, 避免长时间无提示被误认为卡死.
 
         相比 subprocess.run 的一次性捕获 (装完才显示最后几行), 本方法在子进程
@@ -591,6 +592,12 @@ class Launcher:
         返回 (退出码, 完整输出文本);
         timeout 超时则终止进程并抛 subprocess.TimeoutExpired (与 subprocess.run 一致)。
         log_prefix: 每行日志前附加的来源前缀, 如 "npm: " / "plugin: "。
+
+        heartbeat_interval: 可选, 秒数 (如 15)。某些阶段子进程长时间只做本地 I/O
+        (如 npm 抓完元数据后的 reify/安装链接阶段, http 日志级别没有任何网络请求
+        输出), 日志会长时间静默、看着像卡死。开启后, 只要子进程仍在运行、且太久
+        没有新输出, 就由本方法定时打一条"已运行 N 秒, 仍在执行"的心跳日志, 让用户
+        确认没有卡住。默认 None = 不开启。
         """
         process = subprocess.Popen(
             command, cwd=cwd, env=env,
@@ -598,6 +605,9 @@ class Launcher:
             text=True, encoding="utf-8", errors="replace")
         collected_lines = []
         read_errors = []
+        started_time = time.time()
+        last_output_time = [started_time]
+        alive_flag = [True]
 
         def read_output():
             """后台线程持续读取子进程输出: 逐行写日志并收集, 防止管道写满阻塞"""
@@ -607,17 +617,37 @@ class Launcher:
                     if text.strip():
                         collected_lines.append(text)
                         self.log("%s%s" % (log_prefix, text))
+                        last_output_time[0] = time.time()
             except Exception as error:
                 read_errors.append(error)
 
+        def heartbeat():
+            """子进程仍在运行但长时间无新输出时, 定时打心跳, 避免被误判为卡死"""
+            if not heartbeat_interval or heartbeat_interval <= 0:
+                return
+            while alive_flag[0] and process.poll() is None:
+                time.sleep(max(1.0, float(heartbeat_interval)))
+                if not alive_flag[0] or process.poll() is not None:
+                    break
+                # 仅在"确实静默超过间隔"时才打一条, 正常有输出时不打扰
+                if time.time() - last_output_time[0] >= heartbeat_interval:
+                    self.log("%s[进度] 已运行 %d 秒, 命令仍在执行 (暂无新输出, 请继续等待) ..."
+                             % (log_prefix, int(time.time() - started_time)))
+                    last_output_time[0] = time.time()   # 重置, 避免每轮重复刷屏
+
         reader_thread = threading.Thread(target=read_output, daemon=True)
         reader_thread.start()
+        if heartbeat_interval and heartbeat_interval > 0:
+            heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
+            heartbeat_thread.start()
         try:
             process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
             raise
+        finally:
+            alive_flag[0] = False   # 结束心跳线程
         # 极少数情况: 子进程派生的孙进程仍持有输出管道句柄, 导致管道未到 EOF,
         # 读取线程会一直阻塞; 这里限时等待, 不阻塞主流程 (输出内容已完整收集)。
         reader_thread.join(timeout=5)
@@ -643,6 +673,11 @@ class Launcher:
             "--cache", NPM_CACHE_DIR,
             "--userconfig", NPM_USER_CONFIG,
             "--no-audit", "--no-fund",
+            # 关键: 我们以"管道方式"运行 npm (非 TTY)。此时 npm 默认日志级别的下载
+            # 过程输出会被抑制, 装完才丢一行汇总, 导致安装期间日志框毫无动静、像卡死。
+            # http 级别会让每个包的 HTTP 下载完成时实时吐一行, 让进度可见; 又不会像
+            # verbose 那样刷爆日志框/拖卡 GUI (下载并行, 每秒约几行, 平滑可控)。
+            "--loglevel=http",
         ]
         if npm_cli is not None and node_exe is not None:
             self.log("使用便携 Node 自带的 npm 进行安装")
@@ -661,7 +696,11 @@ class Launcher:
         env = self.build_env()
         self.log("正在安装 dsh (首次安装可能需要几分钟, 请耐心等待; npm 输出会实时显示, 请留意进度) ...")
         return_code, _output = self._stream_subprocess(
-            command, cwd=DSH_DIR, env=env, log_prefix="npm: ")
+            command, cwd=DSH_DIR, env=env, log_prefix="npm: ",
+            # 60s 空闲心跳: npm 抓完元数据后的 reify/安装链接阶段是纯本地 I/O,
+            # http 日志无网络输出会长时间静默, 心跳可让用户确认没卡死 (@see 需求 #59)。
+            # 默认 60 秒一次即可, 太频繁会刷屏 (2026-08-20 用户: 15s 改 60s)。
+            heartbeat_interval=60)
 
         if return_code != 0 or not self.dsh_installed():
             raise RuntimeError("dsh 安装失败, 请检查网络后重试 (详见上方 npm 输出)")
@@ -3734,13 +3773,10 @@ def run_gui():
     # 现在改为: 最小化只把窗口缩到任务栏 (任务栏图标保留), 托盘图标从启动
     # 就常驻不消失; 点任务栏或托盘图标都能恢复窗口, 双入口始终可见。
     def minimize_to_tray():
-        """点击最小化按钮时: 最小化到任务栏 (任务栏图标保留), 托盘图标保持常驻"""
-        added = tray_icon.add()   # 幂等: 已常驻则直接返回 True
-        root.iconify()            # 最小化到任务栏, 不隐藏窗口 (任务栏图标不消失)
-        if added:
-            append_log("已最小化到任务栏, 托盘图标常驻, 点任务栏或托盘图标可恢复窗口。")
-        else:
-            append_log("已最小化到任务栏, 点任务栏图标可恢复窗口。")
+        """点击最小化按钮时: 最小化到任务栏 (任务栏图标保留), 托盘图标保持常驻
+        (不再每次打日志提示, 频繁最小化会重复刷屏; 双入口行为见上方设计说明)"""
+        tray_icon.add()   # 幂等: 已常驻则直接返回 True
+        root.iconify()    # 最小化到任务栏, 不隐藏窗口 (任务栏图标不消失)
 
     def restore_from_tray():
         """点击托盘图标时: 恢复显示主窗口 (托盘图标保持常驻, 不删除)"""
@@ -3825,9 +3861,29 @@ def run_gui():
         threading.Thread(target=worker, daemon=True).start()
 
     def on_start():
-        """启动服务"""
+        """启动服务
+
+        同步页面网络设置: 用户可能改了「局域网/本机」绑定或受信任主机却没点
+        「保存设置」就直接启动, 若不同步, 服务仍按旧的 config 绑定 (如仍只绑
+        127.0.0.1), 但界面上却显示「局域网」, 造成"显示 =/= 实际"的误判。
+        这里启动前先把界面当前的网络设置同步进 config 并落盘 (转换规则与
+        「保存设置」完全一致, 但不弹校验框/提示, 静默落盘)。
+        """
         if is_busy[0]:
             return
+        try:
+            raw_bind = bind_var.get()
+            app.config["dsh_host"] = ("0.0.0.0" if "局域网" in raw_bind else "127.0.0.1")
+            trusted_list = []
+            for item in trusted_var.get().replace("，", ",").split(","):
+                item = item.strip()
+                if item:
+                    trusted_list.append(item)
+            app.config["trusted_hosts"] = trusted_list
+            app.save_config()
+        except Exception as error:
+            # 网络设置同步失败只警告不阻断: 服务仍按已有 config 启动
+            append_log("[警告] 启动前同步网络设置失败, 已按原配置启动: %s" % error)
         set_busy(True)
         status_text.set("正在启动服务 ...")
         status_indicator.itemconfig(dot, fill="#f59e0b")
@@ -4991,24 +5047,80 @@ def run_gui():
     log_frame = ttk.LabelFrame(root, text="运行日志")
     log_frame.pack(fill="both", expand=True, padx=14, pady=(0, 12))
 
-    log_text = tk.Text(log_frame, height=14, state="disabled",
-                       font=("Consolas", 9), wrap="word")
-    log_text.pack(fill="both", expand=True, padx=6, pady=6)
+    # 内容多的运行日志需要用滚动条上下翻看 (消息多了自动换行成很长的滚动区,
+    # 不加速滚动的话只能靠鼠标滚轮, 回看早期输出很费劲)。
+    log_inner = ttk.Frame(log_frame)
+    log_inner.pack(fill="both", expand=True, padx=6, pady=6)
+    # Text 与滚动条互相引用, 需先建控件、再双向绑定命令 (见下方 config)
+    log_scrollbar = ttk.Scrollbar(log_inner, orient="vertical")
+    log_text = tk.Text(log_inner, height=14, state="disabled",
+                       font=("Consolas", 9), wrap="word",
+                       yscrollcommand=log_scrollbar.set)
+    log_scrollbar.config(command=log_text.yview)   # 拖滚动条 → 文本上下滚动
+    log_scrollbar.pack(side="right", fill="y")
+    log_text.pack(side="left", fill="both", expand=True)
 
-    # ---------- 关闭窗口时停止服务 ----------
+    # ---------- 关闭窗口时选择: 退出 / 最小化到托盘 / 取消 ----------
+    def ask_close_choice():
+        """关闭时弹三选一对话框 (模态), 返回:
+        "exit" 退出并停止服务; "tray" 最小化到托盘(服务继续); None 取消。
+        这样"不关服务"时托盘/任务栏入口仍在, 可随时恢复, 与本项目期望一致。
+        """
+        choice = {"value": None}
+
+        def choose(value):
+            choice["value"] = value
+            dialog.destroy()
+
+        dialog = tk.Toplevel(root)
+        dialog.title("确认关闭")
+        dialog.transient(root)
+        dialog.grab_set()          # 模态: 关闭操作期间主窗口不响应
+        dialog.resizable(False, False)
+
+        label_frame = ttk.Frame(dialog, padding=14)
+        label_frame.pack(fill="x")
+        ttk.Label(label_frame, justify="left", text=(
+            "请选择关闭方式:\n\n"
+            "退出并停止服务   —— 关闭启动器, 同时停止 dsh 服务。\n"
+            "最小化到托盘     —— dsh 服务继续运行, 可随时从\n"
+            "                     任务栏或托盘图标恢复窗口。\n"
+            "取消             —— 什么都不做, 继续使用。")).pack(anchor="w")
+
+        button_row = ttk.Frame(dialog, padding=14)
+        button_row.pack(fill="x")
+        ttk.Button(button_row, text="取消",
+                   command=lambda: choose(None)).pack(side="right")
+        ttk.Button(button_row, text="最小化到托盘(服务继续)",
+                   command=lambda: choose("tray")).pack(side="right", padx=8)
+        ttk.Button(button_row, text="退出并停止服务",
+                   command=lambda: choose("exit")).pack(side="right")
+
+        # 居中于主窗口
+        dialog.update_idletasks()
+        pos_x = root.winfo_x() + (root.winfo_width() - dialog.winfo_reqwidth()) // 2
+        pos_y = root.winfo_y() + (root.winfo_height() - dialog.winfo_reqheight()) // 2
+        dialog.geometry("+%d+%d" % (pos_x, pos_y))
+
+        root.wait_window(dialog)
+        return choice["value"]
+
     def on_close(confirm=True):
-        """按 X 关闭窗口: 先弹二次确认, 避免误关; 确认后停止服务并退出
-
-        :param confirm: 是否弹确认框。True 为普通手动关闭 (按 X);
-                        False 用于绿色版自更新流程 (此前已确认过, 不再重复询问)。
+        """按 X 关闭窗口: 先弹三选一, 避免误关
+        - 退出并停止服务: 移除托盘 + 停止服务 + 退出;
+        - 最小化到托盘: dsh 服务继续运行, 保留任务栏/托盘入口可恢复;
+        - 取消: 保持现状。
+        :param confirm: True 为普通手动关闭 (按 X); False 用于绿色版自更新流程
+                        (此前已确认过, 不再重复询问, 直接退出)。
         """
         if confirm:
-            choose = messagebox.askyesno(
-                "确认关闭",
-                "确定要退出启动器吗?\n\n退出会同时停止 dsh 服务。",
-                parent=root, icon="question")
-            if not choose:
+            close_choice = ask_close_choice()
+            if close_choice == "tray":
+                minimize_to_tray()   # 服务继续运行, 任务栏/托盘入口保留
                 return
+            if close_choice is None:   # 取消
+                return
+            # close_choice == "exit" → 继续往下执行退出
         status_text.set("正在退出并停止服务 ...")
         tray_icon.dispose()   # 先移除托盘图标并还原窗口过程, 避免残留
         app.on_exit()

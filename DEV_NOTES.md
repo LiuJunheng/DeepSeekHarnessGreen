@@ -114,7 +114,7 @@
       - **超时保持兼容**：`process.wait(timeout=...)` 超时后 `process.kill()` 再抛 `subprocess.TimeoutExpired`（与原 `subprocess.run(timeout=...)` 行为一致）；读取线程用 `join(timeout=5)` 限时等待，避免子进程派生的孙进程仍持有管道句柄导致 join 永久阻塞（输出内容已完整收集，不影响返回）。
       - **行前缀**：`log_prefix` 区分来源（dsh/pnpm 用 `"npm: "`，插件命令用 `"plugin: "`）。
     - **三处接入**：`install_dsh()`（首次装 dsh）、`install_pnpm()`（装 pnpm，保留 timeout=300）、`run_plugin_command.execute_once()`（插件安装/移除/启停，保留 timeout=600，返回 `(退出码, 输出文本)` 契约不变）。
-    - **注意**：npm 在 stdout 非 TTY（管道）时不会输出花哨进度条，而是逐行 `npm notice`/`added N packages` 文本——所以逐行显示即能看到进度与耗时。
+    - **注意（2026-08-20 修正认知）**：npm 在 stdout 非 TTY（管道）时确实不走花哨进度条，但**默认日志级别 `notice` 下，`npm http fetch` 这类逐包下载输出是被抑制的**——它只在**下载全部完成后**才吐一行 `added N packages`，下载那几分钟是静默的。所以单靠 #30 的"流式逐行"仍会让用户看不到安装中的进度、误以为卡死；真正让下载过程实时可见的是给安装命令加 `--loglevel=http`（见需求 #58，2026-08-20）。
     - 验证：`runtime/tmp/test_stream_subprocess.py`（模拟 5 行间隔输出 + stderr + 退出码 3）PASS——逐行实时收到（约 1.0s 全程）、前缀正确、退出码与完整输出正确。
 31. **局域网远程访问 WebUI（2026-08-16）**：用户希望服务端部署在一台电脑，WebUI 从局域网内其它电脑的浏览器远程打开（未来还可能用 WebUI 连不同地址的服务器）。已确认决策：**直接绑定 `0.0.0.0`**（推荐）+ **GUI「网络设置」区 + config.json** 双配置入口 + **整个局域网开放**（信任围栏自动信任全网段 IP，属预期权衡）。改动：
     - **配置项**：`DEFAULT_CONFIG` 新增 `dsh_host`（默认 `127.0.0.1`；`"0.0.0.0"`=局域网可访问）与 `trusted_hosts`（list，默认空；host 或 host:port，追加到 `--trusted-host`）。`trusted_hosts` 语义：**空=局域网模式自动信任全部局域网 IP；填了任意一个=只信任显式填写的地址**（见下「精确语义补丁」）。
@@ -297,6 +297,24 @@
     - **dsh_version_notes 取值避坑（重要，2026-08-20 修正）**：**官方 GitHub Releases 上每个版本都带发布说明（release note body，tag 形如 `dsh-v<version>`，含中英文 changelog）**，这是更新描述的正确来源。第一版误用 `npm view ... readme` 取——**npm 包 readme 字段是空的**，导致用户看到「未获取到更新描述」（rc8 无、rc7 实际有）。修正后：`dsh_version_notes(version)` **优先调用 `dsh_version_notes_from_github(version)`**，批量拉 `api.github.com/repos/deepseek-ai/deepseek-harness/releases?per_page=30`，按 tag/name（去掉 `v` 前缀）匹配目标版本，命中则返回 release body（截断 6000 字符）；**GitHub 网络失败/未命中才回退** npm registry 元数据拼装（描述/发布时间/主页 + 提示到主页看文档）。
       - 避坑：GitHub tag 形如 `dsh-v0.1.0-rc.8`，匹配时把 `version` 与 `tag_name`/`name` 都做 `lstrip("v")` 再去比对，避免硬编码前缀；release body 较长，截断防弹窗卡顿；GitHub API 需带 `User-Agent` 头。
     - **验证**：`py_compile` 通过；`runtime/tmp/smoke_ver_cmp.py`（版本比较 rc.8>rc.7 为 True、同版本为 False）；rc.7 与 rc.8 的 `dsh_version_notes()` 均成功拉到官方 changelog（中英文全文）。尚未重建 exe、未实测真机 UI 弹窗交互。
+58. **【npm 安装过程仍看不到进度：非 TTY 下 npm 默认抑制逐包下载输出】（2026-08-20，需求 #30 的补充修正）**：用户反馈经启动器更新 dsh 时，即便有命令行窗口，npm 安装过程依旧长时间无任何输出，装几分钟像卡死。排查确认：`_stream_subprocess` 的流式逐行转发**没有问题**——只要 npm 吐了内容就一定会实时显示；真正原因是 **npm 在 stdout 非 TTY（管道，`subprocess.PIPE`）时，默认日志级别 `notice` 会抑制 `npm http fetch` 这类逐包下载输出**，只在全部下载完成后才打印一行 `added N packages in Xs`，所以下载期间管道里什么都没有。
+    - **改法**：`install_dsh()` 的 `install_options` 增加 `--loglevel=http`，让**每个包的 HTTP 下载完成时实时吐一行**（`npm http fetch GET 200 <url> <耗时>`）。选 `http` 而非 `verbose` 的原因：`http` 是逐包一行、量适中且平稳（下载并行，每秒约几行），既能让进度可见又不会刷爆日志框/GUI 卡顿；`verbose` 会跑 reify 内部调试日志（每秒数百行），`root.after(0)` 排队刷 Text 组件反而会把界面拖卡，适得其反。
+    - **生效范围**：`install_dsh()` 同时服务「首次安装」（`prepare_dsh`）与「更新」（`update_dsh` → `prepare_dsh(force=True)`），两者都受益。
+    - **未动**：`_npm_view` 用的是快速查询（60s 超时、秒回），默认级别足够，不改。
+    - 验证：`py_compile`（Python 3.10）通过。未真机跑一次完整 npm install / 未重建 exe。
+59. **【npm 安装到 reify/安装链接阶段仍会静默 → 加"空闲心跳"】（2026-08-20，需求 #58 实测后的补充）**：`--loglevel=http` 真机实测生效——刚上手 `npm http fetch GET 200 ...` 元数据逐行实时刷新，用户能看到进度。但元数据抓完后进入 **reify（安装/链接）阶段：把各包写入 node_modules + 跑安装脚本，全是本地磁盘 I/O、没有网络请求**，而 `http` 日志级别只显示网络抓取，所以这一段又长时间静默（在那一行 `fetch dsh-web` 后卡了很久没动静），和需求 #30/#58 之前的"看着像卡死"是同一类问题、只是时机更靠后。**任何绑定网络/日志的 npm 级别都救不了这段纯 I/O 静默**（`verbose`/`silly` 虽能刷满，但 reify 内部日志每秒数百行，经 `root.after(0)` 排队刷 Text 组件会把 GUI 拖卡，不采纳）。
+    - **改法**：给 `_stream_subprocess()` 增加可选参数 `heartbeat_interval`（秒，默认 `None`=关闭）。开启后，后台心跳线程在「子进程仍在运行 且 距上次输出已超过间隔」时，打一条日志 `[进度] 已运行 N 秒, 命令仍在执行 (暂无新输出, 请继续等待) ...` 并重置计时；**正常有输出时绝不打扰**（静默才心跳）。`process.wait(timeout)` 的超时/终止语义原样保留（心跳用独立 daemon 线程，主流程无感；`finally` 置 `alive_flag=False` 结束心跳线程）。`install_dsh()` 传 `heartbeat_interval=60`：大安装时每 **60 秒**静默就有一条心跳，用户明确知道"在跑、没卡死"。间隔最初取 15s，用户反馈太频繁会刷屏，故调成 60s 一次（2026-08-20）。
+    - **经验分层总结**：① 有网络输出（npm 抓元数据/下载包）→ `--loglevel=http`（#58）实时显示；② 无网络输出的纯 I/O 阶段（reify/安装链接）→ 靠启动器自身 `heartbeat_interval` 空闲心跳（本条）；③ 既不想刷爆 GUI、又不想装一半没提示，两招配合即可。
+- 验证：`py_compile`（Python 3.10）通过。未真机跑完整安装看心跳节奏 / 未重建 exe。
+60. **【start.bat 关 cmd 会把整个 GUI+托盘一起关掉, 但 dsh 服务却变孤儿继续跑 → 改用 pythonw】(2026-08-20)**：通过 bat 打开时, 会出现一个 cmd 窗口 + 绿色版程序。这个 **cmd 窗口(=控制台)就是启动器进程本体**: `start.bat` 原先用 `python.exe`(控制台子系统)跑 GUI, 控制台窗口附带在启动器进程上; 一旦用户关掉它, Windows 会**直接终止整个 python 进程**(GUI+托盘一起没了), 而 dsh 服务是独立的 node 子进程不受牵连, 于是表现为"程序关了、托盘任务栏没了、但服务还在跑", 与"关闭要二次确认 + 不关服务要有托盘入口"的期望冲突。**根因是控制台子系统进程被强杀, 走不到 tkinter 的 on_close(WM_DELETE_WINDOW)**。
+    - **改法①(根治控制台问题)**: `start.bat` 优先用 `pythonw.exe`(GUI 子系统, 无控制台)启动——`start.bat` 自身 `start "" "<pythonw>" launcher.py` 后立刻返回让 cmd 窗口自行关闭; 之后只留 GUI+托盘, **根本没有可误关的 cmd 窗口**, 从源头消除"关 cmd 杀进程"。只有拿到 pythonw 才走 python.exe 回退(仅系统 Python 场景, 罕见)。打包的 exe 早已是 `--windowed`(无控制台), 同理不受影响。
+    - **改法②(关闭三选一)**: `on_close()` 由原 `askyesno`(是否退出) 改为自绘模态三选一 `ask_close_choice()`: 「退出并停止服务」(走原逻辑) / 「最小化到托盘(服务继续)」→ 调 `minimize_to_tray()` 保留任务栏+托盘入口、`return` 不退出 / 「取消」→ 原样返回。这样"不关服务"时托盘/任务栏入口都还在, 可随时恢复, 满足期望。`confirm=False`(绿色版自更新流程)仍直接走退出, 不多问。
+    - 说明: 若此前已产生孤儿 dsh 服务进程, 可重开启动器点「停止服务」, 或命令行 `python launcher.py --stop` 结束, 不属本次改动范围。
+    - 验证: `py_compile`（Python 3.10）通过 / 未真机双击 start.bat 验证无 cmd 窗口、未重建 exe。
+61. **【改了「局域网」没点保存就启动, 界面显示与实际不符 → 启动前自动同步网络设置】(2026-08-20)**：用户在「网络设置」下拉把绑定改成「局域网」但**没点「保存设置」**就直接点「启动服务」。之前启动服务只读 `app.config`（旧值 127.0.0.1），服务还是只绑本机，但界面上下拉仍显示「局域网」——用户误以为局域网已生效。**根因：GUI 下拉/t条目是"待保存"的内存临时值, 启动服务却直接用已落盘的 config, 两者脱节。**
+    - **改法**：`on_start()` 在启动前先把界面当前的网络设置同步进 `app.config` 并 `app.save_config()` 落盘 — 转换规则与 `on_save()` 完全一致（`bind_var.get()` 含"局域网"→ `dsh_host="0.0.0.0"` 否则 `127.0.0.1`；`trusted_var` 按 `，`/`,` 分隔去空 → `trusted_hosts`），**但不弹校验框/提示, 静默落盘**。同步仅在网络两项（绑定+受信任主机）内做, 不改端口/镜像/自动开页（那几项无"界面显示 vs 实际"的同样歧义, 且端口还涉及校验逻辑, 保持显式保存）。`except` 时只 `append_log("[警告] 启动前同步网络设置失败, 已按原配置启动: ...")` 不阻断启动。
+    - 命名注意：`on_start`（定义于 ~3863）引用 `bind_var`/`trusted_var`（定义于 ~4956，同在 `run_gui` 内）——都是 `run_gui` 的嵌套函数局部变量, 闭包在**调用时**才解析, 按钮点击时这些变量已赋值, 正常可用。
+    - 验证：`py_compile`（Python 3.10）通过 / 未真机点「启动服务」实测同步生效 / 未重建 exe。
 
 ## 二、代码设定（launcher.py）
 | 模块 | 设定 |
@@ -358,6 +376,7 @@
 5. **Python 官方 embeddable 版不含 tkinter**：给用户说明必须装完整版 python.org 安装包，否则 GUI 起不来（launcher 已做了 ImportError 兜底提示）。
 6. **CLI 模式后台线程陷阱**：`wait_and_open` 是 daemon 线程，`--start` 主进程退出后线程会消失，所以 CLI 模式要**同步** `wait_ready()` 再开浏览器；GUI 模式则用线程即可。
 7. **首次 npm install dsh 较慢**（沙箱实测约 3 分钟、587 个包），界面提示"请耐心等待"。原实现只回显最后 15 行（用户看不到进度），**已改为实时逐行输出**（需求 #30）：npm 每行信息（`npm notice`/`added N packages`）会立即出现在日志框，用户可看到进度确认未卡住。
+   - **（2026-08-20 避坑补充）**：但**非 TTY（管道）下 npm 默认级别 `notice` 会抑制逐包下载输出**，下载那几分钟仍然静默、像卡死。`_stream_subprocess` 只负责"转发 npm 吐出的内容"，并不会变出内容。**必须给安装命令加 `--loglevel=http`**（逐包下行一行、让进度真实可见）——见需求 #58。若日后仍有"无输出"，优先怀疑 npm 自身在当前日志级别下没吐内容，而不是显示侧问题。
 8. **冷启动重复检测**：再次 `--start` 时通过 PID 文件 + 进程存在性判断"已在运行"，避免重复起服务。
 9. **便携 Node 里 npm 的位置分平台**：Linux/Mac 的 tar.gz 里 npm 在 `lib/node_modules/npm/bin/npm-cli.js`，Windows 的 zip 里在 `node_modules/npm/bin/npm-cli.js`。`find_npm_cli()` 必须两个路径都探测，否则会误退回系统 npm（已实测修复：现在日志显示"使用便携 Node 自带的 npm"）。
 10. **npm 缓存默认写 `~/.npm`**：要让 npm 真正绿色，必须在 `install` 命令带 `--cache runtime/npm-cache`，并在环境变量设 `npm_config_cache`（实测重定向后缓存约 196MB 落在本地 runtime/npm-cache，HOME 下 `~/.npm`/`~/.pnpm-store`/`~/.local/share/pnpm` 均未产生）。

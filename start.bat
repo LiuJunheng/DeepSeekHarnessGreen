@@ -28,6 +28,24 @@ if not defined PYTHON_CMD (
     exit /b 1
 )
 
+rem Prefer pythonw.exe (GUI subsystem, no console) when available (bundled python).
+rem Running the GUI with plain python.exe keeps THIS console attached to the
+rem launcher process: if the user closes that console, Windows kills the whole
+rem launcher (including the tray icon), but the dsh server (a separate node
+rem subprocess) keeps running orphaned. pythonw detaches the GUI from any
+rem console, so there is no console window to accidentally close, and this
+rem bat returns immediately after launching the GUI.
+set "PYTHONW_CMD="
+if exist "%~dp0runtime\python\pythonw.exe" set "PYTHONW_CMD=%~dp0runtime\python\pythonw.exe"
+if not defined PYTHONW_CMD (if exist "%~dp0runtime\python\python\pythonw.exe" set "PYTHONW_CMD=%~dp0runtime\python\python\pythonw.exe")
+if defined PYTHONW_CMD (
+    rem Launch GUI detached, then let this console window close on its own.
+    start "" "%PYTHONW_CMD%" launcher.py
+    exit /b 0
+)
+
+rem Fallback: no pythonw available (e.g. system python). A console window will
+rem show; closing it terminates the launcher. Prefer pythonw as described above.
 echo [INFO] Using Python: %PYTHON_CMD%
 %PYTHON_CMD% launcher.py
 if errorlevel 1 (
