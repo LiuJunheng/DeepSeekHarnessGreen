@@ -1075,6 +1075,13 @@
     - **改动**：`open_in_shell_window` 里 `webview.start(on_window_ready, debug=False, icon=icon_path)` 把绿色鲸鱼 .ico 直接交给 WinForms 窗体（权威方式，不受页面标题覆盖影响）；自绘 `apply_window_icon`(WM_SETICON) 保留作双保险。`icon_path=None`（ico 缺失）时后端才回退默认。
     - **避坑（通用）**：判断某个三方库接口到底支不支持某参数，**直接翻它 `platforms/` 下的后端源码**确认，别只信 docstring 的笼统默认说明；WinForms 窗体图标首选 `Form.Icon`（或等价地 `webview.start(icon=)`），它比"先找句柄再发 `WM_SETICON` 消息"可靠得多，因为后者依赖窗口标题，而 **WebView2 会用页面 `<title>` 同步覆盖窗体标题**。
 
+102. **【发布】v1.0.14：桌面版打开去重分机制 + 图标修复落地（2026-08-20，涵盖 #100/#101）**：
+    - `GREEN_VERSION` 1.0.13→1.0.14；README / README_EN 版本号同步，且**打包内容清单补入 `desktop-shell.py` / `desktop-shell.bat`**（桌面版是内置文件，绿色 zip 必须随包）。
+    - **重打包 exe**：`DSH_Launcher.exe` / `DSH_Update.exe`（PyInstaller，便携 python + `PYTHONPATH=runtime\pyinstaller`，`--icon` 绿色鲸鱼 + `--add-data` ico + VC 三件套 `--add-binary`，主逻辑同 `build_exe.bat`，只是绕开它的 `pause`）。
+    - **绿色 zip**：`DSH_Launcher_GreenPortable_Online_20260820_v1.0.14.zip`（~17.6MB），含 plugins/、skills/dsh-deploy-maintain/、desktop-shell*；**不含** runtime/、DEV_NOTES、.gitignore（用 `tar -tf` 复核顶层）。
+    - **发布脚本（runtime/tmp，不进 git）**：`build_release_zip_v1014.py` / `github_release_v1014.py`（读 `GH_TOKEN`） / `gitee_release_v1014.py`（读 `GITEE_TOKEN`），全部由 v1013 复制改版本号而来；release body 用三国风文案。
+    - **异常**：`cmd /c` 在 Windows safety 层被禁 → 用等价的 PyInstaller 命令行 或 `/`；`build_exe.bat` 结尾 `pause` 在自动化里会卡住，应直接跑核心命令而非整批。
+
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验
