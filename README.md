@@ -10,7 +10,7 @@
 
 - **⚡ 双击即用**：用 `DSH_Launcher.exe` 或 `start.bat`，连 Python / Node 都不用单独装（内置便携版），首次点一下「安装环境」即可。
 - **🌱 绿色便携**：Node、dsh、npm/pnpm 缓存、会话数据、临时文件全在本目录 `runtime/`，**不写用户主目录、不装系统、不写注册表**；内置便携 Node/Python，下载国内镜像优先、连不上自动回退官方。整目录拷到任意新电脑即用，无需重装。
-- **📦 内置 6 款实用插件**：会话回退、会话导入、用量统计、文件浏览、清理归档等，一键安装（详见 [内置插件一览](#内置插件一览)）。
+- **📦 内置 7 款实用插件**：会话回退、会话导入、用量统计、文件浏览、清理归档、**背景影画（本地视频做网页背景）**等，一键安装（详见 [内置插件一览](#内置插件一览)）。
 - **🏠 局域网远程访问**：一键改 0.0.0.0 绑定 + **自动放行 Windows 防火墙端口**，手机/其它电脑直接打开 WebUI（含手动智能修复循环的「随机 UUID」缺失、端口与 IP 403 等坑）。
 - **🔁 两通道独立自更新**：官方核心（dsh）与绿色版外围互不干扰，可一键升级；绿色版更新 GitHub 连不通时**自动转 Gitee 镜像**，升级前自动备份、失败给出手动地址，**不丢你的设置与会话**。
 
@@ -42,7 +42,7 @@ DeepSeekHarnessLauncher/
 │   ├── tmp/               # 临时文件
 │   ├── server.pid         # 服务进程号
 │   └── server.log         # 服务运行日志
-├── plugins/               # 内置插件源码（6 款，见「内置插件一览」）
+├── plugins/               # 内置插件源码（7 款，见「内置插件一览」）
 ├── skills/                # 本项目的 DSH 经验 Skill（已安装到 TRAE 全局 skills）
 └── README.md / README_EN.md  # 中文说明（维护主体）/ 英文说明（随版本更新翻译一次）
 ```
@@ -171,7 +171,7 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 ## 五、插件与会话管理
 
 > 本章覆盖本绿色版的**插件体系**与**会话数据维护**两部分：
-> - **内置插件**：6 款自带插件（源码在 `plugins/` 随包分发），分别聊天增强、会话管理、用量统计等功能；
+> - **内置插件**：7 款自带插件（源码在 `plugins/` 随包分发），分别聊天增强、会话管理、用量统计、背景影画等功能；
 > - **数据维护**：启动器内置的「恢复 / 永久删除归档会话」功能（dsh 官方没有，绿色版自建）。
 >
 > 使用入口：主窗口点 **【插件管理】** 弹出插件管理窗口；数据维护在「数据维护」区（需先停止服务）。
@@ -190,7 +190,7 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 - **自动生效编排层**：任何安装 / 移除 / 启停后，启动器自动把声明 `dsh.bundle.patch` 的依赖写进 profile 的 `dsh.profile.bundles`（即使 pnpm 因构建脚本警告 `ERR_PNPM_IGNORED_BUILDS` 以退出码 1 结束也兜底同步，**无需手动编辑 package.json**）；启停状态记在 `dsh.profile.disabled`。**重启服务后插件即加载**。
 - **其它提示**：底部状态栏实时显示"正在安装 / 安装成功 / 共 N 条结果"进度；GitHub 源仓库未必是 npm 包、安装失败属正常，窗口会提示原因，可改用 npm 注册表里的同名包。
 
-### 内置插件一览（本绿色版自带 6 款）
+### 内置插件一览（本绿色版自带 7 款）
 安装方式：任一内置插件均可通过「插件管理 → 选择本地插件文件夹安装…」选择对应目录（命令行等价物：`python launcher.py --install-plugin plugins\<插件名>`），装完**重启服务**生效。官方核心或绿色版自更新后，已装入的旧副本需重新安装本地方可生效。各插件详细用法见其 README。
 
 | 插件 | 一句话功能 | 详细文档 |
@@ -201,6 +201,7 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 | `dsh-session-import` | 把导出的会话 ZIP / JSONL **导回本机**（官方导出互逆） | [README](plugins/dsh-session-import/README.md) |
 | `dsh-usage-stats` | 用量统计 + 每条消息的「本次 token / 预估费用」 | [README](plugins/dsh-usage-stats/README.md) |
 | `dsh-sidebar-lite` | WebUI 右侧边栏（文件管理 / 预览 / 浏览器 / 终端 / 任务） | [README](plugins/dsh-sidebar-lite/README.md) |
+| `dsh-media-background` | 本地目录视频作为 WebUI 背景播放（画面 + 声音，可入播放清单） | [README](plugins/dsh-media-background/README.md) |
 
 所有内置插件均为**纯插件**（不修改任何官方文件），与绿色版一起以 **Apache License 2.0** 开源（见第十一章）。
 
@@ -226,6 +227,9 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 
   数据直接从会话日志解码（`session.jsonl.zstd` zstd 多帧，与 `dsh-session-rewind` 同机制），**费用为估算**（日志不含费用，按价格表估算，仅供成本参考）。详见 [plugins/dsh-usage-stats/README.md](plugins/dsh-usage-stats/README.md)。
   > 说明：消息行「本次token」原为独立插件 `dsh-turn-tokens`（v0.1.0），自 v0.2.0 起合并进本插件；若历史版本装过它，先移除再安装本插件，避免重复显示。
+
+#### 背景影画
+- **`dsh-media-background`（本地视频做网页背景，观星）**：选定一个本地目录，自动列出里面的视频（**含子文件夹**，深度最多 6 层），逐条加入播放清单，以全屏 `<video>` 背景层播放**画面 + 声音**（音量 / 上一首 / 下一首 / 暂停 / 停止 / 背景浓度 / 循环，皆可随手调节；清单默认自动循环）。选目录不必离开网页——在右下角「🎬 观星」面板点「选目录…」弹出的**目录浏览窗口**里从盘符逐层点选即可，也可直接粘贴路径。「选目录…」后的目录即持久化。背景以**半透明壁纸**形式浮在对话区之后（默认浓度 35%，可调 0~100），不改变 harness 主题，最大程度不影响正常对话观感。详见 [plugins/dsh-media-background/README.md](plugins/dsh-media-background/README.md)。
 
 ### 数据维护（恢复 / 永久删除归档会话）
 > dsh 官方**没有**"永久删除会话"和"取消归档"功能：网页里的"归档"只是把会话**隐藏**（日志文件与注册表条目全部保留）。本启动器在**服务停止后**直接操作本地数据文件，做到：
@@ -336,7 +340,7 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 
 ## 十一、开源协议
 
-本绿色版整体（启动器 `launcher.py`、绿色版外壳、内置的 6 款插件，见 [内置插件一览](#内置插件一览)）统一采用 **Apache License 2.0** 开源协议：`Copyright (c) 2026 LiuJunheng`。协议副本见仓库根目录 [LICENSE](LICENSE)，绿色版 zip 已随包附带。
+本绿色版整体（启动器 `launcher.py`、绿色版外壳、内置的 7 款插件，见 [内置插件一览](#内置插件一览)）统一采用 **Apache License 2.0** 开源协议：`Copyright (c) 2026 LiuJunheng`。协议副本见仓库根目录 [LICENSE](LICENSE)，绿色版 zip 已随包附带。
 
 - **主项目 + 全部内置插件**：同一份 Apache License 2.0，随绿色版一并分发，无额外、无割裂的单独协议声明。
 - **运行时依赖**（`@deepseek-ai/dsh`、Node.js、便携 Python 等）为各第三方项目自己的许可证，绿色版仅在其本地运行时目录内安装使用，不随源码分发。

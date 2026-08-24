@@ -30,8 +30,8 @@ simply copy the whole folder to any other computer and keep using it.
   registry**. Bundled portable Node/Python download domestic mirrors first and
   fall back to the official source automatically. Copy the whole folder to any
   new computer and use it as-is, no reinstall needed.
-- **📦 6 practical built-in plugins**: session rewind, session import, usage
-  stats, file browser, archive purge and more — one-click install (see
+- **📦 7 practical built-in plugins**: session rewind, session import, usage
+  stats, file browser, archive purge, **local-video background** and more — one-click install (see
   [Built-in Plugins at a Glance](#built-in-plugins-at-a-glance)).
 - **🏠 LAN remote access**: one-click switch to 0.0.0.0 binding + **automatic
   Windows firewall port exception**, so phones / other computers can open the
@@ -71,7 +71,7 @@ DeepSeekHarnessLauncher/
 │   ├── tmp/               # Temporary files
 │   ├── server.pid         # Service process ID
 │   └── server.log         # Service runtime log
-├── plugins/               # Built-in plugin sources (6, see「Built-in Plugins at a Glance」)
+├── plugins/               # Built-in plugin sources (7, see「Built-in Plugins at a Glance」)
 ├── skills/                # This project's DSH experience Skill (installed to TRAE global skills)
 └── README.md / README_EN.md  # Chinese (maintained) / English (refreshed per release)
 ```
@@ -203,8 +203,8 @@ This zip is maintained and distributed by the author with each release; users si
 ## 5. Plugins & Session Management
 
 > This section covers two parts of the green edition: the **plugin system** and **session data maintenance**.
-> - **Built-in plugins**: 6 self-contained plugins (sources ship with the package under `plugins/`) covering chat
->   enhancement, session management, usage stats and more;
+> - **Built-in plugins**: 7 self-contained plugins (sources ship with the package under `plugins/`) covering chat
+>   enhancement, session management, usage stats, local-video background and more;
 > - **Data maintenance**: the launcher's built-in 「restore / permanently delete archived sessions」feature (dsh
 >   officially has none; this is a green-edition addition).
 >
@@ -246,7 +246,7 @@ This zip is maintained and distributed by the author with each release; users si
   GitHub-source repos aren't necessarily npm packages, so install failure is normal — the window shows the reason, and
   you can switch to the same-named package in the npm registry.
 
-### Built-in Plugins at a Glance (6 bundled)
+### Built-in Plugins at a Glance (7 bundled)
 Installation: any built-in plugin can be installed via「Plugin Manager → Install from local plugin folder…」selecting its
 directory (CLI equivalent: `python launcher.py --install-plugin plugins\<plugin>`); **restart the service** for it to take
 effect. After an official-core or green-edition self-update, an already-installed older copy is a pnpm copy — reinstall
@@ -260,6 +260,7 @@ the local plugin for it to take effect. See each plugin's README for full usage.
 | `dsh-session-import` | Import an exported session ZIP / JSONL **back into this machine** (inverse of the official export) | [README](plugins/dsh-session-import/README.md) |
 | `dsh-usage-stats` | Usage stats + per-message「this-turn tokens / estimated cost」 | [README](plugins/dsh-usage-stats/README.md) |
 | `dsh-sidebar-lite` | WebUI right sidebar (file management / preview / browser / terminal / tasks) | [README](plugins/dsh-sidebar-lite/README.md) |
+| `dsh-media-background` | Play local-directory videos as the WebUI background (video + audio, add to a playlist) | [README](plugins/dsh-media-background/README.md) |
 
 All built-in plugins are **pure plugins** (modify no official files) and are open-sourced together with the green edition
 under the **Apache License 2.0** (see Section 11).
@@ -334,6 +335,17 @@ under the **Apache License 2.0** (see Section 11).
   > Note: the per-turn「this-turn tokens」was originally a standalone plugin `dsh-turn-tokens` (v0.1.0); it was merged into
   > this plugin since v0.2.0. If you installed it in an older version, remove it before installing this plugin to avoid
   > duplicate display.
+
+#### Video background
+- **`dsh-media-background` (play local videos as the WebUI background, "Watch the Stars")**: pick a local directory,
+  list its videos (**including subfolders**, up to 6 levels deep), add them one by one to a playlist, and play them as a
+  full-screen `<video>` background layer with **video + sound** (volume / previous / next / pause / stop / background
+  opacity / loop, all adjustable; the playlist loops by default). No need to leave the page to pick the directory — click
+  「Select folder…」in the「🎬 观星」panel at the bottom-right and drill down from the drive letters in the opened
+  **directory browser window**, or paste a path directly; the picked directory is persisted. The background renders as a
+  **semi-transparent wallpaper** behind the conversation (default opacity 35%, adjustable 0–100), leaving the harness
+  theme untouched so normal conversation looks unchanged. See
+  [plugins/dsh-media-background/README.md](plugins/dsh-media-background/README.md).
 
 ### Data Maintenance (restore / permanently delete archived sessions)
 > dsh officially has **no** "permanently delete session" or "unarchive" feature: archiving in the web UI only **hides**
@@ -479,7 +491,7 @@ The deployment / maintenance / plugin-development experience accumulated in this
 
 ## 11. Open Source License
 
-The whole green edition — the launcher `launcher.py`, the green shell, and the 6 built-in plugins (see
+The whole green edition — the launcher `launcher.py`, the green shell, and the 7 built-in plugins (see
 [Built-in Plugins at a Glance](#built-in-plugins-at-a-glance)) — is uniformly licensed under the **Apache License 2.0**:
 `Copyright (c) 2026 LiuJunheng`. A copy of the license is at [LICENSE](LICENSE) in the repo root and is shipped in the
 green-edition zip.

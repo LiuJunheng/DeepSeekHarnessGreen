@@ -238,8 +238,8 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # 发布流程: 打 tag v{GREEN_VERSION} + Release 资产 DSH_Launcher_GreenPortable_Online_<日期>_v<tag>.zip
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
-GREEN_VERSION = "1.0.14"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
-GREEN_VERSION_DATE = "2026年08月21日"               # 绿色版版本日期
+GREEN_VERSION = "1.0.15"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
+GREEN_VERSION_DATE = "2026年08月24日"               # 绿色版版本日期 (build_release_zip.py 会按构建当天回写)
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
 GREEN_RELEASE_MIRROR = ("https://mirror.nju.edu.cn/github-release/%s/latest"
@@ -5344,7 +5344,7 @@ def run_gui():
             if item:
                 trusted_list.append(item)
         app.config["trusted_hosts"] = trusted_list
-        # 常规设置: 镜像源 / 默认打开方式 / 自动打开
+        # 常规设置: 镜像源 / 默认打开方式 / 自动打开 / 背景视频目录
         raw = mirror_var.get()
         app.config["mirror"] = "cn" if "国内" in raw else ("official" if "官方" in raw else "auto")
         open_raw = open_method_var.get()

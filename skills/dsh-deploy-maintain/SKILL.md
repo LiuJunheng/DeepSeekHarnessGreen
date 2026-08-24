@@ -500,6 +500,18 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 - **教训（pywebview 窗口起不来：`start()` 之前绝不能调 `load_url()`，DEV_NOTES 避坑 #99）**：用 pywebview 做"未启动提示页"时，若在 `webview.create_window(...)` 之后、`webview.start()` **之前**调用 `window.load_url(data:...)`，WinForms/WebView2 后端的原生窗口会初始化失败/挂起——页面层被 `except Exception` 吞成一句 `WebViewException('Main window failed to start')`，还会**静默回退到系统浏览器**，非常难定位。**正解**：①先同步探测服务状态（`socket.connect_ex`）；②未就绪时把提示页 `data:` URL **直接作为 `create_window` 的初始地址**（首屏就是提示页，不闪"连接失败"）；③所有"窗口起来后的导航/轮询"放进 **`webview.start(func)` 的窗口就绪回调**里做。**通用要点**：包装任何 GUI 后端的"窗口就绪后再导航"逻辑，一律放 `start(func)` 回调，绝不放 `start()` 之前；真机失败要看真因，用**控制台 python.exe + 完整 traceback** 跑（别用 pythonw，无 stderr）；判断"后端是否支持某操作"以**实机行为**为准，别只看目录/版本探测。
 - **教训（桌面窗口图标换不掉的根因，DEV_NOTES 避坑 #101）**：给 pywebview(WinForms) 窗口换图标，**正确姿势是把它交回 pywebview 自己**——`webview.start(..., icon=图标路径)`，WinForms 后端会直接 `self.Icon = Icon(icon)`（权威、免查找）。注释/文档里"icon 仅 GTK/QT 支持"是**错的**，WinForms/Cocoa/qT/GTK 都认。**别**自己在 `start()` 后发 `WM_SETICON` 换图标，因为它要靠 `FindWindowW(标题)` 找窗口，而 **WebView2 加载页面后会用页面 `<title>` 同步覆盖窗体标题** → 找不到 → 白忙。**通用避坑**：只要把 icon 相关行为交给 GUI 库托管的，优先传它的**官方参数**；对"三方库某平台到底支不支持某特性"，直接读它 `platforms/` 后端源码，别只信 docstring 默认说明。
 
+### 4.18 背景媒体插件：`<video>` 全屏背景 + 宿主端流式路由（2026-08-24，dsh-media-background，对应项目 DEV_NOTES 需求 #104）
+
+复刻第三方 `Olivia-Lin-in-DeepSeek-Harness` 的"本地视频做网页背景"能力时，**只取其核心播放槽**（选目录→列视频→入播放清单→全屏背景播画面+声音），砍掉对方三层解耦的独立媒体服务器/待机/时段/遮挡门帘，做单插件自包含、复用 harness `webServer` 同源路由（**不新增独立端口、不新增守护进程**）。要点：
+
+- **流式路由选型**：媒体文件是任意绝对路径、且量大按需流式读，**不要**走 harness 沙箱 `fs`（`dsh-fs` 面向会话工作区），宿主端直接用 `node:fs` 的 `createReadStream` 流式返回；`inject=["webServer"]` 用 `ctx.effect(() => ctx.webServer.register(...), 说明)` 注册（同 dsh-file-browser）。
+- **Range 支持（进度条/边下边播）**：`GET stream?path=<rel>` 解析 `Range` 头（`bytes=start-end` / `bytes=-N`），用 `createReadStream(file,{start,end})` 返回 `206` + `content-range`/`content-length`/`content-type`；无 Range 返回 `200` + 完整长 + `accept-ranges: bytes`。**平方定级**：`decodeURIComponent` 后必须 `path.resolve(dir, rel)` 再**防穿越**（`isInside` 校验 `..`，Windows 大小写不敏感需统一小写比较）。
+- **核心坑：媒体流路由不能加守卫头，但要防外部网页触发**——`<video>` 标签**无法携带自定义请求头**，给 `stream` 加守卫头就播不出来；所以 `/stream` **不带守卫头**，改由"目录受限读（只读已配置目录）+ 防穿越 403"兜底；而 `config/list`（改目录/列目录）仍带守卫头（能带头的 fetch 都带）。
+- **目录来源优先级（多入口易冲突，需定序）**：① 面板里改过的持久化 `DSH_HOME/media-background-dir.json`（POST 时 `stat` 校验是目录再写）→ ② `process.env.DSH_MEDIA_BG_DIR`（启动器 GUI 用 Windows 文件夹选择框设置的默认，`build_env()` 注入）→ ③ 空（前端提示未配置）。
+- **客户端注入**：`window.__ModuleLoader__.load` 直接往 `document.body` 挂命名空间节点（背景层 `<video>` 全屏 `position:fixed; inset:0; z-index:0; object-fit:cover; pointer-events:none`），不依赖官方内部布局插槽；`<video>` 需 `muted`（音量=0 时）与 `playsinline`；播放清单/音量/浓度存 `localStorage`。
+- **启动器配置对接**：`DEFAULT_CONFIG` 加 `"media_background_dir": ""`；GUI「常规设置」加"背景视频目录"行，用 `filedialog.askdirectory(title=..., parent=...)`（Windows 自带文件夹选择框，与选工作区同类）；`build_env()` 里 `env["DSH_MEDIA_BG_DIR"]=media_dir`。改动须**重打包 exe** 才生效（GUI 行为"改了没变化"多为旧 exe）。
+- **安全**：目录受限读（只读用户配置的那个目录）；`stream` 对 `..` 越界一律 403；`config/list` 带守卫头才放行。刻意**不硬改 harness 主题 token**（如 `--dsw-alias-bg-base`），用 `opacity` 半透明壁纸（默认 ~35%）透出，避免影响正常对话观感。
+
 ## 五、验证与排查速查表
 
 | 症状 | 首选排查动作 |

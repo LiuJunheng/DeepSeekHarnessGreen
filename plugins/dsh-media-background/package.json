@@ -1,0 +1,26 @@
+{
+  "name": "dsh-media-background",
+  "version": "0.1.0",
+  "description": "把本地目录里的视频作为 DeepSeek Harness 网页背景播放：选定目录→自动列出视频→加入播放清单→全屏背景层播放画面与声音（音量/上一首/下一首/暂停/停止/浓度可调）",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "license": "Apache-2.0"
+}

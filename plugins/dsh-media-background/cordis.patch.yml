@@ -1,0 +1,6 @@
+# dsh-media-background bundle patch: 把本插件作为一行插入 profile 插件树。
+# 格式与内置插件 (dsh-file-browser 等) 完全一致:
+#   - insert: 新增一行插件行 (id 是插件行标识, name 是包名)。
+- insert:
+    - id: media-background
+      name: dsh-media-background
