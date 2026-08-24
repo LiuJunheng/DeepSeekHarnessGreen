@@ -38,15 +38,15 @@ window.__ModuleLoader__.load({
 					display: "inline-flex",
 					alignItems: "baseline",
 					gap: 4,
-					background: "#f5f5f5",
+					background: "var(--dsw-alias-bg-layer-2)",
 					borderRadius: 4,
 					padding: "2px 8px",
 					fontSize: 12,
 					whiteSpace: "nowrap",
 				},
 			}, [
-				react.createElement("span", { key: "l", style: { color: "#888" } }, label),
-				react.createElement("span", { key: "v", style: { fontWeight: 500, color: "#333", ...(valueStyle || {}) } }, value),
+				react.createElement("span", { key: "l", style: { color: "var(--dsw-alias-label-tertiary)" } }, label),
+				react.createElement("span", { key: "v", style: { fontWeight: 500, color: "var(--dsw-alias-label-primary)", ...(valueStyle || {}) } }, value),
 			]);
 		}
 
@@ -59,7 +59,7 @@ window.__ModuleLoader__.load({
 					react.createElement("span", {
 						key: c,
 						title: c + "×" + errors[c],
-						style: { fontSize: 11, color: "#c0392b", background: "#fdecea", borderRadius: 3, padding: "1px 6px", whiteSpace: "nowrap", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }
+						style: { fontSize: 11, color: "var(--dsw-alias-state-error-primary)", background: "var(--dsw-alias-state-error-secondary)", borderRadius: 3, padding: "1px 6px", whiteSpace: "nowrap", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }
 					}, c + "×" + errors[c])
 				)
 			);
@@ -68,10 +68,10 @@ window.__ModuleLoader__.load({
 		/** 会话卡片 (标题独占整行 + ID + 元信息 chips + 分析按钮) */
 		function SessionCard({ s, busy, working, inspecting, onAnalyze }) {
 			const cardStyle = {
-				border: "1px solid #ddd",
+				border: "1px solid var(--dsw-alias-border-l1)",
 				borderRadius: 8,
 				padding: "10px 12px",
-				background: "#fff",
+				background: "var(--dsw-alias-bg-base)",
 				marginBottom: 10,
 			};
 			const titleStyle = {
@@ -79,7 +79,7 @@ window.__ModuleLoader__.load({
 				minWidth: 0,
 				fontSize: 13,
 				fontWeight: 600,
-				color: "#1f2329",
+				color: "var(--dsw-alias-label-primary)",
 				lineHeight: 1.5,
 				wordBreak: "break-word",
 				overflowWrap: "break-word",
@@ -88,7 +88,7 @@ window.__ModuleLoader__.load({
 				marginTop: 2,
 				fontFamily: "Consolas, Menlo, monospace",
 				fontSize: 11,
-				color: "#999",
+				color: "var(--dsw-alias-label-tertiary)",
 				overflow: "hidden",
 				textOverflow: "ellipsis",
 				whiteSpace: "nowrap",
@@ -107,7 +107,7 @@ window.__ModuleLoader__.load({
 					react.createElement("span", { key: "t", style: titleStyle, title: s.title || s.id },
 						s.title || "(无标题)"
 					),
-					s.live && react.createElement("span", { key: "live", style: { flex: "none", fontSize: 11, color: "#e67e22", background: "#fdf3e3", borderRadius: 999, padding: "1px 7px", whiteSpace: "nowrap" } }, "运行中"),
+					s.live && react.createElement("span", { key: "live", style: { flex: "none", fontSize: 11, color: "var(--dsw-alias-state-warn-primary)", background: "var(--dsw-alias-state-warn-secondary)", borderRadius: 999, padding: "1px 7px", whiteSpace: "nowrap" } }, "运行中"),
 					react.createElement("button", {
 						key: "btn",
 						type: "button",
@@ -122,7 +122,7 @@ window.__ModuleLoader__.load({
 				react.createElement("div", { key: "m", style: chipRowStyle }, [
 					react.createElement(MetaChip, { key: "ws", label: "工作区", value: (s.workspace && s.workspace.title) || s.workspaceKey || "—" }),
 					react.createElement(MetaChip, { key: "ct", label: "创建时间", value: fmtTime(s.createdAt) }),
-					react.createElement(MetaChip, { key: "st", label: "状态", value: s.live ? "运行中" : "空闲", valueStyle: { color: s.live ? "#e67e22" : "#999" } }),
+					react.createElement(MetaChip, { key: "st", label: "状态", value: s.live ? "运行中" : "空闲", valueStyle: { color: s.live ? "var(--dsw-alias-state-warn-primary)" : "var(--dsw-alias-label-tertiary)" } }),
 				]),
 			]);
 		}
@@ -130,10 +130,10 @@ window.__ModuleLoader__.load({
 		/** 逐回合卡片 (用户问题独占整行 + 信息行 + 回退按钮) */
 		function TurnCard({ t, working, onRewind }) {
 			const cardStyle = {
-				border: "1px solid #eee",
+				border: "1px solid var(--dsw-alias-border-l1)",
 				borderRadius: 6,
 				padding: "8px 10px",
-				background: "#fafafa",
+				background: "var(--dsw-alias-bg-layer-2)",
 				marginBottom: 8,
 			};
 
@@ -144,7 +144,7 @@ window.__ModuleLoader__.load({
 					style: {
 						fontSize: 12.5,
 						lineHeight: 1.6,
-						color: "#333",
+						color: "var(--dsw-alias-label-primary)",
 						wordBreak: "break-word",
 						overflowWrap: "break-word",
 					},
@@ -160,20 +160,20 @@ window.__ModuleLoader__.load({
 						flexWrap: "wrap",
 						gap: "4px 12px",
 						fontSize: 11.5,
-						color: "#777",
+						color: "var(--dsw-alias-label-secondary)",
 					},
 				}, [
-					react.createElement("span", { key: "turn", style: { fontWeight: 600, color: t.complete ? "#555" : "#c0392b" } }, "回合 #" + t.turn),
+					react.createElement("span", { key: "turn", style: { fontWeight: 600, color: t.complete ? "var(--dsw-alias-label-secondary)" : "var(--dsw-alias-state-error-primary)" } }, "回合 #" + t.turn),
 					react.createElement("span", { key: "steps" }, "步骤 " + t.steps),
 					react.createElement("span", { key: "tools" }, "工具调用 " + t.toolCalls),
-					!t.complete && react.createElement("span", { key: "unfin", style: { fontSize: 11, color: "#c0392b", background: "#fdecea", borderRadius: 3, padding: "1px 6px", fontWeight: 600, whiteSpace: "nowrap" } }, "⚠ 未完成"),
+					!t.complete && react.createElement("span", { key: "unfin", style: { fontSize: 11, color: "var(--dsw-alias-state-error-primary)", background: "var(--dsw-alias-state-error-secondary)", borderRadius: 3, padding: "1px 6px", fontWeight: 600, whiteSpace: "nowrap" } }, "⚠ 未完成"),
 					errorBadge(t.errors),
 					t.complete && react.createElement("button", {
 						key: "btn",
 						type: "button",
 						disabled: working,
 						onClick: () => onRewind(t),
-						style: { marginLeft: "auto", padding: "3px 12px", cursor: working ? "default" : "pointer", fontSize: 12, borderRadius: 4, background: "#fff" },
+						style: { marginLeft: "auto", padding: "3px 12px", cursor: working ? "default" : "pointer", fontSize: 12, borderRadius: 4, background: "var(--dsw-alias-bg-base)" },
 					}, working ? "回退中…" : "回退到此"),
 				]),
 			]);
@@ -273,9 +273,9 @@ window.__ModuleLoader__.load({
 
 			const rootStyle = { display: "flex", flexDirection: "column", gap: 12, padding: 4, maxWidth: 1080 };
 			const titleStyle = { margin: 0, fontSize: 14, fontWeight: 600 };
-			const descStyle = { margin: 0, fontSize: 13, lineHeight: 1.6, color: "#555" };
+			const descStyle = { margin: 0, fontSize: 13, lineHeight: 1.6, color: "var(--dsw-alias-label-secondary)" };
 			const btn = { padding: "4px 10px", cursor: "pointer", fontSize: 12 };
-			const monoStyle = { fontFamily: "Consolas, Menlo, monospace", fontSize: 11, color: "#999" };
+			const monoStyle = { fontFamily: "Consolas, Menlo, monospace", fontSize: 11, color: "var(--dsw-alias-label-tertiary)" };
 
 			// ---------- 列表视图 (卡片式) ----------
 			if (inspecting === null) {
@@ -287,9 +287,9 @@ window.__ModuleLoader__.load({
 						"系统会从该回合之后派生一个干净的续接会话并自动打开, 相当于把失败的消息之后的内容移除, " +
 						"继续对话不再受干扰。原会话保留不动。"
 					),
-					error !== null && react.createElement("p", { style: { color: "#c0392b", margin: 0, fontSize: 13 } }, error),
-					sessions === null && !error && react.createElement("p", { style: { color: "#888", margin: 0, fontSize: 13 } }, "加载中…"),
-					Array.isArray(sessions) && sessions.length === 0 && !error && react.createElement("p", { style: { color: "#888", margin: 0, fontSize: 13 } }, "没有找到任何会话。"),
+					error !== null && react.createElement("p", { style: { color: "var(--dsw-alias-state-error-primary)", margin: 0, fontSize: 13 } }, error),
+					sessions === null && !error && react.createElement("p", { style: { color: "var(--dsw-alias-label-tertiary)", margin: 0, fontSize: 13 } }, "加载中…"),
+					Array.isArray(sessions) && sessions.length === 0 && !error && react.createElement("p", { style: { color: "var(--dsw-alias-label-tertiary)", margin: 0, fontSize: 13 } }, "没有找到任何会话。"),
 					Array.isArray(sessions) && sessions.map((s) =>
 						react.createElement(SessionCard, {
 							key: s.id,
@@ -302,7 +302,7 @@ window.__ModuleLoader__.load({
 					),
 					react.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
 						react.createElement("button", { type: "button", disabled: busy, onClick: loadList, style: { padding: "6px 16px", cursor: busy ? "default" : "pointer" } }, busy ? "刷新中…" : "刷新列表"),
-						message !== null && react.createElement("span", { style: { fontSize: 13, color: "#27ae60" } }, message)
+						message !== null && react.createElement("span", { style: { fontSize: 13, color: "var(--dsw-alias-state-success-primary)" } }, message)
 					)
 				);
 			}
@@ -328,26 +328,26 @@ window.__ModuleLoader__.load({
 						react.createElement("span", { style: { ...monoStyle, marginLeft: 8 } }, s && s.id)
 					)
 				),
-				data === null && react.createElement("p", { style: { color: "#888" } }, "分析中…"),
-				error !== null && react.createElement("p", { style: { color: "#c0392b", margin: 0, fontSize: 13 } }, error),
+				data === null && react.createElement("p", { style: { color: "var(--dsw-alias-label-tertiary)" } }, "分析中…"),
+				error !== null && react.createElement("p", { style: { color: "var(--dsw-alias-state-error-primary)", margin: 0, fontSize: 13 } }, error),
 				data !== null && react.createElement(react.Fragment, null,
 					// 会话汇总 chips (自动换行)
 					react.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } }, [
 						react.createElement(MetaChip, { key: "ev", label: "事件数", value: summary.eventCount }),
 						react.createElement(MetaChip, { key: "turn", label: "回合", value: summary.totalTurns + " (完成 " + summary.completedTurns + " / 未完成 " + summary.unfinishedTurns + ")" }),
-						s && s.live && react.createElement(MetaChip, { key: "live", label: "状态", value: "运行中 (回退后自动切到新会话)", valueStyle: { color: "#e67e22" } }),
+						s && s.live && react.createElement(MetaChip, { key: "live", label: "状态", value: "运行中 (回退后自动切到新会话)", valueStyle: { color: "var(--dsw-alias-state-warn-primary)" } }),
 						s && s.cwd && react.createElement(MetaChip, { key: "cwd", label: "工作区路径", value: s.cwd, valueStyle: { fontFamily: "Consolas, Menlo, monospace", fontSize: 11 } }),
 					]),
-					poisonHints.length > 0 && react.createElement("div", { style: { fontSize: 13, color: "#b8860b", background: "#fdf6e3", borderRadius: 4, padding: "8px 12px", lineHeight: 1.6 } },
+					poisonHints.length > 0 && react.createElement("div", { style: { fontSize: 13, color: "var(--dsw-alias-state-warn-primary)", background: "var(--dsw-alias-state-warn-secondary)", borderRadius: 4, padding: "8px 12px", lineHeight: 1.6 } },
 						poisonHints.map((h, i) => react.createElement("div", { key: i }, "⚠ " + h))
 					),
-					summary.unfinishedTurns > 0 && react.createElement("div", { style: { fontSize: 13, color: "#c0392b", background: "#fdecea", borderRadius: 4, padding: "8px 12px", lineHeight: 1.6 } },
+					summary.unfinishedTurns > 0 && react.createElement("div", { style: { fontSize: 13, color: "var(--dsw-alias-state-error-primary)", background: "var(--dsw-alias-state-error-secondary)", borderRadius: 4, padding: "8px 12px", lineHeight: 1.6 } },
 						"检测到 " + summary.unfinishedTurns + " 个未完成回合(有开始无结束, 通常是出错/中断留下)。" +
 						(lastCompleted
 							? "建议回退到最后一个已完成回合(第 " + lastCompleted.turn + " 回合)之后。"
 							: "该会话没有任何已完成回合。")
 					),
-					turns.length === 0 && react.createElement("p", { style: { color: "#888", margin: 0, fontSize: 13 } }, "该会话还没有任何回合。"),
+					turns.length === 0 && react.createElement("p", { style: { color: "var(--dsw-alias-label-tertiary)", margin: 0, fontSize: 13 } }, "该会话还没有任何回合。"),
 					turns.map((t) =>
 						react.createElement(TurnCard, {
 							key: t.turn,
@@ -357,8 +357,8 @@ window.__ModuleLoader__.load({
 						})
 					),
 					react.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
-						message !== null && react.createElement("span", { style: { fontSize: 13, color: "#27ae60" } }, message),
-						react.createElement("span", { style: { fontSize: 12, color: "#999" } }, "提示: 回退 = 从该回合之后派生新会话并自动打开; 原会话保留不动。")
+						message !== null && react.createElement("span", { style: { fontSize: 13, color: "var(--dsw-alias-state-success-primary)" } }, message),
+						react.createElement("span", { style: { fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, "提示: 回退 = 从该回合之后派生新会话并自动打开; 原会话保留不动。")
 					)
 				)
 			);

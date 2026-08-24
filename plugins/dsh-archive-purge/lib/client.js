@@ -91,13 +91,13 @@ window.__ModuleLoader__.load({
 
 			// 样式: 列表容器
 			const listStyle = {
-				border: "1px solid #ddd",
+				border: "1px solid var(--dsw-alias-border-l1)",
 				borderRadius: 4,
 				maxHeight: 320,
 				overflowY: "auto",
 				fontSize: 13,
 				lineHeight: 1.6,
-				background: "#fafafa"
+				background: "var(--dsw-alias-bg-layer-2)"
 			};
 			// 行样式
 			const rowBase = {
@@ -105,7 +105,7 @@ window.__ModuleLoader__.load({
 				alignItems: "center",
 				gap: 8,
 				padding: "6px 10px",
-				borderBottom: "1px solid #eee",
+				borderBottom: "1px solid var(--dsw-alias-border-l1)",
 				cursor: "pointer"
 			};
 			// 标签文字 (会话 id + 标题)
@@ -117,16 +117,16 @@ window.__ModuleLoader__.load({
 			};
 			// 运行中标记
 			const runningStyle = {
-				fontSize: 11,
-				color: "#e67e22",
-				marginLeft: 6
-			};
+			fontSize: 11,
+			color: "var(--dsw-alias-state-warn-primary)",
+			marginLeft: 6
+		};
 			// 工作区标记
 			const wsStyle = {
-				fontSize: 11,
-				color: "#888",
-				marginLeft: 6
-			};
+			fontSize: 11,
+			color: "var(--dsw-alias-label-tertiary)",
+			marginLeft: 6
+		};
 
 			return react.createElement(
 				"div",
@@ -142,13 +142,13 @@ window.__ModuleLoader__.load({
 				// 加载中提示
 				sessions === null && !error && react.createElement(
 					"p",
-					{ style: { color: "#888", margin: 0, fontSize: 13 } },
+					{ style: { color: "var(--dsw-alias-label-secondary)", margin: 0, fontSize: 13 } },
 					busy ? "加载中…" : "加载中…"
 				),
 				// 错误提示
 				error !== null && react.createElement(
 					"p",
-					{ style: { color: "#c0392b", margin: 0, fontSize: 13 } },
+					{ style: { color: "var(--dsw-alias-state-error-primary)", margin: 0, fontSize: 13 } },
 					error
 				),
 				// 列表
@@ -160,7 +160,7 @@ window.__ModuleLoader__.load({
 						"div",
 						{
 							key: "__all__",
-							style: { ...rowBase, background: "#f0f0f0", fontWeight: "bold" },
+							style: { ...rowBase, background: "var(--dsw-alias-interactive-bg-hover)", fontWeight: "bold" },
 							onClick: toggleAll
 						},
 						react.createElement("input", {
@@ -170,8 +170,8 @@ window.__ModuleLoader__.load({
 							style: { cursor: "pointer", margin: 0 },
 							onClick: (e) => e.stopPropagation()
 						}),
-						react.createElement("span", { style: { fontSize: 12, color: "#555" } }, "全选 / 全不选"),
-						react.createElement("span", { style: { fontSize: 11, color: "#999", marginLeft: "auto" } },
+						react.createElement("span", { style: { fontSize: 12, color: "var(--dsw-alias-label-secondary)" } }, "全选 / 全不选"),
+						react.createElement("span", { style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)", marginLeft: "auto" } },
 							"共 " + sessions.length + " 个归档会话")
 					),
 					// 会话行
@@ -193,7 +193,7 @@ window.__ModuleLoader__.load({
 							"span",
 							{ style: labelStyle, title: s.id + (s.title ? " - " + s.title : "") },
 							s.title || "(无标题)",
-							react.createElement("span", { style: { fontSize: 11, color: "#aaa", marginLeft: 4 } },
+							react.createElement("span", { style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)", marginLeft: 4 } },
 								s.id.slice(0, 28) + "…")
 						),
 						s.running && react.createElement("span", { style: runningStyle }, "[运行中]"),
@@ -204,7 +204,7 @@ window.__ModuleLoader__.load({
 				// 无归档提示
 				Array.isArray(sessions) && sessions.length === 0 && !error && react.createElement(
 					"p",
-					{ style: { color: "#888", margin: 0, fontSize: 13 } },
+					{ style: { color: "var(--dsw-alias-label-secondary)", margin: 0, fontSize: 13 } },
 					"没有已归档的会话。"
 				),
 				// 操作提示 + 刷新按钮 (仅查看, 不提供删除)
@@ -213,7 +213,7 @@ window.__ModuleLoader__.load({
 					{ style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
 					react.createElement(
 						"span",
-						{ style: { fontSize: 13, color: "#b8860b", background: "#fdf6e3", padding: "6px 12px", borderRadius: 4 } },
+						{ style: { fontSize: 13, color: "var(--dsw-alias-state-warn-label)", background: "var(--dsw-alias-state-warn-secondary)", padding: "6px 12px", borderRadius: 4 } },
 						"删除/恢复请到启动器 GUI：停止服务 → 「数据维护」→「会话管理」"
 					),
 					react.createElement(

@@ -120,7 +120,10 @@ window.__ModuleLoader__.load({
 		function loadStore() {
 			try {
 				const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
-				if (Array.isArray(saved.list)) S.list = saved.list;
+				if (Array.isArray(saved.list)) {
+					// 旧版本清单没有 kind 字段, 一律按"视频"兼容处理。
+					S.list = saved.list.map((item) => Object.assign({ kind: "video" }, item));
+				}
 				if (typeof saved.volume === "number") S.volume = saved.volume;
 				if (typeof saved.opacity === "number") S.opacity = saved.opacity;
 				if (typeof saved.loop === "boolean") S.loop = saved.loop;
@@ -173,10 +176,35 @@ window.__ModuleLoader__.load({
 				else stop();
 			} else {
 				playListIndex(S.cur + 1);
+		}
+	}
+
+	/** 当前正在播放的媒体项 (试播优先, 其次是清单当前项); 均无则返回 null。 */
+	function currentItem() {
+		if (S.preview) return S.preview;
+		if (S.cur >= 0 && S.list[S.cur]) return S.list[S.cur];
+		return null;
+	}
+
+	/** 依据当前播放项的媒体类型切换呈现方式:
+	 *   视频: 背景板全透明, 露出作为壁纸的 <video> 画面 (原「观星」影画效果);
+	 *   音频: 背景板保持不透明(原生纯色壁纸), 隐藏 <video> 画面, 只放声音 = 纯音乐模式。 */
+	function applyMediaMode() {
+		const item = currentItem();
+		const isAudioMode = !!(item && item.kind === "audio");
+		setBackgroundActive(!isAudioMode);
+		if (videoEl) {
+			if (isAudioMode) {
+				// 纯音乐: 藏起画面, 保持原生背景板可见, <video> 仅作音轨在后台静音播放。
+				videoEl.style.display = "none";
+			} else {
+				videoEl.style.display = "";
+				videoEl.style.opacity = String(S.opacity);
 			}
 		}
+	}
 
-		/** 开启背景并播放清单里某项。 */
+	/** 开启背景并播放清单里某项。 */
 		function playListIndex(index) {
 			if (!S.list.length) { setStatus("请先往播放清单里添加视频"); return; }
 			const idx = Math.max(0, Math.min(index, S.list.length - 1));
@@ -188,18 +216,18 @@ window.__ModuleLoader__.load({
 			video.loop = false;
 			video.volume = S.volume;
 			video.src = S.list[idx].url;
-			video.play()
-				.then(() => { S.playing = true; })
-				.catch(() => { S.playing = false; });
-			S.active = true;
-			setBackgroundActive(true);
-			updatePlayIcon();
-			setStatus("播放中: " + S.list[idx].name);
-			renderPlaylist();
-		}
+		video.play()
+			.then(() => { S.playing = true; })
+			.catch(() => { S.playing = false; });
+		S.active = true;
+		applyMediaMode();
+		updatePlayIcon();
+		setStatus("播放中: " + S.list[idx].name);
+		renderPlaylist();
+	}
 
-		/** 试播单曲 (不写入清单), 播完即回到默认背景。 */
-		function playPreview(url, displayName) {
+		/** 试播单曲 (不写入清单), 播完即回到默认背景。kind 用于区分视频/纯音乐模式。 */
+		function playPreview(url, displayName, kind) {
 			const video = ensureVideo();
 			video.volume = S.volume;
 			video.src = url;
@@ -207,9 +235,9 @@ window.__ModuleLoader__.load({
 				.then(() => { S.playing = true; })
 				.catch(() => { S.playing = false; });
 			S.cur = -1;
-			S.preview = { name: displayName, url };
+			S.preview = { name: displayName, url, kind: kind || "video" };
 			S.active = true;
-			setBackgroundActive(true);
+			applyMediaMode();
 			updatePlayIcon();
 			setStatus("试播: " + displayName);
 		}
@@ -243,6 +271,7 @@ window.__ModuleLoader__.load({
 				videoEl.pause();
 				videoEl.removeAttribute("src");
 				try { videoEl.load(); } catch (error) { /* 忽略 */ }
+				videoEl.style.display = "";   // 复位显示, 避免下次视频播放被"纯音乐模式"的隐藏残留影响
 				if (videoEl.parentNode) {
 					try { videoEl.parentNode.removeChild(videoEl); } catch (error) { /* 忽略 */ }
 				}
@@ -391,7 +420,7 @@ window.__ModuleLoader__.load({
 			if (!listEl) return;
 			listEl.textContent = "";
 			if (!S.files.length) {
-				listEl.appendChild(el("div", { className: "dsw-mbg-tip" }, "该目录下没有可播放的视频 (支持 mp4/webm/m4v/mov/ogg)"));
+				listEl.appendChild(el("div", { className: "dsw-mbg-tip" }, "该目录下没有可播放的媒体（支持视频 mp4/webm/mkv/mov/avi 等，音频 mp3/wav/flac/m4a 等）"));
 				return;
 			}
 			for (const file of S.files) {
@@ -401,7 +430,7 @@ window.__ModuleLoader__.load({
 						className: "dsw-mbg-act",
 						title: "试播",
 						textContent: "▷",
-						on: { click: (ev) => { ev.stopPropagation(); playPreview(file.url, file.name); } },
+						on: { click: (ev) => { ev.stopPropagation(); playPreview(file.url, file.name, file.kind); } },
 					}),
 					el("button", {
 						className: "dsw-mbg-act",
@@ -425,7 +454,7 @@ window.__ModuleLoader__.load({
 				if (playNow) playListIndex(S.list.findIndex((item) => item.url === file.url));
 				return;
 			}
-			S.list.push({ name: file.name, url: file.url });
+			S.list.push({ name: file.name, url: file.url, kind: file.kind || "video" });
 			saveStore();
 			renderPlaylist();
 			updateStatus();
@@ -477,43 +506,43 @@ window.__ModuleLoader__.load({
 			const css = [
 				'#dsw-mbg-btn{cursor:pointer;}' ,
 				'#dsw-mbg-panel{position:fixed;right:14px;top:14px;width:340px;height:70vh;max-height:560px;' +
-					'display:none;flex-direction:column;z-index:2147483001;background:rgba(24,28,36,.78);' +
-					'border:1px solid rgba(255,255,255,.14);border-radius:12px;color:#dbe2ec;font-size:13px;' +
+					'display:none;flex-direction:column;z-index:2147483001;background:var(--dsw-alias-bg-layer-2);' +
+				'border:1px solid var(--dsw-alias-border-l1);border-radius:12px;color:var(--dsw-alias-label-primary);font-size:13px;' +
 					'font-family:inherit;backdrop-filter:blur(14px);}',
-				'#dsw-mbg-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.1);}',
+				'#dsw-mbg-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l1);}',
 				'#dsw-mbg-title{flex:1;font-weight:600;font-size:14px;}',
-				'.dsw-mbg-b{padding:4px 10px;border-radius:7px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.07);color:#dbe2ec;font-size:12px;cursor:pointer;}',
-				'.dsw-mbg-b:hover{background:rgba(255,255,255,.15);}',
-				'.dsw-mbg-b.on{background:#3b82f6;border-color:#3b82f6;color:#fff;}',
-				'#dsw-mbg-dirrow{display:flex;gap:6px;align-items:center;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.08);}',
-				'#dsw-mbg-dir{flex:1;min-width:0;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.22);border-radius:6px;color:#fff;font-size:12.5px;padding:5px 8px;}',
+				'.dsw-mbg-b{padding:4px 10px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-size:12px;cursor:pointer;}',
+				'.dsw-mbg-b:hover{background:var(--dsw-alias-interactive-bg-hover-solid);}',
+				'.dsw-mbg-b.on{background:var(--dsw-alias-button-primary-fill);border-color:var(--dsw-alias-button-primary-fill);color:#fff;}',
+				'#dsw-mbg-dirrow{display:flex;gap:6px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--dsw-alias-border-l1);}',
+				'#dsw-mbg-dir{flex:1;min-width:0;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:6px;color:var(--dsw-alias-label-primary);font-size:12.5px;padding:5px 8px;}',
 				'.dsw-mbg-block{padding:6px 10px;}',
-				'.dsw-mbg-cap{font-size:11.5px;color:#8b95a5;margin:4px 2px;}',
+				'.dsw-mbg-cap{font-size:11.5px;color:var(--dsw-alias-label-tertiary);margin:4px 2px;}',
 				'#dsw-mbg-list,#dsw-mbg-playlist{overflow-y:auto;min-height:70px;max-height:150px;}',
 				'.dsw-mbg-item{display:flex;gap:6px;align-items:center;width:100%;padding:4px 6px;border-radius:6px;cursor:pointer;}',
-				'.dsw-mbg-item:hover{background:rgba(255,255,255,.09);}',
-				'.dsw-mbg-item.cur{background:rgba(59,130,246,.28);}',
+				'.dsw-mbg-item:hover{background:var(--dsw-alias-interactive-bg-hover);}',
+				'.dsw-mbg-item.cur{background:var(--dsw-alias-interactive-bg-hover-active);}',
 				'.dsw-mbg-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
-				'.dsw-mbg-act{flex-shrink:0;cursor:pointer;border:0;background:transparent;color:#9aa4b2;padding:0 4px;font-size:13px;}',
-				'.dsw-mbg-act:hover{color:#fff;}',
-				'.dsw-mbg-tip{color:#8b95a5;font-size:12px;padding:6px;}',
-				'#dsw-mbg-ctl{border-top:1px solid rgba(255,255,255,.1);padding:8px 12px 10px;display:flex;flex-direction:column;gap:6px;}',
+				'.dsw-mbg-act{flex-shrink:0;cursor:pointer;border:0;background:transparent;color:var(--dsw-alias-label-secondary);padding:0 4px;font-size:13px;}',
+				'.dsw-mbg-act:hover{color:var(--dsw-alias-label-primary);}',
+				'.dsw-mbg-tip{color:var(--dsw-alias-label-tertiary);font-size:12px;padding:6px;}',
+				'#dsw-mbg-ctl{border-top:1px solid var(--dsw-alias-border-l1);padding:8px 12px 10px;display:flex;flex-direction:column;gap:6px;}',
 				'.dsw-mbg-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
-				'.dsw-mbg-lab{font-size:11.5px;color:#8b95a5;min-width:34px;}',
-				'.dsw-mbg-vol{flex:1;min-width:80px;accent-color:#3b82f6;}',
-				'#dsw-mbg-status{color:#9aa4b2;font-size:11.5px;padding:6px 12px;border-top:1px solid rgba(255,255,255,.08);min-height:16px;}',
+				'.dsw-mbg-lab{font-size:11.5px;color:var(--dsw-alias-label-tertiary);min-width:34px;}',
+				'.dsw-mbg-vol{flex:1;min-width:80px;accent-color:var(--dsw-alias-button-primary-fill);}',
+				'#dsw-mbg-status{color:var(--dsw-alias-label-secondary);font-size:11.5px;padding:6px 12px;border-top:1px solid var(--dsw-alias-border-l1);min-height:16px;}',
 			// 目录浏览弹窗 (覆盖层)。
-			'#dsw-mbg-browse{position:fixed;inset:0;z-index:2147483002;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);}',
-			'#dsw-mbg-browse .box{width:440px;max-width:90vw;height:60vh;display:flex;flex-direction:column;background:rgba(24,28,36,.96);border:1px solid rgba(255,255,255,.16);border-radius:12px;color:#dbe2ec;font-size:13px;}',
-			'#dsw-mbg-browse .bd{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.1);}',
-			'#dsw-mbg-browse .bpath{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;color:#cfd6e1;}',
+			'#dsw-mbg-browse{position:fixed;inset:0;z-index:2147483002;display:none;align-items:center;justify-content:center;background:var(--dsw-alias-bg-mask-2);}',
+			'#dsw-mbg-browse .box{width:440px;max-width:90vw;height:60vh;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-3);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;color:var(--dsw-alias-label-primary);font-size:13px;}',
+			'#dsw-mbg-browse .bd{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l1);}',
+			'#dsw-mbg-browse .bpath{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;color:var(--dsw-alias-label-secondary);}',
 			'#dsw-mbg-browse .bbody{flex:1;overflow-y:auto;padding:6px;}',
 			'#dsw-mbg-browse .brow{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:6px;cursor:pointer;}',
-			'#dsw-mbg-browse .brow:hover{background:rgba(255,255,255,.09);}',
+			'#dsw-mbg-browse .brow:hover{background:var(--dsw-alias-interactive-bg-hover);}',
 			'#dsw-mbg-browse .brow .ico{width:18px;text-align:center;flex-shrink:0;}',
 			'#dsw-mbg-browse .brow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
-			'#dsw-mbg-browse .bempty{color:#8b95a5;font-size:12.5px;padding:14px;text-align:center;}',
-			'#dsw-mbg-browse .bfoot{display:flex;align-items:center;gap:8px;padding:10px 12px;border-top:1px solid rgba(255,255,255,.1);}',
+			'#dsw-mbg-browse .bempty{color:var(--dsw-alias-label-tertiary);font-size:12.5px;padding:14px;text-align:center;}',
+			'#dsw-mbg-browse .bfoot{display:flex;align-items:center;gap:8px;padding:10px 12px;border-top:1px solid var(--dsw-alias-border-l1);}',
 			// 动态背景开关: 播放视频时(<html>.dsw-mbg-active)把 WebUI 整窗背景板置为透明,
 			// 让作为背景的 <video> 透出; 停止时移除该类即恢复 DeepSeek Harness 原生纯色壁纸。
 			// 只透明化页面底座 token(--dsw-alias-bg-base, 即空壁纸/聊天画布背景),
@@ -539,8 +568,8 @@ window.__ModuleLoader__.load({
 				on: { click: togglePanel },
 			});
 			btn.style.cssText = "position:fixed;right:14px;bottom:14px;z-index:2147483000;padding:8px 14px;" +
-				"border-radius:20px;border:1px solid rgba(255,255,255,.25);background:rgba(18,20,26,.78);" +
-				"color:#e8ecf2;font-size:13px;backdrop-filter:blur(6px);";
+				"border-radius:20px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);" +
+				"color:var(--dsw-alias-label-primary);font-size:13px;backdrop-filter:blur(6px);";
 			btn.textContent = "🎬 观星";
 			rootEl.appendChild(btn);
 

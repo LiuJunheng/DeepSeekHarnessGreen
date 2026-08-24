@@ -64,19 +64,20 @@ window.__ModuleLoader__.load({
 				}
 			}, []);
 
-			const box = { border: "1px solid #ddd", borderRadius: 4, padding: 12, maxWidth: 640, fontSize: 13, lineHeight: 1.6, background: "#fafafa" };
+			// 面板边框/底色走语义变量，随 DSH 深浅主题自动切换
+			const box = { border: "1px solid var(--dsw-alias-border-l1)", borderRadius: 4, padding: 12, maxWidth: 640, fontSize: 13, lineHeight: 1.6, background: "var(--dsw-alias-bg-layer-2)" };
 			const rowStyle = { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" };
-			const hintStyle = { color: "#888", margin: 0, fontSize: 13 };
+			const hintStyle = { color: "var(--dsw-alias-label-tertiary)", margin: 0, fontSize: 13 };
 
 			return react.createElement(
 				"div",
 				{ style: { display: "flex", flexDirection: "column", gap: 10, padding: 4, maxWidth: 680 } },
 				react.createElement(
-					"p",
-					{ style: { margin: 0, fontSize: 13, lineHeight: 1.5 } },
-					"把「Session log」按钮导出的 ZIP（或单个 .jsonl 日志）导入回本机。导入后会按日志头部的 cwd 写回持久化目录，并自动挂到对应工作区；" +
-					"刷新会话列表即可看到。导入的会话与原会话 id 相同，重复导入同一会话会被跳过。"
-				),
+				"p",
+				{ style: { margin: 0, fontSize: 13, lineHeight: 1.5, color: "var(--dsw-alias-label-secondary)" } },
+				"把「Session log」按钮导出的 ZIP（或单个 .jsonl 日志）导入回本机。导入后会按日志头部的 cwd 写回持久化目录，并自动挂到对应工作区；" +
+				"刷新会话列表即可看到。导入的会话与原会话 id 相同，重复导入同一会话会被跳过。"
+			),
 				react.createElement(
 					"div",
 					{ style: box },
@@ -109,20 +110,20 @@ window.__ModuleLoader__.load({
 				),
 				error !== null && react.createElement(
 					"p",
-					{ style: { color: "#c0392b", margin: 0, fontSize: 13 } },
+					{ style: { color: "var(--dsw-alias-state-error-primary)", margin: 0, fontSize: 13 } },
 					error
 				),
 				result !== null && react.createElement(
 					"div",
-					{ style: { ...box, background: "#f0f7f0", borderColor: "#bcd9bc" } },
+					{ style: { ...box, background: "var(--dsw-alias-state-success-secondary)", borderColor: "var(--dsw-alias-state-success-primary)" } },
 					react.createElement(
 						"p",
-						{ style: { margin: "0 0 6px 0", fontWeight: "bold", fontSize: 13 } },
+						{ style: { margin: "0 0 6px 0", fontWeight: "bold", fontSize: 13, color: "var(--dsw-alias-label-primary)" } },
 						"导入结果"
 					),
 					react.createElement(
 						"div",
-						{ style: { display: "flex", flexDirection: "column", gap: 4, fontSize: 13 } },
+						{ style: { display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: "var(--dsw-alias-label-secondary)" } },
 						react.createElement("span", null, "会话: " + result.sessionId),
 						react.createElement("span", null, "格式: " + (result.compression === "none" ? "明文 JSONL" : "zstd 压缩 JSONL")),
 						react.createElement("span", null, "写入 " + (result.imported ? result.imported.length : 0) + " 份日志" +
@@ -139,7 +140,7 @@ window.__ModuleLoader__.load({
 						),
 						result.note && react.createElement(
 							"span",
-							{ style: { color: "#666" } },
+							{ style: { color: "var(--dsw-alias-label-tertiary)" } },
 							result.note
 						)
 					)

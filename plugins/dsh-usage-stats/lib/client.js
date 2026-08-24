@@ -219,13 +219,14 @@ window.__ModuleLoader__.load({
 			const inputStyle = {
 				width: 64,
 				padding: "3px 6px",
-				border: "1px solid #ccc",
+				border: "1px solid #d0d0d0",
 				borderRadius: 4,
 				fontSize: 12,
 				textAlign: "right",
 			};
-			const th = { padding: "6px 10px", textAlign: "left", fontSize: 12, color: "#555", borderBottom: "1px solid #ddd" };
-			const td = { padding: "4px 10px", fontSize: 12 };
+			const th = { padding: "6px 10px", textAlign: "left", fontSize: 12, color: "#555555", borderBottom: "1px solid #e6e6e6" };
+			// 价格表卡片背景固定浅色 (#ffffff)，表格内文字必须固定深色，否则深色主题下会继承页面白字、白字落白底看不清
+			const td = { padding: "4px 10px", fontSize: 12, color: "#1f1f1f" };
 
 			return react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, [
 				react.createElement("table", { key: "tbl", style: { borderCollapse: "collapse", width: "100%", maxWidth: 560 } }, [
@@ -285,7 +286,7 @@ window.__ModuleLoader__.load({
 				react.createElement("div", { key: "btns", style: { display: "flex", gap: 8, flexWrap: "wrap" } }, [
 					react.createElement("button", { key: "save", type: "button", style: { padding: "4px 14px", cursor: "pointer", fontSize: 12 }, onClick: save }, "保存价格"),
 					react.createElement("button", { key: "reset", type: "button", style: { padding: "4px 14px", cursor: "pointer", fontSize: 12 }, onClick: reset }, "恢复默认"),
-					react.createElement("span", { key: "tip", style: { fontSize: 11, color: "#999", alignSelf: "center" } },
+					react.createElement("span", { key: "tip", style: { fontSize: 11, color: "#8a8f98", alignSelf: "center" } },
 						"单价 = 元 / 每百万 tokens；费用 = 输入(未命中)×单价 + 输入(命中)×单价 + 输出×单价，思考 token 已计入输出不重复计费；默认按 DeepSeek 官方高峰时段价（北京 9:00-12:00 / 14:00-18:00，高峰为低谷 2 倍），请按实际价格/时段修改"
 					),
 				]),
@@ -294,7 +295,9 @@ window.__ModuleLoader__.load({
 
 		// ---- 主面板 ----
 
-		/** 元信息小标签 (label + value, 自动换行) */
+		/** 元信息小标签 (label + value, 自动换行)。
+		 *  背景框固定浅灰底、文字固定深色，不随主题变化（因为背景框颜色不会变，
+		 *  若文字随主题变白会在白框上不可读）。 */
 		function MetaChip({ label, value, valueStyle }) {
 			return react.createElement("span", {
 				style: {
@@ -308,8 +311,8 @@ window.__ModuleLoader__.load({
 					whiteSpace: "nowrap",
 				},
 			}, [
-				react.createElement("span", { key: "l", style: { color: "#888" } }, label),
-				react.createElement("span", { key: "v", style: { fontWeight: 500, color: "#333", ...(valueStyle || {}) } }, value),
+				react.createElement("span", { key: "l", style: { color: "#8a8f98" } }, label),
+				react.createElement("span", { key: "v", style: { fontWeight: 500, color: "#2f3540", ...(valueStyle || {}) } }, value),
 			]);
 		}
 
@@ -320,10 +323,10 @@ window.__ModuleLoader__.load({
 			const expanded = detail && detail.id === s.id;
 
 			const cardStyle = {
-				border: "1px solid #ddd",
+				border: "1px solid #dddddd",
 				borderRadius: 8,
 				padding: "10px 12px",
-				background: "#fff",
+				background: "#ffffff",
 				marginBottom: 10,
 			};
 			const titleStyle = {
@@ -331,7 +334,7 @@ window.__ModuleLoader__.load({
 				minWidth: 0,
 				fontSize: 13,
 				fontWeight: 600,
-				color: "#1f2329",
+				color: "#1f1f1f",
 				lineHeight: 1.5,
 				wordBreak: "break-word",
 				overflowWrap: "break-word",
@@ -340,7 +343,7 @@ window.__ModuleLoader__.load({
 				marginTop: 2,
 				fontFamily: "Consolas, Menlo, monospace",
 				fontSize: 11,
-				color: "#999",
+				color: "#8a8f98",
 				overflow: "hidden",
 				textOverflow: "ellipsis",
 				whiteSpace: "nowrap",
@@ -403,17 +406,18 @@ window.__ModuleLoader__.load({
 			]);
 		}
 
-		/** 会话明细: 汇总行 + 逐回合卡片 (用户消息独占整行) */
+		/** 会话明细: 汇总行 + 逐回合卡片 (用户消息独占整行)。
+		 *  卡片内文字固定深色（背景框固定浅色，不随主题变化）。 */
 		function DetailBody({ detail, prices, session }) {
 			const d = detail;
 			const bodyStyle = {
 				marginTop: 10,
-				borderTop: "1px solid #eee",
+				borderTop: "1px solid #e6e6e6",
 				paddingTop: 10,
 			};
 
 			if (d === null) {
-				return react.createElement("div", { style: { ...bodyStyle, color: "#888", fontSize: 12 } }, "加载中…");
+				return react.createElement("div", { style: { ...bodyStyle, color: "#8a8f98", fontSize: 12 } }, "加载中…");
 			}
 			if (d.error) {
 				return react.createElement("div", { style: { ...bodyStyle, color: "#c0392b", fontSize: 12 } }, "明细加载失败: " + d.error);
@@ -443,7 +447,7 @@ window.__ModuleLoader__.load({
 					react.createElement("div", {
 						key: ti,
 						style: {
-							border: "1px solid #eee",
+							border: "1px solid #dddddd",
 							borderRadius: 6,
 							padding: "8px 10px",
 							background: "#fafafa",
@@ -456,7 +460,7 @@ window.__ModuleLoader__.load({
 							style: {
 								fontSize: 12.5,
 								lineHeight: 1.6,
-								color: "#333",
+								color: "#1f1f1f",
 								wordBreak: "break-word",
 								overflowWrap: "break-word",
 							},
@@ -470,18 +474,18 @@ window.__ModuleLoader__.load({
 								flexWrap: "wrap",
 								gap: "2px 12px",
 								fontSize: 11.5,
-								color: "#777",
+								color: "#555555",
 							},
 						}, [
-							react.createElement("span", { key: "turn", style: { fontWeight: 600, color: "#555" } }, "回合 #" + t.turn),
+							react.createElement("span", { key: "turn", style: { fontWeight: 600, color: "#555555" } }, "回合 #" + t.turn),
 							react.createElement("span", { key: "steps" }, "步骤 " + fmtInt(t.steps)),
 							react.createElement("span", { key: "tools" }, "工具调用 " + fmtInt(t.toolCalls)),
 							react.createElement("span", { key: "out" }, "输出 tk " + fmtInt(tSum.total.outputTokens)),
-							react.createElement("span", { key: "cost", style: { fontWeight: 600, color: "#555" } }, "估算 " + fmtCost(tSum.cost)),
-							react.createElement("span", { key: "model", style: { fontFamily: "Consolas, Menlo, monospace", color: "#888" } }, turnModels),
+							react.createElement("span", { key: "cost", style: { fontWeight: 600, color: "#555555" } }, "估算 " + fmtCost(tSum.cost)),
+							react.createElement("span", { key: "model", style: { fontFamily: "Consolas, Menlo, monospace", color: "#8a8f98" } }, turnModels),
 							react.createElement("span", {
 								key: "status",
-								style: { color: t.complete ? "#27ae60" : "#e67e22", fontWeight: 600 },
+								style: { color: t.complete ? "#1a7f37" : "#b25e00", fontWeight: 600 },
 							}, t.complete ? "完成" : "未完"),
 						]),
 					])
@@ -501,7 +505,7 @@ window.__ModuleLoader__.load({
 						valueStyle: { fontFamily: "Consolas, Menlo, monospace", fontSize: 11 },
 					})
 				)),
-				turnBlocks.length === 0 && react.createElement("div", { key: "empty", style: { color: "#888", fontSize: 12, padding: "4px 0" } }, "没有回合数据。"),
+				turnBlocks.length === 0 && react.createElement("div", { key: "empty", style: { color: "#8a8f98", fontSize: 12, padding: "4px 0" } }, "没有回合数据。"),
 				turnBlocks,
 			]);
 		}
@@ -557,9 +561,9 @@ window.__ModuleLoader__.load({
 
 			// ---- 样式 ----
 			const rootStyle = { display: "flex", flexDirection: "column", gap: 12, padding: 4, maxWidth: 1080 };
-			const titleStyle = { margin: 0, fontSize: 14, fontWeight: 600 };
-			const descStyle = { margin: 0, fontSize: 13, lineHeight: 1.6, color: "#555" };
-			const cardStyle = { border: "1px solid #ddd", borderRadius: 6, padding: "10px 12px", background: "#fff" };
+			const titleStyle = { margin: 0, fontSize: 14, fontWeight: 600, color: "var(--dsw-alias-label-primary)" };
+			const descStyle = { margin: 0, fontSize: 13, lineHeight: 1.6, color: "var(--dsw-alias-label-secondary)" };
+			const cardStyle = { border: "1px solid #dddddd", borderRadius: 6, padding: "10px 12px", background: "#ffffff" };
 			const btn = { padding: "4px 10px", cursor: "pointer", fontSize: 12 };
 
 			// ---- 总览 (全会话合计) ----
@@ -591,8 +595,8 @@ window.__ModuleLoader__.load({
 
 			const statCell = (label, value) =>
 				react.createElement("div", { key: label, style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 96 } }, [
-					react.createElement("span", { key: "l", style: { fontSize: 11, color: "#888" } }, label),
-					react.createElement("span", { key: "v", style: { fontSize: 16, fontWeight: 600 } }, value),
+					react.createElement("span", { key: "l", style: { fontSize: 11, color: "#8a8f98" } }, label),
+					react.createElement("span", { key: "v", style: { fontSize: 16, fontWeight: 600, color: "#1f1f1f" } }, value),
 				]);
 
 			// ---- 会话列表 (卡片式) ----
@@ -621,7 +625,7 @@ window.__ModuleLoader__.load({
 					"当前服务运行中的会话可能仍在写入，统计为截至刷新时的数据。"
 				),
 
-				error !== null && react.createElement("p", { key: "err", style: { color: "#c0392b", margin: 0, fontSize: 13 } }, error),
+				error !== null && react.createElement("p", { key: "err", style: { color: "var(--dsw-alias-state-error-primary)", margin: 0, fontSize: 13 } }, error),
 
 				// 总览
 				overview !== null && react.createElement("div", { key: "ov", style: cardStyle }, [
@@ -635,7 +639,7 @@ window.__ModuleLoader__.load({
 						statCell("思考推理", fmtInt(overview.total.reasoningTokens)),
 						statCell("估算费用", fmtCost(overview.cost)),
 					]),
-					react.createElement("div", { key: "row2", style: { display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, color: "#666" } },
+					react.createElement("div", { key: "row2", style: { display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, color: "#555555" } },
 						Object.keys(overview.perModel).map((model) =>
 							react.createElement("span", { key: model, style: { fontFamily: "Consolas, Menlo, monospace" } },
 								model + ": 入 " + fmtInt(overview.perModel[model].inputTokens) +
@@ -649,7 +653,7 @@ window.__ModuleLoader__.load({
 
 				// 价格表 (可折叠)
 				react.createElement("details", { key: "prices", style: cardStyle }, [
-					react.createElement("summary", { key: "s", style: { cursor: "pointer", fontWeight: 600, fontSize: 13 } }, "价格表（费用估算用）"),
+					react.createElement("summary", { key: "s", style: { cursor: "pointer", fontWeight: 600, fontSize: 13, color: "#1f1f1f" } }, "价格表（费用估算用）"),
 					react.createElement("div", { key: "b", style: { marginTop: 8 } },
 						prices !== null && react.createElement(PriceEditor, { prices, setPrices, onChange: (next) => setPrices(next) })
 					),
@@ -657,8 +661,8 @@ window.__ModuleLoader__.load({
 
 				// 会话列表 (卡片式, 标题独占一行)
 				react.createElement("div", { key: "list" }, [
-					sessions === null && !error && react.createElement("div", { key: "loading", style: { padding: 12, color: "#888" } }, "加载中…"),
-					Array.isArray(sessions) && sessions.length === 0 && !error && react.createElement("div", { key: "empty", style: { padding: 12, color: "#888" } }, "没有找到任何会话。"),
+					sessions === null && !error && react.createElement("div", { key: "loading", style: { padding: 12, color: "var(--dsw-alias-label-tertiary)" } }, "加载中…"),
+					Array.isArray(sessions) && sessions.length === 0 && !error && react.createElement("div", { key: "empty", style: { padding: 12, color: "var(--dsw-alias-label-tertiary)" } }, "没有找到任何会话。"),
 					sessionCards,
 				]),
 
@@ -667,7 +671,7 @@ window.__ModuleLoader__.load({
 					react.createElement("button", { key: "refresh", type: "button", disabled: busy, onClick: loadList, style: { ...btn, padding: "6px 16px" } },
 						busy ? "扫描中…" : "刷新统计"
 					),
-					react.createElement("span", { key: "tip", style: { fontSize: 11, color: "#999" } }, "日志较大时会话多时扫描可能需要几秒"),
+					react.createElement("span", { key: "tip", style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)" } }, "日志较大时会话多时扫描可能需要几秒"),
 				]),
 			]);
 		}

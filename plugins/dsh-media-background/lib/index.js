@@ -27,14 +27,36 @@ const inject = ["webServer"];
 
 const BASE = "/__dsh/media-bg";
 const GUARD_HEADER = "x-dsh-media-bg";
-// 只把这些扩展名当作可播放的视频 (mkv/avi 等浏览器原生不一定能解, 不列入)。
-const VIDEO_EXTS = new Set(["mp4", "webm", "m4v", "mov", "ogg"]);
+// 可作背景播放的媒体扩展名清单, 分两类:
+//   VIDEO_EXTS: 显示画面 (可作为网页背景壁纸)
+//   AUDIO_EXTS: 纯音频 (mp3/wav 等, 只出声不显示画面, 保留原生背景板 = 纯音乐模式)
+// 说明: mkv/avi/flv/wmv 等能否解出来取决于浏览器内核与编码, 这里统一列出并交给浏览器尝试,
+//       能放的直接播放, 放不了的会在前端自动跳到下一首, 不影响整体使用。
+const VIDEO_EXTS = new Set(["mp4", "webm", "m4v", "mov", "ogg", "mkv", "avi", "flv", "wmv", "mpg", "mpeg", "ts", "3gp", "m2ts"]);
+const AUDIO_EXTS = new Set(["mp3", "wav", "flac", "aac", "m4a", "wma", "opus", "amr"]);
 const MIME = {
 	mp4: "video/mp4",
 	webm: "video/webm",
 	m4v: "video/x-m4v",
 	mov: "video/quicktime",
 	ogg: "video/ogg",
+	mkv: "video/x-matroska",
+	avi: "video/x-msvideo",
+	flv: "video/x-flv",
+	wmv: "video/x-ms-wmv",
+	mpg: "video/mpeg",
+	mpeg: "video/mpeg",
+	ts: "video/mp2t",
+	"3gp": "video/3gpp",
+	m2ts: "video/mp2t",
+	mp3: "audio/mpeg",
+	wav: "audio/wav",
+	flac: "audio/flac",
+	aac: "audio/aac",
+	m4a: "audio/mp4",
+	wma: "audio/x-ms-wma",
+	opus: "audio/opus",
+	amr: "audio/amr",
 };
 // 面板持久化的目录配置文件 (存 DSH_HOME 下, 由启动器 build_env 注入 DSH_HOME)。
 function dshConfigPath() {
@@ -128,13 +150,15 @@ async function listVideos(dir, base = "") {
 		if (!entry.isFile()) continue;
 		const dot = entry.name.lastIndexOf(".");
 		const ext = dot >= 0 ? entry.name.slice(dot + 1).toLowerCase() : "";
-		if (!VIDEO_EXTS.has(ext)) continue;
+		if (!VIDEO_EXTS.has(ext) && !AUDIO_EXTS.has(ext)) continue;
+		// 判断媒体类型: 纯音频走"纯音乐模式", 其余一律当视频背景。
+		const kind = AUDIO_EXTS.has(ext) ? "audio" : "video";
 		let size = null;
 		try {
 			const info = await stat(full);
 			size = info.size;
 		} catch { /* 无法 stat 的文件仍列出, 大小置空 */ }
-		files.push({ name: relName, path: relName, size, url: "/__dsh/media-bg/stream?path=" + encodeURIComponent(relName) });
+		files.push({ name: relName, path: relName, size, kind, url: "/__dsh/media-bg/stream?path=" + encodeURIComponent(relName) });
 	}
 	// 名称排序 (和 Windows 资源管理器一致的中文友好排序, 逐字 codepoint)。
 	files.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -181,13 +205,31 @@ async function listDrives() {
  */
 const NATIVE_PICK_SCRIPT = [
 	"Add-Type -AssemblyName System.Windows.Forms;",
+	// 取当前前台窗口句柄, 包装成 owner 传给 ShowDialog, 保证对话框模态于前台窗口之上、
+	// 弹到最上层, 不会被其他窗口遮挡 (原无 owner 的 ShowDialog 常被盖住、看似没弹出)。
+	"Add-Type -TypeDefinition @'",
+	"using System;",
+	"using System.Runtime.InteropServices;",
+	"public static class DshMbgWin32 {",
+	"	[DllImport(\"user32.dll\")]",
+	"	public static extern IntPtr GetForegroundWindow();",
+	"}",
+	"'@;",
 	"$folderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog;",
 	"$folderBrowser.Description = 'Select the video background folder';",
 	"$folderBrowser.ShowNewFolderButton = $false;",
 	"if ($env:DSH_PICK_INITIAL -and (Test-Path -LiteralPath $env:DSH_PICK_INITIAL)) {",
 	"	$folderBrowser.SelectedPath = $env:DSH_PICK_INITIAL;",
 	"}",
-	"$result = $folderBrowser.ShowDialog();",
+	"$ownerHwnd = [DshMbgWin32]::GetForegroundWindow();",
+	"if ($ownerHwnd -ne [IntPtr]::Zero) {",
+	"	$nativeWindow = New-Object System.Windows.Forms.NativeWindow;",
+	"	$nativeWindow.AssignHandle($ownerHwnd);",
+	"	try { $result = $folderBrowser.ShowDialog($nativeWindow); }",
+	"	finally { $nativeWindow.ReleaseHandle(); }",
+	"} else {",
+	"	$result = $folderBrowser.ShowDialog();",
+	"}",
 	"if ($result -eq [System.Windows.Forms.DialogResult]::OK) {",
 	"	Write-Output $folderBrowser.SelectedPath;",
 	"	exit 0;",
