@@ -986,6 +986,13 @@
     - **通用经验（主题自适应的分层决策）**：不是"全都随主题"就最好——**锚定在固定浅色背景框里的内容要整组固定（浅框 + 深字）**，不能只让框内文字随主题导致对比度失效；只有框外的页面级文字才随主题。改主题前先分清"哪些是浮在页面底上的文字、哪些是框内文字"。
     - **补漏（同日）**：价格表表格内模型名/兜底行文字仍是白字白底——`td` 样式无显式 `color`、靠继承落到页面主题白字，而价格表卡片背景固定浅色 `#ffffff`。修复：`td` 统一补 `color:"#1f1f1f"`（模型名/兜底行/「添加」按钮等继承后均深字）。教训：**"框内文字固定深色"要逐一检查无显式 `color` 的节点（表格单元格、折叠标题等），不能只改有显式 `var()` 的地方**——正是避坑 #106 第 4 条的翻版，只是这回漏的是"固定深字"一侧。
 
+109. **【内置插件增强】用量统计：接入 DeepSeek 官方 `/user/balance` 展示账户真实余额（2026-08-25，需求 #109）**：
+    - **背景**：插件原本只按价格表**估算**费用（`费用 = 各 token ÷1e6 × 单价`），不是实扣。用户希望看到**账户真实余额**。确认 DeepSeek 官方提供余额接口 `GET https://api.deepseek.com/user/balance`（`Authorization: Bearer <api_key>`，返回 `is_available` + `balance_infos[]`：`currency`/`total_balance`/`granted_balance`/`topped_up_balance`，单位为元）。
+    - **需求（用户明确）**：① 用量统计页展示真实余额，**原估算保留**；② **消息行（对话结束后）把余额和预估消耗一起显示**。
+    - **Key 来源（取值优先级，2026-08-25 实测定位）**：用户在 WebUI 设置面板配置的 key 由 harness 持久化到 `$DSH_HOME/.credentials.yaml`，格式是 `refs:\n  DEEPSEEK_API_KEY: sk-xxx`。宿主端 `readApiKey()` 优先读 `process.env.DEEPSEEK_API_KEY`，读不到再解析该 yaml（去 BOM + 正则取第 1 项）。**Key 只在服务端**：宿主端路由持 Key 调官方接口，绝不传给前端，避免 key 暴露到浏览器。
+    - **实现**：宿主端 `index.js` 新增 `GET /__dsh/usage-stats/balance` 路由（用 node 全局 `fetch` + `AbortController` 8s 超时；未配置/HTTP 非 2xx/超时/异常统一返回 `{ok,configured,error}` 的 200 响应，前端据此区分状态，不抛错）。前端 `client.js` 新增**模块级 5 分钟余额缓存** `getBalancePayload`/`getBalanceCached`/`pickBalanceInfo`/`fmtBalance`，避免消息行每回合重复请求后端；设置页加余额卡（固定浅框深字，与 #108 分层一致，含「刷新余额」强刷），消息行 `TurnTokens` 用 `useEffect(空依赖)` 在组件挂载拉一次，把 `余额 ¥xx` 追加到「本次token」展示项末尾。改动后同步运行副本两个文件（client.js 强刷生效；index.js 为宿主端，**必须重启 dsh 服务**新路由才加载）。
+    - **通用经验（主题自适应的分层决策）**：新增的余额卡沿用 #108 分层——锚定在固定浅色背景框里的内容整组固定（浅框 + 深字），只有框外页面级文字随主题。消息行「本次token」是浮在页面上的说明性文字，余额跟随其主题色即可，不进浅框。
+
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验

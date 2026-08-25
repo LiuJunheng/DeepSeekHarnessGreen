@@ -21,13 +21,41 @@ const inject = ["webServer", "workspaceRegistry"];
 
 const ROUTE_LIST = "/__dsh/usage-stats/list";
 const ROUTE_DETAIL = "/__dsh/usage-stats/detail";
+const ROUTE_BALANCE = "/__dsh/usage-stats/balance";
 const GUARD_HEADER = "x-dsh-usage-stats";
+
+// DeepSeek 官方余额查询接口 (https://api-docs.deepseek.com/zh-cn/api/get-user-balance/)
+const DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance";
 
 const MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
 const USAGE_KEYS = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "reasoningTokens"];
 
 function dshHome() {
 	return process.env.DSH_HOME || join(homedir(), ".dsh");
+}
+
+/**
+ * 读取 DeepSeek API Key。
+ * 优先级: ① 运行进程环境变量 DEEPSEEK_API_KEY; ② DSH_HOME/.credentials.yaml 的 refs.DEEPSEEK_API_KEY
+ * (用户在 WebUI 设置面板里配置的 key 由 harness 持久化到该 yaml)。
+ * 读不到返回 null (前端据此提示未配置)。
+ */
+async function readApiKey() {
+	const fromEnv = process.env.DEEPSEEK_API_KEY;
+	if (fromEnv && typeof fromEnv === "string" && fromEnv.trim().length > 0) {
+		return fromEnv.trim();
+	}
+	try {
+		const raw = await readFile(join(dshHome(), ".credentials.yaml"), "utf8");
+		const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw; // 去 UTF-8 BOM
+		const match = text.match(/^\s*DEEPSEEK_API_KEY\s*:\s*(\S+)\s*$/m);
+		if (match !== null && typeof match[1] === "string" && match[1].length > 0) {
+			return match[1];
+		}
+	} catch {
+		// 忽略: 读不到文件就当未配置
+	}
+	return null;
 }
 
 function sendJson(res, status, payload) {
@@ -365,6 +393,58 @@ function apply(ctx) {
 			}
 		}
 	}), name + ": detail route");
+
+	// 余额查询: 后端用 DeepSeek API key 调 /user/balance, key 不出服务端、不暴露给前端
+	ctx.effect(() => ctx.webServer.register({
+		kind: "exact",
+		path: ROUTE_BALANCE,
+		handler: async (req, res) => {
+			if (req.headers[GUARD_HEADER] !== "1") {
+				res.writeHead(403);
+				res.end();
+				return;
+			}
+			try {
+				const key = await readApiKey();
+				if (!key) {
+					sendJson(res, 200, { ok: false, configured: false, error: "未检测到 DeepSeek API Key，请先在设置面板配置" });
+					return;
+				}
+				const controller = new AbortController();
+				const timer = setTimeout(() => controller.abort(), 8000);
+				let response;
+				try {
+					response = await fetch(DEEPSEEK_BALANCE_URL, {
+						method: "GET",
+						headers: { Accept: "application/json", Authorization: "Bearer " + key },
+						signal: controller.signal,
+					});
+				} finally {
+					clearTimeout(timer);
+				}
+				if (!response.ok) {
+					let detail = "";
+					try {
+						const body = await response.json();
+						if (body && body.error && body.error.message) detail = String(body.error.message);
+					} catch { /* 忽略解析失败 */ }
+					// 401/403 通常是非 DeepSeek key 或 key 已失效, 给平和提示, 不影响其它功能
+					const friendly = (response.status === 401 || response.status === 403)
+						? "当前账户非 DeepSeek，或 API Key 无效，无法读取余额（其余功能不受影响）"
+						: "查询余额失败(HTTP " + response.status + ")" + (detail ? " " + detail : "");
+					sendJson(res, 200, { ok: false, configured: true, http_status: response.status, error: friendly });
+					return;
+				}
+				const data = await response.json();
+				sendJson(res, 200, { ok: true, configured: true, balance: data });
+			} catch (error) {
+				const reason = (error && error.name === "AbortError")
+					? "查询余额超时"
+					: "查询余额异常: " + String((error && error.message) || error);
+				sendJson(res, 200, { ok: false, configured: true, error: reason });
+			}
+		}
+	}), name + ": balance route");
 }
 
 export { apply, inject, name };

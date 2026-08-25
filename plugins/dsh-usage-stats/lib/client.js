@@ -26,6 +26,7 @@ window.__ModuleLoader__.load({
 
 		const ROUTE_LIST = "/__dsh/usage-stats/list";
 		const ROUTE_DETAIL = "/__dsh/usage-stats/detail";
+		const ROUTE_BALANCE = "/__dsh/usage-stats/balance";
 		const GUARD_HEADER = "X-DSH-Usage-Stats";
 		const PRICES_KEY = "dsh.usageStats.prices.v3";
 
@@ -153,6 +154,67 @@ window.__ModuleLoader__.load({
 				throw new Error((payload && payload.error) || ("HTTP " + response.status));
 			}
 			return payload;
+		}
+
+		// ---- DeepSeek 真实余额查询 (账户级, 2026-08-25 新增) ----
+
+		// 余额缓存 (模块级): 避免消息行多次渲染反复请求后端; 默认缓存 5 分钟
+		const BALANCE_CACHE_MS = 5 * 60 * 1000;
+		let balanceCacheValue = null;   // 最近一次拿到的完整余额响应对象
+		let balanceCacheAt = 0;         // 最近一次拉取的时间戳 (毫秒)
+
+		/**
+		 * 直接拉取余额响应 (不抛异常): 返回 { ok, configured, balance?, error? }。
+		 * 与 getJson 不同: 余额路由即使查询失败也返回 HTTP 200, 需原样拿到 ok / configured 字段来区分状态。
+		 */
+		async function getBalancePayload() {
+			// 全程兜底: 非 DeepSeek 绑定 / 后端不可达 / 网络异常都不允许往外抛, 保证消息行 effect 不产生 unhandled rejection
+			try {
+				const response = await fetch(ROUTE_BALANCE, { headers: { [GUARD_HEADER]: "1" } });
+				return await response.json().catch(() => ({ ok: false, error: "余额接口响应解析失败" }));
+			} catch (err) {
+				return { ok: false, configured: false, error: "余额接口请求失败: " + String((err && err.message) || err) };
+			}
+		}
+
+		/**
+		 * 带缓存的余额获取: 缓存未过期直接回缓存; 否则请求后端并刷新缓存。
+		 * force 为 true 时强制重新拉取 (设置页手动刷新用)。
+		 */
+		async function getBalanceCached(force) {
+			const now = Date.now();
+			if (!force && balanceCacheValue !== null && now - balanceCacheAt < BALANCE_CACHE_MS) {
+				return balanceCacheValue;
+			}
+			try {
+				const payload = await getBalancePayload();
+				balanceCacheValue = payload;
+				balanceCacheAt = Date.now();
+				return payload;
+			} catch (err) {
+				// 双保险: 拉取异常时若缓存未过期则回缓存, 否则给一个平和的失败响应, 绝不外抛
+				if (balanceCacheValue !== null && now - balanceCacheAt < BALANCE_CACHE_MS) {
+					return balanceCacheValue;
+				}
+				return { ok: false, configured: false, error: "余额查询失败: " + String((err && err.message) || err) };
+			}
+		}
+
+		/**
+		 * 从余额响应里挑出 CNY 的余额信息 (拿不到 CNY 用第一个); 无有效余额返回 null。
+		 */
+		function pickBalanceInfo(payload) {
+			if (!payload || payload.ok !== true || !payload.balance || !Array.isArray(payload.balance.balance_infos)) return null;
+			const infos = payload.balance.balance_infos;
+			return infos.find((item) => item && item.currency === "CNY") || infos[0] || null;
+		}
+
+		/** 把余额数字 (字符串/数字) 格式化为千分位 (如 "110.00" -> "110.00") */
+		function fmtBalance(value) {
+			if (typeof value !== "string" && typeof value !== "number") return "—";
+			const numberValue = Number(value);
+			if (!Number.isFinite(numberValue)) return "—";
+			return numberValue.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 		}
 
 		// ---- 价格表编辑 ----
@@ -517,6 +579,8 @@ window.__ModuleLoader__.load({
 			const [prices, setPrices] = react.useState(null);
 			const [detail, setDetail] = react.useState(null);
 			const [detailBusy, setDetailBusy] = react.useState(false);
+			const [balance, setBalance] = react.useState(null);          // 真实余额响应 (含 ok/configured/balance/error)
+			const [balanceBusy, setBalanceBusy] = react.useState(false); // 余额加载/刷新中标志
 			const loadedRef = react.useRef(false);
 
 			if (prices === null) {
@@ -537,9 +601,22 @@ window.__ModuleLoader__.load({
 				}
 			}, []);
 
+			const loadBalance = react.useCallback(async (force) => {
+				setBalanceBusy(true);
+				try {
+					const payload = await getBalanceCached(force);
+					setBalance(payload);
+				} catch (err) {
+					setBalance({ ok: false, error: String((err && err.message) || err) });
+				} finally {
+					setBalanceBusy(false);
+				}
+			}, []);
+
 			if (!loadedRef.current) {
 				loadedRef.current = true;
 				loadList();
+				loadBalance(false);
 			}
 
 			const toggleDetail = async (sessionId) => {
@@ -616,6 +693,51 @@ window.__ModuleLoader__.load({
 				});
 			}
 
+			// ---- 真实余额卡 (DeepSeek 账户余额, 实扣非估算) ----
+			// 余额卡背景用固定浅框 (#ffffff), 框内文字固定深色, 与其它卡片一致 (不随主题变白, 见需求 #108 分层决策)
+			const balanceStat = (label, value) =>
+				react.createElement("div", { key: label, style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 96 } }, [
+					react.createElement("span", { key: "l", style: { fontSize: 11, color: "#8a8f98" } }, label),
+					react.createElement("span", { key: "v", style: { fontSize: 15, fontWeight: 600, color: "#1f1f1f" } }, value),
+				]);
+			const balanceCard = (() => {
+				if (balance === null) return null;
+				const currencySymbol = () => {
+					const info = pickBalanceInfo(balance);
+					return info && info.currency === "USD" ? "$" : "¥";
+				};
+				let body;
+				if (balance.configured === false) {
+					body = react.createElement("div", { key: "nb", style: { fontSize: 12, color: "#8a8f98" } },
+						balance.error || "当前非 DeepSeek 账户，或未在设置面板配置 API Key，无法读取余额（余额查询仅对 DeepSeek 生效，其余功能不受影响）");
+				} else if (balance.ok !== true) {
+					body = react.createElement("div", { key: "fb", style: { fontSize: 12, color: "#c0392b" } },
+						balance.error || "余额查询失败");
+				} else {
+					const info = pickBalanceInfo(balance);
+					if (!info) {
+						body = react.createElement("div", { key: "nb", style: { fontSize: 12, color: "#555555" } }, "DeepSeek 未返回余额明细");
+					} else {
+						const symbol = currencySymbol();
+						const available = (balance.balance && balance.balance.is_available === true) ? "可用" : "不可用";
+						body = react.createElement("div", { key: "bb", style: { display: "flex", gap: 24, flexWrap: "wrap", fontSize: 12 } }, [
+							balanceStat("总余额", symbol + fmtBalance(info.total_balance)),
+							balanceStat("充值余额", symbol + fmtBalance(info.topped_up_balance)),
+							balanceStat("赠金余额", symbol + fmtBalance(info.granted_balance)),
+							balanceStat("API 可用", available),
+						]);
+					}
+				}
+				return react.createElement("div", { key: "balcard", style: cardStyle }, [
+					react.createElement("div", { key: "h", style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 } }, [
+						react.createElement("span", { key: "t", style: { fontSize: 13, fontWeight: 600, color: "#1f1f1f" } }, "余额（DeepSeek 实时）"),
+						react.createElement("button", { key: "r", type: "button", disabled: balanceBusy, onClick: () => loadBalance(true), style: { ...btn, fontSize: 11, padding: "2px 8px" } },
+							balanceBusy ? "查询中…" : "刷新余额"),
+					]),
+					body,
+				]);
+			})();
+
 			return react.createElement("div", { style: rootStyle }, [
 				react.createElement("p", { key: "title", style: titleStyle }, "用量统计"),
 				react.createElement("p", { key: "desc", style: descStyle },
@@ -626,6 +748,9 @@ window.__ModuleLoader__.load({
 				),
 
 				error !== null && react.createElement("p", { key: "err", style: { color: "var(--dsw-alias-state-error-primary)", margin: 0, fontSize: 13 } }, error),
+
+				// 真实余额卡 (位于总览上方)
+				balanceCard,
 
 				// 总览
 				overview !== null && react.createElement("div", { key: "ov", style: cardStyle }, [
@@ -719,6 +844,22 @@ window.__ModuleLoader__.load({
 			const useSession = props.useSession;
 			const matched = props.matched;
 
+			// 真实余额 (DeepSeek 账户)/预估消耗一起展示: 需在条件 return 之前声明 hook, 保证 hooks 顺序稳定
+			const [balance, setBalance] = react.useState(null);
+			react.useEffect(() => {
+				let alive = true;
+				(async () => {
+					// 全程 try/catch: 非 DeepSeek 账户读取失败也绝不当成崩溃来源 (unhandled rejection)
+					try {
+						const payload = await getBalanceCached(false);
+						if (alive) setBalance(payload);
+					} catch (err) {
+						if (alive) setBalance({ ok: false, configured: false, error: String((err && err.message) || err) });
+					}
+				})();
+				return () => { alive = false; };
+			}, []);
+
 			// 防御: standard kit 缺失时静默不渲染
 			if (!useSession || typeof useSession !== "function") return null;
 
@@ -751,10 +892,20 @@ window.__ModuleLoader__.load({
 			if (outStr) parts.push("输出 " + outStr);
 			if (reasonStr && usage.reasoningTokens > 0) parts.push("思考 " + reasonStr);
 			if (cost > 0) parts.push("费用约 " + fmtCost(cost));
+
+			// 追加真实余额 (账户扣款后的实时余额), 与预估消耗一起展示; 无有效余额/未配置时不显示该项
+			if (balance && balance.ok === true) {
+				const info = pickBalanceInfo(balance);
+				if (info) {
+					const symbol = info.currency === "USD" ? "$" : "¥";
+					parts.push("余额 " + symbol + fmtBalance(info.total_balance));
+				}
+			}
+
 			if (parts.length === 0) return null;
 
 			return react.createElement("div", {
-				title: "该回合实际消耗的 token 与预估费用（token 按 DeepSeek 官方计费口径分类：输入分未命中/命中缓存，思考(reasoning) 已计入输出不重复计费；费用按价格表估算，可在 设置 → 用量统计 调整价格）",
+				title: "该回合实际消耗的 token 与预估费用（token 按 DeepSeek 官方计费口径分类：输入分未命中/命中缓存，思考(reasoning) 已计入输出不重复计费；费用按价格表估算，可在 设置 → 用量统计 调整价格；余额为 DeepSeek 账户实时余额）",
 				style: {
 					display: "flex",
 					justifyContent: "flex-end",
