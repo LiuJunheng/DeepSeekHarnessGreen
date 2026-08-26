@@ -998,6 +998,12 @@
     - **GitHub Release（自动，成功）**：用 `GH_TOKEN`（GitHub 连接器注入）+ `curl.exe -X POST ... --data @body.json` 建 Release（id 376469870），再 `curl.exe -T <zip> "uploads.github.com/.../releases/<id>/assets?name=<文件名>"` 上传资产（state=uploaded，sha256 `f76c97621241d4...`）。curl.exe 需用 `--data-binary`/`-T`，避免 GitHub alias 到 Invoke-WebRequest。⚠ 本机环境变量**没有** `GITEE*` token（`Get-ChildItem Env:` 匹配不到）。
     - **Gitee Release（已建，绿色 zip 已用 token 上传）**：用 Gitee MCP `create_release`（owner=`liujunheng`、repo=`DeepSeekHarnessGreen`、tag=v1.0.16、target_commitish=master）创建成功（id 892624）；Gitee MCP **只有 create_release 没有上传资产工具**（自动生成的只是源码 `refs/tags/v1.0.16.zip/.tar.gz`）。绿色 zip 通过**作者提供 Gitee 私人令牌**用 REST API 上传成功（资产 id 3095893，17695745B）：`curl.exe -X POST -F "access_token=<TOKEN>" -F "file=@<zip>" "https://gitee.com/api/v5/repos/liujunheng/DeepSeekHarnessGreen/releases/892624/attach_files"`，返回含 `browser_download_url` 即直链，可用 `list_releases` 复查资产已挂上。经验：GitHub / Gitee 双发布，release 建法与资产上传能力不对称——GitHub 有 `uploads/.../assets` API + GH_TOKEN 可自动传；Gitee 需第三方 `access_token` 走 `attach_files` 上传（shell 环境默认无 Gitee token，得向作者索取，勿写死在代码里）。国内源/自动优先走 Gitee Release，挂齐 zip 后 `green_find_zip_asset` 按前缀 `DSH_Launcher_GreenPortable_Online_` 可稳定命中直链。
 
+111. **【绿色版更新】Gitee `/releases` 按创建时间升序返回导致"取不到最新版本"（2026-08-25，需求 #110 后续 + 更新检查修复）**：
+    - **现象**：本地是 v1.0.15、GitHub/Gitee 均已发 v1.0.16（`releases/latest` 返回 v1.0.16、非预发布），但「检查绿色版更新」却弹"已是最新绿色版 v1.0.15"。
+    - **根因**：用户 `mirror=cn`（国内源优先走 Gitee）。`_gitee_release_latest` 用 `for item in release_list` **顺序遍历**，而 Gitee `/releases` 列表接口**按创建时间升序（旧→新）返回** → 每次都会命中**最早发布的 v1.0.9**（`DSH_Launcher_GreenPortable_Online_20260818_v1.0.9.zip`）。Gitee 返回非 None → 不触发 GitHub 回退 → `1.0.9 < 1.0.15` → 误判"已是最新"。GitHub 通道本身无恙（`api.github.com/.../releases/latest` 实测返回 v1.0.16），只有国内源优先路径中招。
+    - **修复（`launcher.py::_gitee_release_latest`）**：① 请求加 `?per_page=100`——Gitee 默认每页 20，若发布数超过默认页，**最新的会被截断**（升序+切片=丢最新），必须拉全；② 拿到 `release_list` 后先按 `created_at` **降序（新→旧）**排序再遍历取第一个带可用 zip 的发布，才符合"最新"语义。修复后用 portable python 复跑 probe 脚本：命中 `v1.0.16`（`..._20260825_v1.0.16.zip`），`1.0.16 > 1.0.15` 判为可更新 ✅。
+    - **通用经验（Gitee/类"升序列表"接口）**：凡依赖第三方列表接口取"最新"的（Gitee `/releases`、issue、commit 等），**不要假设返回顺序是新的在前**——Gitee 常用升序。要么显式排序（按 created_at 降序），要么在请求里指定排序参数；同时留意**分页截断**（默认页数 < 总数时"最新"恰在末尾最容易丢）。这就是 bug gating 三件套之外最容易犯的"顺序假设"坑。
+
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验

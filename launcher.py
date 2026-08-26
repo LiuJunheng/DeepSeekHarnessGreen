@@ -1131,13 +1131,22 @@ class Launcher:
             self.log("正在查询 Gitee 发布版: %s" % GITEE_RELEASES_API)
             ssl_context = ssl.create_default_context()
             request = urllib.request.Request(
-                GITEE_RELEASES_API,
+                # 带 per_page=100: Gitee /releases 默认每页 20 且按创建时间升序(旧->新),
+                # 若发布数量超过默认页, 最新的会被截断, 必须拉全再自行降序。
+                GITEE_RELEASES_API + "?per_page=100",
                 headers={"User-Agent": "DSH-Launcher/%s" % GREEN_VERSION})
             with urllib.request.urlopen(request, context=ssl_context, timeout=30) as response:
                 release_list = json.loads(response.read().decode("utf-8"))
             if not isinstance(release_list, list) or not release_list:
                 self.log("Gitee 暂无发布版 (返回空列表)")
                 return None
+            # Gitee /releases 按创建时间升序(旧->新)返回, 直接顺序遍历会命中最早的
+            # "带 zip 的发布"(如 v1.0.9), 导致明明有新版本却报"已是最新"。
+            # 这里按 created_at 降序(新->旧)取第一个带可用 zip 的发布, 才符合"最新"语义。
+            release_list = sorted(
+                release_list,
+                key=lambda rel: (rel.get("created_at") or ""),
+                reverse=True)
             for item in release_list:
                 tag_name = item.get("tag_name") or ""
                 assets = item.get("assets") or []
