@@ -1004,6 +1004,13 @@
     - **修复（`launcher.py::_gitee_release_latest`）**：① 请求加 `?per_page=100`——Gitee 默认每页 20，若发布数超过默认页，**最新的会被截断**（升序+切片=丢最新），必须拉全；② 拿到 `release_list` 后先按 `created_at` **降序（新→旧）**排序再遍历取第一个带可用 zip 的发布，才符合"最新"语义。修复后用 portable python 复跑 probe 脚本：命中 `v1.0.16`（`..._20260825_v1.0.16.zip`），`1.0.16 > 1.0.15` 判为可更新 ✅。
     - **通用经验（Gitee/类"升序列表"接口）**：凡依赖第三方列表接口取"最新"的（Gitee `/releases`、issue、commit 等），**不要假设返回顺序是新的在前**——Gitee 常用升序。要么显式排序（按 created_at 降序），要么在请求里指定排序参数；同时留意**分页截断**（默认页数 < 总数时"最新"恰在末尾最容易丢）。这就是 bug gating 三件套之外最容易犯的"顺序假设"坑。
 
+112. **【发布】v1.0.17：绿色版更新检查 Gitee 排序修复落地（2026-08-26，需求 #111 的修复 + 双平台 Release）**：
+    - **版本**：`GREEN_VERSION` 升 1.0.17（launcher.py）；`GREEN_VERSION_DATE` = 2026年08月26日。重打 DSH_Launcher.exe / DSH_Update.exe（便携 python + `PYTHONPATH=runtime\pyinstaller`，`--onefile --windowed --noupx --icon` + `--add-data` ico + `--add-binary` VC 三件套，命令等价 build_exe.bat 3b/3c，只是绕开它的 `pause`）。跑 `runtime/tmp/build_release_zip_v1017.py`（复制 v1014 改版本，含 desktop-shell.py/bat，GREEN_DIRS=plugins/、skills/dsh-deploy-maintain/）生成 `DSH_Launcher_GreenPortable_Online_20260826_v1.0.17.zip`（17,703,580B，~17MB）；`zipfile` 复核顶层不含 runtime/、DEV_NOTES、.gitignore。
+    - **携带的修复**：本次即把 #111 的 Gitee `/releases` 排序修复随包发布（升级后国内源优先能正确检测到最新版本，不再误报"已是最新"）。
+    - **git**：commit（launcher.py 版本号 + DEV_NOTES + 两个 exe `DSH_Launcher.exe`/`DSH_Update.exe` 一并跟踪）+ `git tag v1.0.17` + push master 与 tag。
+    - **Gitee 旧 zip 清理（用户明确要求）**：Gitee 历史 v1.0.9~v1.0.16 各 Release 上手动上传的 zip 附件**全部删除，只保留最新 v1.0.17 的 zip**。删除走 Gitee API `DELETE /repos/{owner}/{repo}/releases/{id}/attach_files/{asset_id}`（需 access_token）；保留的 tarball/zipball（GitHub/Gitee 自动生成、`archive/refs/tags/...`）属源码包，策略上不删。
+    - **经验（双平台"保留最新"清理）**：Gitee release 列表接口返回**升序**，且每页默认 20——要删"历史旧 zip"时同样要注意：**遍历顺序即创建顺序**，通常从最旧开始逐个删除；删除后建议 `list_releases` 复查确认只剩目标 tag 的 zip。删除附件只影响下载列表，不影响 tag/源码包。
+
 ## 七、后续建议
 - ✅ 已实现"连 Python 都不装"的完全免安装体验：内置便携 Python（python-build-standalone 含 tkinter，进 runtime/python）+ PyInstaller 打包 `DSH_Launcher.exe`（内嵌解释器）。详见避坑 #18/#19/#20 与 README 第七章。
 - 可增加"开机自启""系统托盘""最小化到托盘"等桌面应用体验
