@@ -302,6 +302,15 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 - **关键坑**：`subprocess.call` 里 `stdout/stderr=DEVNULL` + 检查返回码判断成败；无管理员权限/非 Windows 时仅记警告**不阻断主流程**；netsh 成功后 `exit=0`。
 - **验证**：`py_compile` 通过；生产同命令执行 `exit=0` 规则成功写入；`Test-NetConnection <本机局域网IP> -Port 3080` 返回 `TcpTestSucceeded: True`。**局限**：本机连本机局域网 IP 多走回环协议栈，未严格走防火墙入站过滤，最终必须用手机实测内网 IP 打开。
 
+### 3.14 双平台发布（GitHub + Gitee 发行避坑，2026-08-26 沉淀）
+
+发版到 GitHub/Gitee Release 的平台性坑，均实测。除「更新」外，发布流程本身也要过一遍这里。
+
+- **PowerShell 发中文 commit / Release 正文变 `?`**：`Invoke-RestMethod -Body $str` 按本地 ANSI(GBK) 序列化，必须 `[System.Text.Encoding]::UTF8.GetBytes($json)` + `-ContentType "application/json; charset=utf-8"`；**git commit 带中文一律用 UTF-8 消息文件 `git commit -F <文件>`**，不要 `-m "中文"`（否则 PowerShell 管线上中文被 ANSI 转码成 `?`，commit 后是坏消息面）。拼 URL 时 `"$uploadUrl?name=..."` 里的 `?` 会被当变量名吞掉，需写成 `"${uploadUrl}?name=..."`。
+- **Gitee `/releases` 升序返回 + 默认每页 20**：取"最新"必须 `?per_page=100` 后再按 `created_at` 降序，否则会首选到最旧版本（曾误报 v1.0.9 为最新）。**凡依赖第三方列表接口取"最新"，都防"顺序假设 + 分页截断"，不要轻信返回顺序**。
+- **Gitee 删附件用 `curl.exe` 逐条删**：PowerShell `Invoke-RestMethod -Method Delete` 会 404；短时间批量循环会命中限流返回**假 404**，须逐条 + 删后 `?per_page=100` 复查；建 Release 必带 `target_commitish=master`（否则 400）；Gitee 同名附件上传不覆盖，先按 attachment id 删旧再传。
+- **推送 / 网络**：本机常有 `api.github.com` 可达、`github.com:443` 直连超时——git push 失败改走 GitHub API 建 ref/提交/传资产（`uploads.github.com`），或开代理 `-c http.proxy=http://127.0.0.1:10809 -c http.lowSpeedLimit=0 -c http.lowSpeedTime=999`。**Gitee push 认 `https://oauth2:<token>@gitee.com`，用 `用户名:token` 会 403**。
+
 ## 四、DSH 插件开发（双端加载 + 路由注册）
 
 ### 4.1 插件 = npm 包 + 双入口（最容易漏）
