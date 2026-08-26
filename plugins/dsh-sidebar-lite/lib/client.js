@@ -122,6 +122,98 @@ window.__ModuleLoader__.load({
 			return fixedPath;
 		}
 
+		// ---- 官方 @ 引用 (dsh-file-reference grammar) 的路径换算 ----
+		// 与 dsh-file-browser 插件同一套逻辑: 官方 @ 文件搜索 (dsh-file-reference-local)
+		// 以会话 header.cwd 为根、索引相对路径; mention 语法无空白 `@path`、含空白
+		// `@"path with spaces"`。这里做 Windows 语义 (大小写不敏感) 的相对换算;
+		// 目标在根之外或跨盘返回 null。
+		function toPosix(p) {
+			return String(p || "").replace(/\\/g, "/");
+		}
+		function relSegments(fromPath, toPath) {
+			const fromParts = fromPath.split("/").filter(Boolean);
+			const toParts = toPath.split("/").filter(Boolean);
+			let i = 0;
+			while (i < fromParts.length && i < toParts.length && fromParts[i].toLowerCase() === toParts[i].toLowerCase()) i += 1;
+			const ups = fromParts.length - i;
+			const rest = toParts.slice(i);
+			return [...Array(ups).fill(".."), ...rest].join("/");
+		}
+		function relativePosix(fromAbs, toAbs) {
+			const from = toPosix(fromAbs).replace(/\/+$/, "");
+			const to = toPosix(toAbs);
+			const m1 = from.match(/^([a-zA-Z]:)(\/.*)$/);
+			const m2 = to.match(/^([a-zA-Z]:)(\/.*)$/);
+			if (m1 || m2) {
+				if (!m1 || !m2 || m1[1].toLowerCase() !== m2[1].toLowerCase()) return null; // 跨盘
+				return relSegments(m1[2], m2[2]);
+			}
+			return relSegments(from, to); // UNC / 相对形态
+		}
+		function formatMention(relPosix) {
+			return /\s/.test(relPosix) ? "@\"" + relPosix + "\"" : "@" + relPosix;
+		}
+
+		/**
+		 * 以官方 @ 引用把文件插入当前会话输入框 (与官方 @ 菜单 onPick 完全同一管线):
+		 * 换算相对会话工作目录 (header.cwd, 即官方 @ 搜索的根) 的 mention → 经
+		 * standard-kit sessions.provideInfo 读输入机状态 (draft/draftRev) 与
+		 * inputActions → sessions.scope 取会话作用域, 派发官方事件
+		 * slash/input-insert-reference, 由官方输入机 mint 结构化 occurrence:
+		 * 草稿显示 @文件名 chip, 发送时经 reference source codec 序列化为相对路径。
+		 * @param {object} bridge - { provideInfo(id), scope(id) } 会话级通道。
+		 * @param {string} sessionId - 当前激活会话 id。
+		 * @param {string} cwd - 会话工作目录 (官方 @ 引用的根)。
+		 * @param {string} entryPath - 文件的绝对路径。
+		 * @returns {Promise<string|null>} 错误信息 (null = 成功)。
+		 */
+		async function insertOfficialReference(bridge, sessionId, cwd, entryPath) {
+			if (!bridge || !sessionId) return "当前没有激活会话，官方 @ 引用不可用";
+			if (!cwd) return "当前会话没有工作目录（header.cwd），官方 @ 引用不可用";
+			const rel = relativePosix(cwd, entryPath);
+			if (rel === null || rel === "" || rel === ".." || rel.startsWith("../")) {
+				return "文件不在当前会话工作目录内：官方 @ 引用只支持工作目录内的相对路径（仍可用「复制绝对路径」）";
+			}
+			const label = rel.slice(rel.lastIndexOf("/") + 1) || rel;
+			const mention = formatMention(rel);
+			let info = null;
+			try {
+				info = bridge.provideInfo ? bridge.provideInfo(sessionId) : null;
+			} catch (e) { /* 下面统一提示 */ }
+			const inputStore = info && info.hooks && info.hooks.input;
+			const actions = info && info.props && info.props.inputActions;
+			let snap = (inputStore && typeof inputStore.getSnapshot === "function") ? inputStore.getSnapshot() : null;
+			if (!snap || !actions || !inputStore) return "无法获取输入框状态，官方引用插入不可用";
+			let draft = typeof snap.draft === "string" ? snap.draft : "";
+			// 追加到草稿末尾: 非空且末尾无空白时先补一个空格, 避免 @label 与上文粘连
+			// (官方 pick 替换的是已输入的 @token, 天然有前导分隔; 我们追加需要自己补)。
+			if (draft !== "" && !/\s$/.test(draft)) {
+				actions.setDraft(draft + " ");
+				snap = inputStore.getSnapshot(); // setDraft 会推进 draftRev, 重新读取
+			}
+			let actx = null;
+			try {
+				actx = bridge.scope ? bridge.scope(sessionId) : null;
+			} catch (e) { /* 下面统一提示 */ }
+			if (!actx || typeof actx.bail !== "function") return "当前会话作用域不可用，官方引用插入失败";
+			const span = { start: snap.draft.length, end: snap.draft.length, draftRev: snap.draftRev };
+			const reference = {
+				source: "reference",
+				ref: mention,
+				label,
+				appearance: "file",
+				clipboardText: mention,
+			};
+			let applied = false;
+			try {
+				applied = actx.bail(actx, "slash/input-insert-reference", { reference, span }) === true;
+			} catch (e) {
+				return "官方引用插入失败：" + String((e && e.message) || e);
+			}
+			if (!applied) return "插入失败：输入框忙碌或状态已变化，请重试";
+			return null;
+		}
+
 		/** 写剪贴板 (优先 navigator.clipboard, 缺省回退到 execCommand 兼容旧内核)。 */
 		function writeClipboard(text) {
 			if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -303,9 +395,10 @@ window.__ModuleLoader__.load({
 		function ContextMenu({ x, y, entry, onSelect }) {
 			const itemStyle = { padding: "6px 10px", cursor: "pointer", fontSize: 12.5, whiteSpace: "nowrap" };
 			const sepStyle = { height: 1, background: "var(--dsw-alias-border-l1,#eee)", margin: "3px 4px" };
-			// 仅文件行提供"另存为"(本地机器, 用对话框自选保存位置), 目录行只提供复制相对/绝对。
+			// 文件行: 以官方 @ 引用插入 (衔接官方 @+文件 机制) + 另存为; 目录行只提供复制相对/绝对。
 			const items = [];
 			if (!entry.isDir) {
+				items.push(react.createElement("div", { key: "insertref", style: itemStyle, onClick: () => onSelect("insertref") }, "以官方 @ 引用插入"));
 				items.push(react.createElement("div", { key: "saveas", style: itemStyle, onClick: () => onSelect("saveas") }, "另存为"));
 			}
 			if (items.length > 0) {
@@ -382,7 +475,7 @@ window.__ModuleLoader__.load({
 
 		// ---- 资源管理器面板 ----
 
-		function ExplorerView({ scope, cwd, workspaceRoot, rootName, onOpenFile }) {
+		function ExplorerView({ scope, cwd, workspaceRoot, rootName, onOpenFile, bridge }) {
 			// 当前正在浏览的目录 (默认优先用会话工作目录 cwd——即"这个会话锁指定的目录"
 			// session.header.cwd, 如 D:\DeepSeekHarnessLauncher；无会话/无 cwd 时回退到
 			// 工作区根 workspaceRoot)。
@@ -398,6 +491,17 @@ window.__ModuleLoader__.load({
 			// 单个共享右键菜单 (与原版一致): 记录触发行 + 光标位置; 复制成功短暂显示"已复制"。
 			const [rowMenu, setRowMenu] = react.useState(null);
 			const [copiedPath, setCopiedPath] = react.useState(null);
+			// 临时提示条 (如官方 @ 引用不可用原因), 数秒后自动消失。
+			const [notice, setNotice] = react.useState(null);
+			const noticeTimerRef = react.useRef(null);
+			const showNotice = react.useCallback((text) => {
+				setNotice(text);
+				if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+				noticeTimerRef.current = window.setTimeout(() => setNotice(null), 6000);
+			}, []);
+			react.useEffect(() => () => {
+				if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+			}, []);
 
 			// 工作区根/会话工作目录可能在会话挂载后才确定, 首次拿到后同步当前浏览目录。
 			// 与 initialRoot 一致: 会话工作目录 cwd 优先 (即"这个会话锁指定的目录"),
@@ -469,11 +573,19 @@ window.__ModuleLoader__.load({
 				});
 			};
 
-			// 菜单项点击: 'saveas' 走另存为, 'relative'/'absolute' 走复制。
+			// 菜单项点击: 'insertref' 走官方 @ 引用插入, 'saveas' 走另存为, 'relative'/'absolute' 走复制。
 			const onMenuSelect = (id) => {
 				const menu = rowMenu;
 				if (menu === null) return;
 				setRowMenu(null);
+				if (id === "insertref") {
+					if (menu.entry.isDir) return;
+					// 官方 @ 引用以会话工作目录 (header.cwd) 为根 —— 正是侧栏解析出的 cwd。
+					insertOfficialReference(bridge, scope.sessionId, cwd, menu.entry.path).then((err) => {
+						if (err) showNotice(err);
+					});
+					return;
+				}
 				if (id === "saveas") {
 					saveAsFile(scope, menu.entry.path);
 					return;
@@ -523,6 +635,7 @@ window.__ModuleLoader__.load({
 					react.createElement("button", { key: "refresh", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 5px", border: "none", background: "transparent", color: "var(--dsw-alias-label-tertiary)" }, title: "刷新", onClick: () => setRefreshTick((tick) => tick + 1) }, "⟳"),
 				]),
 				error !== null && react.createElement("div", { key: "err", style: { padding: 8, fontSize: 12, color: "var(--dsw-alias-state-error-primary)" } }, "加载失败: " + error),
+				notice !== null && react.createElement("div", { key: "ntc", style: { padding: 6, fontSize: 11, color: "var(--dsw-alias-state-error-primary)" } }, notice),
 				react.createElement("div", { key: "body", style: { flex: 1, overflow: "auto", padding: "2px 0" } }, [
 					// 根行: 当前目录自身也可右键 (与原版一致, 复制相对/绝对路径)。
 					react.createElement("div", {
@@ -1006,6 +1119,24 @@ window.__ModuleLoader__.load({
 
 			const scope = { sessionId: sessionId || "", cwd: cwd || undefined };
 
+			// 官方 @ 引用插入需要的会话级通道 (与 dsh-file-browser 插件相同):
+			//   provideInfo(id) -> standard-kit 提供包 { hooks: { input: 输入机状态 store }, props: { inputActions } }
+			//   scope(id)       -> 会话作用域 ctx (用于派发 slash/input-insert-reference)
+			const bridge = {
+				provideInfo: (id) => {
+					try {
+						const sessions = ctx && ctx.sessions;
+						return sessions && typeof sessions.provideInfo === "function" ? sessions.provideInfo(id) : null;
+					} catch (e) { return null; }
+				},
+				scope: (id) => {
+					try {
+						const sessions = ctx && ctx.sessions;
+						return sessions && typeof sessions.scope === "function" ? sessions.scope(id) : null;
+					} catch (e) { return null; }
+				},
+			};
+
 			// 展开/收起时的 #root 让位现由上方 panelWidth 相关 effect 统一处理。
 
 			const tabButton = (id, label) => react.createElement("button", {
@@ -1045,7 +1176,7 @@ window.__ModuleLoader__.load({
 				sessionErr !== null && react.createElement("div", { key: "serr", style: { padding: 6, fontSize: 11, color: "var(--dsw-alias-state-error-primary)" } }, "会话定位失败: " + sessionErr),
 				react.createElement("div", { key: "body", style: { flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" } }, [
 					tab === "explorer"
-						? react.createElement(ExplorerView, { key: "ex", scope, cwd, workspaceRoot, rootName, onOpenFile: () => { } })
+						? react.createElement(ExplorerView, { key: "ex", scope, cwd, workspaceRoot, rootName, onOpenFile: () => { }, bridge })
 						: tab === "terminal"
 						? react.createElement(TerminalView, { key: "te", scope, tab: "1" })
 						: tab === "tasks"

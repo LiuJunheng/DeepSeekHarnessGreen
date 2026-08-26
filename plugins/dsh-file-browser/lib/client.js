@@ -2,6 +2,12 @@
 // 在输入框工具行注册「📁 文件」按钮 (conversation.input.left), 在 shell.overlay
 // 注册右侧浮层文件浏览器: 列目录、返回上级、路径跳转、文本/图片预览。
 // 右键文件/目录弹出菜单: 插入路径/内容到输入框、复制路径 (追加进草稿, 用户可编辑后发送)。
+// 新版 DSH 官方 @+文件 引用 (dsh-client-ui-reference): 以会话 header.cwd 为根、
+// 用相对路径的 @"path" mention 作为提示词文本, 并带结构化 occurrence (chip 渲染 +
+// 提交时经 source codec 序列化)。本插件右键菜单新增「以官方 @ 引用插入」: 把所选文件
+// 换算成相对会话工作目录的 mention, 然后向当前会话作用域派发与官方 @ 菜单 onPick 完全
+// 同一个事件 slash/input-insert-reference (InputTriggerController.execute 同源), 由官方
+// 输入机 mint occurrence 成 chip —— 即官方机制的真正衔接, 而非普通文本。
 // 数据通过 fetch 调用宿主端路由 /__dsh/file-browser/* (带自定义头防跨站)。
 // 这是加载器契约格式 (window.__ModuleLoader__.load), 与官方客户端插件一致。
 // 注意: 不修改任何官方文件/包; 样式用内联对象 (与 dsh-archive-purge 同风格)。
@@ -21,6 +27,38 @@ window.__ModuleLoader__.load({
 		const CONTENT_INSERT_CAP = 3000; // 插入内容的最大字符数
 		// 与宿主端一致: 大二进制文件仅预览前部 4KB head (host 端常量 BINARY_HEAD_BYTES)
 		const BINARY_HEAD_BYTES = 4096;
+
+		// ---- 官方 @ 引用 (dsh-file-reference grammar) 的路径换算 ----
+		// 官方 @ 文件搜索 (dsh-file-reference-local) 以会话 header.cwd 为根、索引相对路径;
+		// mention 语法与 dsh-file-reference 的 formatFileMention 一致: 无空白 `@path`,
+		// 含空白 `@"path with spaces"`。宿主端 /home 与 /list 返回的都是绝对路径,
+		// 这里做 Windows 语义 (大小写不敏感) 的相对换算; 目标在根之外或跨盘返回 null。
+		function toPosix(p) {
+			return String(p || "").replace(/\\/g, "/");
+		}
+		function relSegments(fromPath, toPath) {
+			const fromParts = fromPath.split("/").filter(Boolean);
+			const toParts = toPath.split("/").filter(Boolean);
+			let i = 0;
+			while (i < fromParts.length && i < toParts.length && fromParts[i].toLowerCase() === toParts[i].toLowerCase()) i += 1;
+			const ups = fromParts.length - i;
+			const rest = toParts.slice(i);
+			return [...Array(ups).fill(".."), ...rest].join("/");
+		}
+		function relativePosix(fromAbs, toAbs) {
+			const from = toPosix(fromAbs).replace(/\/+$/, "");
+			const to = toPosix(toAbs);
+			const m1 = from.match(/^([a-zA-Z]:)(\/.*)$/);
+			const m2 = to.match(/^([a-zA-Z]:)(\/.*)$/);
+			if (m1 || m2) {
+				if (!m1 || !m2 || m1[1].toLowerCase() !== m2[1].toLowerCase()) return null; // 跨盘
+				return relSegments(m1[2], m2[2]);
+			}
+			return relSegments(from, to); // UNC / 相对形态
+		}
+		function formatMention(relPosix) {
+			return /\s/.test(relPosix) ? "@\"" + relPosix + "\"" : "@" + relPosix;
+		}
 
 		// ---- 通用工具 ----
 		function fmtSize(n) {
@@ -116,6 +154,17 @@ window.__ModuleLoader__.load({
 			const [hoverKey, setHoverKey] = react.useState(null);
 			// 右键菜单: null 或 { x, y, path, name, type }
 			const [menu, setMenu] = react.useState(null);
+			// 底部提示条 (如"官方 @ 引用不可用"原因), 数秒后自动消失
+			const [notice, setNotice] = react.useState(null);
+			const noticeTimerRef = react.useRef(null);
+			const showNotice = react.useCallback((text) => {
+				setNotice(text);
+				if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+				noticeTimerRef.current = setTimeout(() => setNotice(null), 6000);
+			}, []);
+			react.useEffect(() => () => {
+				if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+			}, []);
 
 			// ---- 弹窗几何 (可拖动 + 可拉伸右/下/右下角) ----
 			// 初始为默认尺寸/位置 (680 × (视口高-128), 右下锚), 用户拖动后按记忆渲染;
@@ -400,15 +449,105 @@ window.__ModuleLoader__.load({
 				}
 			}
 
+			// ---- 官方 @ 引用插入 (衔接官方 @+文件 机制) ----
+			// 把所选文件以"官方引用"形式插入输入框: 1) 换算成相对会话工作目录 (header.cwd)
+			// 的 @"rel/path" mention; 2) 经 standard-kit 的 provideInfo 拿当前输入机状态
+			// (draft/draftRev) 与 inputActions; 3) 向当前会话作用域派发官方事件
+			// slash/input-insert-reference —— 与官方 @ 菜单 onPick → InputTriggerController
+			// .execute 完全同一事件/结构, 由官方输入机 mint occurrence: 草稿里是 @label
+			// chip, 提交时经 reference source 的 codec 序列化为 mention 文本发给模型。
+			// 仅支持文件 (目录的官方 pick 会留开引号续补全, 不适合一键插入)。
+			async function insertOfficialReference(menuEntry) {
+				const sessionId = typeof props.sessionId === "string" ? props.sessionId : "";
+				// 1) 会话工作目录根: 官方 @ 文件引用以会话 header.cwd 为根 (host /home 优先级第一)。
+				let root = "";
+				try {
+					const res = await fetch(BASE + "/home?sessionId=" + encodeURIComponent(sessionId), {
+						headers: { [GUARD_HEADER]: "1" },
+					});
+					const payload = await res.json().catch(() => null);
+					root = payload && typeof payload.root === "string" ? payload.root : "";
+				} catch (e) { /* 下面统一提示 */ }
+				if (!root) {
+					showNotice("无法获取会话工作目录，官方 @ 引用不可用");
+					return;
+				}
+				// 2) 相对路径 + mention (官方语法)。
+				const rel = relativePosix(root, menuEntry.path);
+				if (rel === null || rel === "" || rel === ".." || rel.startsWith("../")) {
+					showNotice("文件不在当前会话工作目录内：官方 @ 引用只支持工作目录内的相对路径（仍可用「插入文件路径」插入绝对路径）");
+					return;
+				}
+				const label = rel.slice(rel.lastIndexOf("/") + 1) || rel;
+				const mention = formatMention(rel);
+				// 3) 输入框机器状态与动作通道 (standard-kit 提供: hooks.input = 状态 store,
+				//    props.inputActions; 经 sessions.provideInfo 按会话 id 读取)。
+				const bridge = props.bridge || {};
+				let info = null;
+				try {
+					info = bridge.provideInfo ? bridge.provideInfo(sessionId) : null;
+				} catch (e) { /* fallthrough */ }
+				const inputStore = info && info.hooks && info.hooks.input;
+				const actions = info && info.props && info.props.inputActions;
+				let snap = (inputStore && typeof inputStore.getSnapshot === "function") ? inputStore.getSnapshot() : null;
+				if (!snap || !actions || !inputStore) {
+					showNotice("无法获取输入框状态，官方引用插入不可用（请确认当前会话输入框已就绪）");
+					return;
+				}
+				// 4) 追加到草稿末尾: 非空且末尾无空白时先补一个空格, 避免 @label 与上文粘连
+				//    (官方 pick 替换的是已输入的 @token, 天然有前导分隔; 我们追加需要自己补)。
+				let draft = typeof snap.draft === "string" ? snap.draft : "";
+				if (draft !== "" && !/\s$/.test(draft)) {
+					actions.setDraft(draft + " ");
+					snap = inputStore.getSnapshot(); // setDraft 会推进 draftRev, 重新读取
+				}
+				// 5) 派发官方插入事件 (span 为草稿末尾零宽区间 + draftRev CAS)。
+				let actx = null;
+				try {
+					actx = bridge.scope ? bridge.scope(sessionId) : null;
+				} catch (e) { /* fallthrough */ }
+				if (!actx || typeof actx.bail !== "function") {
+					showNotice("当前会话作用域不可用，官方引用插入失败");
+					return;
+				}
+				const span = { start: snap.draft.length, end: snap.draft.length, draftRev: snap.draftRev };
+				const reference = {
+					source: "reference",
+					ref: mention,
+					label,
+					appearance: "file",
+					clipboardText: mention,
+				};
+				let applied = false;
+				try {
+					applied = actx.bail(actx, "slash/input-insert-reference", { reference, span }) === true;
+				} catch (e) {
+					showNotice("官方引用插入失败：" + String((e && e.message) || e));
+					return;
+				}
+				if (!applied) {
+					showNotice("插入失败：输入框忙碌或状态已变化，请重试");
+					return;
+				}
+				setMenu(null);
+			}
+
 			function buildMenuItems(menuEntry) {
 				const isDir = menuEntry.type === "directory";
-				const items = [
-					{
-						label: isDir ? "插入目录路径到输入框" : "插入文件路径到输入框",
-						icon: isDir ? "\uD83D\uDCC1" : "\uD83D\uDCC4",
-						onClick: () => { queueInsert(menuEntry.path); setMenu(null); },
-					},
-				];
+				const items = [];
+				// 官方 @+文件 引用插入 (文件专属, 排第一): 与官方 @ 菜单同源的引用 chip。
+				if (!isDir) {
+					items.push({
+						label: "以官方 @ 引用插入",
+						icon: "@",
+						onClick: () => { setMenu(null); insertOfficialReference(menuEntry); },
+					});
+				}
+				items.push({
+					label: isDir ? "插入目录路径到输入框" : "插入文件路径到输入框",
+					icon: isDir ? "\uD83D\uDCC1" : "\uD83D\uDCC4",
+					onClick: () => { queueInsert(menuEntry.path); setMenu(null); },
+				});
 				if (!isDir) {
 					items.push({
 						label: "插入内容到输入框",
@@ -768,8 +907,10 @@ window.__ModuleLoader__.load({
 				]),
 				react.createElement("div", {
 					key: "footer",
-					style: { flex: "none", borderTop: "1px solid " + C.border, padding: "6px 12px", color: C.text2, fontSize: 11 },
-				}, busy ? "加载中…" : (entries ? entries.length + (truncated ? "+ 项（已截断）" : " 项") : "")),
+					style: { flex: "none", borderTop: "1px solid " + C.border, padding: "6px 12px", color: notice ? C.error : C.text2, fontSize: 11 },
+				}, notice
+					? notice
+					: (busy ? "加载中…" : (entries ? entries.length + (truncated ? "+ 项（已截断）" : " 项") : ""))),
 				menuEl,
 			]);
 		}
@@ -800,7 +941,7 @@ window.__ModuleLoader__.load({
 					return react.createElement("button", {
 						type: "button",
 						onClick: () => setOpen(!isOpen),
-						title: "文件浏览（右键文件可添加到对话）",
+						title: "文件浏览（右键文件可 @ 引用插入 / 插入路径 / 插入内容 / 复制）",
 						style: {
 							display: "inline-flex",
 							alignItems: "center",
@@ -835,7 +976,24 @@ window.__ModuleLoader__.load({
 							: null;
 						sessionId = (snapshot && (snapshot.current || snapshot.sessionId)) || "";
 					} catch (e) { /* 取不到就按无会话处理, 宿主端回退工作区根 */ }
-					return react.createElement(FileBrowser, { onClose: () => setOpen(false), sessionId });
+					// 官方 @ 引用插入需要的会话级通道 (尽量少暴露 ctx 本体):
+					//   provideInfo(id) -> standard-kit 提供包 { hooks: { input: 输入机状态 store }, props: { inputActions } }
+					//   scope(id)       -> 会话作用域 ctx (用于派发 slash/input-insert-reference)
+					const bridge = {
+						provideInfo: (id) => {
+							try {
+								const sessions = ctx && ctx.sessions;
+								return sessions && typeof sessions.provideInfo === "function" ? sessions.provideInfo(id) : null;
+							} catch (e) { return null; }
+						},
+						scope: (id) => {
+							try {
+								const sessions = ctx && ctx.sessions;
+								return sessions && typeof sessions.scope === "function" ? sessions.scope(id) : null;
+							} catch (e) { return null; }
+						},
+					};
+					return react.createElement(FileBrowser, { onClose: () => setOpen(false), sessionId, bridge });
 				},
 			));
 		}

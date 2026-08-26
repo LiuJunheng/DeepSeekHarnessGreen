@@ -195,12 +195,12 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 
 | 插件 | 一句话功能 | 详细文档 |
 |------|-----------|----------|
-| `dsh-file-browser` | WebUI 内文件浏览 / 预览 / 右键把路径或内容塞进对话 | [README](plugins/dsh-file-browser/README.md) |
+| `dsh-file-browser` | WebUI 内文件浏览 / 预览 / 右键把官方 @ 引用、路径或内容塞进对话 | [README](plugins/dsh-file-browser/README.md) |
 | `dsh-archive-purge` | WebUI「清理归档」页只读查看已归档会话 | [README](plugins/dsh-archive-purge/README.md) |
 | `dsh-session-rewind` | 会话被工具崩溃"毒化"时报错时，一键回退到某可行回合派生干净续聊 | [README](plugins/dsh-session-rewind/README.md) |
 | `dsh-session-import` | 把导出的会话 ZIP / JSONL **导回本机**（官方导出互逆） | [README](plugins/dsh-session-import/README.md) |
 | `dsh-usage-stats` | 用量统计 + 每条消息的「本次 token / 预估费用」 | [README](plugins/dsh-usage-stats/README.md) |
-| `dsh-sidebar-lite` | WebUI 右侧边栏（文件管理 / 预览 / 浏览器 / 终端 / 任务） | [README](plugins/dsh-sidebar-lite/README.md) |
+| `dsh-sidebar-lite` | WebUI 右侧边栏（文件管理 / 预览 / 浏览器 / 终端 / 任务，文件可右键以官方 @ 引用插入对话） | [README](plugins/dsh-sidebar-lite/README.md) |
 | `dsh-media-background` | 本地目录视频作为 WebUI 背景播放（画面 + 声音，可入播放清单） | [README](plugins/dsh-media-background/README.md) |
 
 所有内置插件均为**纯插件**（不修改任何官方文件），与绿色版一起以 **Apache License 2.0** 开源（见第十一章）。
@@ -209,9 +209,9 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 > 下面按用途分组介绍各插件。实际安装均通过「插件管理 → 选择本地插件文件夹安装…」选择对应 `plugins\<插件名>` 目录即可（命令行等价物 `python launcher.py --install-plugin plugins\<插件名>`），装完**重启服务**生效；更完整用法见各章节末尾的 README。
 
 #### 聊天与文件增强
-- **`dsh-file-browser`（文件浏览 / 预览 / 右键添加到对话）**：安装并重启服务后，WebUI 输入框工具行左侧出现「📁 文件」按钮，点击打开右侧浮层文件浏览器——目录列表（目录在前）、文本/代码与图片预览、路径输入跳转、返回上级/刷新；**右键文件或目录**弹出菜单，可把**路径**或**内容**（≤3000 字符，超出截断并注明）追加到输入框草稿（可编辑后再发送），或**复制路径**。详见 [plugins/dsh-file-browser/README.md](plugins/dsh-file-browser/README.md)。
+- **`dsh-file-browser`（文件浏览 / 预览 / 右键添加到对话）**：安装并重启服务后，WebUI 输入框工具行左侧出现「📁 文件」按钮，点击打开右侧浮层文件浏览器——目录列表（目录在前）、文本/代码与图片预览、路径输入跳转、返回上级/刷新；**右键文件或目录**弹出菜单：文件可**「以官方 @ 引用插入」**（衔接新版 DSH 官方 `@+文件` 引用——换算成相对会话工作目录的 `@相对路径` mention，走官方 `slash/input-insert-reference` 管线，输入框显示 `@文件名` chip、发送时序列化为规范相对路径；仅支持会话工作目录内文件）、**插入路径**、**插入内容**（≤3000 字符，超出截断并注明）追加到输入框草稿（可编辑后再发送），或**复制路径**。详见 [plugins/dsh-file-browser/README.md](plugins/dsh-file-browser/README.md)。
   > 常见问题：安装后输入框看不到「文件」按钮 → 多为没重启服务 / 插件 `exports` 少了 `"./package.json"` / 改源码后没重新安装，详见插件 README 的「排查」一节。
-- **`dsh-sidebar-lite`（WebUI 右侧边栏）**：在 WebUI 右侧常驻一个工作面板，提供文件管理 / 预览 / 浏览器 / 终端 / 任务入口，方便在对话旁直接操作文件与工具。详见 [plugins/dsh-sidebar-lite/README.md](plugins/dsh-sidebar-lite/README.md)。
+- **`dsh-sidebar-lite`（WebUI 右侧边栏）**：在 WebUI 右侧常驻一个工作面板，提供文件管理 / 预览 / 浏览器 / 终端 / 任务入口，方便在对话旁直接操作文件与工具；资源管理器文件行**右键**同样支持**「以官方 @ 引用插入」**（与 `dsh-file-browser` 同一套官方 @ 引用管线）。详见 [plugins/dsh-sidebar-lite/README.md](plugins/dsh-sidebar-lite/README.md)。
 
 #### 会话数据管理
 - **`dsh-archive-purge`（清理归档查看）**：安装并重启服务后，可在 WebUI「设置 → 清理归档」里**查看**已归档会话列表（可勾选/全选交互保留）。由于实际启动服务时所有会话都处于"运行中"，WebUI 侧**无法直接删除**，该页面为**只读展示**——真正的删除/恢复请在下方「数据维护」完成。详见 [plugins/dsh-archive-purge/README.md](plugins/dsh-archive-purge/README.md)。

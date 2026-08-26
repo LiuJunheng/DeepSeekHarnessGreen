@@ -1,6 +1,6 @@
 {
   "name": "dsh-sidebar-lite",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "WebUI 右侧侧边栏：① 文件资源管理器（工作区根 sandboxPolicy.workspaceRoot 为默认根、目录优先/隐藏文件灰显、支持上级任意路径浏览）；② 文件预览/编辑（受控文本区 + 图片/PDF/MD 预览、保存回写）；③ 内嵌浏览器（沙箱 iframe + 地址栏导航）；④ CMD 终端（轻量 SSE 流 + cmd.exe 逐行执行）；⑤ 任务管理（后台任务列表/输出/停止）。零原生依赖、零构建，纯 JS 注入。参考/复刻自第三方插件 DSH Better Sidebar（omdsh-dev/DSH-better-sidebar），本版内置其资源管理/文件预览/浏览器/终端/任务五项核心能力。",
   "type": "module",
   "main": "lib/index.js",

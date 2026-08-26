@@ -1,7 +1,7 @@
 {
   "name": "dsh-file-browser",
-  "version": "0.2.1",
-  "description": "WebUI 文件列表与选中文件预览：输入框工具行按钮打开右侧浮层，浏览目录、预览文本与图片，右键文件可插入路径/内容到输入框，不修改任何官方文件",
+  "version": "0.4.0",
+  "description": "WebUI 文件列表与选中文件预览：输入框工具行按钮打开右侧浮层，浏览目录、预览文本与图片，右键文件可插入官方 @ 引用/路径/内容到输入框，不修改任何官方文件",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

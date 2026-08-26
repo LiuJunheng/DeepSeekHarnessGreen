@@ -254,12 +254,12 @@ the local plugin for it to take effect. See each plugin's README for full usage.
 
 | Plugin | One-liner | Docs |
 |--------|-----------|------|
-| `dsh-file-browser` | WebUI file browse / preview / right-click to add path or content into the conversation | [README](plugins/dsh-file-browser/README.md) |
+| `dsh-file-browser` | WebUI file browse / preview / right-click to insert an official @ reference, path or content into the conversation | [README](plugins/dsh-file-browser/README.md) |
 | `dsh-archive-purge` | Read-only「Archive Purge」page in the WebUI to view archived sessions | [README](plugins/dsh-archive-purge/README.md) |
 | `dsh-session-rewind` | When a session gets "poisoned" by a tool-run crash, one-click rewind to a usable turn and fork a clean continuation | [README](plugins/dsh-session-rewind/README.md) |
 | `dsh-session-import` | Import an exported session ZIP / JSONL **back into this machine** (inverse of the official export) | [README](plugins/dsh-session-import/README.md) |
 | `dsh-usage-stats` | Usage stats + per-message「this-turn tokens / estimated cost」 | [README](plugins/dsh-usage-stats/README.md) |
-| `dsh-sidebar-lite` | WebUI right sidebar (file management / preview / browser / terminal / tasks) | [README](plugins/dsh-sidebar-lite/README.md) |
+| `dsh-sidebar-lite` | WebUI right sidebar (file management / preview / browser / terminal / tasks; right-click a file to insert it as an official @ reference) | [README](plugins/dsh-sidebar-lite/README.md) |
 | `dsh-media-background` | Play local-directory videos as the WebUI background (video + audio, add to a playlist) | [README](plugins/dsh-media-background/README.md) |
 
 All built-in plugins are **pure plugins** (modify no official files) and are open-sourced together with the green edition
@@ -274,14 +274,20 @@ under the **Apache License 2.0** (see Section 11).
 - **`dsh-file-browser` (file browse / preview / right-click add to conversation)**: after installing and restarting the
   service, a「📁 File」button appears on the left of the WebUI input's tool row; clicking it opens a right-side floating
   file browser — directory listing (dirs first), text/code and image preview, path-input jump, up/refresh; **right-click
-  a file or directory** to append its **path** or **content** (≤3000 chars, truncated with a note if longer) to the input
-  draft (editable before sending), or **copy the path**. It's a pure plugin. See
+  a file or directory** to: for files, **「Insert as official @ reference」** (bridges the new DSH official `@+file`
+  mechanism — the file is converted to a `@relative/path` mention under the session working directory and inserted through
+  the official `slash/input-insert-reference` pipeline, showing a `@filename` chip in the input that serializes to the
+  canonical relative path on send; files outside the session working directory are refused with a notice), or append its
+  **path** or **content** (≤3000 chars, truncated with a note if longer) to the input draft (editable before sending), or
+  **copy the path**. It's a pure plugin. See
   [plugins/dsh-file-browser/README.md](plugins/dsh-file-browser/README.md).
   > FAQ: if you don't see the「File」button after installing → usually the service wasn't restarted / the plugin `exports`
   > is missing `"./package.json"` / the source was changed without reinstalling; see the plugin README's「Troubleshooting」.
 - **`dsh-sidebar-lite` (WebUI right sidebar)**: a persistent working panel on the right side of the WebUI, providing file
   management / preview / browser / terminal / task entries, so you can operate files and tools right beside the
-  conversation. See [plugins/dsh-sidebar-lite/README.md](plugins/dsh-sidebar-lite/README.md).
+  conversation; right-clicking a file row in its resource manager also offers **「Insert as official @ reference」** (the
+  same official `@`-reference pipeline as `dsh-file-browser`). See
+  [plugins/dsh-sidebar-lite/README.md](plugins/dsh-sidebar-lite/README.md).
 
 #### Session Data Management
 - **`dsh-archive-purge` (archive purge viewer)**: after installing and restarting the service, you can **view** the

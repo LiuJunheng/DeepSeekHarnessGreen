@@ -9,9 +9,10 @@ DeepSeek Harness 插件：在 WebUI 提供**文件列表 + 选中文件预览 + 
   - 图片（png/jpg/jpeg/gif/webp/bmp）：≤ 32MB 完整预览，更大的只返回前部缩略图并提示"建议直接打开看原图"。
   - 二进制大文件：显示大小 + 4KB 头部的 hex/ASCII 嗅探网格，方便识别类型；不会因 fs.readText 拒绝读而直接报错。
 - **右键文件/目录弹出菜单**：
-  - 文件：插入文件路径到输入框 / 插入内容到输入框（内容 ≤ 3000 字符，超出截断并注明；超大文件插入前部预览并注明）/ 复制路径
+  - 文件：**以官方 @ 引用插入**（新，衔接 DSH 官方 @+文件 机制，见下）/ 插入文件路径到输入框 / 插入内容到输入框（内容 ≤ 3000 字符，超出截断并注明；超大文件插入前部预览并注明）/ 复制路径
   - 目录：插入目录路径到输入框 / 复制路径
   - 插入是**追加到输入框草稿**（不直接发消息），可编辑后再发送给模型。
+- **「以官方 @ 引用插入」＝ 衔接新版 DSH 官方 @+文件 引用**：官方 `dsh-client-ui-reference` 的 `@` 触发以**会话工作目录（header.cwd）为根**、用**相对路径**的 `@path` / `@"path with spaces"` 作为提示词文本，并以结构化 occurrence（输入框 chip + 提交时经 source codec 序列化）呈现。本插件右键该项时：① 把所选文件换算成相对会话工作目录的相对路径（Windows 大小写不敏感）；② 经 standard-kit `sessions.provideInfo` 取当前输入机状态（draft/draftRev）与 `inputActions`；③ 向当前会话作用域派发与官方 @ 菜单 onPick **完全同一个事件** `slash/input-insert-reference`，由官方输入机 mint 成 chip（草稿里显示 `@文件名`，发送时序列化为完整相对路径 mention）。文件在会话工作目录外时给出提示并保留「插入文件路径」（绝对路径）兜底；仅支持文件（目录的官方 pick 会留开引号续补全，不适合一键插入）。
 - 不修改任何官方文件 / 官方包（纯插件，装进 profile 的 node_modules）。
 
 ## 工作原理
@@ -19,7 +20,7 @@ DeepSeek Harness 插件：在 WebUI 提供**文件列表 + 选中文件预览 + 
 | 端 | 文件 | 作用 |
 |---|---|---|
 | 宿主 | `lib/index.js` | 注册本地路由（均要求 `X-DSH-File-Browser: 1` 头防跨站触发）：`GET /__dsh/file-browser/home?sessionId=` 返回起始目录（优先级：会话 header.cwd → 工作区注册表根 → 显式 workspaceRoot，见需求 #45）；`POST /__dsh/file-browser/list` 列目录（名称/类型/大小/子路径）；`POST /__dsh/file-browser/read` 读取文件——**图片按 ≤ 32MB 前部做 dataURL + truncated，文本按 ≤ 512KB 前部 UTF-8 读 + truncated，二进制降级 4KB head base64，不再返回 tooLarge**；**新增 `POST /__dsh/file-browser/readChunk`** 按字节 offset 分块（默认 512KB / 单次最大 4MB），支持"再看后面一段"，并带 `back` 回退字节保护 UTF-8 多字节 chunk 边界不乱码。 |
-| 客户端 | `lib/client.js` | 加载器契约（`window.__ModuleLoader__.load`）。在 `conversation.input.left` 注册「文件」开关按钮，在 `shell.overlay` 注册**可拖动+三路拉伸**的浏览面板（列目录 + 预览 + 右键菜单），窗口几何状态 `win={left,top,width,height}`，`dragStateRef` + 全局 `mousemove/mouseup` 跟手；`inject: ["slots","sessions"]`，从官方 sessions store 快照取当前激活会话 id（字段是 `snapshot.current`）随 `/home` 请求上报，供宿主端解析会话工作目录；通过 fetch 调宿主端路由；文本 truncated 时追加「再看后面一段」按钮调 readChunk；菜单的「插入到输入框」经由 input.left 条目的 `inputActions` 追加草稿。 |
+| 客户端 | `lib/client.js` | 加载器契约（`window.__ModuleLoader__.load`）。在 `conversation.input.left` 注册「文件」开关按钮，在 `shell.overlay` 注册**可拖动+三路拉伸**的浏览面板（列目录 + 预览 + 右键菜单），窗口几何状态 `win={left,top,width,height}`，`dragStateRef` + 全局 `mousemove/mouseup` 跟手；`inject: ["slots","sessions"]`，从官方 sessions store 快照取当前激活会话 id（字段是 `snapshot.current`）随 `/home` 请求上报，供宿主端解析会话工作目录；通过 fetch 调宿主端路由；文本 truncated 时追加「再看后面一段」按钮调 readChunk；菜单的「插入到输入框」经由 input.left 条目的 `inputActions` 追加草稿；**「以官方 @ 引用插入」**＝ 客户端把文件绝对路径换算为相对会话工作目录（`/home` 返回的根）的 posix mention，再经 `sessions.provideInfo` 读 `hooks.input`（draft/draftRev）与 `props.inputActions`、`sessions.scope` 取会话作用域，派发官方事件 `slash/input-insert-reference`（`{reference:{source:"reference",ref,label,appearance:"file",clipboardText},span}`），由官方输入机 mint 结构化 occurrence——与官方 @ 菜单选文件走同一条管线，故只改客户端即可衔接，无需改宿主端/重启服务。 |
 
 限制：单目录最多列 1000 项；预览只读，不提供编辑/下载；分块加载按字节对齐估算 UTF-8 偏移（有 `back` 机制不会乱码）。
 
@@ -62,6 +63,7 @@ python launcher.py --remove-plugin dsh-file-browser
 
 ## 变更记录
 
+- **v0.4.0（2026-08-26，需求：衔接官方 @+文件 引用）**：右键文件新增「**以官方 @ 引用插入**」——与新版 DSH 官方 `@` 文件引用机制同源：把所选文件换算成相对会话工作目录的 `@path`/`@"path with spaces"` mention（Windows 大小写不敏感、跨盘/目录外拒绝并提示），经 `sessions.provideInfo` 取输入机状态、`sessions.scope` 取会话作用域，派发官方 `slash/input-insert-reference` 事件（与官方 @ 菜单 onPick 的 `InputTriggerController.execute` 同一条管线），由官方输入机 mint 结构化 occurrence：输入框显示 `@文件名` chip、发送时经 reference source codec 序列化为相对路径 mention。纯客户端改动（含底部错误提示条），**无需改宿主端、无需重启服务**，同步运行副本后强制刷新页面即生效。
 - **v0.3.1（2026-08-18，需求 #45）**：修复弹窗**默认路径仍指向 `runtime\dsh`**。根因：宿主端 `/home` 用 `sandboxPolicy.workspaceRoot`，未显式配置时默认 = `process.cwd()` = `runtime\dsh`。修复：新增 `workspaceRootOf`（权威来源 `workspaceRegistry`）+ `homeRootOf`（会话 header.cwd → 工作区注册表根 → 显式 workspaceRoot）；客户端 `inject` 补 `sessions`，`shell.overlay` 从 sessions store 快照取 `snapshot.current` 会话 id 随 `/home` 上报。改后需**同步 pnpm 副本 + 重启服务**。
 - **v0.3.0（2026-08-17，需求 #44）**：① 浏览窗口改为**可拖动+三路拉伸**（标题栏拖动 move，右/下/右下透明拉伸手柄），状态 `win={left,top,width,height}` + 最小 520×380 + 视口 clamp；② 大文件预览不再直接报「文件过大无法预览」，改为前部预览 + `truncated` + 「再看后面一段 512KB」按钮**分批加载**到文件末尾；③ 宿主端新增 `POST /readChunk(offset,size)`，带 `back=min(3,offset)` 字节回退 + 客户端扫续字节实现 UTF-8 chunk 边界不乱码；④ 图片上限放宽 4MB→32MB，超大图给缩略；二进制文件给 hex/ASCII 嗅探网格不再报错；⑤ `insertContent` 适配新 kind（text/image/binary）。
 - **v0.2.1（2026-08-15）**：修复"按钮不显示"。根因：工具行组件条件调用从 props 传入的 `useInput()` hook（`typeof useInput === "function" ? useInput() : null`），hook 身份/可用性在渲染间不稳会触发 React "Rendered more/fewer hooks" 错误、被错误边界吞掉导致组件不渲染。修复：**移除 `useInput()` 调用**，当前草稿改从 ownerProps 的 `input.draft` 读（InputZone 契约，普通数据快照，见根 `DEV_NOTES.md` 避坑 #42）。客户端 bundle 按请求生成，**改后无需重启服务，强制刷新页面即可**。
