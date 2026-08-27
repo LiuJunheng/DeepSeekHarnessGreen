@@ -12,6 +12,13 @@
 #                         请求; Ollama 不校验该头。留空则不发。默认 Bearer ollama-local)
 #   detectIntervalMs     周期性探测间隔毫秒 (默认 60000)
 #   probeTimeoutMs       单次探测超时毫秒 (默认 3000)
+#   ensureContext        是否自动修复 Ollama 上下文容量 (默认 true; 坑 35):
+#                         探测到容量不足的模型时, 自动用 Modelfile 固化 num_ctx
+#                         并创建 "<原名>-32k" 变体, models 自动指向变体 —— 否则
+#                         DSH 工具 schema 被截断、模型从不调用工具 + 报 token 上限
+#   targetContextWindow  变体固化的目标上下文窗口 (默认 32768)
+#   targetMaxTokens      模型单次输出上限 (默认 8192; 必须远小于 contextWindow,
+#                         相等时输入空间为零必截断)
 - insert:
     - id: ollama
       name: dsh-ollama
@@ -24,3 +31,6 @@
         authorizationHeader: Bearer ollama-local
         detectIntervalMs: 60000
         probeTimeoutMs: 3000
+        ensureContext: true
+        targetContextWindow: 32768
+        targetMaxTokens: 8192

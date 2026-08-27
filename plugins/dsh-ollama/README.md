@@ -8,8 +8,9 @@
 - 探测到服务在线后，自动把 Ollama 注册为 OpenAI 兼容 Provider（写入 `llm-pi-ai` 的 `providers.ollama` 配置）：
   - `api = openai-completions`（Ollama `/v1` 端点）
   - `baseURL = {baseUrl}/v1`
-  - `models` = 从 `/api/tags` 拉到的模型列表（含默认 `contextWindow` / `maxTokens`）
+  - `models` = 从 `/api/tags` 拉到的模型列表（含 `contextWindow` / `maxTokens`）
   - `compat` = Ollama 兼容开关（`supportsDeveloperRole: false` / `supportsReasoningEffort: false` / `maxTokensField: max_tokens` / `supportsStrictMode: false`），**保证 pi-ai 用 Ollama 认识的方言发请求，工具（Tool Calling）才能送达模型并被执行**——缺它时 Ollama 接入后模型从不调用 DSH 工具；
+  - **自动上下文容量修复**（`ensureContext`，默认开）：探测到容量不足的模型时，自动用 Modelfile 固化 `num_ctx` 并创建 `"<原名>-32k"` 变体，`models` 自动指向变体——否则 DSH 工具 schema 被截断、模型从不调用工具 + 报 token 上限；
 - WebUI **Models 设置页**随即出现 Ollama 条目，可直接选择模型对话，也可修改 baseURL / contextWindow / maxTokens 等参数；
 - Ollama 模型有增删（新 pull / 删除）时自动同步 `models` 列表。
 
@@ -20,6 +21,8 @@
 - 已存在的 Ollama provider：只同步模型列表（且仅当 baseURL 与我方一致），不覆盖用户在 Models 页手改的其他字段。
 - Ollama 无需 API Key，因此不写 `apiKeyEnv`（否则 pi-ai 会因缺凭据报 `MISSING_CREDENTIAL`）。
 - **必须写 `compat`（工具调用关键，2026-08-27 实测）**：Ollama 的 OpenAI 兼容层不说 OpenAI 官方方言——不认 `developer` 角色、`max_completion_tokens` 字段、工具定义里的 `strict` 字段。pi-ai 对无法识别的端点默认按 OpenAI 官方协议发送，Ollama 会丢弃/拒绝，导致**工具 schema 到不了模型、模型从不调用工具**。本插件固定写入 `compat: { supportsDeveloperRole: false, supportsReasoningEffort: false, maxTokensField: "max_tokens", supportsStrictMode: false }`，让 pi-ai 改用 system 角色、`max_tokens` 字段、不带 strict 的工具。此坑对任何 OpenAI 兼容网关（LM Studio / vLLM 等）同样适用。
+- **必须解决上下文容量（工具调用另一前提，2026-08-27 坑 35 实测）**：Ollama 服务端默认 `num_ctx` 只有 4096/16384，而 DSH 的 system prompt + 工具 schema 上万 token → 工具定义被截断 → 模型从不调用工具 + 报 token 上限。`OLLAMA_CONTEXT_LENGTH` 环境变量对桌面版 serve 不生效，`/v1/chat/completions` 不转发 `options.num_ctx`；**正解是 Modelfile 固化 `num_ctx` 重建变体**。本插件 `ensureContext`（默认开）自动完成：探测模型 → 原生能力足够则创建 `"<原名>-32k"` 变体 → models 指向变体。也可手动：`FROM qwen3:4b` + `PARAMETER num_ctx 32768` → `ollama create qwen3:4b-32k -f Modelfile`。
+- **`maxTokens` 必须远小于 `contextWindow`**（2026-08-27 实测）：两者相等（如都设 16000）时 pi-ai 认为"输出上限 = 总上下文"，输入空间为零 → 必截断。正确配比如 `contextWindow: 32768` / `maxTokens: 8192`。
 
 ## 配置
 
@@ -34,6 +37,9 @@
 | `defaultMaxTokens` | `8192` | 模型发现不到最大输出时的默认值 |
 | `detectIntervalMs` | `60000` | 周期性探测间隔（毫秒） |
 | `probeTimeoutMs` | `3000` | 单次探测超时（毫秒） |
+| `ensureContext` | `true` | 自动修复上下文容量（创建 `-32k` 变体并指向它） |
+| `targetContextWindow` | `32768` | 变体固化的目标上下文窗口 |
+| `targetMaxTokens` | `8192` | 模型单次输出上限（须远小于 contextWindow） |
 
 ## 安装
 

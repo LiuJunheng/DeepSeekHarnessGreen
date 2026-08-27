@@ -43,9 +43,10 @@
 //
 // 零原生依赖、零构建。探测用 Node 全局 fetch (运行时 Node >= 18, 本项目 v22)。
 
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
+import { spawnSync, execFileSync } from "node:child_process";
 
 const name = "dsh-ollama";
 
@@ -97,6 +98,20 @@ const DEFAULT_CONFIG = {
 	detectIntervalMs: 60000,
 	// 单次探测超时 (毫秒)
 	probeTimeoutMs: 3000,
+	// ── 上下文容量修复 (DSH 工具调用关键, 2026-08-27 坑 35) ──
+	// Ollama 服务端默认 num_ctx 只有 4096/16384, 而 DSH 的 system prompt +
+	// 工具 schema 上万 token → 工具定义被截断 → 模型从不调用工具 + 报 token
+	// 上限。OLLAMA_CONTEXT_LENGTH 环境变量对桌面版 serve 不生效, /v1 端点
+	// 也不转发 options.num_ctx; 正解是用 Modelfile 给模型固化 num_ctx 并
+	// 重建一个 "<原名>-32k" 变体 (任何方式启动都生效)。以下开关控制插件
+	// 在探测到模型时自动执行这一修复:
+	//   ensureContext  是否自动为容量不足的模型创建 -32k 变体并写入 models
+	//   targetContextWindow 变体固化的上下文窗口 (默认 32768)
+	//   targetMaxTokens     变体/普通模型的单次输出上限 (默认 8192; 必须远
+	//                       小于 contextWindow, 相等时输入空间为零必截断)
+	ensureContext: true,
+	targetContextWindow: 32768,
+	targetMaxTokens: 8192,
 };
 
 // ---- 小工具 ----
@@ -200,17 +215,152 @@ async function probeOllamaModels(baseUrl, timeoutMs) {
 }
 
 /**
+ * 定位 ollama CLI 可执行文件。优先 PATH, 其次常见安装路径。
+ * @returns {string | null} ollama 可执行文件路径; 找不到时 null
+ */
+function findOllamaCli() {
+	try {
+		const probe = spawnSync("ollama", ["--version"], { encoding: "utf8", timeout: 5000, windowsHide: true });
+		if (probe && probe.status === 0) return "ollama";
+	} catch {
+		// fallthrough
+	}
+	const candidates = [
+		join(process.env.LOCALAPPDATA || "", "Programs", "Ollama", "ollama.exe"),
+		join(process.env.ProgramFiles || "", "Ollama", "ollama.exe"),
+		join(process.env["ProgramFiles(x86)"] || "", "Ollama", "ollama.exe"),
+	];
+	for (const candidate of candidates) {
+		try {
+			if (existsSync(candidate)) return candidate;
+		} catch {
+			// continue
+		}
+	}
+	return null;
+}
+
+/**
+ * 查询模型原生 (未裁剪) 上下文窗口大小。
+ * 探测端点: POST {baseUrl}/api/show { model } → model_info.<arch>.context_length。
+ * @param {string} baseUrl - Ollama 根地址
+ * @param {string} model - 模型名
+ * @param {number} timeoutMs - 超时毫秒
+ * @returns {Promise<number | null>} 原生 context_length; 未知时为 null
+ */
+async function probeModelContextLength(baseUrl, model, timeoutMs) {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		const endpoint = baseUrl.replace(/\/+$/, "") + "/api/show";
+		const response = await fetch(endpoint, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ model }),
+			signal: controller.signal,
+		});
+		if (!response.ok) return null;
+		const body = await response.json();
+		const info = body && typeof body.model_info === "object" ? body.model_info : {};
+		let contextLength = null;
+		for (const [key, value] of Object.entries(info)) {
+			if (typeof value === "number" && key.endsWith(".context_length")) {
+				contextLength = Math.max(contextLength || 0, value);
+			}
+		}
+		return contextLength;
+	} catch {
+		return null;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+/**
+ * 确保模型有满足目标上下文的 -32k 变体; 没有则用 Modelfile 自动创建。
+ * Ollama 桌面版 serve 不继承 OLLAMA_CONTEXT_LENGTH 环境变量、/v1 端点不转发
+ * options.num_ctx (坑 35), 唯一可靠的做法是给模型固化 num_ctx 并重建变体。
+ * 创建是幂等的: 变体已存在 (api/tags 能列出) 则跳过。
+ * @param {string} baseUrl - Ollama 根地址
+ * @param {Array<string>} modelNames - 已安装模型名列表
+ * @param {object} settings - 合并后的插件配置 (targetContextWindow 等)
+ * @param {object} logger - 日志函数集
+ * @returns {Promise<Array<string>>} 应写入 DSH 的模型名列表 (容量不足者换为 -32k 变体)
+ */
+async function ensureContextVariants(baseUrl, modelNames, settings, logger) {
+	if (!settings.ensureContext || settings.ensureContext === false) return modelNames;
+	const target = Number(settings.targetContextWindow) || 32768;
+	const cli = findOllamaCli();
+	// 第一遍: 确定每个"非变体"模型应该用哪个名字 (原样 / 已有变体 / 需创建变体)
+	const resolved = new Map(); // model -> 要写入的名字
+	const pendingCreate = [];   // { model, variant } 需要 ollama create 的
+	for (const model of modelNames) {
+		if (/-\d+k$/.test(model)) continue; // 变体本身不参与决策, 只作为"已存在"信号
+		const variant = model + "-" + (target / 1024) + "k";
+		const already = modelNames.includes(variant);
+		const native = await probeModelContextLength(baseUrl, model, settings.probeTimeoutMs || 3000);
+		// 原生能力不足 target (连变体都救不了): 原样使用 + 告警
+		if (native !== null && native < target) {
+			logger.warn("[dsh-ollama] %s 原生上下文仅 %s < 目标 %s, 无法达到 DSH 工具所需容量 (DSH 工具可能被截断)", model, native, target);
+			resolved.set(model, model);
+			continue;
+		}
+		// 普通模型: Ollama 服务端默认只分配 16384 (坑 35), 即使原生能力 262144
+		// 实际也到不了 target。因此只要原生能力足够, 一律优先使用/创建 -32k
+		// 变体 (Modelfile 固化 num_ctx, 任何方式启动都生效)。
+		if (already) {
+			resolved.set(model, variant);
+			continue;
+		}
+		if (!cli) {
+			logger.warn("[dsh-ollama] %s 需要 %s 上下文但找不到 ollama CLI, 无法自动创建变体 %s (DSH 工具可能被截断); 可手动: 写 Modelfile 'FROM %s\\nPARAMETER num_ctx %s' 后 ollama create %s", model, target, variant, model, target, variant);
+			resolved.set(model, model);
+			continue;
+		}
+		pendingCreate.push({ model, variant });
+	}
+	// 第二遍: 创建缺失的变体 (幂等、增量, 秒级完成)
+	for (const { model, variant } of pendingCreate) {
+		try {
+			const modelfilePath = join(tmpdir(), "dsh-ollama-Modelfile-" + model.replace(/[^a-zA-Z0-9_.-]/g, "_") + "-" + target);
+			writeFileSync(modelfilePath, "FROM " + model + "\nPARAMETER num_ctx " + target + "\n", "utf8");
+			try {
+				execFileSync(cli, ["create", variant, "-f", modelfilePath], { encoding: "utf8", timeout: 120000, windowsHide: true, stdio: "ignore" });
+				logger.info("[dsh-ollama] 已自动创建 %s (num_ctx=%s, FROM %s) — DSH 工具调用/上下文截断修复", variant, target, model);
+				resolved.set(model, variant);
+			} finally {
+				try { unlinkSync(modelfilePath); } catch { /* ignore */ }
+			}
+		} catch (error) {
+			logger.warn("[dsh-ollama] 自动创建 %s 失败: %s (回退原模型 %s, DSH 工具可能被截断; 可手动 ollama create)", variant, error && error.message ? error.message : error, model);
+			resolved.set(model, model);
+		}
+	}
+	// 去重返回: 每个原模型只映射到一个名字
+	return Array.from(new Set(resolved.values()));
+}
+
+/** 从合并后的插件设置里取 Ollama 根地址 (与 cordis.patch.yml 默认一致)。 */
+function baseUrlOf(settings) {
+	return (settings && settings.baseUrl) ? settings.baseUrl : "http://localhost:11434";
+}
+
+/**
  * 构建写入 llm-pi-ai 的 Ollama provider 配置对象。
  * @param {object} settings - 合并后的插件配置
  * @param {Array<string>} modelNames - 从 /api/tags 拿到的模型名
  * @returns {object} pi-ai profile 对象 (displayName / api / baseURL / models)
  */
 function buildProviderProfile(settings, modelNames) {
+	// 容量: 优先 targetContextWindow/targetMaxTokens (上下文修复目标值),
+	// 回退到 defaultContextWindow/defaultMaxTokens (面板兼容字段)。
+	const contextWindow = Number(settings.targetContextWindow) || Number(settings.defaultContextWindow) || 32768;
+	const maxTokens = Number(settings.targetMaxTokens) || Number(settings.defaultMaxTokens) || 8192;
 	const models = modelNames.map((modelId) => ({
 		id: modelId,
 		name: modelId,
-		contextWindow: settings.defaultContextWindow,
-		maxTokens: settings.defaultMaxTokens,
+		contextWindow,
+		maxTokens,
 	}));
 	// 占位 Authorization 头: pi-ai 的 openai-completions 协议校验
 	// getClientApiKey() 时, 没有 apiKey 也没有 authorization 头会直接抛
@@ -375,7 +525,10 @@ async function runDetection(sctx, settings, logger, options) {
 	status.online = true;
 	status.models = modelNames;
 	status.lastError = null;
-	const profile = buildProviderProfile(settings, modelNames);
+	// 上下文容量修复: 容量不足的模型自动创建 -32k 变体, models 指向变体
+	const effectiveModels = await ensureContextVariants(baseUrlOf(settings), modelNames, settings, logger);
+	status.models = effectiveModels;
+	const profile = buildProviderProfile(settings, effectiveModels);
 	let lastError = null;
 	for (let attempt = 0; attempt < NAMESPACE_RETRIES; attempt++) {
 		try {
@@ -440,6 +593,10 @@ function sanitizeOverrides(body) {
 		if (typeof body.enabled !== "boolean") errors.push("启用开关必须是布尔值");
 		else overrides.enabled = body.enabled;
 	}
+	if (body.ensureContext !== undefined) {
+		if (typeof body.ensureContext !== "boolean") errors.push("上下文修复开关必须是布尔值");
+		else overrides.ensureContext = body.ensureContext;
+	}
 	if (body.baseUrl !== undefined) {
 		if (typeof body.baseUrl !== "string" || !/^https?:\/\/.+/.test(body.baseUrl.trim())) {
 			errors.push("Ollama 服务地址必须以 http:// 或 https:// 开头");
@@ -454,6 +611,8 @@ function sanitizeOverrides(body) {
 	}
 	intField("defaultContextWindow", 1, "默认上下文窗口");
 	intField("defaultMaxTokens", 1, "默认最大输出");
+	intField("targetContextWindow", 1024, "目标上下文窗口");
+	intField("targetMaxTokens", 256, "目标最大输出");
 	intField("detectIntervalMs", 1000, "探测间隔");
 	intField("probeTimeoutMs", 200, "探测超时");
 	if (body.authorizationHeader !== undefined) {
