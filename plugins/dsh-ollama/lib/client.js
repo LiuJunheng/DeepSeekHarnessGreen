@@ -166,8 +166,11 @@ window.__ModuleLoader__.load({
 				setError(null);
 				setSavedTip(null);
 				const overrides = { ...draft };
-				// 数字字段统一转整数 (空串/非法值由宿主端校验并返回错误)
-				for (const key of ["defaultContextWindow", "defaultMaxTokens", "detectIntervalMs", "probeTimeoutMs"]) {
+				// 数字字段统一转整数 (空串/非法值由宿主端校验并返回错误)。
+				// 上下文/输出容量改走 target* —— 这才是 buildProviderProfile 与
+				// ensureContextVariants 实际采用的生效字段; default* 仅作回退,
+				// 面板不再暴露, 避免"改了不生效"的困惑 (坑 38)。
+				for (const key of ["targetContextWindow", "targetMaxTokens", "detectIntervalMs", "probeTimeoutMs"]) {
 					const value = overrides[key];
 					if (typeof value === "string") overrides[key] = value.trim() === "" ? 0 : Number(value);
 				}
@@ -254,11 +257,11 @@ window.__ModuleLoader__.load({
 						react.createElement(TextInput, { value: draft.displayName || "", onChange: (e) => setDraftField("displayName", e.target.value) })
 					),
 					react.createElement("div", { key: "nums", style: { display: "flex", gap: 16, flexWrap: "wrap" } }, [
-						react.createElement(FieldRow, { key: "ctx", label: "默认上下文窗口 (tokens)" },
-							react.createElement(NumberInput, { min: 1, value: draft.defaultContextWindow || "", onChange: (e) => setDraftField("defaultContextWindow", e.target.value) })
+						react.createElement(FieldRow, { key: "ctx", label: "目标上下文窗口 (tokens)", hint: "生效值：写入 Models 页模型容量 + 自动创建变体固化的 num_ctx。" },
+							react.createElement(NumberInput, { min: 1024, value: draft.targetContextWindow || "", onChange: (e) => setDraftField("targetContextWindow", e.target.value) })
 						),
-						react.createElement(FieldRow, { key: "max", label: "默认最大输出 (tokens)" },
-							react.createElement(NumberInput, { min: 1, value: draft.defaultMaxTokens || "", onChange: (e) => setDraftField("defaultMaxTokens", e.target.value) })
+						react.createElement(FieldRow, { key: "max", label: "目标最大输出 (tokens)", hint: "生效值：单次输出上限，必须远小于上下文窗口（如 32768/8192），否则输入空间为零必截断。" },
+							react.createElement(NumberInput, { min: 256, value: draft.targetMaxTokens || "", onChange: (e) => setDraftField("targetMaxTokens", e.target.value) })
 						),
 					]),
 					react.createElement("div", { key: "times", style: { display: "flex", gap: 16, flexWrap: "wrap" } }, [

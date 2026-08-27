@@ -356,15 +356,31 @@ function buildProviderProfile(settings, modelNames) {
 	// 回退到 defaultContextWindow/defaultMaxTokens (面板兼容字段)。
 	const contextWindow = Number(settings.targetContextWindow) || Number(settings.defaultContextWindow) || 32768;
 	const maxTokens = Number(settings.targetMaxTokens) || Number(settings.defaultMaxTokens) || 8192;
+	// qwen3 / gemma3 等模型在 Ollama 里默认开启思考, 会把 max_tokens 烧在
+	// reasoning 上、还没轮到工具调用就被截断 (坑 37)。这里给每个模型声明
+	// reasoningEfforts: DSH 的思考档位映射到 Ollama 认识的 reasoning_effort
+	// 线上值; 关键是把 off 映射成 "none", 这样 DSH 默认不思考时 pi-ai 会
+	// 发送 reasoning_effort="none" 关闭思考, token 全部用于工具调用。
+	const ollamaReasoningEfforts = {
+		off: "none",
+		minimal: "none",
+		low: "low",
+		medium: "medium",
+		high: "high",
+	};
 	const models = modelNames.map((modelId) => ({
 		id: modelId,
 		name: modelId,
 		contextWindow,
 		maxTokens,
+		reasoningEfforts: ollamaReasoningEfforts,
 	}));
 	// 占位 Authorization 头: pi-ai 的 openai-completions 协议校验
 	// getClientApiKey() 时, 没有 apiKey 也没有 authorization 头会直接抛
 	// "No API key for provider", 而 Ollama 不校验该头, 因此补一个占位值。
+	// 注意: 绝不能写 apiKeyEnv (坑 36) —— Ollama 不需要密钥, 且 dsh-llm-pi-ai
+	// 只要配置了 apiKeyEnv 就会去解析对应环境变量, 解析不到直接抛
+	// MISSING_CREDENTIAL, 导致所有请求失败。
 	const authorization = settings.authorizationHeader;
 	// Ollama 的 OpenAI 兼容层不说 OpenAI 官方方言: 不认 developer 角色 /
 	// max_completion_tokens / strict 工具字段。不配 compat 时 pi-ai 按
@@ -372,9 +388,11 @@ function buildProviderProfile(settings, modelNames) {
 	// 写输出上限、工具带 strict), Ollama 会丢弃/拒绝, 导致工具 schema 到
 	// 不了模型 → 模型从不调用 DSH 工具。这套开关让 pi-ai 改用 Ollama
 	// 认识的方式: system 角色、max_tokens 字段、不带 strict 的工具。
+	// supportsReasoningEffort 必须为 true, pi-ai 才会发送 reasoning_effort
+	// (配合上面模型的 reasoningEfforts.off="none" 关闭思考)。
 	const ollamaCompat = {
 		supportsDeveloperRole: false,
-		supportsReasoningEffort: false,
+		supportsReasoningEffort: true,
 		maxTokensField: "max_tokens",
 		supportsStrictMode: false,
 	};
@@ -389,22 +407,26 @@ function buildProviderProfile(settings, modelNames) {
 }
 
 /**
- * 比较两个模型列表是否等价 (只比 id + contextWindow + maxTokens, 忽略顺序)。
+ * 比较两个模型列表是否等价 (比 id + contextWindow + maxTokens + reasoningEfforts,
+ * 忽略顺序)。reasoningEfforts 参与比较, 是为了让旧版本插件写入的、缺少该字段的
+ * 模型列表在升级后能被自动补齐 (否则周期性探测会认为模型没变化、跳过写入)。
  * @param {Array<object> | undefined} previousModels - 当前已存的 models 列表
  * @param {Array<object> | undefined} nextModels - 要写入的 models 列表
  * @returns {boolean} true 表示等价, 无需写入
  */
 function modelsEquivalent(previousModels, nextModels) {
 	const signature = (models) => (models || [])
-		.map((model) => model.id + "|" + model.contextWindow + "|" + model.maxTokens)
+		.map((model) => model.id + "|" + model.contextWindow + "|" + model.maxTokens
+			+ "|" + JSON.stringify(model.reasoningEfforts ?? null))
 		.sort()
 		.join(",");
 	return signature(previousModels) === signature(nextModels);
 }
 
 /**
- * 合并模型列表: 已存在的模型保留其手改的 contextWindow / maxTokens (以旧列表为准),
- * 只对新增模型套用默认容量。force 重写时用于不丢失用户在 Models 页的手改。
+ * 合并模型列表: 已存在的模型保留其手改的 contextWindow / maxTokens / name,
+ * 只对新增模型套用默认容量; reasoningEfforts 始终以新列表 (插件) 为准。
+ * force 重写时用于不丢失用户在 Models 页的手改容量参数。
  * @param {Array<object> | undefined} previousModels - 当前已存的 models 列表
  * @param {Array<object> | undefined} nextModels - 探测到的新模型列表
  * @returns {Array<object>} 合并后的模型列表
@@ -422,6 +444,7 @@ function mergeModelParams(previousModels, nextModels) {
 			name: model.name || previous.name || model.id,
 			contextWindow: previous.contextWindow !== undefined ? previous.contextWindow : model.contextWindow,
 			maxTokens: previous.maxTokens !== undefined ? previous.maxTokens : model.maxTokens,
+			reasoningEfforts: model.reasoningEfforts !== undefined ? model.reasoningEfforts : previous.reasoningEfforts,
 		};
 	});
 }
@@ -457,6 +480,10 @@ async function applyOllamaProfile(sctx, settings, profile, logger, options) {
 			{ op: "set", path: [...PROVIDER_PATH, "api"], value: profile.api },
 			{ op: "set", path: [...PROVIDER_PATH, "baseURL"], value: profile.baseURL },
 			{ op: "set", path: [...PROVIDER_PATH, "compat"], value: profile.compat },
+			// 坑 36: Ollama 不需要 API Key, 且 apiKeyEnv 指向的环境变量缺失时
+			// dsh-llm-pi-ai 直接抛 MISSING_CREDENTIAL 使所有请求失败。这里主动
+			// 移除该字段, 自愈手工/历史配置里误加的值 (鉴权交给 authorizationHeader)。
+			{ op: "remove", path: [...PROVIDER_PATH, "apiKeyEnv"] },
 		];
 		if (profile.headers) {
 			ops.push({ op: "set", path: [...PROVIDER_PATH, "headers"], value: profile.headers });
@@ -488,8 +515,18 @@ async function applyOllamaProfile(sctx, settings, profile, logger, options) {
 	if (currentProfile.headers === undefined && profile.headers !== undefined) {
 		ops.push({ op: "set", path: [...PROVIDER_PATH, "headers"], value: profile.headers });
 	}
+	// 坑 36 自愈: 已有配置里误加的 apiKeyEnv 一律移除 (见上方注释)。
+	if (currentProfile.apiKeyEnv !== undefined) {
+		ops.push({ op: "remove", path: [...PROVIDER_PATH, "apiKeyEnv"] });
+	}
 	if (!modelsEquivalent(currentProfile.models, profile.models)) {
-		ops.push({ op: "set", path: [...PROVIDER_PATH, "models"], value: profile.models || [] });
+		// 周期性同步也要用 mergeModelParams: 保留用户在 Models 页手改的
+		// contextWindow / maxTokens / name, 只对新增模型套用默认容量;
+		// reasoningEfforts 始终以新列表 (插件) 为准 (负责给旧配置补齐该字段)。
+		// 若直接写 profile.models, 用户手改的容量会在下一轮探测 (默认 60s)
+		// 被插件覆盖回默认值——又是"改了不生效"的坑 (对应坑 38 的教训)。
+		const mergedModels = mergeModelParams(currentProfile.models, profile.models || []);
+		ops.push({ op: "set", path: [...PROVIDER_PATH, "models"], value: mergedModels });
 	}
 	if (ops.length === 0) return;
 	await sctx.settings.mutate(PI_AI_NAMESPACE, ops);
