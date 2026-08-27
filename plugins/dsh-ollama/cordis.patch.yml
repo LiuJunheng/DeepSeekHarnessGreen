@@ -1,0 +1,26 @@
+# dsh-ollama bundle patch: 把本插件作为一行插入 profile 插件树。
+# 格式与同项目插件 dsh-sidebar-lite / dsh-usage-stats 完全一致:
+#   - insert: 新增一行插件行 (id 是本插件行标识, name 是包名)。
+# config 为本插件的入口配置, 覆盖 DEFAULT_CONFIG (见 lib/index.js):
+#   enabled              是否启用自动识别 (默认 true)
+#   baseUrl              Ollama 服务根地址, 不含 /v1 (默认 http://localhost:11434)
+#   displayName          Models 页显示的提供方名称 (默认 Ollama)
+#   defaultContextWindow 模型发现不到上下文大小时的默认值 (默认 32768)
+#   defaultMaxTokens     模型发现不到最大输出时的默认值 (默认 8192)
+#   authorizationHeader  发送给 Ollama 的 Authorization 头 (pi-ai 要求必须有
+#                         apiKey 或 authorization 头才放行 openai-completions
+#                         请求; Ollama 不校验该头。留空则不发。默认 Bearer ollama-local)
+#   detectIntervalMs     周期性探测间隔毫秒 (默认 60000)
+#   probeTimeoutMs       单次探测超时毫秒 (默认 3000)
+- insert:
+    - id: ollama
+      name: dsh-ollama
+      config:
+        enabled: true
+        baseUrl: http://localhost:11434
+        displayName: Ollama
+        defaultContextWindow: 32768
+        defaultMaxTokens: 8192
+        authorizationHeader: Bearer ollama-local
+        detectIntervalMs: 60000
+        probeTimeoutMs: 3000

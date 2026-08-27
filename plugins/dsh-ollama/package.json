@@ -1,0 +1,26 @@
+{
+  "name": "dsh-ollama",
+  "version": "0.1.0",
+  "description": "自动识别本机 Ollama 服务并接入 DSH：启动后周期探测 Ollama 原生接口 /api/tags（默认 http://localhost:11434），在线则自动把 Ollama 注册为 OpenAI 兼容 Provider（写入 llm-pi-ai 的 providers 配置），WebUI Models 页即可选择 Ollama 模型并修改参数；模型有增删时自动同步。另提供 WebUI「设置 → Ollama 设置」面板在线修改插件配置（持久化到 DSH_HOME/ollama-config.json，保存即生效）。零原生依赖、零构建、纯宿主端。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "license": "Apache-2.0"
+}

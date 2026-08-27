@@ -310,6 +310,7 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 - **Gitee `/releases` 升序返回 + 默认每页 20**：取"最新"必须 `?per_page=100` 后再按 `created_at` 降序，否则会首选到最旧版本（曾误报 v1.0.9 为最新）。**凡依赖第三方列表接口取"最新"，都防"顺序假设 + 分页截断"，不要轻信返回顺序**。
 - **Gitee 删附件用 `curl.exe` 逐条删**：PowerShell `Invoke-RestMethod -Method Delete` 会 404；短时间批量循环会命中限流返回**假 404**，须逐条 + 删后 `?per_page=100` 复查；建 Release 必带 `target_commitish=master`（否则 400）；Gitee 同名附件上传不覆盖，先按 attachment id 删旧再传。
 - **推送 / 网络**：本机常有 `api.github.com` 可达、`github.com:443` 直连超时——git push 失败改走 GitHub API 建 ref/提交/传资产（`uploads.github.com`），或开代理 `-c http.proxy=http://127.0.0.1:10809 -c http.lowSpeedLimit=0 -c http.lowSpeedTime=999`。**Gitee push 认 `https://oauth2:<token>@gitee.com`，用 `用户名:token` 会 403**。
+- **发行流程（v1.0.18 起复用模板）**：`runtime/tmp/` 下 `build_release_zip_v10xx.py`（纯标准库打**一个**绿色 zip，`GREEN_FILES` 白名单 + `GREEN_DIRS` 递归，含 `plugins/` 与 `skills/dsh-deploy-maintain/`）、`github_release_v10xx.py`（`GH_TOKEN` 建 Release/传资产，422 自动复用）、`gitee_release_v10xx.py`（`GITEE_TOKEN` 会话临时注入不落盘，先删同名旧附件再传）。**构建 zip 用便携 Python `runtime\python\python\python.exe`**——系统 `python` 是本机 Python 2.7.6，跑新脚本会误报语法错。发布说明按改动主题分节、文案三国化包装；Gitee 正文用纯文本编号列表（不带 Markdown 标题）。改内置插件/入口后记得同步 `GREEN_FILES` 白名单（如 v1.0.18 移除了 `desktop-shell.bat`）。
 
 ## 四、DSH 插件开发（双端加载 + 路由注册）
 
@@ -524,6 +525,33 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 - **格式扩展 + 纯音乐（2026-08-24，需求 #105）**：把扩展名集拆成 `VIDEO_EXTS` / `AUDIO_EXTS` 两套即可让同一个全屏 `<video>` 同时播 mp3/wav 等音频（`<video>` 原生支持音频轨道，`stream` 端 `content-type` 按表回 `audio/*`）。**纯音乐绝不能走"背景板全透明 + video 显示画面"**——`<video>` 底是黑色 `#000`，整窗会变黑底听歌；纯音乐需 `setBackgroundActive(false)` 恢复原生背景板 + `videoEl.style.display="none"` 只出声（保留原深色壁纸当视觉）。mkv/flv/wmv 等能否解取决于浏览器内核/编码，**统一列出交给浏览器尝试**，解不了会触发结束事件、前端 `onEnded` 自动跳下一首，不影响清单其余项。清单项/试播项加 `kind` 字段区分，旧版 localStorage 无 kind 时默认 `video` 兼容。
 4.19 **内置插件主题自适应（2026-08-24，需求 #106）**：做插件 UI 必须用 harness 语义 CSS 变量 `--dsw-alias-*`（主文字 `label-primary`、次文字 `label-secondary`、弱文字 `label-tertiary`、面板背景 `bg-layer-2`、底座 `bg-base`、边框 `border-l1/l2`、hover `interactive-bg-hover`、主按钮 `button-primary-fill`、错误 `state-error-primary`、遮罩 `bg-mask-N`）。深浅主题由根容器 `body[data-ds-dark-theme]` 自动换值、CSS 变量级联，**不用写任何 JS 主题判断/监听**。禁引 `--dsw-static-*` 当底色/文字/边框（静态色不随主题）；状态装饰（运行蓝 `#1a56db`、成功绿、危险红、品牌强调 `#4a7bff`）与阴影可留少量静态色。改造用 `var(--x, #回退值)` 写法可安全兜底。切记 media-background 的背景透明语义（`html.dsw-mbg-active` / `setBackgroundActive` / `applyMediaMode` / `--dsw-alias-bg-base:transparent` / `<video> background:#000`）是刻意为之、不能因主题化误改——只改面板控件色即可。**凡是无显式 `color`、靠父级继承的文字（正文/标题/数值/折叠 summary）也要显式补 `var(--dsw-alias-label-*)`，否则深色下会落到默认黑字看不清**；**固定深字侧同理（2026-08-25，需求 #108 补漏）**：浅框表格里无显式 `color` 的单元格（如价格表模型名）也要显式补固定深色 `#1f1f1f`，否则深色下继承页面白字、白字落白底。参考：7 个内置插件已全量按此适配（theme 变量权威定义在 `runtime/dsh/node_modules/@deepseek-ai/dsh-client-ui-theme/lib/client.js`）。**重大补漏（2026-08-25 实测，dev 流程必读）：改完 `plugins/` 源码必须同步运行副本！** 插件经 `dsh plugin add file:`（pnpm）是**拷贝**进 `runtime/dsh-home/profiles/web/node_modules/<插件>/`，dsh 实际跑的 bundle 读的是**安装副本**；只改 `plugins/` 源码不重装/不同步，改动在运行端**静默不生效**——#106 全量主题化改造就因没同步，用户切深色后用量统计仍是旧白框（`#fff`/`#f5f5f5`/`#fafafa`）。同步法：`Copy-Item -Path "$src\*" -Destination $dst -Recurse -Force`（PowerShell `Copy-Item -Destination` 遇已存在目录会**嵌套**复制、须用 `$src\*` 复制内容）；dsh 运行中 `lib/index.js`/`cordis.patch.yml` 被锁无法覆盖、`lib/client.js` 按请求生成不受锁；同步后纯客户端改动**强刷页面**即生效、服务端改动需**重启服务**。或直接 `--install-plugin file:<绝对路径>` 重装（幂等很快）+ 重启服务。**分层决策（2026-08-25，需求 #108 细化）**：不是"全都随主题"就最好——**锚定在固定浅色背景框里的内容要整组固定（浅框 `#fff`/`#f5f5f5`/`#fafafa` + 深字 `#1f1f1f`/`#555555`/`#8a8f98`）**，不能只让框内文字随主题变白（白字落白底看不清）；只有框外的页面级文字才用 `var(--dsw-alias-label-*)` 随主题。改主题前先分清"浮在页面底上的文字 vs 框内文字"。**宿主端调 DeepSeek API 拿凭据（2026-08-25，需求 #109 余额接入实测）**：用户经 WebUI 设置面板配置的 API Key 由 harness 持久化到 `$DSH_HOME/.credentials.yaml`（格式 `refs:\n  DEEPSEEK_API_KEY: sk-xxx`，`$DSH_HOME` 默认 `%USERPROFILE%\.dsh`，绿色版在 runtime/dsh-home）；宿主端插件调用 `DEEPSEEK_API_KEY` 的凭据**取值优先级=运行进程环境变量 → 解析该 yaml**（去 UTF-8 BOM + 正则 `^\s*DEEPSEEK_API_KEY\s*:\s*(\S+)` 取首项）。**Key 绝不能传给前端**：宿主端路由持 Key 调官方接口（如 `GET https://api.deepseek.com/user/balance`，node 全局 `fetch` + `AbortController` 设超时），再只把结果 JSON 返回给客户端；读 `credentials` 属官方 `PRIVILEGED_METHODS`，本插件的取巧是直接读文件而非调 credentials 服务。
 
+4.20 **接入第三方模型/Provider（Ollama 等）：写 pi-ai 的 `providers` 配置，别自己注册适配器（2026-08-27，dsh-ollama，对应 DEV_NOTES 坑 31-33）**：官方多 Provider 底座是 `dsh-llm-pi-ai`（命名空间 `llm-pi-ai`），要给 DSH 加新模型源（Ollama / LM Studio / vLLM 等任何 OpenAI 兼容服务）**绝不要**自己调 `ctx.llm.registerAdapter`（对 provider 路由**排他**）或 `ctx.llm.registerModelDiscovery`（每 namespace **只能一个**）——直接注册必与 pi-ai 冲突。**正解：经 `ctx.settings.mutate("llm-pi-ai", ops)` 把 `providers.<id>` 写进设置节**，pi-ai 监听变更自动注册模型目录 + 对话路由 + 模型发现：
+
+- **Ollama 接入配方**：`api: "openai-completions"`（OpenAI 兼容端点） + `baseURL: "{baseUrl}/v1"`（默认 `http://localhost:11434`）+ `models: [{id,name,contextWindow,maxTokens}]`（从 `/api/tags` 探测）。探测不到服务/超时（`AbortController` 3s）静默跳过、周期重试（60s）；首次写入全量、已存在则仅当 baseURL 一致时才补缺字段 + 同步模型列表（**尊重用户在 Models 页的手改，不覆盖 displayName/api/baseURL/模型参数**）。
+- **免鉴权服务必带占位 Authorization 头**：pi-ai 的 `openai-completions` 协议校验 `getClientApiKey()`——无 `apiKeyEnv` 也无 headers 直接抛 `No API key for provider`；但给 Ollama 这类服务写 `apiKeyEnv` 又会因缺真实 Key 报 `MISSING_CREDENTIAL`。**正解：配置 `headers: { Authorization: "Bearer ollama-local" }` 占位头**，Ollama 不校验、pi-ai 原样透传。
+- **thinking 模型"Deep diving…"是正常思考态**：带 `thinking` 能力（`/api/tags` 的 `capabilities`）的模型先流式 `delta.reasoning`（pi-ai 映射 `reasoning-delta`，UI 显示"Deep diving…"），**思考完才出正文**；本地 4B 冷启动 + 思考要十几秒~几十秒，别误判卡死。
+- **curl 直测 OpenAI 兼容端点（Windows/PowerShell）**：`-d '...'` 单引号 JSON 会被 PowerShell 吃掉（报 `invalid character 'm'`）→ JSON 写临时文件 `curl --data-binary "@file"`；`GET /api/ps` 空数组 = 模型未加载（冷启动慢）。
+- **插件形态**：纯宿主端 `lib/index.js` 即可，零原生依赖、零构建（探测用 Node 全局 `fetch`）；配置项（baseUrl/displayName/探测间隔等）由 `cordis.patch.yml` 的 `config` 覆盖；模型参数（contextWindow/maxTokens/baseURL）用户直接在 WebUI Models 页改。想免编辑文件改插件配置，再加 `dsh.client` 客户端设置面板。
+- **验证链（三环缺一不可）**：① `GET {baseUrl}/api/tags` 能列模型；② `settings.yaml` 里 `llm-pi-ai.providers.ollama` 已写入（重启服务后持久）；③ WebUI 模型选择器出现 Ollama 模型 + 真实对话有回复（耐心等 thinking 模型思考完）。端到端通过后，改动同步更新 DEV_NOTES.md 与本文档。
+
+### 4.21 `webServer.register` 无 `method` 字段：同一 path 只能注册一次，GET/POST 须在同一 handler 按 `req.method` 分流（2026-08-27，dsh-ollama 设置路由 404）
+
+- **现象**：dsh-ollama 的 WebUI「设置 → Ollama 设置」面板客户端 fetch `/__dsh/ollama/config` 一直 404，但插件探测/接入 provider 都正常（settings.yaml 里 ollama provider 已写入、模型已同步）。
+- **根因**：`@deepseek-ai/dsh-host-webserver` 的 `WebRoute` 只有 `kind` / `path` / `handler` 三个字段（`lib/types/index.d.ts` 确认），**没有 `method` 字段**——想区分 GET/POST 必须在**同一个 handler 里按 `req.method` 分流**。对同一 path 分别注册 GET 路由和 POST 路由会抛 **"Duplicate (kind, path)"** 错误，异常把整个插件 fiber 回滚、**所有**路由（不止 POST）全部失效 → 客户端 fetch 全 404。注意与 4.3 的 405 语义不同：404 = 路由根本没进 exact 表。
+- **修复**：合并为单一路由、handler 内按 `req.method` 分流：
+  ```js
+  ctx.effect(() => ctx.webServer.register({
+    kind: "exact",
+    path: "/__dsh/ollama/config",
+    handler: async (req, res) => {
+      if (req.method === "POST") { /* 解析 body + 校验 + 保存 + 立即重新接入 */ return; }
+      /* GET 与其余方法: 返回当前生效配置 + 连接状态 */
+    }
+  }), "dsh-ollama: config route");
+  ```
+- **排查"路由注册了却 404"三步**：① 核对是否同 `(kind, path)` 注册了两条（撞车必抛错回滚全插件路由）；② 抓首页 `window.__DSH_BOOT__.entries` 是否含该插件的 client 条目、`curl /plugins/<id>/client.js` 能否 200（排除客户端根本没加载）；③ 若面板是 `settings.section` 注册——它在设置页生成的是**侧边栏导航行**（按 `order` 排序，order 大排最后），**不是顶栏独立标签**，浏览器验证时要滚动侧边栏找（dsh-ollama order=520 排在「用量统计」之后）。
+- **改完同步 + 重启**：`plugins/` 源文件与运行副本是 **pnpm 硬链接**同一物理文件（`fsutil hardlink list <副本路径>` 可见双路径）→ 改源码即改副本，但**运行中的服务内存里仍是旧代码，必须重启服务**；重启后 `node` 仍持有文件句柄时 `Copy-Item` 覆盖报"被另一进程占用"（硬链接同 inode 所致）属正常——内容已共享，无需再拷，`Get-FileHash` 双路径一致即证明已同步。
+
 ## 五、验证与排查速查表
 
 | 症状 | 首选排查动作 |
@@ -531,6 +559,7 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 | WebUI 入口不显示 | 抓首页 `window.__DSH_BOOT__.entries` 是否含插件 → 查 `exports` 是否含 `./package.json` → 查 `files` 是否含 `cordis.patch.yml` |
 | 客户端组件不渲染 / 按钮消失（控制台 `componentDidCatch`、Rendered more/fewer hooks） | 查条目组件是否**条件调用 props 传入的 hook**（`typeof useXxx === "function" ? useXxx() : null`）→ 改读 ownerProps 里的普通数据字段（如 `input.draft`）→ 强制刷新页面（改客户端源码无需重启服务） |
 | 点击按钮 HTTP 405 | 查路由是否注册进 exact 表 → 确认 `ctx.effect(() => register(...), label)` 写法 → 查 `dsh-host-frontend-static` fallback 行为 |
+| 客户端 fetch 报 HTTP 404（服务端插件明明有路由） | 查是否同 `(kind, path)` 注册了两条路由（`webServer` 无 `method` 字段，重复注册抛 "Duplicate" 回滚全插件路由）→ 合并为单 handler 按 `req.method` 分流 → 重启服务（见 4.21） |
 | 路由 403 | 自定义头没带对（`x-dsh-plugin-purge: 1`），或来自跨域（无法带自定义头） |
 | 会话 shell 报 ACL temp 冲突 | 临时目录在工作区内 → 换用 `BASE_DIR/workspace` 或工作区外目录 |
 | "Failed to fetch" / 服务 40 秒退 | stdin 读到 EOF → 用 `stdin=PIPE` 保持打开 |
@@ -558,6 +587,8 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 | 点最小化窗口却进了任务栏、没进系统托盘 | ①钩子只装在 `add()` 没在 `__init__`（第一次最小化时托盘图标还没出现→漏拦截）→ 移到 `__init__`；②`winfo_id()` 拿到的是 `TkChild` 子窗口、或窗口未 realize 导致 `GetAncestor` 拿错窗口 → 先 `update_idletasks()` 再 `GetAncestor(GA_ROOT)`；③WndProc 里直接调 `after`/`withdraw` 重入 Tcl 崩溃或 `--windowed` 下 `stderr=None` 输出崩 → 改用「WndProc 只置标志位 + `after(80,...)` 轮询 `poll()`」；恢复后再最小化又失效则 `remove()` 误还原了窗口过程（应只删图标，退出才 `dispose()` 还原） |
 | bat 双击/调用"闪退"但代码看着没问题 | 先分清「窗口关闭」与「逻辑失败」：带 `pause` 的 bat 若真失败会暂停显示错误、不会闪退。抓取完整行为用 Python `subprocess.run(["cmd","/c",bat], capture_output=True, text=True)`——**别用 PowerShell `Start-Process -RedirectStandardOutput/Error`**（重定向管道与 cmd 的 `pause` 交互冲突，输出被吞、看起来像闪退）。再字节级检查 bat 是否全 ASCII、无 BOM、CRLF（非 ASCII 注释在 GBK 代码页下变乱码虽不致命但难看） |
 | 改了默认价格 WebUI 还是旧价 | 改价格表必须**同时改 `PRICES_KEY`（localStorage 键）**——键不变则用户浏览器里已存的旧价永远覆盖新默认；改键后 loadPrices 读不到新键自动回退新默认。客户端 bundle 按请求生成，强制刷新页面即可生效，无需重启服务 |
+| 模型选择器没有 Ollama 等新 provider / 选了发消息报 `No API key for provider` | ①查 `settings.yaml` 里 `llm-pi-ai.providers.<id>` 是否已写（重启服务后持久，改插件源码须同步运行副本 + 重启，见 4.19/坑 16）；②免鉴权服务（Ollama 等）须有占位 `headers.Authorization`（无 apiKey 无头必报 `No API key for provider`，见 4.20）；③模型是 thinking 模型时"Deep diving…"是正常思考态，耐心等正文（见 4.20） |
+| 对话停在"Deep diving…"很久 | thinking 模型先思考后出正文（本地 4B 冷启动 + 思考十几秒~几十秒）；先 `GET /api/ps` 确认模型已加载、再耐心等，别误判卡死（见 4.20） |
 
 ## 六、工作流建议（绿色整合版启动器开发顺序）
 
