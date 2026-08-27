@@ -558,6 +558,16 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 - **排查"路由注册了却 404"三步**：① 核对是否同 `(kind, path)` 注册了两条（撞车必抛错回滚全插件路由）；② 抓首页 `window.__DSH_BOOT__.entries` 是否含该插件的 client 条目、`curl /plugins/<id>/client.js` 能否 200（排除客户端根本没加载）；③ 若面板是 `settings.section` 注册——它在设置页生成的是**侧边栏导航行**（按 `order` 排序，order 大排最后），**不是顶栏独立标签**，浏览器验证时要滚动侧边栏找（dsh-ollama order=520 排在「用量统计」之后）。
 - **改完同步 + 重启**：`plugins/` 源文件与运行副本是 **pnpm 硬链接**同一物理文件（`fsutil hardlink list <副本路径>` 可见双路径）→ 改源码即改副本，但**运行中的服务内存里仍是旧代码，必须重启服务**；重启后 `node` 仍持有文件句柄时 `Copy-Item` 覆盖报"被另一进程占用"（硬链接同 inode 所致）属正常——内容已共享，无需再拷，`Get-FileHash` 双路径一致即证明已同步。
 
+### 4.22 后台自动探测型插件要提供「主动重接入」入口（2026-08-27，dsh-ollama 「一键接入」按钮）
+
+- **背景**：外部服务探测类插件（识别本地 Ollama / LM Studio / vLLM 等）默认是**后台周期探测**，一旦「启动时或更新后的那一轮没接上」（如外部服务比 DSH 晚启动、更新后 provider 列表停在旧状态），用户**没有任何主动重试入口**，只能等下一轮或重启服务，体验割裂。
+- **正解**：给 WebUI 面板加一个手动「一键接入」按钮，走**独立路由** `POST /<route>/reconnect`（复用现有的 `runDetection(..., {force:true})` 逻辑 + `configPayload()`），客户端按钮放置于状态卡「已接入/未接入」徽章旁。要点：
+  - **独立 path**：新路由与配置读写路由 `/config` 用**不同 path**，避免违背 4.21 的"同一 path 只能注册一次"。
+  - **`force:true` 全量重写、但保留用户手改项**：`applyOllamaProfile` 的 force 分支里用 `mergeModelParams` 合并——已有模型保留 Models 页手改的 contextWindow/maxTokens/name，新增模型套默认容量。
+  - **不干扰持久化配置**：`/reconnect` 内部只 `runDetection`，**不要写 `ollama-config.json`**，避免"点一下接入"意外清空用户在面板保存的覆盖值。
+  - **离线也是正常返回**：外部服务未开时 `runDetection` 返回 `false`（不抛异常），路由照常 `200` 返回 `reconnected:false` + `status.lastError`，客户端据此显示"未检测到服务"而非报错。
+  - **置忙防连点**：客户端按钮 `disabled: busy`，文案切「接入中…」。
+
 ## 五、验证与排查速查表
 
 | 症状 | 首选排查动作 |

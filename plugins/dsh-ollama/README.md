@@ -13,6 +13,7 @@
   - **自动上下文容量修复**（`ensureContext`，默认开）：探测到容量不足的模型时，自动用 Modelfile 固化 `num_ctx` 并创建 `"<原名>-32k"` 变体，`models` 自动指向变体——否则 DSH 工具 schema 被截断、模型从不调用工具 + 报 token 上限；
 - WebUI **Models 设置页**随即出现 Ollama 条目，可直接选择模型对话，也可修改 baseURL / contextWindow / maxTokens 等参数；
 - Ollama 模型有增删（新 pull / 删除）时自动同步 `models` 列表。
+- WebUI「设置 → Ollama 设置」面板提供**「一键接入」按钮**（2026-08-27 新增）：当自动探测没能在更新/启动后把模型配置好时（如 Ollama 启动晚于 DSH、或 provider 列表停在旧状态），点一下即**立即**按当前生效配置强制重新探测 ` /api/tags`、必要时补建 `-32k` 上下文变体，并把 `providers.ollama`（含全部模型）全量重写到 llm-pi-ai；不保存表单、不改动已持久化的面板配置，结束即刷新连接状态 / 模型列表 / 已接入标记。
 
 ## 设计要点 / 避坑
 

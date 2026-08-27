@@ -23,6 +23,7 @@ window.__ModuleLoader__.load({
 
 		// 宿主端设置路由与防御头 (与 lib/index.js 保持一致)。
 		const ROUTE_CONFIG = "/__dsh/ollama/config";
+		const ROUTE_RECONNECT = "/__dsh/ollama/reconnect";
 		const GUARD_HEADER = "X-DSH-Ollama";
 
 		// ---- 网络请求 ----
@@ -43,6 +44,22 @@ window.__ModuleLoader__.load({
 				method: "POST",
 				headers: { "content-type": "application/json", [GUARD_HEADER]: "1" },
 				body: JSON.stringify(overrides),
+			});
+			const payload = await response.json().catch(() => null);
+			if (!response.ok || payload === null || payload.ok !== true) {
+				throw new Error((payload && payload.error) || ("HTTP " + response.status));
+			}
+			return payload;
+		}
+
+		// ---- 网络请求 ----
+
+		/** 「一键接入」: 强制重新探测 + 全量重写 provider; 不保存表单、不动持久化配置。
+		 * 宿主端返回 { config, status, providerWritten, reconnected, error? }。 */
+		async function reconnectOllama() {
+			const response = await fetch(ROUTE_RECONNECT, {
+				method: "POST",
+				headers: { [GUARD_HEADER]: "1" },
 			});
 			const payload = await response.json().catch(() => null);
 			if (!response.ok || payload === null || payload.ok !== true) {
@@ -195,6 +212,32 @@ window.__ModuleLoader__.load({
 				loadAll(false);
 			}
 
+			/** 「一键接入」: 强制重新探测接入, 用返回的生效配置刷新表单与状态。 */
+			const reconnectNow = async () => {
+				setBusy(true);
+				setError(null);
+				setSavedTip(null);
+				try {
+					const payload = await reconnectOllama();
+					setConfig(payload.config || {});
+					setStatus(payload.status || {});
+					setProviderWritten(payload.providerWritten === true);
+					setDraft({ ...(payload.config || {}) });
+					// 面板顶部错误优先级最高; 其次失败/成功文案
+					if (payload.error) {
+						setError(String(payload.error));
+					} else if (payload.reconnected === true) {
+						setSavedTip("已重新接入 Ollama，模型已按当前配置同步");
+					} else {
+						setSavedTip("重探完成，但未检测到可接入的 Ollama 模型");
+					}
+				} catch (err) {
+					setError("一键接入失败: " + String((err && err.message) || err));
+				} finally {
+					setBusy(false);
+				}
+			};
+
 			// ---- 样式 ----
 			const rootStyle = { display: "flex", flexDirection: "column", gap: 12, padding: 4, maxWidth: 720 };
 			const titleStyle = { margin: 0, fontSize: 14, fontWeight: 600, color: "var(--dsw-alias-label-primary)" };
@@ -219,6 +262,12 @@ window.__ModuleLoader__.load({
 						providerWritten
 							? react.createElement("span", { key: "badge", style: { fontSize: 11, color: "#2ecc71", border: "1px solid #2ecc71", borderRadius: 10, padding: "1px 8px" } }, "已接入 Models 页")
 							: react.createElement("span", { key: "badge", style: { fontSize: 11, color: "#8a8f98", border: "1px solid #cccccc", borderRadius: 10, padding: "1px 8px" } }, "未接入"),
+						// 「一键接入」按钮: 强制按当前配置重新探测接入 (不需保存表单)。
+						react.createElement("button", { key: "reconnect", type: "button", disabled: busy, onClick: reconnectNow, style: {
+							padding: "4px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600,
+							background: "#1f4973", color: "#ffffff", border: "none", borderRadius: 4,
+						} },
+							busy ? "接入中…" : "一键接入"),
 					]),
 					status && status.lastError
 						? react.createElement("div", { key: "err", style: { fontSize: 12, color: "#c0392b", marginBottom: 6 } }, status.lastError)

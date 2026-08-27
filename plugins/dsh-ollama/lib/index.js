@@ -75,6 +75,9 @@ const LOOP_TICK_MS = 5000;
 
 // 设置路由 (客户端面板用, 均要求自定义头 X-DSH-Ollama: 1 防跨站)。
 const ROUTE_CONFIG = "/__dsh/ollama/config";
+// 「一键接入」路由: 强制按当前生效配置重新探测 + 全量重写 provider (force)。
+// 与 /config 是不同 path, 避免与 GET/POST /config 同 path 重复注册 (坑 34)。
+const ROUTE_RECONNECT = "/__dsh/ollama/reconnect";
 const GUARD_HEADER = "x-dsh-ollama";
 
 // 默认配置; 用户可在 cordis.patch.yml 的 config 里覆盖, 也可在 WebUI
@@ -483,12 +486,13 @@ async function applyOllamaProfile(sctx, settings, profile, logger, options) {
 			// 坑 36: Ollama 不需要 API Key, 且 apiKeyEnv 指向的环境变量缺失时
 			// dsh-llm-pi-ai 直接抛 MISSING_CREDENTIAL 使所有请求失败。这里主动
 			// 移除该字段, 自愈手工/历史配置里误加的值 (鉴权交给 authorizationHeader)。
-			{ op: "remove", path: [...PROVIDER_PATH, "apiKeyEnv"] },
+			// 注意: sctx.settings.mutate 只认 set/unset (不认 remove, 详见 DEV_NOTES 坑 40)。
+			{ op: "unset", path: [...PROVIDER_PATH, "apiKeyEnv"] },
 		];
 		if (profile.headers) {
 			ops.push({ op: "set", path: [...PROVIDER_PATH, "headers"], value: profile.headers });
 		} else {
-			ops.push({ op: "remove", path: [...PROVIDER_PATH, "headers"] });
+			ops.push({ op: "unset", path: [...PROVIDER_PATH, "headers"] });
 		}
 		if (mergedModels.length > 0) {
 			ops.push({ op: "set", path: [...PROVIDER_PATH, "models"], value: mergedModels });
@@ -517,7 +521,7 @@ async function applyOllamaProfile(sctx, settings, profile, logger, options) {
 	}
 	// 坑 36 自愈: 已有配置里误加的 apiKeyEnv 一律移除 (见上方注释)。
 	if (currentProfile.apiKeyEnv !== undefined) {
-		ops.push({ op: "remove", path: [...PROVIDER_PATH, "apiKeyEnv"] });
+		ops.push({ op: "unset", path: [...PROVIDER_PATH, "apiKeyEnv"] });
 	}
 	if (!modelsEquivalent(currentProfile.models, profile.models)) {
 		// 周期性同步也要用 mergeModelParams: 保留用户在 Models 页手改的
@@ -740,6 +744,40 @@ function registerRoutes(sctx, entry, logger) {
 			res.end(JSON.stringify(payload));
 		}
 	}), name + ": config route");
+
+	// 「一键接入」路由: 只处理 POST, 强制按当前生效配置重新探测接入。
+	// 独立 path, 与 /config 互不串扰; 通过这里触发不修改面板持久化配置
+	// (不写 ollama-config.json)。Ollama 未在线时 runDetection 返回 false,
+	// status.lastError 已带"无法连接"说明, 属正常结果而非异常。
+	sctx.effect(() => sctx.webServer.register({
+		kind: "exact",
+		path: ROUTE_RECONNECT,
+		handler: async (req, res) => {
+			const send = (statusCode, payload) => {
+				res.writeHead(statusCode, { "content-type": "application/json; charset=utf-8" });
+				res.end(JSON.stringify(payload));
+			};
+			if (req.headers[GUARD_HEADER] !== "1") {
+				send(403, { ok: false, error: "forbidden" });
+				return;
+			}
+			if (req.method !== "POST") {
+				send(405, { ok: false, error: "method not allowed" });
+				return;
+			}
+			try {
+				const effective = resolveEffectiveSettings(entry);
+				// force=true: 全量重写 provider (mergeModelParams 保留手改模型参数)
+				const reconnected = await runDetection(sctx, effective, logger, { force: true });
+				send(200, { ...configPayload(), reconnected: reconnected === true });
+			} catch (error) {
+				logger.warn("[dsh-ollama] 一键接入失败: %s",
+					error && error.message ? error.message : error);
+				send(200, { ...configPayload(), reconnected: false,
+					error: "一键接入失败: " + ((error && error.message) || error) });
+			}
+		}
+	}), name + ": reconnect route");
 }
 
 /**
