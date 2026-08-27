@@ -184,7 +184,7 @@ You can also change the mirror and port in the launcher UI 【Settings】(networ
 > Compared to whole-folder migration, this zip **does NOT contain `runtime/` (no pre-downloaded environment or sessions)**; on a new machine the launcher auto-downloads Node / Python / dsh after connecting to the network. Small size, ideal for distribution.
 >
 > Packed contents match the GitHub repo (main branch): `launcher.py`, `update_agent.py`, `desktop-shell.py`,
-> `desktop-shell.bat`, `start.bat`, `stop.bat`, `build_exe.bat`, `DSH_Launcher.exe`, `DSH_Update.exe`, `DSH_Launcher.ico`,
+> `start.bat`, `stop.bat`, `build_exe.bat`, `DSH_Launcher.exe`, `DSH_Update.exe`, `DSH_Launcher.ico`,
 > `config.json`, `README.md`, `README_EN.md`, `LICENSE`, `plugins/`, `skills/dsh-deploy-maintain/`
 > (`DSH_Launcher.exe` / `DSH_Update.exe` are also tracked in the GitHub repo, same source as the Release;
 > `DEV_NOTES.md` and `.gitignore` are dev-side files, not shipped).

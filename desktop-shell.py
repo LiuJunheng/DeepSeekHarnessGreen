@@ -16,8 +16,9 @@ Edge / Chrome，也不依赖浏览器外观。实现方式是内嵌 WebView2
   （pywebview(WinForms) 的 start() 图标参数仅支持 GTK/QT，Windows 需走 WM_SETICON）。
 - 未启动提示：若 dsh 服务尚未监听端口，先弹一个"请先启动服务器"的固定提示页，
   后台每秒探测端口，一旦服务就绪自动载入真实界面；而不是显示"连接失败"网页。
-- 使用：由绿色版根目录 desktop-shell.bat 调用本脚本（用便携 Python + pythonw
-  无控制台方式拉起，双击起来像原生桌面 App）。
+- 使用：由启动器 GUI「桌面窗口」按钮调用本脚本（用便携 Python + pythonw
+  无控制台方式拉起，看起来像原生桌面 App）；desktop-shell.bat 独立入口
+  已于 2026-08-27 移除，桌面窗口统一从启动器进入。
 """
 import ctypes
 import json

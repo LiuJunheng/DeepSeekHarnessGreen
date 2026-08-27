@@ -238,8 +238,8 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # 发布流程: 打 tag v{GREEN_VERSION} + Release 资产 DSH_Launcher_GreenPortable_Online_<日期>_v<tag>.zip
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
-GREEN_VERSION = "1.0.17"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
-GREEN_VERSION_DATE = "2026年08月26日"               # 绿色版版本日期 (build_release_zip.py 会按构建当天回写)
+GREEN_VERSION = "1.0.18"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
+GREEN_VERSION_DATE = "2026年08月27日"               # 绿色版版本日期 (build_release_zip.py 会按构建当天回写)
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
 GREEN_RELEASE_MIRROR = ("https://mirror.nju.edu.cn/github-release/%s/latest"
@@ -2150,6 +2150,151 @@ class Launcher:
                 self.log("[警告] 内置插件 %s 安装失败: %s" % (package_name, error))
         return installed_now, skipped, failed
 
+    def _plugin_tree_hashes(self, root):
+        """收集目录内所有文件的相对路径 -> MD5, 返回 {相对路径: md5}。
+        用于对比内置插件源码与 profile 内已安装副本是否一致。"""
+        result = {}
+        if not os.path.isdir(root):
+            return result
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames.sort()
+            for name in sorted(filenames):
+                full_path = os.path.join(dirpath, name)
+                relative = os.path.relpath(full_path, root)
+                try:
+                    with open(full_path, "rb") as file_handle:
+                        result[relative] = hashlib.md5(file_handle.read()).hexdigest()
+                except OSError:
+                    result[relative] = "<unreadable>"
+        return result
+
+    def update_bundled_plugins(self, profile=DEFAULT_PROFILE, package_names=None):
+        """把已安装的内置插件一键更新为程序目录 plugins/ 的最新源码 (重装最新版)。
+
+        背景: install_bundled_plugins() 对已安装的插件直接跳过, 而 profile 的
+        node_modules 里是 file: 依赖的独立拷贝 (nodeLinker=hoisted, 并非指向
+        plugins/ 源码的链接), 因此内置插件源码更新后, 已装副本不会自动同步 ——
+        导致"别的电脑更新了插件, 这台机器还是旧版"(如用量统计的余额功能)。
+        本方法逐文件对比源码与已装副本的哈希, 不一致时把源码镜像进已装副本
+        (只写变化的文件, 避免重写被服务占用的未变化文件; 源码中已删除的陈旧
+        文件一并清理), 实现一键同步最新版。
+
+        package_names: 仅更新指定插件 (None = 更新全部已安装的内置插件)。
+
+        返回 (updated, up_to_date, not_installed, failed):
+          updated        已更新插件名列表
+          up_to_date     已是最新、无需更新的插件名列表
+          not_installed  未安装(或不在 node_modules)的内置插件名列表
+          failed         [(插件名, 失败原因), ...]
+        """
+        updated, up_to_date, not_installed, failed = [], [], [], []
+        installed = self.list_installed_plugins(profile)
+        want = set(package_names or [])
+        for folder in self.bundled_plugin_dirs():
+            try:
+                with open(os.path.join(folder, "package.json"), "r",
+                          encoding="utf-8") as file_handle:
+                    manifest = json.load(file_handle)
+            except Exception as error:
+                failed.append((os.path.basename(folder),
+                               "读取 package.json 失败: %s" % error))
+                continue
+            package_name = manifest.get("name") or ""
+            if not package_name:
+                failed.append((os.path.basename(folder), "package.json 缺少 name 字段"))
+                continue
+            if want and package_name not in want:
+                continue
+            if package_name not in installed:
+                not_installed.append(package_name)
+                continue
+            module_dir = os.path.join(DSH_HOME_DIR, "profiles", profile,
+                                      "node_modules", package_name)
+            module_dir = os.path.realpath(module_dir)  # 兼容符号链接布局, 写到真实目录
+            if not os.path.isdir(module_dir):
+                not_installed.append(package_name)
+                continue
+            try:
+                source_hashes = self._plugin_tree_hashes(folder)
+                installed_hashes = self._plugin_tree_hashes(module_dir)
+                if source_hashes == installed_hashes:
+                    up_to_date.append(package_name)
+                    continue
+                # 镜像源码 -> 已装副本: 只写内容变化的文件 + 删除源码中已不存在的陈旧文件
+                source_files = set(source_hashes.keys())
+                installed_files = set(installed_hashes.keys())
+                errors = []
+                for relative in sorted(source_files):
+                    if installed_hashes.get(relative) == source_hashes[relative]:
+                        continue  # 内容一致, 不重写 (避免触碰被服务占用的未变化文件)
+                    src_path = os.path.join(folder, relative)
+                    dst_path = os.path.join(module_dir, relative)
+                    try:
+                        os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+                        shutil.copy2(src_path, dst_path)
+                    except OSError as error:
+                        errors.append("%s: %s" % (relative, error))
+                for relative in sorted(installed_files - source_files):
+                    stale_path = os.path.join(module_dir, relative)
+                    try:
+                        if os.path.isfile(stale_path):
+                            os.remove(stale_path)
+                    except OSError as error:
+                        errors.append("删除陈旧文件 %s: %s" % (relative, error))
+                if errors:
+                    failed.append((package_name, "; ".join(errors[:5])))
+                    self.log("[警告] 内置插件 %s 更新不完整: %s"
+                             % (package_name, "; ".join(errors)))
+                else:
+                    updated.append(package_name)
+                    self.log("已把内置插件 %s 更新为 plugins/%s 最新源码"
+                             % (package_name, package_name))
+            except Exception as error:
+                failed.append((package_name, str(error)))
+                self.log("[警告] 内置插件 %s 更新失败: %s" % (package_name, error))
+        return updated, up_to_date, not_installed, failed
+
+    def mark_bundled_plugin_sync_pending(self):
+        """写入"绿色版更新后需同步一次内置插件"标记 (由 run_post_update_bundled_sync 消费)。
+
+        绿色版更新流程: 启动器写标记 -> 退出 -> 独立更新程序覆盖 -> 重启。
+        标记放在 runtime/ 下 (更新程序不替换 runtime/), 重启后新启动器检测到
+        标记即自动执行一次 update_bundled_plugins(), 保证"每次绿色版更新后
+        自动同步一次内置插件"。"""
+        try:
+            with open(os.path.join(RUNTIME_DIR, "pending_bundled_plugin_check"),
+                      "w", encoding="utf-8") as file_handle:
+                file_handle.write("green-update")
+        except OSError:
+            pass
+
+    def run_post_update_bundled_sync(self):
+        """绿色版更新后自动同步一次内置插件 (幂等: 无标记直接返回)。
+
+        检测到标记时执行 update_bundled_plugins() 并把结果写入日志, 随后清除标记。
+        GUI 启动与 --start 无界面启动都会调用, 保证更新后首次启动即完成同步。"""
+        marker = os.path.join(RUNTIME_DIR, "pending_bundled_plugin_check")
+        if not os.path.isfile(marker):
+            return
+        try:
+            os.remove(marker)
+        except OSError:
+            pass
+        try:
+            updated, up_to_date, _not_installed, failed = self.update_bundled_plugins()
+            summary = []
+            if updated:
+                summary.append("已更新 %d 个: %s" % (len(updated), ", ".join(updated)))
+            if up_to_date:
+                summary.append("其余 %d 个已是最新" % len(up_to_date))
+            if failed:
+                summary.append("失败: %s" % "; ".join(
+                    "%s(%s)" % (name, reason) for name, reason in failed))
+            self.log("绿色版更新完成, 自动同步内置插件 → "
+                     + ("；".join(summary) if summary else "(无可同步)"))
+        except Exception as error:
+            self.log("[警告] 绿色版更新后的内置插件自动同步失败: %s" % error)
+
     def remove_plugin(self, package_name, profile=DEFAULT_PROFILE):
         """从指定 profile 移除插件 (转发给 pnpm remove), 失败抛异常。
         移除后同步编排层, 把已卸载的包从 dsh.profile.bundles 清掉。"""
@@ -3486,9 +3631,9 @@ class Launcher:
 
         由绿色版根目录 desktop-shell.py 承担: 自检/自装 pywebview(WebView2 后端),
         再以 pythonw.exe(GUI 子系统)无控制台方式运行拎起独立桌面窗口。
-        优先用 subprocess 直启 pythonw + desktop-shell.py, 不经过 .bat,
-        从而不闪现任何 cmd 黑窗; 找不到 pythonw/pywebview 时才回退 .bat。
-        """
+        这里直接用 subprocess 直启 pythonw + desktop-shell.py, 不经过 .bat,
+        从而不闪现任何 cmd 黑窗 (desktop-shell.bat 独立入口已于 2026-08-27 移除,
+        桌面窗口统一从启动器 GUI「桌面窗口」按钮进入)。"""
         shell_script = os.path.join(BASE_DIR, "desktop-shell.py")
         pythonw_exe = self._find_pythonw()
         url = "http://127.0.0.1:%d" % int(self.config.get("dsh_port", 3080))
@@ -3513,18 +3658,9 @@ class Launcher:
                 self.log("正在打开独立桌面窗口 (WebView2 桌面版, 无控制台) ...")
                 return
             except Exception as error:
-                self.log("启动桌面窗口失败, 回退到 bat/浏览器: %s" % error)
-        # 兜底: bat 存在则用"双击"方式(会闪一下 cmd), 否则直接浏览器
-        bat_path = os.path.join(BASE_DIR, "desktop-shell.bat")
-        if os.path.exists(bat_path):
-            self.log("正在打开独立桌面窗口 (WebView2 桌面版) ...")
-            try:
-                os.startfile(bat_path)   # ShellExecute 按"双击"方式运行, 不阻塞本进程
-            except Exception as error:
-                self.log("启动桌面窗口失败, 改用系统浏览器: %s" % error)
-                webbrowser.open(url)
-            return
-        self.log("未找到 desktop-shell.bat, 改用系统浏览器打开: %s" % url)
+                self.log("启动桌面窗口失败: %s" % error)
+        # 兜底: pythonw 或桌面壳脚本缺失/启动失败时直接用系统浏览器打开
+        self.log("未找到 pythonw 或 desktop-shell.py, 改用系统浏览器打开: %s" % url)
         webbrowser.open(url)
 
     def _ui_open_state(self, write_method=None):
@@ -3926,6 +4062,25 @@ def run_gui():
     def check_environment_ready():
         """检查环境是否已就绪 (Node + dsh 已安装)"""
         return (app.find_node_exe() is not None) and app.dsh_installed()
+
+    # 绿色版更新后自动同步一次内置插件 (2026-08-27): 更新流程在退出前写标记
+    # (mark_bundled_plugin_sync_pending), 重启后这里检测到标记即后台执行同步,
+    # 不阻塞界面; 环境未就绪时无需同步 (插件尚未安装), 直接清除标记。
+    def auto_sync_bundled_after_green_update():
+        try:
+            if check_environment_ready():
+                app.run_post_update_bundled_sync()
+            else:
+                marker = os.path.join(RUNTIME_DIR, "pending_bundled_plugin_check")
+                try:
+                    if os.path.isfile(marker):
+                        os.remove(marker)
+                except OSError:
+                    pass
+        except Exception as error:
+            app.log("[警告] 绿色版更新后的内置插件自动同步失败: %s" % error)
+    if os.path.isfile(os.path.join(RUNTIME_DIR, "pending_bundled_plugin_check")):
+        threading.Thread(target=auto_sync_bundled_after_green_update, daemon=True).start()
 
     def python_ok():
         """内置便携 Python 是否就绪 (供 start.bat 脚本版使用; 缺失不影响 dsh 服务)"""
@@ -4746,6 +4901,8 @@ def run_gui():
             set_busy(False)
             return
         try:
+            # 更新完成重启后, 新启动器会自动同步一次内置插件 (见 run_post_update_bundled_sync)
+            app.mark_bundled_plugin_sync_pending()
             app.launch_update_agent(job_path)
             # 脚本已分离启动, 启动器随即退出; 不重置 busy(窗口即将销毁)
             append_log("绿色版更新脚本已启动, 启动器即将退出 ...")
@@ -4975,8 +5132,10 @@ def run_gui():
             do_install(spec, os.path.basename(folder))
 
         def on_install_bundled():
-            """一键安装程序目录 plugins/ 下所有内置插件 (已装的自动跳过)。
-            复用 install_bundled_plugins(), 与「安装环境」里的自动安装同一实现"""
+            """一键安装 + 同步程序目录 plugins/ 下所有内置插件:
+            未安装的自动补装, 已安装的自动更新为最新源码 (附带检查更新操作)。
+            复用 install_bundled_plugins() + update_bundled_plugins(), 与「安装环境」里
+            的自动安装同一实现; 更新为增量: 逐文件哈希对比, 只写变化的文件"""
             if plugin_busy[0]:
                 return
             if not app.bundled_plugin_dirs():
@@ -4984,27 +5143,36 @@ def run_gui():
                 return
             if not messagebox.askyesno(
                     "安装内置插件",
-                    "将批量安装程序目录 plugins/ 下的全部内置插件:\n%s\n\n"
-                    "已安装的会自动跳过, 安装后需重启服务生效。继续吗?" % "\n".join(
+                    "将批量安装并同步程序目录 plugins/ 下的全部内置插件:\n%s\n\n"
+                    "未安装的会自动安装, 已安装的自动更新为最新源码 (已是最新的跳过), "
+                    "完成后需重启服务生效。继续吗?" % "\n".join(
                         os.path.basename(folder) for folder in app.bundled_plugin_dirs()),
                     parent=top):
                 return
             set_plugin_busy(True)
-            plugin_status.set("正在批量安装内置插件 ...")
+            plugin_status.set("正在安装/更新内置插件 ...")
             def worker():
                 try:
-                    installed_now, skipped, failed = app.install_bundled_plugins(profile)
+                    installed_now, _skipped, failed_install = \
+                        app.install_bundled_plugins(profile)
+                    updated, up_to_date, _not_installed, failed_update = \
+                        app.update_bundled_plugins(profile)
                     summary = []
                     if installed_now:
-                        summary.append("已装: %s" % ", ".join(installed_now))
-                    if skipped:
-                        summary.append("跳过(已存在): %s" % ", ".join(skipped))
-                    if failed:
-                        summary.append("失败: %s" % ", ".join(failed))
-                    message = "\n".join(summary) if summary else "(没有可安装的内置插件)"
+                        summary.append("新装: %s" % ", ".join(installed_now))
+                    if updated:
+                        summary.append("已更新: %s" % ", ".join(updated))
+                    if up_to_date:
+                        summary.append("已是最新: %s" % ", ".join(up_to_date))
+                    if failed_install:
+                        summary.append("安装失败: %s" % ", ".join(failed_install))
+                    if failed_update:
+                        summary.append("更新失败: %s" % "; ".join(
+                            "%s(%s)" % (name, reason) for name, reason in failed_update))
+                    message = "\n".join(summary) if summary else "(没有可安装/更新的内置插件)"
                     root.after(0, lambda: (refresh_installed(),
                                            messagebox.showinfo("安装内置插件", message, parent=top),
-                                           plugin_status.set("内置插件安装完成")))
+                                           plugin_status.set("内置插件安装/更新完成")))
                 except Exception as error:
                     root.after(0, lambda: (messagebox.showerror("安装失败", str(error), parent=top),
                                            plugin_status.set("安装失败")))
@@ -5027,6 +5195,26 @@ def run_gui():
                 finally:
                     root.after(0, lambda: set_plugin_busy(False))
             threading.Thread(target=worker, daemon=True).start()
+
+        def auto_sync_bundled_on_open():
+            """打开插件管理窗口即自动同步一次内置插件 (无需单独按钮):
+            把已安装的内置插件更新为 plugins/ 最新源码, 结果写入状态栏。"""
+            try:
+                updated, up_to_date, _not_installed, failed = \
+                    app.update_bundled_plugins(profile)
+                if updated:
+                    root.after(0, lambda: (refresh_installed(),
+                                           plugin_status.set("已自动更新内置插件: %s (重启服务后完全生效)"
+                                                             % ", ".join(updated))))
+                elif failed:
+                    root.after(0, lambda: plugin_status.set(
+                        "内置插件同步: 失败 %s" % "; ".join(
+                            "%s(%s)" % (name, reason) for name, reason in failed)))
+                else:
+                    root.after(0, lambda: plugin_status.set(
+                        "内置插件已是最新 (%d 个)" % len(up_to_date)))
+            except Exception as error:
+                root.after(0, lambda: plugin_status.set("内置插件同步失败: %s" % error))
 
         def on_remove():
             """移除左侧选中的已安装插件"""
@@ -5102,6 +5290,7 @@ def run_gui():
         bundled_btn = ttk.Button(toolbar, text="一键安装内置插件",
                                  command=on_install_bundled)
         bundled_btn.pack(side="left", padx=(12, 0))
+        ttk.Label(toolbar, text="(打开本窗口自动同步内置插件)").pack(side="left", padx=(6, 0))
 
         # ---------- 中间: 左右两个面板 ----------
         middle = ttk.Panedwindow(top, orient="horizontal")
@@ -5191,10 +5380,28 @@ def run_gui():
         ttk.Label(top, textvariable=plugin_status, font=("Microsoft YaHei", 9),
                   foreground="#555555").pack(side="bottom", fill="x", padx=10, pady=(0, 8), anchor="w")
 
-        # 右键菜单: 在列表条目上右键可打开对应网页 (npm / GitHub) 或复制包名
-        installed_tree.bind("<Button-3>",
-                            lambda event: on_plugin_right_click(installed_tree,
-                                                                installed_item_urls, event))
+        # 右键菜单: 已安装列表 -> npm 页面 / 复制包名 (内置插件更新在打开窗口时自动进行,
+        # 无需单独入口); 搜索列表 -> 对应网页 (npm / GitHub) 或复制包名
+        def on_installed_right_click(event):
+            """已安装列表右键: 打开 npm 页面 / 复制包名"""
+            row_id = installed_tree.identify_row(event.y)
+            if not row_id:
+                return
+            installed_tree.selection_set(row_id)
+            package_name = installed_item_urls.get(row_id)
+            if not package_name:
+                return
+            context_menu = tk.Menu(top, tearoff=0)
+            context_menu.add_command(
+                label="打开 npm 页面",
+                command=lambda: webbrowser.open(
+                    "https://www.npmjs.com/package/%s" % urllib.parse.quote(package_name)))
+            context_menu.add_command(label="复制包名",
+                                     command=lambda: root.clipboard_append(package_name))
+            context_menu.tk_popup(event.x_root, event.y_root)
+            context_menu.grab_release()
+
+        installed_tree.bind("<Button-3>", on_installed_right_click)
         search_tree.bind("<Button-3>",
                          lambda event: on_plugin_right_click(search_tree,
                                                              search_item_urls, event))
@@ -5202,6 +5409,10 @@ def run_gui():
         # 初始刷新已安装列表; 回车触发搜索
         refresh_installed()
         keyword_entry.bind("<Return>", lambda event: do_search())
+
+        # 打开窗口即自动同步一次内置插件 (2026-08-27): 源码随绿色版更新后,
+        # 打开插件管理即可把已装副本更新到最新, 无需单独更新按钮
+        threading.Thread(target=auto_sync_bundled_on_open, daemon=True).start()
 
     # 八个按钮: 安装环境 / 启动服务 / 停止服务 / 打开界面 / 检查更新 / 检查绿色版更新 / 插件管理 / 刷新状态
     install_btn = ttk.Button(button_frame, text="安装环境", command=on_install)
@@ -5487,6 +5698,7 @@ def main():
         app = Launcher()
         app.on_log = lambda message: print(message)   # 命令行模式把日志打印到终端
         try:
+            app.run_post_update_bundled_sync()   # 绿色版更新后自动同步一次内置插件
             started = app.start_server(open_browser=False)   # 启动(或复用已运行)服务
             app._ensure_ui_beacon_server()
             port = int(app.config.get("dsh_port", 3080))

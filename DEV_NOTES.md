@@ -22,6 +22,7 @@
 - **形态**：python(tkinter) 启动器 + 便携 Node/Python + 绿色 zip 分发 + 内置桌面壳（pywebview / WebView2）+ 双通道自更新。
 - **内置插件 7 款**：`dsh-file-browser`(文件浏览，右键文件可插**官方 @ 引用**/路径/内容) / `dsh-archive-purge`(清理归档) / `dsh-session-rewind`(会话回退) / `dsh-session-import`(会话导入) / `dsh-usage-stats`(用量统计) / `dsh-sidebar-lite`(侧边栏，资源管理器文件右键同样可插**官方 @ 引用**) / `dsh-media-background`(观星背景影画)。
 - **官方 @+文件 引用衔接（2026-08-26）**：官方 `dsh-client-ui-reference` 的 `@` 触发以会话 header.cwd 为根、用相对路径 mention；插件可直接向会话作用域派发官方事件 `slash/input-insert-reference`（`{reference:{source:"reference",ref,label,appearance:"file",clipboardText},span}`，span 须带 `draftRev` CAS）——与官方 @ 菜单 onPick 完全同一条管线，由官方输入机 mint chip（草稿显示 `@文件名`，发送时经 source codec 序列化为相对路径）。`dsh-file-browser` / `dsh-sidebar-lite` 已用它实现右键「以官方 @ 引用插入」：纯客户端（经 `sessions.provideInfo` 读输入机状态 `hooks.input`/`inputActions` + `sessions.scope` 取作用域派发），无需改宿主端 / 重启服务。
+- **内置插件全自动同步（2026-08-27）**：`update_bundled_plugins()` 把 `plugins/` 源码镜像进已装副本（逐文件 MD5 对比、只写变化文件、清理源码已删的陈旧文件）。三个自动入口，无单独更新按钮：①**打开插件管理窗口**即后台自动同步一次（结果写状态栏）；②**「一键安装内置插件」**附带自动更新（未装补装 + 已装增量更新）；③**绿色版更新后**自动同步一次——更新确认时写标记 `runtime/pending_bundled_plugin_check`（更新程序不覆盖 runtime/），重启后 GUI 启动 / `--start` 都会消费标记执行同步并写日志。解决坑 16 的"源码更新了、已装副本不同步"（实测：用量统计余额功能 8-25 进源码，8-20 装的老副本一直 404）。发版后其他电脑更新绿色版即可自动同步，无需手动操作。
 - **仓库**：GitHub `LiuJunheng/DeepSeekHarnessGreen` + Gitee `liujunheng/DeepSeekHarnessGreen`（国内镜像，代码/tag 自动同步）。协议统一 Apache-2.0（绿色版外壳 + 全部内置插件）。
 - **发布凭据**：GitHub 用 `GH_TOKEN` 环境变量（可自动建 Release/传资产）；Gitee 需用户提供 PAT（保存在 project memory，勿写死进代码/文档）。
 
@@ -48,7 +49,7 @@
   - `patch_frontend()`：注入心跳脚本 + `crypto.randomUUID` polyfill。
 - **WebUI 单页面去重**：后台心跳服务 `127.0.0.1:3081`，窗口 180s；心跳 URL 用 `location.hostname` 适配局域网；**手动打开(force=True)不拦截，自动(force=False)才排重**。
 - **防火墙**：`dsh_host=0.0.0.0` 时用 netsh 放行 3080 入站 TCP（须管理员，失败仅记日志）。
-- **桌面壳**：`desktop-shell.py`（pywebview，WinForms/WebView2），`webview.start(on_ready, icon=...)`；桌面版固定单实例 → 用 **PID 文件 + OpenProcess/GetExitCodeProcess** 判存活排重（别用页面心跳）；服务未启动先显示固定提示页，端口就绪后自动切真实界面。
+- **桌面壳**：`desktop-shell.py`（pywebview，WinForms/WebView2），`webview.start(on_ready, icon=...)`；桌面版固定单实例 → 用 **PID 文件 + OpenProcess/GetExitCodeProcess** 判存活排重（别用页面心跳）；服务未启动先显示固定提示页，端口就绪后自动切真实界面。入口只从启动器 GUI「桌面窗口」按钮进（`desktop-shell.bat` 独立双击入口 2026-08-27 已移除——功能与 GUI 完全一致，GUI 直启 pythonw 无黑窗反而更好；launcher 里 bat 兜底路径同步删掉，直接回退浏览器）。
 - **命令行**：`--start`(守护) / `--stop` / `--purge-archived` / `--purge-session <ID>` / `--restore-session <ID>` / `--install-plugin` / `--remove-plugin`。
 
 ## 五、高频坑点（按主题聚合，均实证）
@@ -73,7 +74,7 @@
 13. `package.json` 双入口：`dsh.bundle.patch`(→ cordis.patch.yml) + `dsh.client` 才双端加载；`exports` 必须含 `"./package.json"`；`files` 必须含 `cordis.patch.yml`；**纯客户端插件也必须有宿主端 `lib/index.js`（哪怕空 `export{}`），否则整个服务起不来**。
 14. 宿主注册路由必须 `ctx.effect(() => ctx.webServer.register({...}), label)`（把返回值当清理函数）；写成"先 register 再 effect(disposer)"会注册即注销 → 非 GET 全 405。
 15. 防御路由带自定义头防 CSRF；但 GET 媒体路由 `req.method !== "GET/HEAD"` 会 405 → 预览走 `fetch(url,{headers})→blob→objectURL`（`<img>`/`<iframe>` 带不了自定义头）。
-16. **pnpm 对 `file:` 本地路径是拷贝非软链**：改 `plugins/` 源码后**必须同步运行副本** `runtime/dsh-home/profiles/web/node_modules/<name>/`（或重装 `--install-plugin`）。服务端文件（index.js/cordis.patch.yml）改后要**重启服务**、client.js 改后强刷；dsh 运行时 index.js/cordis.patch.yml 被文件锁挡住需先停服务。**这是最易"改了没生效还当已完成"的坑，做完要 `Get-FileHash` 比对 SAME。**
+16. **pnpm 对 `file:` 本地路径是拷贝非软链**：改 `plugins/` 源码后**必须同步运行副本** `runtime/dsh-home/profiles/web/node_modules/<name>/`（或重装 `--install-plugin`）。服务端文件（index.js/cordis.patch.yml）改后要**重启服务**、client.js 改后强刷；dsh 运行时 index.js/cordis.patch.yml 被文件锁挡住需先停服务。**这是最易"改了没生效还当已完成"的坑，做完要 `Get-FileHash` 比对 SAME。** 自 2026-08-27 起同步已自动化（`update_bundled_plugins()` 逐文件哈希、只写变化文件、跳过内容一致的文件避免锁冲突）：打开插件管理窗口 / 点「一键安装内置插件」/ 绿色版更新后首启 都会自动同步。
 17. **pnpm 非 0 退出码 ≠ 失败**：`ERR_PNPM_IGNORED_BUILDS` 会让 pnpm 以 1 结束但安装成功，而官方 reconcile 只在 exit=0 时写 `dsh.profile.bundles`。launcher 已用 `reconcile_bundles()` 兜底自动写编排层 + 启停开关（`dsh.profile.disabled` 由 launcher 自己维护，官方不识别）。
 18. 官方客户端 store 的**当前会话字段是 `snapshot.current`（不是 sessionId）**；"数据源在却取不到"先核对键名（`current`/`byId`/`jobsBySession`）。
 19. **工作区根权威来源 = `workspaceRegistry`**（读 `storages/workspace.json`），不是 `sandboxPolicy.workspaceRoot`——后者未显式配置时默认值= `process.cwd()`= `runtime\dsh`（启动器以 `Popen(cwd=DSH_DIR)` 拉起 dsh），当兜底根必错。
@@ -95,7 +96,7 @@
 ## 六、维护提醒
 
 - **跨机 / 整包覆盖会吞本地未提交改动**（实测 1.0.10 覆盖把已修好的代码覆盖掉）→ 发布前先 `git diff` / `git log` 核对，或先把改动 commit。
-- 改内置插件源码后必须同步运行副本（见坑 16）——验证"已生效"要在运行端目验，不能只看源码。
+- 改内置插件源码后必须同步运行副本（见坑 16）——验证"已生效"要在运行端目验，不能只看源码。同步动作已自动化：打开插件管理窗口即自动同步，或点「一键安装内置插件」；绿色版更新后首启也会自动同步一次。
 
 ## 七、待办 / 后续建议
 

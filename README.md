@@ -155,7 +155,7 @@ python launcher.py --install-plugin <本地插件目录或npm包名> :: 安装�
 ### 轻量分发 zip（精简在线版，约 8MB）
 > 相较"整目录迁移"，此 zip **不含 `runtime/`（不带已下载的环境与会话）**，新机联网后由启动器自动下载 Node / Python / dsh，体积小、适合放到 GitHub Release 分发。
 >
-> 打包内容与 GitHub 仓库（main 分支）**保持一致**：`launcher.py`、`update_agent.py`、`desktop-shell.py`、`desktop-shell.bat`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`DSH_Update.exe`、`DSH_Launcher.ico`、`config.json`、`README.md`、`README_EN.md`、`LICENSE`、`plugins/`、`skills/dsh-deploy-maintain/`（`DSH_Launcher.exe` / `DSH_Update.exe` 也上传 GitHub 仓库，与 Release 同源；`DEV_NOTES.md` 与 `.gitignore` 是开发侧文件，不进 release）。
+> 打包内容与 GitHub 仓库（main 分支）**保持一致**：`launcher.py`、`update_agent.py`、`desktop-shell.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`DSH_Update.exe`、`DSH_Launcher.ico`、`config.json`、`README.md`、`README_EN.md`、`LICENSE`、`plugins/`、`skills/dsh-deploy-maintain/`（`DSH_Launcher.exe` / `DSH_Update.exe` 也上传 GitHub 仓库，与 Release 同源；`DEV_NOTES.md` 与 `.gitignore` 是开发侧文件，不进 release）。
 
 - **最新下载**（GitHub Release，tag `v1.0.14`）：<https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest>
 - **Gitee 镜像下载**（国内访问 GitHub 不便时）：<https://gitee.com/liujunheng/DeepSeekHarnessGreen/releases>
