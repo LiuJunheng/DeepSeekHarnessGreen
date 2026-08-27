@@ -216,10 +216,23 @@ function buildProviderProfile(settings, modelNames) {
 	// getClientApiKey() 时, 没有 apiKey 也没有 authorization 头会直接抛
 	// "No API key for provider", 而 Ollama 不校验该头, 因此补一个占位值。
 	const authorization = settings.authorizationHeader;
+	// Ollama 的 OpenAI 兼容层不说 OpenAI 官方方言: 不认 developer 角色 /
+	// max_completion_tokens / strict 工具字段。不配 compat 时 pi-ai 按
+	// OpenAI 官方协议发送 (developer 角色承载 system、max_completion_tokens
+	// 写输出上限、工具带 strict), Ollama 会丢弃/拒绝, 导致工具 schema 到
+	// 不了模型 → 模型从不调用 DSH 工具。这套开关让 pi-ai 改用 Ollama
+	// 认识的方式: system 角色、max_tokens 字段、不带 strict 的工具。
+	const ollamaCompat = {
+		supportsDeveloperRole: false,
+		supportsReasoningEffort: false,
+		maxTokensField: "max_tokens",
+		supportsStrictMode: false,
+	};
 	return {
 		displayName: settings.displayName,
 		api: "openai-completions",
 		baseURL: settings.baseUrl.replace(/\/+$/, "") + "/v1",
+		compat: ollamaCompat,
 		...authorization ? { headers: { Authorization: authorization } } : {},
 		...models.length > 0 ? { models } : {},
 	};
@@ -293,6 +306,7 @@ async function applyOllamaProfile(sctx, settings, profile, logger, options) {
 			{ op: "set", path: [...PROVIDER_PATH, "displayName"], value: profile.displayName },
 			{ op: "set", path: [...PROVIDER_PATH, "api"], value: profile.api },
 			{ op: "set", path: [...PROVIDER_PATH, "baseURL"], value: profile.baseURL },
+			{ op: "set", path: [...PROVIDER_PATH, "compat"], value: profile.compat },
 		];
 		if (profile.headers) {
 			ops.push({ op: "set", path: [...PROVIDER_PATH, "headers"], value: profile.headers });
@@ -317,6 +331,9 @@ async function applyOllamaProfile(sctx, settings, profile, logger, options) {
 	// 仅在字段缺失时补齐, 不覆盖用户已填写的值。
 	if (currentProfile.api === undefined && profile.api !== undefined) {
 		ops.push({ op: "set", path: [...PROVIDER_PATH, "api"], value: profile.api });
+	}
+	if (currentProfile.compat === undefined && profile.compat !== undefined) {
+		ops.push({ op: "set", path: [...PROVIDER_PATH, "compat"], value: profile.compat });
 	}
 	if (currentProfile.headers === undefined && profile.headers !== undefined) {
 		ops.push({ op: "set", path: [...PROVIDER_PATH, "headers"], value: profile.headers });
