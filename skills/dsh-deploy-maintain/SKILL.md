@@ -528,11 +528,12 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 4.20 **接入第三方模型/Provider（Ollama 等）：写 pi-ai 的 `providers` 配置，别自己注册适配器（2026-08-27，dsh-ollama，对应 DEV_NOTES 坑 31-33）**：官方多 Provider 底座是 `dsh-llm-pi-ai`（命名空间 `llm-pi-ai`），要给 DSH 加新模型源（Ollama / LM Studio / vLLM 等任何 OpenAI 兼容服务）**绝不要**自己调 `ctx.llm.registerAdapter`（对 provider 路由**排他**）或 `ctx.llm.registerModelDiscovery`（每 namespace **只能一个**）——直接注册必与 pi-ai 冲突。**正解：经 `ctx.settings.mutate("llm-pi-ai", ops)` 把 `providers.<id>` 写进设置节**，pi-ai 监听变更自动注册模型目录 + 对话路由 + 模型发现：
 
 - **Ollama 接入配方**：`api: "openai-completions"`（OpenAI 兼容端点） + `baseURL: "{baseUrl}/v1"`（默认 `http://localhost:11434`）+ `models: [{id,name,contextWindow,maxTokens}]`（从 `/api/tags` 探测）。探测不到服务/超时（`AbortController` 3s）静默跳过、周期重试（60s）；首次写入全量、已存在则仅当 baseURL 一致时才补缺字段 + 同步模型列表（**尊重用户在 Models 页的手改，不覆盖 displayName/api/baseURL/模型参数**）。
+- **OpenAI 兼容服务必配 `compat`（工具调用关键，2026-08-27 实测）**：Ollama / LM Studio / vLLM 等端点**不认 OpenAI 官方方言**——`developer` 角色、`max_completion_tokens` 字段、工具定义里的 `strict` 字段都会被丢弃/拒绝；pi-ai 对无法识别的端点默认按 OpenAI 官方协议发送，结果**工具 schema 到不了模型、模型接入后从不调用 DSH 工具**。正解：`compat: { supportsDeveloperRole: false, supportsReasoningEffort: false, maxTokensField: "max_tokens", supportsStrictMode: false }`（system 角色、`max_tokens` 字段、不带 strict 的工具）。验证：带 tools 直测 `/v1/chat/completions` 应返回 `finish_reason: "tool_calls"` + `message.tool_calls`。
 - **免鉴权服务必带占位 Authorization 头**：pi-ai 的 `openai-completions` 协议校验 `getClientApiKey()`——无 `apiKeyEnv` 也无 headers 直接抛 `No API key for provider`；但给 Ollama 这类服务写 `apiKeyEnv` 又会因缺真实 Key 报 `MISSING_CREDENTIAL`。**正解：配置 `headers: { Authorization: "Bearer ollama-local" }` 占位头**，Ollama 不校验、pi-ai 原样透传。
 - **thinking 模型"Deep diving…"是正常思考态**：带 `thinking` 能力（`/api/tags` 的 `capabilities`）的模型先流式 `delta.reasoning`（pi-ai 映射 `reasoning-delta`，UI 显示"Deep diving…"），**思考完才出正文**；本地 4B 冷启动 + 思考要十几秒~几十秒，别误判卡死。
 - **curl 直测 OpenAI 兼容端点（Windows/PowerShell）**：`-d '...'` 单引号 JSON 会被 PowerShell 吃掉（报 `invalid character 'm'`）→ JSON 写临时文件 `curl --data-binary "@file"`；`GET /api/ps` 空数组 = 模型未加载（冷启动慢）。
 - **插件形态**：纯宿主端 `lib/index.js` 即可，零原生依赖、零构建（探测用 Node 全局 `fetch`）；配置项（baseUrl/displayName/探测间隔等）由 `cordis.patch.yml` 的 `config` 覆盖；模型参数（contextWindow/maxTokens/baseURL）用户直接在 WebUI Models 页改。想免编辑文件改插件配置，再加 `dsh.client` 客户端设置面板。
-- **验证链（三环缺一不可）**：① `GET {baseUrl}/api/tags` 能列模型；② `settings.yaml` 里 `llm-pi-ai.providers.ollama` 已写入（重启服务后持久）；③ WebUI 模型选择器出现 Ollama 模型 + 真实对话有回复（耐心等 thinking 模型思考完）。端到端通过后，改动同步更新 DEV_NOTES.md 与本文档。
+- **验证链（四环缺一不可）**：① `GET {baseUrl}/api/tags` 能列模型；② `settings.yaml` 里 `llm-pi-ai.providers.ollama` 已写入（含 `compat`，重启服务后持久）；③ WebUI 模型选择器出现 Ollama 模型 + 真实对话有回复（耐心等 thinking 模型思考完）；④ **工具调用实测**：让模型"查一下现在几点"（或任一需要工具的任务），观察它是否真的发起工具调用并返回结果——不调用即 compat 缺失（见上条）。端到端通过后，改动同步更新 DEV_NOTES.md 与本文档。
 
 ### 4.21 `webServer.register` 无 `method` 字段：同一 path 只能注册一次，GET/POST 须在同一 handler 按 `req.method` 分流（2026-08-27，dsh-ollama 设置路由 404）
 
@@ -588,6 +589,7 @@ dsh 插件要**同时**声明 `dsh.bundle` 与 `dsh.client` 才会被宿主 + We
 | bat 双击/调用"闪退"但代码看着没问题 | 先分清「窗口关闭」与「逻辑失败」：带 `pause` 的 bat 若真失败会暂停显示错误、不会闪退。抓取完整行为用 Python `subprocess.run(["cmd","/c",bat], capture_output=True, text=True)`——**别用 PowerShell `Start-Process -RedirectStandardOutput/Error`**（重定向管道与 cmd 的 `pause` 交互冲突，输出被吞、看起来像闪退）。再字节级检查 bat 是否全 ASCII、无 BOM、CRLF（非 ASCII 注释在 GBK 代码页下变乱码虽不致命但难看） |
 | 改了默认价格 WebUI 还是旧价 | 改价格表必须**同时改 `PRICES_KEY`（localStorage 键）**——键不变则用户浏览器里已存的旧价永远覆盖新默认；改键后 loadPrices 读不到新键自动回退新默认。客户端 bundle 按请求生成，强制刷新页面即可生效，无需重启服务 |
 | 模型选择器没有 Ollama 等新 provider / 选了发消息报 `No API key for provider` | ①查 `settings.yaml` 里 `llm-pi-ai.providers.<id>` 是否已写（重启服务后持久，改插件源码须同步运行副本 + 重启，见 4.19/坑 16）；②免鉴权服务（Ollama 等）须有占位 `headers.Authorization`（无 apiKey 无头必报 `No API key for provider`，见 4.20）；③模型是 thinking 模型时"Deep diving…"是正常思考态，耐心等正文（见 4.20） |
+| Ollama 接入后能对话但**从不调用工具**（模型收不到工具 schema） | **compat 缺失**：Ollama / LM Studio / vLLM 等 OpenAI 兼容端点不认 `developer` 角色 / `max_completion_tokens` / 工具 `strict` 字段，pi-ai 默认按 OpenAI 官方方言发送会被丢弃 → provider 配置必须带 `compat: { supportsDeveloperRole: false, supportsReasoningEffort: false, maxTokensField: "max_tokens", supportsStrictMode: false }`（查 `settings.yaml` 的 `llm-pi-ai.providers.<id>.compat` 是否在；dsh-ollama 0.1.0+ 自动写入，见 4.20/坑 31） |
 | 对话停在"Deep diving…"很久 | thinking 模型先思考后出正文（本地 4B 冷启动 + 思考十几秒~几十秒）；先 `GET /api/ps` 确认模型已加载、再耐心等，别误判卡死（见 4.20） |
 
 ## 六、工作流建议（绿色整合版启动器开发顺序）

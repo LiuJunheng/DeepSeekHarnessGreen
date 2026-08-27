@@ -9,6 +9,7 @@
   - `api = openai-completions`（Ollama `/v1` 端点）
   - `baseURL = {baseUrl}/v1`
   - `models` = 从 `/api/tags` 拉到的模型列表（含默认 `contextWindow` / `maxTokens`）
+  - `compat` = Ollama 兼容开关（`supportsDeveloperRole: false` / `supportsReasoningEffort: false` / `maxTokensField: max_tokens` / `supportsStrictMode: false`），**保证 pi-ai 用 Ollama 认识的方言发请求，工具（Tool Calling）才能送达模型并被执行**——缺它时 Ollama 接入后模型从不调用 DSH 工具；
 - WebUI **Models 设置页**随即出现 Ollama 条目，可直接选择模型对话，也可修改 baseURL / contextWindow / maxTokens 等参数；
 - Ollama 模型有增删（新 pull / 删除）时自动同步 `models` 列表。
 
@@ -18,6 +19,7 @@
 - **不自己调用 `ctx.llm.registerAdapter` / `registerModelDiscovery`**：`registerAdapter` 对 provider 路由是排他的，`registerModelDiscovery` 每个 namespace 只能有一个，直接注册会与 pi-ai 冲突。正确做法是只写 pi-ai 的 `providers` 配置，由 pi-ai 统一注册路由与模型发现。
 - 已存在的 Ollama provider：只同步模型列表（且仅当 baseURL 与我方一致），不覆盖用户在 Models 页手改的其他字段。
 - Ollama 无需 API Key，因此不写 `apiKeyEnv`（否则 pi-ai 会因缺凭据报 `MISSING_CREDENTIAL`）。
+- **必须写 `compat`（工具调用关键，2026-08-27 实测）**：Ollama 的 OpenAI 兼容层不说 OpenAI 官方方言——不认 `developer` 角色、`max_completion_tokens` 字段、工具定义里的 `strict` 字段。pi-ai 对无法识别的端点默认按 OpenAI 官方协议发送，Ollama 会丢弃/拒绝，导致**工具 schema 到不了模型、模型从不调用工具**。本插件固定写入 `compat: { supportsDeveloperRole: false, supportsReasoningEffort: false, maxTokensField: "max_tokens", supportsStrictMode: false }`，让 pi-ai 改用 system 角色、`max_tokens` 字段、不带 strict 的工具。此坑对任何 OpenAI 兼容网关（LM Studio / vLLM 等）同样适用。
 
 ## 配置
 
