@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-DeepSeek Harness 绿色整合版启动器 (Python 标准库实现, 无第三方依赖)
+DeepSeek Harness 桌面绿色整合版启动器 (Python 标准库实现, 无第三方依赖)
 
 作用:
     1. 自动检测 / 下载便携版 Node.js 到 runtime/node
@@ -82,7 +82,7 @@ def get_icon_path():
 
 
 # 主窗口标题 (单实例检测时按此标题查找已运行窗口, 与 run_gui 中 root.title 保持一致)
-WINDOW_TITLE = "DeepSeek Harness 绿色整合版启动器"
+WINDOW_TITLE = "DeepSeek Harness 桌面绿色整合版启动器"
 # 单实例互斥量名称 (exe 版与源码版共用同名, 保证全局只允许一个启动器实例)
 SINGLE_INSTANCE_MUTEX = "DSH_Launcher_GreenPortable_SingleInstance"
 ERROR_ALREADY_EXISTS = 183              # CreateMutexW 返回该错误码表示互斥量已存在
@@ -238,8 +238,8 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # 发布流程: 打 tag v{GREEN_VERSION} + Release 资产 DSH_Launcher_GreenPortable_Online_<日期>_v<tag>.zip
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
-GREEN_VERSION = "1.0.20"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
-GREEN_VERSION_DATE = "2026年08月27日"               # 绿色版版本日期 (build_release_zip.py 会按构建当天回写)
+GREEN_VERSION = "1.0.21"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
+GREEN_VERSION_DATE = "2026年08月29日"               # 绿色版版本日期 (build_release_zip.py 会按构建当天回写)
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
 GREEN_RELEASE_MIRROR = ("https://mirror.nju.edu.cn/github-release/%s/latest"
@@ -268,33 +268,90 @@ GITEE_RELEASES_API = ("https://gitee.com/api/v5/repos/%s/releases"
                       % GITEE_REPO)  # Gitee 发布版列表 (公开读无需令牌)
 GITEE_REPO_PAGE_URL = "https://gitee.com/%s" % GITEE_REPO  # Gitee 仓库主页 (失败手动提示)
 
-# npm 上已核实的一批 dsh 插件 (供「加载推荐」一键展示, 保证即使搜索/网络异常也能看到可安装项)
-# version 留空表示安装时自动取 npm 最新版; 来源标记为 "推荐"
+# 「加载推荐」一键展示的 dsh 插件列表 (按社区目录站 dsh-plugins.top / awesome-deepseek-harness / 官方 dsh-plugin 话题筛选出的高口碑款, 2026-08 底校准)
+# 字段说明: name=展示名; category=分类(显示在「分类」列); source=来源平台(github/npm, 与搜索项统一, 显示在「来源」列);
+#   description=一句话功能; spec=真实安装标识(以 github: 开头走 GitHub 仓库安装, 否则按 npm 包名装);
+#   version 统一填显示值 "latest", 表示安装时自动取最新版
+# 提示: 第三方插件即以本机身份运行, 装前请先看源码
 RECOMMENDED_PLUGINS = [
-    {"name": "@dsh-external/dsh-vision-toolkit", "version": "", "source": "推荐",
-     "description": "视觉工具箱: 图片问答 / OCR / UI 截图测试等"},
-    {"name": "dsh-find-plugin", "version": "", "source": "推荐",
-     "description": "在 agent 内部查找 DeepSeek Harness 插件"},
-    {"name": "dsh-remote", "version": "", "source": "推荐",
-     "description": "远程工作助手: 通过 SSH / 隧道连接远程环境"},
-    {"name": "dsh-clawrouter", "version": "", "source": "推荐",
-     "description": "第二大脑: 智能路由工具调用的增强插件"},
-    {"name": "dsh-better-sidebar", "version": "", "source": "推荐",
-     "description": "web 插件: 类似 VSCode 的右侧边栏"},
-    {"name": "dsh-lark-bot", "version": "", "source": "推荐",
-     "description": "把 dsh 接入飞书 / Lark 机器人"},
-    {"name": "dsh-email", "version": "", "source": "推荐",
-     "description": "IMAP/SMTP 邮件工具: 收发邮件能力"},
-    {"name": "dsh-safe-delete", "version": "", "source": "推荐",
-     "description": "安全删除: 文件移入回收站而不是直接删除"},
-    {"name": "dsh-web-plugin-manager", "version": "", "source": "推荐",
-     "description": "在 Web 界面管理 dsh 插件"},
-    {"name": "dsh-tui", "version": "", "source": "推荐",
-     "description": "终端界面 (TUI) 客户端"},
-    {"name": "dsh-plugin-greeter", "version": "", "source": "推荐",
-     "description": "示例插件: 打招呼, 适合学习插件开发"},
-    {"name": "dsh-dynamic-island", "version": "", "source": "推荐",
-     "description": "灵动岛风格 UI 插件"},
+    {"name": "modlens", "category": "视觉", "source": "npm", "version": "latest",
+     "spec": "@liustack/modlens",
+     "description": "首个视觉插件: 图片粘贴进对话即转结构化证据读图识图、理解 UI"},
+    {"name": "dsh-web", "category": "Web UI", "source": "github", "version": "latest",
+     "spec": "github:zhu1090093659/dsh-web",
+     "description": "Web 聚合生态包: 任务看板 / Git 图谱 / 皮肤中心 / 鲸鱼娘宠物等界面全家桶"},
+    {"name": "DSH-better-sidebar", "category": "Web UI", "source": "github", "version": "latest",
+     "spec": "github:omdsh-dev/DSH-better-sidebar",
+     "description": "开放侧边栏工作台: 文件渲染编辑 / 终端 / Git / 侧边对话 / 子智能体"},
+    {"name": "dsh-desktop", "category": "桌面", "source": "github", "version": "latest",
+     "spec": "github:dataelement/dsh-desktop",
+     "description": "把 DSH 封装成原生桌面应用: 系统托盘常驻、独立窗口"},
+    {"name": "deepseek-harness-desktop", "category": "桌面", "source": "github", "version": "latest",
+     "spec": "github:anywhere-labs/deepseek-harness-desktop",
+     "description": "桌面端封装, 生态星标最高: 系统托盘常驻、独立窗口"},
+    {"name": "dsh-TUI", "category": "终端", "source": "github", "version": "latest",
+     "spec": "github:ccch1mneyyy/dsh-TUI",
+     "description": "Claude Code 风全屏终端 TUI: 纯键盘流 / 流式思考 / 上下文进度"},
+    {"name": "dsh-market", "category": "商店", "source": "github", "version": "latest",
+     "spec": "github:dsh-market/dsh-market",
+     "description": "内置可视化插件市场: 浏览 / 搜索 / 按已装项推荐 / 一键安装 (建议第一个装)"},
+    {"name": "dsh-anchored-standard", "category": "预设", "source": "github", "version": "latest",
+     "spec": "github:xiaobright/dsh-anchored-standard",
+     "description": "两阶段预设: 先最小对齐引导、再挂全量标准工具集"},
+    {"name": "modsearch", "category": "搜索", "source": "github", "version": "latest",
+     "spec": "github:liustack/modsearch",
+     "description": "联网实时搜索、引用来源, 与 modlens 同作者配套使用"},
+    {"name": "dsh-agent-teams", "category": "Agent", "source": "github", "version": "latest",
+     "spec": "github:NanmiCoder/dsh-agent-teams",
+     "description": "多智能体并行拆解大任务、协作交付框架"},
+    {"name": "Aegis", "category": "Agent", "source": "github", "version": "latest",
+     "spec": "github:GanyuanRan/Aegis",
+     "description": "架构感知: 基线优先、证据验证、漂移检查, 让 Agent 长任务更稳"},
+    {"name": "DeepSeek-Balance-Whale-Widget", "category": "趣味", "source": "github", "version": "latest",
+     "spec": "github:MeteorNOX/DeepSeek-Balance-Whale-Widget",
+     "description": "界面右下角小鲸鱼娘盯 DeepSeek 账户余额: 数字滚动动画、可拖拽"},
+    {"name": "dsh-safeguard", "category": "安全", "source": "npm", "version": "latest",
+     "spec": "dsh-safeguard",
+     "description": "零配置安全: 危险命令 (rm -rf / push --force) 与密钥泄漏执行前拦截"},
+    {"name": "dsh-handoff", "category": "工具", "source": "npm", "version": "latest",
+     "spec": "dsh-handoff",
+     "description": "零配置: 会话交接一键导出 (决策/已完成/未完成/下一步), 不调模型零成本"},
+    {"name": "dsh-http", "category": "工具", "source": "npm", "version": "latest",
+     "spec": "dsh-http",
+     "description": "零配置: 结构化 HTTP 请求, JSON 自动解析、截断保护"},
+    {"name": "dsh-fmt", "category": "工具", "source": "npm", "version": "latest",
+     "spec": "dsh-fmt",
+     "description": "零配置: JSON/YAML/TOML/SQL 格式化与校验"},
+    {"name": "dsh-clipboard", "category": "工具", "source": "npm", "version": "latest",
+     "spec": "dsh-clipboard",
+     "description": "零配置: 长文本一键进系统剪贴板"},
+    {"name": "dsh-fetch-file", "category": "工具", "source": "npm", "version": "latest",
+     "spec": "dsh-fetch-file",
+     "description": "零配置: URL 下载文件进工作区, 二进制流式落盘、路径围栏"},
+    {"name": "dsh-jwt", "category": "工具", "source": "npm", "version": "latest",
+     "spec": "dsh-jwt",
+     "description": "零配置: JWT 解码调试, payload/过期判断"},
+    {"name": "dsh-cron-parse", "category": "工具", "source": "npm", "version": "latest",
+     "spec": "dsh-cron-parse",
+     "description": "零配置: cron 表达式解析 / 人性化 / 未来 N 次预览"},
+    {"name": "dsh-when", "category": "工具", "source": "npm", "version": "latest",
+     "spec": "dsh-when",
+     "description": "零配置: 自然语言相对时间 转 ISO 时间"},
+    {"name": "dsh-url-tools", "category": "工具", "source": "npm", "version": "latest",
+     "spec": "dsh-url-tools",
+     "description": "零配置: URL 解析 / 去 UTM 跟踪参数 / 编解码 / 短链展开"},
+    {"name": "dsh-password", "category": "工具", "source": "npm", "version": "latest",
+     "spec": "dsh-password",
+     "description": "零配置: 强密码 / diceware 口令生成, 标注熵值"},
+    {"name": "dsh-dead-links", "category": "工具", "source": "npm", "version": "latest",
+     "spec": "dsh-dead-links",
+     "description": "零配置: Markdown 文档死链检查, HEAD 降级 GET、限流并发"},
+    {"name": "dsh-pkg-info", "category": "工具", "source": "npm", "version": "latest",
+     "spec": "dsh-pkg-info",
+     "description": "零配置: npm / PyPI 包版本、依赖、发布时间查询"},
+    {"name": "dsh-case", "category": "工具", "source": "npm", "version": "latest",
+     "spec": "dsh-case",
+     "description": "零配置: 命名大小写转换 (camel/Pascal/snake/kebab 等 8 风格)"},
 ]
 
 # ---------------------------------------------------------------------------
@@ -2033,11 +2090,19 @@ class Launcher:
 
         # 先清一遍存量 package.json 的 BOM (历史遗留或重装时可能带 BOM)
         self.strip_bom_from_profile_packages(profile)
+        # pnpm 11 strictDepBuilds (避坑 44): 提前补齐已预构建原生依赖的 false 声明,
+        # 避免 ERR_PNPM_IGNORED_BUILDS 让安装以非 0 退出。绿色版分发不含 runtime/,
+        # so 必须由启动器在本机自动化补丁, 新电脑无需手改 pnpm-workspace.yaml。
+        self.ensure_pnpm_native_allowbuilds(profile)
         exit_code, output = execute_once()
         if exit_code != 0:
             # 本次 pnpm 刚下载的包可能带 BOM 导致 dsh JSON.parse 崩溃;
             # 清掉 BOM 后重试一次 (pnpm 幂等, 不重复下载, 很快完成)
             self.strip_bom_from_profile_packages(profile)
+            # pnpm 11: git 源插件 prepare 构建脚本被拦 (ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED,
+            # 避坑 44) → 提取报错里的放行 key 写入 profile 的 allowBuilds true (幂等);
+            # 无论是否写入都重试一次, 以保留原有 BOM 修复重试能力
+            self.auto_allow_git_build(profile, output)
             exit_code, output = execute_once()
         # 无论 pnpm 退出码如何, 只要命令执行完就同步一次编排层:
         # 官方 reconcile 只在 pnpm exit 0 时运行, 且不识别 disabled 列表,
@@ -2047,6 +2112,99 @@ class Launcher:
         except Exception as error:
             self.log("同步编排层失败 (不影响插件命令结果): %s" % error)
         return exit_code, output
+
+    # ---------- pnpm-workspace.yaml allowBuilds 自愈 (pnpm 11+) ----------
+    # 背景: pnpm 11+ strictDepBuilds (见 DEV_NOTES 避坑 44) 默认拦 git 源插件
+    # (如 dsh-market) 的 prepare 构建脚本 → ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED 中断;
+    # 已预构建的原生依赖 (node-pty/ssh2 等) 则要显式声明 false 跳过重复构建, 否则报
+    # ERR_PNPM_IGNORED_BUILDS 以非 0 退出。绿色版分发 zip 不含 runtime/, 因此必须由
+    # 启动器在本机自动补齐, 新电脑无需手改 profile 的 pnpm-workspace.yaml。
+
+    def _pnpm_workspace_yaml(self, profile):
+        """返回 profile 的 pnpm-workspace.yaml 绝对路径"""
+        return os.path.join(DSH_HOME_DIR, "profiles", profile, "pnpm-workspace.yaml")
+
+    def set_allow_builds(self, profile, entry_mapping):
+        """把 {全key: bool} 合并写入 profile 的 pnpm-workspace.yaml 的 allowBuilds 节。
+        幂等: 已存在的 key 不动, 只补缺失项; 返回是否发生了修改。
+        key 含冒号 (如 git 源的 dshmarket@https://...) 时自动加单引号包裹,
+        避免 YAML 把第一个冒号误判为 key 分隔。"""
+        yaml_path = self._pnpm_workspace_yaml(profile)
+        if not os.path.isfile(yaml_path):
+            return False
+        with open(yaml_path, "r", encoding="utf-8") as file_handle:
+            text = file_handle.read()
+        # 收集已有 allowBuilds 顶层条目的 key (支持带引号或裸 key, 值 true/false)
+        existing_keys = set()
+        allow_match = re.search(r"(?m)^allowBuilds:\s*\n((?:[ \t]+[^\n]*\n)*)", text)
+        if allow_match:
+            block = allow_match.group(1)
+            for each_line in block.splitlines():
+                item_match = re.match(
+                    r"[ \t]+(['\"]?)([^\n]*?)\1\s*:\s*(?:true|false)\s*$", each_line)
+                if item_match:
+                    existing_keys.add(item_match.group(2))
+        # 构造缺失条目; key 含冒号才加引号 (与现有 git 源 key 的写法一致)
+        adds = []
+        for each_key, each_value in entry_mapping.items():
+            if each_key in existing_keys:
+                continue
+            if ":" in each_key:
+                formatted_key = "'%s'" % each_key.replace("'", "''")
+            else:
+                formatted_key = each_key
+            adds.append("  %s: %s" % (formatted_key, "true" if each_value else "false"))
+        if not adds:
+            return False
+        insertion_text = "\n" + "\n".join(adds)
+        if allow_match:
+            anchor_match = re.search(r"(?m)^allowBuilds:\s*$", text)
+            anchor_index = anchor_match.start() if anchor_match else allow_match.start()
+            text = text[:anchor_index] + "allowBuilds:" + insertion_text + text[anchor_index + len("allowBuilds:"):]
+        else:
+            text = text.rstrip() + "\n\nallowBuilds:" + insertion_text + "\n"
+        with open(yaml_path, "w", encoding="utf-8") as file_handle:
+            file_handle.write(text)
+        return True
+
+    def ensure_pnpm_native_allowbuilds(self, profile):
+        """首次装插件/装环境时幂等补齐已预构建原生依赖的 false 声明, 避免
+        ERR_PNPM_IGNORED_BUILDS 让安装以非 0 退出 (避坑 44)。"""
+        entry_mapping = {}
+        for package_name in ("cloudflared", "cpu-features", "node-pty",
+                             "protobufjs", "ssh2"):
+            entry_mapping[package_name] = False
+        try:
+            if self.set_allow_builds(profile, entry_mapping):
+                self.log("已为 profile %s 补充 pnpm allowBuilds 原生依赖跳过构建声明"
+                         % profile)
+        except Exception as error:
+            self.log("[警告] 补充 pnpm allowBuilds 失败: %s" % error)
+
+    def auto_allow_git_build(self, profile, command_output):
+        """检测安装失败输出里的 ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED, 提取 git 源插件的
+        放行 key (形如 dshmarket@https://codeload.github.com/.../<commit>) 写入
+        allowBuilds true (幂等), 返回是否发生了写入。key 含完整 commit hash,
+        包名/版本/分支均不匹配 (见 DEV_NOTES 避坑 44)。"""
+        if "ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED" not in command_output:
+            return False
+        key = None
+        # 优先取 pnpm 报错里建议块给出的放行 key (name@commit-url: true)
+        match = re.search(r"([A-Za-z0-9_.-]+@https?://\S+?):\s*true", command_output)
+        if match:
+            key = match.group(1)
+        else:
+            # 退一步: 用包名 + "fetched from \'<url>\'" 拼出 key
+            url_match = re.search(r"fetched from\s+\"([^\"]+)\"", command_output)
+            name_match = re.search(r"The git-hosted package\s+\"([^@\"]+)", command_output)
+            if url_match and name_match:
+                key = "%s@%s" % (name_match.group(1), url_match.group(1))
+        if not key:
+            return False
+        changed = self.set_allow_builds(profile, {key: True})
+        if changed:
+            self.log("已放行 git 源插件构建脚本 (allowBuilds): %s" % key)
+        return changed
 
     # ---------- profile 编排层 (dsh.profile.bundles) 同步 ----------
     # 背景: dsh plugin 命令内部会在 pnpm 成功 (退出码 0) 后自动把声明 dsh.bundle 的
@@ -4244,7 +4402,7 @@ def run_gui():
         about_window.grab_set()         # 模态, 关闭前不能操作主窗口
 
         # 主标题
-        ttk.Label(about_window, text="DeepSeek Harness 绿色整合版启动器",
+        ttk.Label(about_window, text="DeepSeek Harness 桌面绿色整合版启动器",
                   font=("Microsoft YaHei", 13, "bold")).pack(pady=(18, 4))
         ttk.Label(about_window, text="绿色整合版 · 所有文件与依赖全部本地化",
                   font=("Microsoft YaHei", 9), foreground="#666666").pack(pady=(0, 12))
@@ -5154,20 +5312,24 @@ def run_gui():
             search_tree.delete(*search_tree.get_children())
             search_item_urls.clear()
             if not plugins:
-                search_tree.insert("", "end", text="(无结果)", values=(default_source, "", ""))
+                search_tree.insert("", "end", text="(无结果)", values=("", default_source, "", ""))
                 plugin_status.set("没有搜索到结果")
                 return
             for plugin in plugins:
+                item_category = plugin.get("category", "")
                 item_source = plugin.get("source", default_source)
                 item_id = search_tree.insert("", "end",
                                              text=plugin["name"],
-                                             values=(item_source, plugin.get("version", ""),
+                                             values=(item_category, item_source,
+                                                     plugin.get("version", ""),
                                                      plugin.get("description", "")))
-                # 记录每个条目对应的网址, 供右键菜单打开页面使用
+                # 记录每个条目对应的网址, 供右键菜单打开页面使用; spec 为显式安装标识 (推荐项才有)
                 search_item_urls[item_id] = {
                     "name": plugin["name"],
+                    "category": item_category,
                     "source": item_source,
                     "url": plugin.get("url", ""),
+                    "spec": plugin.get("spec", ""),
                 }
             plugin_status.set("共 %d 条结果" % len(plugins))
 
@@ -5207,11 +5369,11 @@ def run_gui():
             threading.Thread(target=worker, daemon=True).start()
 
         def do_load_recommended():
-            """加载内置推荐插件列表 (npm 上已核实的 dsh 插件, 无需网络搜索)"""
+            """加载内置推荐插件列表 (本地内置, 无需网络搜索, 即使断网也能看到可装项)"""
             if plugin_busy[0]:
                 return
             show_search_results(list(RECOMMENDED_PLUGINS), "推荐")
-            plugin_status.set("已加载 %d 个推荐插件 (来源: npm 推荐)" % len(RECOMMENDED_PLUGINS))
+            plugin_status.set("已加载 %d 个社区精选推荐插件" % len(RECOMMENDED_PLUGINS))
 
         def do_open_github_topic():
             """在浏览器打开 GitHub 官方话题页 (完整入口, 可翻页浏览更多)"""
@@ -5219,18 +5381,19 @@ def run_gui():
 
         def build_open_urls(item_info):
             """根据条目信息构造可打开的网址列表
-            返回 [(显示名, url), ...]; github 来源用仓库地址, 其余用 npm 页面 + GitHub 搜索兜底"""
+            返回 [(显示名, url), ...]; 推荐项 GitHub 标识用仓库地址, 其余用 npm 页面 + GitHub 搜索兜底"""
             name = item_info["name"]
-            source = item_info.get("source", "")
+            spec = item_info.get("spec", "")
             raw_url = item_info.get("url", "")
             url_list = []
-            # GitHub 来源: 直接打开仓库地址
-            if source == "github":
-                url_list.append(("打开 GitHub 仓库", raw_url or "https://github.com/%s" % name))
-                url_list.append(("打开 npm 页面",
-                                 "https://www.npmjs.com/package/%s" % urllib.parse.quote(name)))
+            # 推荐项 GitHub 标识: 直接打开仓库地址; 仓库名不等于 npm 包名, 不给无效的 npm 页
+            if spec.startswith("github:"):
+                repo = spec[len("github:"):]
+                url_list.append(("打开 GitHub 仓库", raw_url or "https://github.com/%s" % repo))
+                url_list.append(("打开 GitHub 搜索",
+                                 "https://github.com/search?q=%s" % urllib.parse.quote(name)))
             else:
-                # npm / 推荐来源: 打开 npm 页面, 以及 GitHub 搜索
+                # npm 包 / 搜索来源: 打开 npm 页面, 以及 GitHub 搜索
                 url_list.append(("打开 npm 页面",
                                  "https://www.npmjs.com/package/%s" % urllib.parse.quote(name)))
                 url_list.append(("打开 GitHub 搜索",
@@ -5265,7 +5428,12 @@ def run_gui():
             package_name = search_tree.item(selection[0], "text")
             if package_name.startswith("("):
                 return None, None
-            item_source = search_tree.item(selection[0], "values")[0]
+            # 推荐项: 优先用显式 spec (可能为 github:<repo> 或 npm 包名)
+            item_spec = search_item_urls.get(selection[0], {}).get("spec", "")
+            if item_spec:
+                return item_spec, package_name
+            # 搜索来源: 依来源列判断 (位于 values 第 1 项, 前面是分类列), GitHub 用仓库形式, 其余按 npm 包名
+            item_source = search_tree.item(selection[0], "values")[1]
             if item_source == "github":
                 return "github:%s" % package_name, package_name
             return package_name, package_name
@@ -5515,16 +5683,18 @@ def run_gui():
         # 列表区: 左 Treeview + 右垂直滚动条 (方便上下滑动)
         search_body = ttk.Frame(search_frame)
         search_body.pack(fill="both", expand=True, padx=6, pady=6)
-        search_tree = ttk.Treeview(search_body, columns=("source", "version", "description"), show="tree headings")
+        search_tree = ttk.Treeview(search_body, columns=("category", "source", "version", "description"), show="tree headings")
         search_tree.heading("#0", text="插件名")
+        search_tree.heading("category", text="分类")
         search_tree.heading("source", text="来源")
         search_tree.heading("version", text="版本")
         search_tree.heading("description", text="描述")
         # 列宽留足余量: 总和需明显小于面板宽度, 否则 pack 会把右侧滚动条压缩成 1x1
-        search_tree.column("#0", width=160)
+        search_tree.column("#0", width=150)
+        search_tree.column("category", width=56, anchor="center")
         search_tree.column("source", width=48, anchor="center")
-        search_tree.column("version", width=58, anchor="center")
-        search_tree.column("description", width=180, stretch=True)
+        search_tree.column("version", width=54, anchor="center")
+        search_tree.column("description", width=170, stretch=True)
         search_scrollbar = ttk.Scrollbar(search_body, orient="vertical",
                                          command=search_tree.yview)
         search_tree.configure(yscrollcommand=search_scrollbar.set)

@@ -76,30 +76,6 @@
 
 各插件详细用法见 `plugins/<插件名>/README.md`。
 
-### 社区精选插件（可选装，与内置插件不同源）
-
-> DSH 奉行「一切皆插件」，生态已涌现上千款外部插件。以下为按**口碑 / 星标 / 热度**从社区目录站（`dsh-plugins.top`、`deepseek-harness-plugin.com`、`dshplugin.online`、`awesome-deepseek-harness`）筛出的常用款，星标为各站约 2026-08 底快照，安装前请以相应仓库为准。**装前务必先看源码**——第三方插件即以你的身份在本机运行，能读写文件、取用凭证、访问网络，切勿在含密钥的目录乱试。
-
-| 类别 | 插件 | 功能一句话 | 参考星标 |
-|------|------|-----------|---------|
-| 商店 | `dsh-market` | 内置可视化插件市场，浏览 / 搜索 / 一键安装升级生态插件（建议第一个装） | ⭐~2600 |
-| Web UI | `dsh-web`（`dsh-web-ui` 聚合包） | 侧边栏 / 任务看板 / 皮肤中心 / 鲸鱼娘宠物等 Web 界面全家桶 | ⭐~6400 |
-| Web UI | `DSH-better-sidebar` | 开放侧边栏工作台：文件渲染编辑 / 终端 / Git / 侧边对话 / 子智能体 | ⭐~3000 |
-| 桌面 | `deepseek-harness-desktop`（`dsh-desktop`） | 把 DSH 封装成原生桌面应用，系统托盘常驻、独立窗口 | ⭐~13000 / ~3000 |
-| 终端 | `dsh-TUI` | Claude Code 风全屏终端 TUI，纯键盘流、流式思考、上下文进度 | ⭐~2600 |
-| 视觉 | `modlens` | 截图 / 图片粘贴进对话即读图识图、理解 UI，补纯文本模型短板 | ⭐~3700 |
-| 搜索 | `modsearch` | 联网实时搜索、引用来源，与 modlens 同作者配套使用 | ⭐~150 |
-| 视觉 | `dsh-vision-toolkit` | 带意图图片问答、长截图 OCR、UI 还原 | ⭐~800 |
-| 记忆 | `MemOS` | 长期记忆沉淀、自动召回、混合检索、本地记忆查看器 | ⭐~10900 |
-| 上下文 | `dsh-context` | 上下文窗口构成与演化洞察仪表盘（看清 token 花在哪） | ⭐~760 |
-| Agent | `dsh-agent-teams` | 多智能体并行拆解大任务、协作交付框架 | ⭐~1150 |
-| 工作流 | `dsh_workflow` | 把一次性多 Agent 调度升级为可生成 / 保存 / 治理 / 恢复的 Workflow 层 | ⭐~110 |
-| 安全 | `dsh-safeguard` | 危险命令（`rm -rf`、`push --force`）与密钥泄漏（AKIA/sk-/ghp_…）执行前拦截，带 allowList 豁免 | 社区零配置系列 |
-| 小工具 | `dsh-http` / `dsh-fmt` / `dsh-clipboard` / `dsh-jwt` / `dsh-when` 等 | 结构化 HTTP、格式校验、系统剪贴板、JWT 解码、自然语言时间解析等零配置工具 | 社区零配置系列 |
-| 趣味 | `DeepSeek-Balance-Whale-Widget` | 界面右下角小鲸鱼娘盯 DeepSeek 账户余额，数字滚动动画、可拖拽 | ⭐~1200 |
-
-**安装方式**：本绿色版「插件管理」页可直接装，或用命令 `dsh plugin --profile web add <名字>`（GitHub 上可用 `dsh plugin --profile web add <owner/repo>`）。装完**重启服务**生效。
-
 ### 数据维护（恢复 / 永久删除归档会话）
 
 dsh 官方**没有**"永久删除会话"和"取消归档"功能——网页里的"归档"只是把会话隐藏（日志全保留）。本启动器在**停止服务**后直接操作本地数据，做到：
