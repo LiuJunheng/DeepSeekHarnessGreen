@@ -5,7 +5,7 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 
 # DeepSeek Harness 绿色整合版 · 部署维护与插件开发
 
-> 版本日期：2026-08-18
+> 版本日期：2026-08-29
 > 本 Skill 沉淀自 `DeepSeekHarnessLauncher` 项目（Python tkinter 绿色整合版启动器 + 内置 `dsh-archive-purge` / `dsh-file-browser` / `dsh-session-rewind` / `dsh-usage-stats` 插件）的全过程实测经验，含 51 条避坑记录。适用于：把 dsh 封装成"双击即用、绿色整合、可整目录拷走"的形态，以及开发 DSH 插件（宿主端路由 + WebUI 客户端入口）。
 
 ## 一、适用场景
@@ -89,14 +89,15 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 
 ## 三、日常维护
 
-### 3.1 检查更新（备份优先策略 / npm 双版本可选）
+### 3.1 检查更新（备份优先策略 / 动态检测所有标签）
 
 - **"装了就永远最新"是错觉**：`prepare_dsh()` 只在缺失时安装，已装就跳过；同步更新的唯一途径是强制重装。
-- **更新逻辑优先走 npm（官方真正发布渠道，需求 #56）**：官方 dsh 发版在 npm registry（GitHub Releases 只是壳）。`dsh_dist_tags()` 用 `npm view @deepseek-ai/dsh dist-tags --json` **只读查询**（复用 find_npm_cli + build_env + 镜像参数，与安装同源），一次读出 `latest` 与 `next` 两个标签（官方稳定版在 latest、预发布在 next，如 `{"latest":"0.1.0-rc.7","next":"0.1.0-rc.8"}`），失败返回 `None` 而非抛错。
-- **版本可选 + 只提示更新的版本（需求 #56/#57）**：GUI「检查更新」用 `app._green_version_greater(version, current_version)` **只保留比当前已装版本更新的候选**（否则已是 stable 仍提示再次覆盖，属误报）；latest/next 都列出来（去重；相同/更旧者记日志跳过）。两者都不更新时提示「已是最新版本: <当前>」。
-- **升级两段式确认（需求 #57）**：点某版本按钮先弹出 `confirm_upgrade()` 二级确认框，展示 当前/目标版本 + 该版本更新说明（后台线程加载），点「确认升级」才真正 `update_dsh(target_version)`；「取消」则放弃。`update_dsh(None)` 仍装 latest（兼容旧调用）。
-- **更新说明来源（重要避坑）**：官方 **GitHub Releases** 每个版本都带发布说明（tag 形如 `dsh-v<version>`，中英文 changelog），是正确来源。`dsh_version_notes(version)` 优先 `dsh_version_notes_from_github(version)`（批量拉 releases?per_page=30，按去 `v` 的 tag/name 匹配）；GitHub 失败/未命中才回退 npm registry 元数据。**别用 `npm view readme`——npm 包 readme 是空的**。
+- **动态检测所有标签（2026-08-29 起，不再只查 npm latest/next）**：官方 dsh 发布**不一定**同步 npm——如 `0.1.2-alpha.1` 只发在 GitHub Releases（tag `dsh-v0.1.2-alpha.1`）、npm 仍停 `0.1.1-rc.2`，只看 dist-tags 永远检测不到。因此「检查更新」现在合并两个来源：① `dsh_dist_tags()` 读 npm 的 `latest`/`next`（稳定版/预发布，一定可安装）；② `dsh_github_releases()` 用 GitHub API `releases?per_page=100&page=N` **分页拉全部 tag**（`_dsh_tag_to_version()` 兼容 `dsh-v`/`v`/裸版本号三种前缀），再配 `dsh_npm_versions()`（`npm view … versions --json` 全量版本集合）判断每个 tag **是否已在 npm 发布（可安装）**。合并成动态候选列表，GUI 用**可滚动 Treeview** 列出（版本/标签来源/发布时间/可安装），选中可安装的版本才进「确认升级」；未发布到 npm 的源码 tag 给明确提示 + 「打开 GitHub 发布页」。
+- **版本可选 + 只提示更新的版本（需求 #56/#57）**：GUI「检查更新」用 `app._green_version_greater(version, current_version)` **只保留比当前已装版本更新的候选**（否则已是 stable 仍提示再次覆盖，属误报）；去重、按 可安装优先 + 版本从新到旧 排序。都不更新时提示「已是最新版本: <当前>」。
+- **升级两段式确认（需求 #57）**：点某版本按钮先弹出 `confirm_upgrade()` 二级确认框，展示 当前/目标版本 + 该版本更新说明（后台线程加载；动态检测已拉到的 GitHub body 会直接传入 `preloaded_notes` 复用，避免重复网络查询），点「确认升级」才真正 `update_dsh(target_version)`；「取消」则放弃。`update_dsh(None)` 仍装 latest（兼容旧调用）。
+- **更新说明来源（重要避坑）**：官方 **GitHub Releases** 每个版本都带发布说明（tag 形如 `dsh-v<version>`，中英文 changelog），是正确来源。`dsh_version_notes(version)` 优先 `dsh_version_notes_from_github(version)`（批量拉 releases?per_page=30，tag 用 `_dsh_tag_to_version()` 解析后匹配，兼容 `dsh-v` 前缀）；GitHub 失败/未命中才回退 npm registry 元数据。**别用 `npm view readme`——npm 包 readme 是空的**。
 - **查询避坑**：`dist-tags --json` 必须拆成独立 argv（`_npm_view` 内 `query.split()`），整串当单参数传 npm 会报用法错误返回 None；npm view 的 registry 参数要与安装一致（镜像源），否则查到非所选镜像的版本快照。
+- **源码 tag ≠ 可安装（2026-08-29 实测）**：GitHub 上出现而 npm 没有的版本**无法自动安装**——`npm install @deepseek-ai/dsh@<版本>` 报 ETARGET；GitHub release 的 tarball 是 **monorepo 源码包**（根 package.json 是 `@deepseek-ai/dsh-root` + workspaces，需 pnpm build），也装不成 dsh 包。只能等官方同步发布到 npm 后才能装。凡第三方列表接口取"最新/全部"都要防顺序假设 + 分页截断（坑 26）。
 - `update_dsh(target_version)` 顺序 = 备份 → **备份成功后才** `prepare_dsh(force=True, package_spec="<pkg>@<版本>")` 强制重装目标版本。备份失败直接中止，防止"旧版被覆盖又没装上"的数据丢失。GUI「数据维护」可一键清理更新/备份目录。
 - 备份目录不自动清理，是否删除交给用户手动管理。
 - 把安装主体抽成 `install_dsh(package_spec)`（支持 `@pkg` / `@pkg@<版本>` / `@pkg@next` 指定标签），`prepare_dsh(force, package_spec)` 只做"缺失则装 / 强制重装"分支，首装与更新共用同一代码。

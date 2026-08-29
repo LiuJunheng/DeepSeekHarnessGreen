@@ -814,6 +814,102 @@ class Launcher:
                  % (result["latest"], result["next"]))
         return result
 
+    def _dsh_tag_to_version(self, tag_name):
+        """把官方 GitHub release tag 解析成版本号 (动态, 不写死标签)。
+        兼容形态: dsh-v0.1.2-alpha.1 / v0.1.2-alpha.1 / 0.1.2-alpha.1;
+        解析不出合法版本号返回 None (如 release 名字非版本形态)"""
+        tag = (tag_name or "").strip()
+        if not tag:
+            return None
+        lowered = tag.lower()
+        if lowered.startswith("dsh-v"):
+            tag = tag[5:]
+        elif lowered.startswith("dsh"):
+            tag = tag[3:]
+        if tag.startswith("v"):
+            tag = tag[1:]
+        if not tag or not re.match(r"^[\w.+-]+$", tag):
+            return None
+        return tag
+
+    def dsh_github_releases(self, max_pages=5):
+        """动态拉取官方 GitHub Releases 的**所有 tag** (分页, 不写死 latest/next)。
+        官方发布策略: 正式/预发布都发在 GitHub Releases (tag 形如 dsh-v<version>),
+        但**不一定同步发布到 npm** —— 本函数只负责列出所有 tag 及其发布说明,
+        该版本是否已在 npm 可安装由 dsh_npm_versions() 另行判断。
+        返回 list[dict] (按发布时间倒序, 最新在前):
+        [{version, tag_name, prerelease, published_at, body}, ...];
+        整体失败 (网络/解析) 返回 None"""
+        owner = "deepseek-ai"
+        repo = "deepseek-harness"
+        all_releases = []
+        page = 1
+        try:
+            while page <= max_pages:
+                api_url = ("https://api.github.com/repos/%s/%s/releases"
+                           "?per_page=100&page=%d" % (owner, repo, page))
+                request = urllib.request.Request(
+                    api_url, headers={"User-Agent": "DSH-Launcher/%s" % GREEN_VERSION})
+                with urllib.request.urlopen(request, timeout=25) as response:
+                    batch = json.loads(response.read().decode("utf-8"))
+                if not batch:
+                    break
+                all_releases.extend(batch)
+                if len(batch) < 100:
+                    break
+                page += 1
+        except Exception as error:
+            self.log("GitHub Releases 拉取失败: %s" % error)
+            return None
+        results = []
+        for release in all_releases:
+            tag_name = release.get("tag_name") or ""
+            version = self._dsh_tag_to_version(tag_name)
+            if not version:
+                continue
+            body = (release.get("body") or "").strip()
+            max_len = 4000
+            if len(body) > max_len:
+                body = body[:max_len] + "\n...(发布说明过长已省略)"
+            results.append({
+                "version": version,
+                "tag_name": tag_name,
+                "prerelease": bool(release.get("prerelease")),
+                "published_at": (release.get("published_at") or "").replace("T", " ")[:16],
+                "body": body,
+            })
+        self.log("GitHub Releases 动态检测到 %d 个 tag, 最新: %s"
+                 % (len(results), results[0]["version"] if results else "无"))
+        return results
+
+    def dsh_npm_versions(self):
+        """查询 npm 上 @deepseek-ai/dsh 的**全部已发布版本号** (动态, 不写死)。
+        与 dsh_dist_tags (latest/next) 不同, 这里拿到完整版本集合,
+        用于判断某个 GitHub tag 对应的版本是否已发布到 npm (可安装)。
+        返回 set[str]; 失败返回 None"""
+        npm_cli = self.find_npm_cli()
+        node_exe = self.find_node_exe()
+        if npm_cli is None or node_exe is None:
+            self.log("未找到便携 Node, 无法查询已发布版本")
+            return None
+        self.log("正在查询 npm 已发布版本列表 ...")
+        output = self._npm_view(npm_cli, node_exe,
+                                self.config["dsh_package"], "versions --json")
+        if not output:
+            return None
+        try:
+            versions = json.loads(output)
+        except Exception as error:
+            self.log("解析 npm versions 失败: %s, 原始: %s" % (error, output))
+            return None
+        result = set()
+        for version in versions:
+            if isinstance(version, str) and version.strip():
+                result.add(version.strip())
+        latest = sorted(result)[-1] if result else "无"
+        self.log("npm 已发布版本 %d 个, 最新: %s" % (len(result), latest))
+        return result
+
     def dsh_version_notes(self, version):
         """获取 @deepseek-ai/dsh@<version> 的更新说明, 供「确认升级」对话框展示
         (需求 #57)。
@@ -882,7 +978,7 @@ class Launcher:
             return None
         target = version.lstrip("v")
         for release in releases:
-            tag = (release.get("tag_name") or "").lstrip("v")
+            tag = self._dsh_tag_to_version(release.get("tag_name") or "")
             name = (release.get("name") or "").lstrip("v")
             if target in (tag, name):
                 body = release.get("body") or ""
@@ -4597,37 +4693,59 @@ def run_gui():
         def worker():
             try:
                 current_version = app.dsh_version()
+                # 动态检测所有标签 (不再写死 latest/next 两个):
+                # ① npm dist-tags (稳定版/预发布)  ② GitHub Releases 全部 tag
                 tags = app.dsh_dist_tags()
-                if tags is None:
+                npm_versions = app.dsh_npm_versions()
+                github_releases = app.dsh_github_releases()
+                if tags is None and github_releases is None:
                     root.after(0, lambda: messagebox.showerror(
-                        "检查更新", "无法获取最新版本号, 请检查网络后重试。"))
-                else:
-                    latest_version = tags.get("latest")
-                    next_version = tags.get("next")
-                    # 汇总「提示目标」: 只保留比当前已装版本更新的候选
+                        "检查更新", "无法获取最新版本信息, 请检查网络后重试。"))
+                    return
+                candidates = []
+                seen = set()
+                def add_candidate(version, tag_label, installable,
+                                  published_at="", body="", tag_name=""):
+                    if not version or version in seen:
+                        return
+                    # 只保留比当前已装版本更新的候选
                     # (否则已是 stable(latest) 却仍提示再次覆盖安装, 属误报)。
-                    # 去重 + 忽略与当前相同或更旧者。
-                    candidates = []
-                    seen = set()
-                    for _tag_name, version in (("稳定版(latest)", latest_version),
-                                               ("预发布(next)", next_version)):
-                        if not version or version in seen:
-                            continue
-                        seen.add(version)
-                        if app._green_version_greater(version, current_version):
-                            candidates.append((version, _tag_name))
-                        else:
-                            app.log("跳过与当前相同或更旧的候选 %s (当前: %s)"
-                                    % (version, current_version))
-                    if not candidates:
-                        # latest 与 next 都不比当前更新, 视为已是最新版本
-                        root.after(0, lambda: messagebox.showinfo(
-                            "检查更新",
-                            "已是最新版本: %s\n(当前没有比已安装版本更新的发布。)"
-                            % current_version))
-                    else:
-                        root.after(0, lambda: ask_update(
-                            current_version, candidates))
+                    if not app._green_version_greater(version, current_version):
+                        app.log("跳过与当前相同或更旧的候选 %s (当前: %s)"
+                                % (version, current_version))
+                        return
+                    seen.add(version)
+                    candidates.append({
+                        "version": version,
+                        "tag_label": tag_label,
+                        "installable": installable,
+                        "published_at": published_at,
+                        "tag_name": tag_name,
+                        "body": body,
+                    })
+                # 1) npm dist-tags: 稳定版(latest) / 预发布(next), 一定可安装
+                if tags:
+                    add_candidate(tags.get("latest"), "稳定版(latest)", True)
+                    add_candidate(tags.get("next"), "预发布(next)", True)
+                # 2) GitHub Releases 全部 tag: 是否可安装看 npm 是否已发布该版本
+                if github_releases:
+                    for item in github_releases:
+                        installable = (npm_versions is not None
+                                       and item["version"] in npm_versions)
+                        source_label = "GitHub tag" + ("(预发布)" if item["prerelease"] else "")
+                        add_candidate(item["version"], source_label, installable,
+                                      item["published_at"], item["body"], item["tag_name"])
+                # 排序: 可安装的在前, 同一组内版本号从新到旧
+                candidates.sort(key=lambda c: (
+                    not c["installable"],
+                    tuple(-number for number in app._green_version_tuple(c["version"]))))
+                if not candidates:
+                    root.after(0, lambda: messagebox.showinfo(
+                        "检查更新",
+                        "已是最新版本: %s\n(当前没有比已安装版本更新的发布。)"
+                        % current_version))
+                else:
+                    root.after(0, lambda: ask_update(current_version, candidates))
             finally:
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=worker, daemon=True).start()
@@ -4684,10 +4802,11 @@ def run_gui():
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=update_worker, daemon=True).start()
 
-    def confirm_upgrade(current_version, version, tag_name):
+    def confirm_upgrade(current_version, version, tag_name, preloaded_notes=None):
         """点击某个目标版本后弹出「确认升级」: 先展示该版本的更新描述,
         用户点「确认升级」才真正执行; 点「取消」则回到版本选择/关闭 (需求 #57)。
-        描述在后台线程拉取, 避免网络查询阻塞 GUI"""
+        preloaded_notes: 动态检测时已拉到的发布说明 (GitHub body), 有则直接用,
+        避免重复网络查询; 无则在后台线程拉取 (需求: 动态 tag 列表复用)"""
         detail_dialog = tk.Toplevel(root)
         detail_dialog.title("确认升级")
         detail_dialog.transient(root)
@@ -4709,7 +4828,8 @@ def run_gui():
         notes_text.configure(yscrollcommand=scrollbar.set)
 
         def load_notes():
-            notes = app.dsh_version_notes(version)
+            notes = (preloaded_notes if preloaded_notes
+                     else app.dsh_version_notes(version))
             root.after(0, lambda: fill_notes(notes))
 
         def fill_notes(notes):
@@ -4740,43 +4860,105 @@ def run_gui():
         detail_dialog.geometry("+%d+%d" % (pos_x, pos_y))
 
     def ask_update(current_version, candidates):
-        """发现新版本时弹出对话框, 列出可选目标版本 (latest / next 不同则分别列出),
-        让用户选择装哪个, 点「暂不更新」则取消。
-        candidates: [(版本, 标签说明), ...], 已按 stable/next 顺序排列。
-        点选某个版本后进入 confirm_upgrade 二次确认 (需求 #57)"""
+        """发现新版本时弹出对话框: 用可滚动列表**动态**列出所有检测到的候选版本
+        (npm 稳定版/预发布 + GitHub 全部 tag), 用户选中后进入确认升级。
+        不写死 latest/next 两个标签 —— 所有 tag 都按真实来源动态列出来。
+        candidates: [{"version","tag_label","installable","published_at",
+                      "tag_name","body"}, ...],
+        已按 可安装优先、版本号从新到旧 排序。
+        未发布到 npm 的版本 (仅 GitHub 源码 tag) 只能查看/打开 GitHub 页面,
+        无法自动安装 (会给出明确提示, 避免安装失败)"""
         dialog = tk.Toplevel(root)
         dialog.title("发现新版本")
-        dialog.resizable(False, False)
         dialog.transient(root)
         dialog.grab_set()   # 模态: 关闭前主窗口不可操作
+        dialog.geometry("680x480")
 
         header = ttk.Frame(dialog, padding=12)
         header.pack(fill="x")
-        ttk.Label(header, text="当前版本: %s\n\n发现以下可更新版本, 请选择要安装的版本:"
-                  % current_version, justify="left").pack(anchor="w")
+        ttk.Label(header, justify="left", text=(
+            "当前版本: %s\n\n检测到 %d 个可更新版本, 请选择要安装的版本:"
+            % (current_version, len(candidates)))).pack(anchor="w")
 
-        button_frame = ttk.Frame(dialog, padding=(12, 0))
-        button_frame.pack(fill="x")
-        for version, tag_name in candidates:
-            row = ttk.Frame(button_frame)
-            row.pack(fill="x", pady=3)
-            ttk.Button(
-                row,
-                text="%s\n%s" % (tag_name, version),
-                command=lambda v=version, t=tag_name: (
-                    dialog.destroy(), confirm_upgrade(current_version, v, t)),
-            ).pack(fill="x")
+        # 列表区: 左 Treeview + 右垂直滚动条 (方便上下滑动)
+        body = ttk.Frame(dialog)
+        body.pack(fill="both", expand=True, padx=12, pady=(0, 6))
+        tree = ttk.Treeview(body, columns=("tag", "time", "installable"),
+                            show="tree headings", height=10)
+        tree.heading("#0", text="版本")
+        tree.heading("tag", text="标签/来源")
+        tree.heading("time", text="发布时间")
+        tree.heading("installable", text="可安装")
+        # 列宽留足余量: 总和需明显小于面板宽度, 否则 pack 会把右侧滚动条压缩成 1x1
+        tree.column("#0", width=130, anchor="center")
+        tree.column("tag", width=170, anchor="w")
+        tree.column("time", width=130, anchor="center")
+        tree.column("installable", width=110, anchor="center")
+        tree_scrollbar = ttk.Scrollbar(body, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=tree_scrollbar.set)
+        tree.pack(side="left", fill="both", expand=True)
+        tree_scrollbar.pack(side="right", fill="y")
+
+        selected_items = {}
+        for index, item in enumerate(candidates):
+            installable_text = "是" if item["installable"] else "否(未发布到npm)"
+            tree.insert("", "end", iid=str(index), text=item["version"],
+                        values=(item["tag_label"], item["published_at"],
+                                installable_text))
+            selected_items[str(index)] = item
+
+        def get_selected():
+            selection = tree.selection()
+            if not selection:
+                messagebox.showwarning("发现新版本",
+                                       "请先在上方列表中选择一个版本。", parent=dialog)
+                return None
+            return selected_items[selection[0]]
+
+        def on_confirm():
+            item = get_selected()
+            if item is None:
+                return
+            if not item["installable"]:
+                messagebox.showwarning(
+                    "发现新版本",
+                    "版本 %s 尚未发布到 npm, 暂无法自动安装。\n\n"
+                    "官方通常只把正式/稳定版本发布到 npm,\n"
+                    "而源码 tag 会提前出现在 GitHub Releases。\n"
+                    "可点下方「打开 GitHub 发布页」查看该版本的源码与发布说明。"
+                    % item["version"], parent=dialog)
+                return
+            dialog.destroy()
+            confirm_upgrade(current_version, item["version"],
+                            item["tag_label"], item.get("body"))
+
+        def on_open_github():
+            item = get_selected()
+            if item is None:
+                return
+            tag_name = item.get("tag_name") or item["version"]
+            url = ("https://github.com/deepseek-ai/deepseek-harness/"
+                   "releases/tag/%s" % urllib.parse.quote(tag_name))
+            try:
+                webbrowser.open(url)
+                append_log("已打开 GitHub 发布页: %s" % url)
+            except Exception as error:
+                messagebox.showerror("打开失败", "无法打开浏览器: %s" % error,
+                                     parent=dialog)
 
         footer = ttk.Frame(dialog, padding=12)
         footer.pack(fill="x")
-        ttk.Label(
-            footer,
-            text="更新前会自动备份当前版本到 runtime/backup/dsh-<版本>,\n"
-                 "旧版本备份不会自动删除, 可随时在「数据维护」里一键清理。",
-            justify="left", foreground="#888888").pack(anchor="w")
-        ttk.Button(footer, text="暂不更新",
-                   command=lambda: (dialog.destroy(),
-                                    append_log("用户选择暂不更新"))).pack(side="right")
+        ttk.Label(footer, justify="left", foreground="#888888", text=(
+            "提示: 「可安装」= 该版本已发布到 npm, 可自动下载安装;\n"
+            "未发布到 npm 的源码 tag 只能查看, 需等官方同步发布后才能安装。")).pack(anchor="w")
+        button_row = ttk.Frame(footer)
+        button_row.pack(side="right")
+        ttk.Button(button_row, text="暂不更新", command=lambda: (
+            dialog.destroy(), append_log("用户选择暂不更新"))).pack(side="right")
+        ttk.Button(button_row, text="打开 GitHub 发布页",
+                   command=on_open_github).pack(side="right", padx=6)
+        ttk.Button(button_row, text="确认升级",
+                   command=on_confirm).pack(side="right", padx=(6, 0))
 
         # 居中于主窗口
         dialog.update_idletasks()
