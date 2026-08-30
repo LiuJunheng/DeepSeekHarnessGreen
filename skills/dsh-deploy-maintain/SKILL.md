@@ -62,6 +62,7 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 - **就绪检测**：后台线程 socket 轮询端口，就绪后 `webbrowser.open`。CLI 模式要**同步** `wait_ready()`（daemon 线程会随主进程退出消失）。
 - **冷启动重复检测**：PID 文件（`runtime/server.pid`）+ 进程存在判断。排查端口监听用 `grep -w 3080`（`grep 3080` 误匹配 `13080`）。
 - **启动前自动清理孤儿 dsh 进程**：手动/残留的 dsh 进程占 3080 时新进程起不来还误报"已就绪"。`start_server()` 在判断已有进程之后、启动新进程之前，用 `_find_port_owner(port)`（`Get-NetTCPConnection -LocalPort -State Listen`→`Get-CimInstance Win32_Process`）+ `_cleanup_orphan_dsh(port)` 校验进程名含 `node` 且命令行含 `bin.js web --port`（**绝不误杀普通程序**）才 `taskkill /F /PID`，再 `_wait_port_free` 兜底轮询。
+- **【高发】新版 dsh web 认证（0.1.2-alpha.2+，界面显示 "dsh web authentication required"）**：client-connection 首次访问要求认证，启动时打印带一次性 `?token=<launchToken>` 的 URL，打开它才签发 30 天 Cookie；直接开裸地址 401。launcher 从 server.log **最新启动块**解析 token（`_read_launch_token`）+ 拼认证地址（`_web_auth_url`，`/` 不能省）→ `open_ui`/`wait_and_open`/`launch_desktop_shell`（`--url` 传桌面壳）统一用。**两个坑**：① **竞态**——dsh 先绑端口、插件树加载完才打印 token，`_web_auth_url` 在端口已监听时最多短等 8s（`wait_and_open` 必须先 `wait_ready` 再解析地址）；② **改 launcher.py 必须重打包 exe**，否则旧 exe 开裸地址必然 401、误判"启动失败"。
 
 ### 2.5 工作区与 ACL 沙箱（Windows 专属大坑）
 
@@ -90,6 +91,7 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 - **升级两段式确认 + 更新说明**：点版本先弹二级确认框（当前/目标 + 更新说明），确认才 `update_dsh(target_version)`。更新说明来源 = GitHub Releases（每版本带 changelog，tag `dsh-v<ver>`）；`dsh_version_notes_from_github()` 批量拉 releases?per_page=30 匹配。**别用 `npm view readme`——npm readme 是空的**。
 - **查询避坑**：`dist-tags --json` 必须拆成独立 argv（`_npm_view` 内 `query.split()`），整串当单参数会用法错误返回 None；npm view 的 registry 要与安装一致。
 - `update_dsh(target)` 顺序 = 备份 → **备份成功后才**强制重装目标版本（否则"旧版被覆盖又没装上"丢数据）。备份目录不自动清理，用户手动管理。
+- **升级后自愈（根治"升级后插件树起不来"）**：`update_dsh` 成功后自动执行 `_heal_after_core_upgrade` 四步——① `_remove_incompatible_bundles` 移除黑名单 `UPGRADE_INCOMPATIBLE_BUNDLES`(dshmarket)＋历史启动日志/探针日志定位到的不兼容 bundle（`_extract_bundle_from_log`：日志含关键字 `does not provide an export`/`is not in cache`/`ERR_MODULE_NOT_FOUND`/`Cannot find package`/`SyntaxError` 且堆栈路径命中 profile 的 bundles+dependencies，内置 bundle 不在 dependencies 永不误删）；② `_heal_profile_dependencies` 补宿主核心声明的 peer 依赖（`autoInstallPeers:false` 下 pnpm 不自动装，缺了报 `not in cache`）＋把 profile 与 file: 本地插件的核心依赖版本同步到宿主已装版本；③ `_rebuild_dependency_tree` 便携 pnpm `install --force --no-frozen-lockfile` 强制重建（复用 BOM 清理＋allowBuilds 补丁）；④ `_smoke_verify_core_upgrade` 独立子进程冒烟启动验证端口监听，失败再定位 1 个不兼容 bundle 移除重建重试（最多 2 轮，每轮只删 1 个防误删）。服务运行中跳过冒烟；任一步失败仅记警告不阻断更新成功返回。
 - 安装主体抽成 `install_dsh(package_spec)`，`prepare_dsh(force, package_spec)` 只做"缺失则装 / 强制重装"分支，首装与更新共用。
 
 ### 3.2 插件管理（dsh plugin 依赖 pnpm）
@@ -234,6 +236,16 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 - **免鉴权服务必带占位 Authorization 头**：`openai-completions` 协议校验 key——无 apiKeyEnv 无头抛 `No API key for provider`、写 `apiKeyEnv` 又缺真 Key 报 `MISSING_CREDENTIAL` → 正解 `headers:{Authorization:"Bearer ollama-local"}`（服务不校验）。
 - **thinking 模型"Deep diving…"是正常思考态**（先流 reasoning-delta 后出正文，本地 4B 冷启动+思考十几秒~几十秒）；`curl` 直测注意 PowerShell 单引号 JSON 被吃（写临时文件 `--data-binary "@file"`）；`api/ps` 空 = 模型未加载。
 - **后台探测型插件要提供「主动重接入」入口**（外部服务比 DSH 晚启动时用户无重试入口）：加独立路由 `POST /<route>/reconnect`（复用 `runDetection(force:true)`），与配置路由**不同 path**（避免同 path 只能注册一次）；`force:true` 全量重写但 `mergeModelParams` 保留手改项；内部只 runDetection，**不写**配置文件（避免点一下清空面板覆盖值）；离线也是正常返回（reconnected:false + lastError）；客户端按钮置忙。
+
+### 5.11 WebUI 悬浮侧栏/浮层的开关按钮：别钉右上角、也别叠内容区
+
+- 官方 WebUI 右上角自带宽操作按钮（下载对话等）；自建侧栏/浮层的**展开收拢开关若 `position:fixed; top/right` 固定右上角会盖住官方按钮**（第一处坑）。**把折叠开关垂直居中叠在面板内容区（文件列表）高度上会挡住列表点击**（第二处坑，两面都踩过，`dsh-sidebar-lite`）。
+- 参考社区 better-sidebar 的 **toggle cluster**：开关**始终固定在面板顶部**——
+  - **展开态**：折叠按钮放在**标题/tab 条右端**（内容区之外），绝不叠在列表中间高度；
+  - **收起态**：开关在右上角/右缘（圆形图标按钮）。
+  - 按钮用**官方 icon-button 样式**（圆形无边框 / secondary 墨色 / hover 加深填底），图标复刻官方 `IconPanelRightOutline16`（外框 + 右侧竖条）而非字符箭头。
+- 规避重叠的正解不是"把开关挪开"，而是靠 `#root` 让位：面板展开时 `#root{margin-right:面板宽}` 把**官方 header（含下载按钮）推到面板左侧**，故面板内右上角本就没有官方按钮 → 标题条右端放折叠按钮天然不重叠。收起态若用右上角 cluster，需让官方 header `padding-right` 给 cluster 让位。左缘拖拽调宽条保持窄透明（宽 5px），避免挡内容。
+- **多浮动面板并存时的让位累加**（如侧栏 + 独立文件预览框）：额外面板用 `position:fixed; right:主面板宽; width:预览宽` 叠在主面板**左侧**，并把它的宽度也累进 `#root` 的 `margin-right`（`calc(var(--w1)+var(--w2))`）；面板关闭/收起时对应让位变量归零，否则主内容会被后开的浮动面板遮挡（`dsh-sidebar-lite` 已如此实现）。
 
 ## 六、验证与排查速查表
 

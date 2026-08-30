@@ -207,6 +207,19 @@ SERVER_READY_TIMEOUT = 120
 # 默认 profile (插件管理的目标 profile, 对应 dsh --profile web)
 DEFAULT_PROFILE = "web"
 
+# 升级 dsh 后与新版核心不兼容的 bundle 插件黑名单 (自愈逻辑在 update_dsh 后自动移除):
+# dshmarket 依赖已被新版 @deepseek-ai/dsh-settings 移除的 installSettingsSection 导出,
+# 保留会拖垮整个插件树导致服务起不来 (2026-08-31 实测, 见 DEV_NOTES 避坑 45)。
+# 其余未知的不兼容插件由冒烟启动验证 + 启动日志模式匹配自动定位移除。
+UPGRADE_INCOMPATIBLE_BUNDLES = ["dshmarket"]
+
+# 服务启动失败日志里代表"插件与核心不兼容"的关键字 (冒烟验证/历史日志匹配用)。
+# 匹配到任意关键字 + 日志堆栈里出现 profile 的 bundle 插件路径, 即判定该插件不兼容。
+UPGRADE_INCOMPATIBLE_LOG_KEYWORDS = [
+    "does not provide an export", "is not in cache",
+    "ERR_MODULE_NOT_FOUND", "Cannot find package", "SyntaxError",
+]
+
 # ---------------------------------------------------------------------------
 # WebUI 单页面去重 (检测"界面已在浏览器中打开"则不再重复打开新页面)
 # 原理: 启动器向 WebUI 前端 index.html 注入一小段心跳脚本, 页面打开后每
@@ -1094,9 +1107,386 @@ class Launcher:
         # 备份成功后, 强制重装目标版本 (prepare_dsh 的 force 会跳过已存在检查)
         if not self.prepare_dsh(force=True, package_spec=package_spec):
             raise RuntimeError("dsh 重装失败, 更新已取消")
+        # ---- 升级后自愈 (2026-08-31, 需求): 新核心可能与旧插件/依赖不兼容, 自动修复 ----
+        # 先清理不兼容 bundle, 再补齐/同步依赖, 最后重建依赖树并冒烟验证启动;
+        # 任一步失败只记警告, 不阻断"更新已成功"的返回 (用户仍可手动重启服务排查)。
+        try:
+            self._heal_after_core_upgrade()
+        except Exception as error:
+            self.log("[警告] dsh 升级后自愈失败 (可手动重启服务或重新安装环境): %s" % error)
         self.log("更新完成, 当前版本: %s" % self.dsh_version())
         self.log("旧版本备份在: %s (可手动删除)" % backup_dir)
         return self.dsh_version()
+
+    # ---------- 升级后自愈 (dsh 核心升级 -> profile 依赖/插件兼容性自动修复) ----------
+    # 背景: dsh 升级后旧插件可能与新版核心不兼容 (模块导出被删、peer 依赖因
+    # pnpm-workspace.yaml 的 autoInstallPeers: false 未自动安装等), 任一关键插件
+    # 加载失败会让整个插件树起不来 (2026-08-31 实测 0.1.2-alpha.2, 见 DEV_NOTES 避坑 45)。
+    # 以下是根治项: update_dsh 成功后自动走一遍"移除不兼容 -> 修复依赖 -> 重建 -> 冒烟验证"。
+    def _heal_after_core_upgrade(self, profile=DEFAULT_PROFILE):
+        """dsh 核心升级后的整体自愈流程 (按顺序执行):
+        1) _remove_incompatible_bundles   移除已知黑名单/历史启动日志定位到的不兼容 bundle;
+        2) _heal_profile_dependencies     补齐宿主核心的 peer 依赖 + 把插件声明的核心依赖
+                                          同步到宿主已装版本;
+        3) _rebuild_dependency_tree       用便携 pnpm 强制重建 profile 依赖树 (联网下载);
+        4) _smoke_verify_core_upgrade     独立子进程冒烟启动验证; 起不来则从日志定位不兼容
+                                          bundle 移除后重建重试 (最多 2 轮)。
+        依赖树重建失败会直接抛异常 (3 失败则 4 无意义); 其余步骤内部已吞异常防阻断。"""
+        self.log("--- dsh 升级后自愈开始 (profile: %s) ---" % profile)
+        removed = self._remove_incompatible_bundles(profile)
+        if removed:
+            self.log("已自动移除与新版核心不兼容的 bundle: %s" % ", ".join(removed))
+        changed = self._heal_profile_dependencies(profile)
+        if changed:
+            self.log("已把 profile 及其插件依赖同步到新版核心 (需重建依赖树生效)")
+        # 无论是否有改动都强制重建一次, 保证 node_modules 与新版核心完全一致
+        self._rebuild_dependency_tree(profile)
+        boot_ok = self._smoke_verify_core_upgrade(profile)
+        if boot_ok:
+            self.log("--- dsh 升级后自愈完成: 冒烟启动验证通过 ---")
+        else:
+            self.log("[警告] 升级后冒烟启动仍失败, 请查看 %s 日志或点击「重新安装环境」手动修复"
+                     % LOG_FILE)
+
+    def _host_core_versions(self):
+        """扫描宿主核心 runtime/dsh/node_modules 下已安装包的版本, 返回 {包名: 版本}。
+        同时覆盖 @deepseek-ai 作用域包与顶层非作用域包 (如 dsh-invariants)。
+        供自愈逻辑把 profile 及其插件依赖同步到新版核心的版本。"""
+        version_map = {}
+        modules_root = os.path.join(DSH_DIR, "node_modules")
+        if not os.path.isdir(modules_root):
+            return version_map
+        # 非作用域包 (顶层目录本身就是一个包)
+        for entry_name in os.listdir(modules_root):
+            if entry_name.startswith("@"):
+                continue
+            package_json = os.path.join(modules_root, entry_name, "package.json")
+            if os.path.isfile(package_json):
+                try:
+                    with open(package_json, "r", encoding="utf-8") as file_handle:
+                        manifest = json.load(file_handle)
+                    version_map[entry_name] = manifest.get("version", "")
+                except Exception:
+                    continue
+        # 作用域包 @deepseek-ai/*
+        scoped_root = os.path.join(modules_root, "@deepseek-ai")
+        if os.path.isdir(scoped_root):
+            for entry_name in os.listdir(scoped_root):
+                package_json = os.path.join(scoped_root, entry_name, "package.json")
+                if os.path.isfile(package_json):
+                    try:
+                        with open(package_json, "r", encoding="utf-8") as file_handle:
+                            manifest = json.load(file_handle)
+                        version_map["@deepseek-ai/%s" % entry_name] = manifest.get("version", "")
+                    except Exception:
+                        continue
+        return version_map
+
+    def _host_peer_dependencies(self):
+        """收集宿主核心所有已装 @deepseek-ai 作用域包声明的 peerDependencies 包名集合。
+        pnpm 工作区 autoInstallPeers: false 时这些 peer 不会被自动安装, 升级后
+        往往缺失 (如 @deepseek-ai/cordis / @deepseek-ai/dsh-scope), 需显式补进
+        profile 的 dependencies。"""
+        peer_names = set()
+        scoped_root = os.path.join(DSH_DIR, "node_modules", "@deepseek-ai")
+        if not os.path.isdir(scoped_root):
+            return peer_names
+        for entry_name in os.listdir(scoped_root):
+            package_json = os.path.join(scoped_root, entry_name, "package.json")
+            if not os.path.isfile(package_json):
+                continue
+            try:
+                with open(package_json, "r", encoding="utf-8") as file_handle:
+                    manifest = json.load(file_handle)
+            except Exception:
+                continue
+            peers = manifest.get("peerDependencies") or {}
+            for peer_name in peers:
+                peer_names.add(peer_name)
+        return peer_names
+
+    @staticmethod
+    def _strip_version_spec(spec):
+        """去掉依赖版本说明里的范围操作符 (^ ~ > < = 及空格), 返回裸版本号。
+        仅用于自愈时判断"声明的版本是否与宿主版本一致", 不参与真实解析。"""
+        return re.sub(r"[^0-9A-Za-z.+-]", "", str(spec or "").strip())
+
+    def _sync_manifest_core_deps(self, manifest, version_map, package_label):
+        """把单个 package.json 里的 @deepseek-ai/* (及 dsh-invariants 等核心) 依赖同步到
+        宿主已装版本。声明版本与宿主一致时跳过; 不一致则改写成宿主精确版本。
+        返回是否发生了改动。package_label 仅用于日志描述。"""
+        changed = False
+        for section_name in ("dependencies", "peerDependencies"):
+            dependencies = manifest.get(section_name) or {}
+            for package_name in list(dependencies.keys()):
+                if package_name not in version_map:
+                    continue
+                host_version = version_map[package_name]
+                if not host_version:
+                    continue
+                declared_spec = dependencies[package_name]
+                if self._strip_version_spec(declared_spec) == self._strip_version_spec(host_version):
+                    continue
+                dependencies[package_name] = host_version
+                self.log("同步 %s 的核心依赖 %s: %s -> %s"
+                         % (package_label, package_name, declared_spec, host_version))
+                changed = True
+        return changed
+
+    def _heal_profile_dependencies(self, profile=DEFAULT_PROFILE):
+        """升级 dsh 后自动修复 profile 依赖 (自愈第二步):
+        1) 补充宿主核心声明的 peer 依赖到 profile 的 dependencies (autoInstallPeers: false
+           下 pnpm 不会自动装, 缺了会导致插件 import 宿主核心时报 not in cache);
+        2) 把 profile 自身及 file: 本地插件 package.json 里的 @deepseek-ai/* 核心依赖
+           同步到宿主已装版本 (避免插件钉在旧版核心上导致模块导出不匹配)。
+        返回是否发生了改动 (改动后调用方需重建依赖树)。"""
+        manifest = self.read_profile_manifest(profile)
+        if manifest is None:
+            self.log("[自愈] 未找到 profile 配置, 跳过依赖修复: %s" % profile)
+            return False
+        version_map = self._host_core_versions()
+        changed = False
+        # 1) 补 peer 依赖: 宿主核心声明了、但 profile 没显式声明的, 一律补成宿主精确版本
+        dependencies = manifest.setdefault("dependencies", {})
+        for peer_name in self._host_peer_dependencies():
+            if peer_name in dependencies:
+                continue
+            if peer_name not in version_map:
+                continue
+            dependencies[peer_name] = version_map[peer_name]
+            self.log("补充缺失的 peer 依赖 %s: %s (宿主核心自动安装依赖链)"
+                     % (peer_name, version_map[peer_name]))
+            changed = True
+        # 2) 同步 profile 自身的核心依赖版本到宿主
+        if self._sync_manifest_core_deps(manifest, version_map, "profile %s" % profile):
+            changed = True
+        # 3) 同步 file: 本地插件声明的核心依赖版本到宿主
+        for package_spec in list(dependencies.values()):
+            plugin_dir = self._resolve_file_dependency_dir(package_spec)
+            if plugin_dir is None:
+                continue
+            plugin_package_json = os.path.join(plugin_dir, "package.json")
+            if not os.path.isfile(plugin_package_json):
+                continue
+            try:
+                with open(plugin_package_json, "r", encoding="utf-8") as file_handle:
+                    plugin_manifest = json.load(file_handle)
+            except Exception as error:
+                self.log("[自愈] 读取插件配置失败, 跳过: %s (%s)" % (plugin_dir, error))
+                continue
+            plugin_name = plugin_manifest.get("name") or os.path.basename(plugin_dir)
+            if self._sync_manifest_core_deps(plugin_manifest, version_map, "插件 %s" % plugin_name):
+                changed = True
+                try:
+                    with open(plugin_package_json, "w", encoding="utf-8") as file_handle:
+                        json.dump(plugin_manifest, file_handle, ensure_ascii=False, indent=2)
+                        file_handle.write("\n")
+                except Exception as error:
+                    self.log("[自愈] 写回插件配置失败: %s (%s)" % (plugin_dir, error))
+        if changed:
+            self.write_profile_manifest(profile, manifest)
+        return changed
+
+    @staticmethod
+    def _resolve_file_dependency_dir(package_spec):
+        """解析 profile 依赖里 file: 本地依赖指向的目录; 非 file: 依赖返回 None。
+        仅用于定位绿色版自带插件源码目录 (更新其 package.json 里的核心依赖版本)。"""
+        spec = str(package_spec or "").strip()
+        if not spec.startswith("file:"):
+            return None
+        plugin_dir = spec[len("file:"):].strip()
+        if not plugin_dir:
+            return None
+        # Windows 下 "file:D:/..." 或 "file:/D:/..." 都能被 os.path 归一化
+        plugin_dir = os.path.normpath(plugin_dir)
+        return plugin_dir if os.path.isdir(plugin_dir) else None
+
+    def _extract_bundle_from_log(self, log_text, profile=DEFAULT_PROFILE):
+        """从启动失败日志里定位"与核心不兼容的 bundle 插件"包名。
+        判定条件 (都满足才算): 日志含不兼容关键字 (UPGRADE_INCOMPATIBLE_LOG_KEYWORDS);
+        堆栈里出现 node_modules/<包>/ 路径; 且该包当前在 profile 的 bundles 列表里、
+        且是 dependencies 里声明的插件 (内置 bundle 如 @deepseek-ai/dsh-base 不在
+        dependencies 中, 永不误删)。返回包名或 None。"""
+        if not log_text:
+            return None
+        if not any(keyword in log_text for keyword in UPGRADE_INCOMPATIBLE_LOG_KEYWORDS):
+            return None
+        manifest = self.read_profile_manifest(profile)
+        if manifest is None:
+            return None
+        dependencies = set(manifest.get("dependencies") or {})
+        bundles = set((manifest.get("dsh") or {}).get("profile", {}).get("bundles") or [])
+        # 匹配 scoped (@deepseek-ai/x) 或普通 (x) 两种路径形态
+        package_match = re.findall(
+            r"node_modules[/\\](?:@deepseek-ai[/\\])?([A-Za-z0-9_.-]+)[/\\]", log_text)
+        for package_name in package_match:
+            if package_name in bundles and package_name in dependencies:
+                return package_name
+        return None
+
+    def _remove_incompatible_bundles(self, profile=DEFAULT_PROFILE, extra_names=None):
+        """升级 dsh 后自动移除与新版核心不兼容的 bundle 插件 (自愈第一步)。
+        来源:
+        1) 黑名单 UPGRADE_INCOMPATIBLE_BUNDLES (已知不兼容, 如 dshmarket);
+        2) extra_names 参数 (冒烟验证从探针日志动态定位到的不兼容 bundle);
+        3) 最近一次启动日志 (server.log 尾部) 里能定位到的不兼容 bundle (覆盖已发生过
+           的失败)。
+        移除方式: 从 dsh.profile.bundles 移除, 并从 dependencies 移除 (若仍在);
+        若该包还出现在 disabled 列表则一并清掉, 避免残留。
+        返回被移除的包名列表。"""
+        manifest = self.read_profile_manifest(profile)
+        if manifest is None:
+            return []
+        dependencies = manifest.get("dependencies") or {}
+        profile_section = (manifest.get("dsh") or {}).get("profile") or {}
+        bundles = profile_section.get("bundles") or []
+        disabled = profile_section.get("disabled") or []
+        removed = []
+        # 来源 1: 黑名单
+        incompatible_names = set(UPGRADE_INCOMPATIBLE_BUNDLES)
+        # 来源 2: 显式传入 (冒烟验证定位到的不兼容 bundle)
+        if extra_names:
+            incompatible_names.update(extra_names)
+        # 来源 3: 历史启动日志尾部 (只取最近一段, 避免旧错误干扰)
+        try:
+            if os.path.isfile(LOG_FILE):
+                with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as file_handle:
+                    log_tail = file_handle.readlines()[-300:]
+                log_tail_text = "".join(log_tail)
+                log_bundle = self._extract_bundle_from_log(log_tail_text, profile)
+                if log_bundle:
+                    incompatible_names.add(log_bundle)
+        except Exception as error:
+            self.log("[自愈] 读取启动日志失败, 仅按黑名单移除: %s" % error)
+        for package_name in sorted(incompatible_names):
+            if package_name in bundles:
+                bundles.remove(package_name)
+            if package_name in dependencies:
+                del dependencies[package_name]
+            if package_name in disabled:
+                disabled.remove(package_name)
+            if (package_name not in bundles and package_name not in dependencies):
+                removed.append(package_name)
+        if removed:
+            profile_section["bundles"] = bundles
+            manifest["dependencies"] = dependencies
+            profile_section["disabled"] = disabled
+            self.write_profile_manifest(profile, manifest)
+            for package_name in removed:
+                self.log("已移除不兼容 bundle 并清理依赖/停用残留: %s" % package_name)
+        return removed
+
+    def _rebuild_dependency_tree(self, profile=DEFAULT_PROFILE):
+        """用便携 pnpm 在 profile 目录强制重建依赖树 (自愈第三步)。
+        --force 重新拉取、--no-frozen-lockfile 允许锁文件随 package.json 更新,
+        使前面的依赖修复真正落到 node_modules。失败抛异常 (调用方捕获提示)。"""
+        node_exe = self.find_node_exe()
+        if node_exe is None:
+            raise RuntimeError("未找到便携 Node, 无法重建 profile 依赖 (请先安装环境)")
+        if not self.pnpm_installed():
+            self.install_pnpm()
+        profile_dir = os.path.join(DSH_HOME_DIR, "profiles", profile)
+        # 复用既有经验: 先清 BOM、补 pnpm 原生依赖 allowBuilds, 避免装到一半报错
+        self.strip_bom_from_profile_packages(profile)
+        self.ensure_pnpm_native_allowbuilds(profile)
+        command = [self.find_pnpm_exe(), "install", "--force", "--no-frozen-lockfile"]
+        mirror, is_auto = self.resolve_mirror()
+        if not is_auto:
+            command.append("--registry=%s" % NPM_REGISTRY[mirror])
+        self.log("正在重建 profile 依赖树: %s (需联网下载, 请稍候) ..." % profile_dir)
+
+        def run_once():
+            """执行一次 pnpm install, 返回 (退出码, 输出文本)"""
+            try:
+                return self._stream_subprocess(
+                    command, cwd=profile_dir, env=self.build_env(),
+                    timeout=600, log_prefix="pnpm: ")
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("重建 profile 依赖树超时 (超过 10 分钟), 请检查网络后重试")
+
+        exit_code, output = run_once()
+        if exit_code != 0:
+            # 失败后清一遍本次新装包的 BOM、补 git 源插件放行, 再重试一次 (幂等)
+            self.strip_bom_from_profile_packages(profile)
+            self.auto_allow_git_build(profile, output)
+            exit_code, output = run_once()
+        if exit_code != 0:
+            raise RuntimeError("重建 profile 依赖树失败, 请检查网络后重试 (详见上方 pnpm 输出)")
+        # 与 run_plugin_command 一致: pnpm 非 0 退出时官方 reconcile 会跳过, 这里兜底对齐
+        try:
+            self.reconcile_bundles(profile)
+        except Exception as error:
+            self.log("[警告] 重建后同步编排层失败: %s" % error)
+        self.log("profile 依赖树重建完成: %s" % profile)
+
+    def _smoke_verify_core_upgrade(self, profile=DEFAULT_PROFILE, max_rounds=2):
+        """升级后冒烟启动验证 (自愈第四步): 用独立子进程启动一次服务, 确认插件树能加载。
+        启动成功判定: 在冒烟超时内服务端口被监听。
+        若启动失败且日志能定位到不兼容 bundle, 自动移除该 bundle 并重建依赖后重试,
+        最多 max_rounds 轮 (每轮最多移除一个, 避免一次误删多个)。
+        仅当服务当前未运行时执行 (运行中会占用端口且无需验证); 结束后一定结束探针进程,
+        不触碰正在运行的服务。返回 True 表示最终验证通过。"""
+        if self.is_server_running():
+            self.log("[自愈] 服务正在运行, 跳过冒烟验证 (请重启服务使新版核心生效)")
+            return True
+        port = int(self.config.get("dsh_port", 3080))
+        command = self.build_server_command()
+        probe_log = os.path.join(RUNTIME_DIR, "tmp", "boot_smoke.log")
+        os.makedirs(os.path.dirname(probe_log), exist_ok=True)
+        for round_index in range(1, max_rounds + 1):
+            self.log("[自愈] 冒烟启动验证 (第 %d/%d 轮) ..." % (round_index, max_rounds))
+            process = None
+            try:
+                with open(probe_log, "w", encoding="utf-8") as log_handle:
+                    creation_flags = 0
+                    if sys.platform == "win32":
+                        creation_flags = subprocess.CREATE_NO_WINDOW
+                    process = subprocess.Popen(
+                        command, cwd=DSH_DIR, env=self.build_env(),
+                        stdout=log_handle, stderr=subprocess.STDOUT,
+                        creationflags=creation_flags,
+                    )
+                boot_deadline = time.time() + 30
+                boot_success = False
+                while time.time() < boot_deadline:
+                    if self.port_open(port):
+                        boot_success = True
+                        break
+                    if process.poll() is not None:
+                        break   # 进程提前退出 = 插件树加载失败
+                    time.sleep(1)
+                if boot_success:
+                    self.log("[自愈] 冒烟启动验证通过: 服务端口 %d 已就绪" % port)
+                    return True
+                # 启动失败: 读探针日志定位不兼容 bundle
+                log_text = ""
+                try:
+                    with open(probe_log, "r", encoding="utf-8", errors="replace") as file_handle:
+                        log_text = file_handle.read()
+                except OSError:
+                    pass
+                incompatible_bundle = self._extract_bundle_from_log(log_text, profile)
+                if incompatible_bundle:
+                    self.log("[自愈] 冒烟启动失败, 定位到不兼容 bundle: %s" % incompatible_bundle)
+                    # 移除该 bundle (含黑名单/历史日志包) 并重建后进入下一轮重试
+                    self._remove_incompatible_bundles(profile, extra_names=[incompatible_bundle])
+                    self._rebuild_dependency_tree(profile)
+                    continue
+                # 无法自动定位: 保留日志供人工排查
+                self.log("[自愈] 冒烟启动失败且无法自动定位不兼容插件, 日志: %s" % probe_log)
+                return False
+            except Exception as error:
+                self.log("[自愈] 冒烟启动验证出错: %s" % error)
+                return False
+            finally:
+                if process is not None and process.poll() is None:
+                    try:
+                        process.kill()
+                        process.wait(timeout=5)
+                    except Exception:
+                        pass
+        self.log("[自愈] 冒烟启动验证重试 %d 轮仍失败, 请查看 %s 日志" % (max_rounds, probe_log))
+        return False
 
     def cleanup_update_files(self):
         """清空绿色版更新目录 (runtime/update): 暂存 zip / 解压内容 / 覆盖前旧文件备份 / 更新任务文件。
@@ -3382,13 +3772,16 @@ class Launcher:
     def wait_and_open(self, open_browser):
         """轮询检测服务端口是否就绪, 就绪后可选打开浏览器"""
         port = int(self.config.get("dsh_port", 3080))
-        url = "http://127.0.0.1:%d" % port
         if self.wait_ready(port):
+            # 服务就绪后再解析认证地址: dsh 先绑定端口、插件树加载完才打印 token,
+            # 过早解析会拿到空 token 退回裸地址导致 401 (认证竞态, 2026-08-31)。
+            url = self._web_auth_url("http://127.0.0.1:%d" % port)
             self.log("服务已就绪: %s" % url)
-            # 局域网模式: 提示可被其他电脑远程访问的地址
+            # 局域网模式: 提示可被其他电脑远程访问的地址 (带认证 token, 需复制完整地址)
             if self.config.get("dsh_host", "127.0.0.1") == "0.0.0.0":
                 for lan_ip in self.lan_addresses():
-                    self.log("局域网访问地址: http://%s:%d (其他电脑浏览器打开)" % (lan_ip, port))
+                    lan_url = self._web_auth_url("http://%s:%d" % (lan_ip, port))
+                    self.log("局域网访问地址: %s (其他电脑浏览器打开, 请复制完整地址)" % lan_url)
             if open_browser:
                 self.open_ui(force=False)   # 按默认打开方式(桌面窗口/网页窗口)自动打开; 已打开则内部跳过
 
@@ -3413,6 +3806,70 @@ class Launcher:
                 return True
         except OSError:
             return False
+
+    # ---------- dsh web 认证地址 (2026-08-31, 需求 #48) ----------
+    # 新版 dsh (0.1.2-alpha.2+) 的 client-connection 在首次访问前要求认证:
+    # 启动时打印的 URL 带一次性 ?token=<launchToken>, 打开它才签发 30 天浏览器
+    # Cookie (签名 secret 跨进程持久), 之后请求才被放行; 直接打开裸地址返回 401
+    # "dsh web authentication required"。launchToken 每次进程启动都重新生成,
+    # 故每次打开界面时都重新从 server.log 解析, 不能用缓存。
+    def _read_launch_token(self):
+        """从 server.log 最新一次启动块里解析 dsh 打印的 ?token= 值。
+        旧版无认证 / 尚未打印时返回 None (调用方退回裸地址, 兼容旧版)。
+        只取最后一个启动块, 避免旧进程的 token 干扰。"""
+        try:
+            if not os.path.isfile(LOG_FILE):
+                return None
+            with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as file_handle:
+                lines = file_handle.readlines()
+        except OSError:
+            return None
+        # 从后往前找最近一个启动标记, 取其后的文本 (含 dsh web: 打印行)
+        start_marker = "===== DSH Server Start:"
+        latest_index = None
+        for index in range(len(lines) - 1, -1, -1):
+            if lines[index].startswith(start_marker):
+                latest_index = index
+                break
+        if latest_index is None:
+            return None
+        block_text = "".join(lines[latest_index:])
+        # URL 形如 http://127.0.0.1:3080/?token=xxx (LAN 后缀在空格后, \S+ 不包含)
+        url_match = re.search(r"dsh web:\s*(\S+)", block_text)
+        if not url_match:
+            return None
+        token_match = re.search(r"[?&]token=([^&\s]+)", url_match.group(1))
+        if not token_match:
+            return None
+        return token_match.group(1)
+
+    def _web_auth_url(self, base_url, wait_seconds=8.0):
+        """把裸地址升级为带 ?token= 的认证地址 (若本次启动打印了 token)。
+        无 token (旧版) 时原样返回, 保证兼容。
+        统一补成 /?token=... 形式, 与 dsh 启动时打印的认证地址完全一致。
+        注: 本启动器传入的 base_url 恒为干净的 http://host:port (无路径/查询参数)。
+
+        竞态处理 (2026-08-31): dsh 先绑定端口、等插件树加载完成才打印带 token 的
+        URL, 故"端口已就绪但 token 还没落盘"是常见窗口期。这里在端口已监听的前提
+        下最多短等 wait_seconds 秒等 token 打印; 服务根本没启动时端口未开, 直接返回
+        不白等, 兼容旧版无认证逻辑。"""
+        token = self._read_launch_token()
+        if not token and wait_seconds > 0:
+            try:
+                parsed_port = urllib.parse.urlparse(base_url).port
+            except (ValueError, TypeError):
+                parsed_port = None
+            if parsed_port is not None and self.port_open(parsed_port):
+                deadline = time.time() + wait_seconds
+                while time.time() < deadline:
+                    token = self._read_launch_token()
+                    if token:
+                        break
+                    time.sleep(0.5)
+        if not token:
+            return base_url
+        base_url = base_url.rstrip("/")
+        return "%s/?token=%s" % (base_url, token)
 
     @staticmethod
     def _find_port_owner(port):
@@ -3892,11 +4349,13 @@ class Launcher:
         shell_script = os.path.join(BASE_DIR, "desktop-shell.py")
         pythonw_exe = self._find_pythonw()
         url = "http://127.0.0.1:%d" % int(self.config.get("dsh_port", 3080))
+        # 新版 dsh 需带 ?token= 的认证地址打开一次换取 Cookie, 把认证地址传给桌面壳
+        auth_url = self._web_auth_url(url)
         # 启动前先在 GUI 层确保桌面版依赖 (pywebview) 就绪: 缺失则带进度自动安装,
         # 不再静默由子进程后台补装; 装不上/无便携 python 时明确提示并回退浏览器。
         if not self.prepare_desktop_deps():
-            self.log("桌面版依赖未就绪, 改用系统浏览器打开界面: %s" % url)
-            webbrowser.open(url)
+            self.log("桌面版依赖未就绪, 改用系统浏览器打开界面: %s" % auth_url)
+            webbrowser.open(auth_url)
             return
         if pythonw_exe and os.path.isfile(shell_script):
             creation_flags = 0
@@ -3904,7 +4363,7 @@ class Launcher:
                 creation_flags = subprocess.CREATE_NO_WINDOW
             try:
                 shell_process = subprocess.Popen(
-                    [pythonw_exe, shell_script],
+                    [pythonw_exe, shell_script, "--url", auth_url],
                     cwd=BASE_DIR,
                     creationflags=creation_flags,
                 )
@@ -3915,8 +4374,8 @@ class Launcher:
             except Exception as error:
                 self.log("启动桌面窗口失败: %s" % error)
         # 兜底: pythonw 或桌面壳脚本缺失/启动失败时直接用系统浏览器打开
-        self.log("未找到 pythonw 或 desktop-shell.py, 改用系统浏览器打开: %s" % url)
-        webbrowser.open(url)
+        self.log("未找到 pythonw 或 desktop-shell.py, 改用系统浏览器打开: %s" % auth_url)
+        webbrowser.open(auth_url)
 
     def _ui_open_state(self, write_method=None):
         """持久化"当前正在使用的界面方式", 返回最近记录的方式; 传 write_method 时先落盘。
@@ -3956,7 +4415,9 @@ class Launcher:
         """
         self._ensure_ui_beacon_server()
         open_method = method or self.config.get("open_method", "desktop")
-        url = "http://127.0.0.1:%d" % int(self.config.get("dsh_port", 3080))
+        # 新版 dsh 需要带 ?token= 的认证地址打开一次以换取浏览器 Cookie, 否则 401
+        url = self._web_auth_url("http://127.0.0.1:%d"
+                                 % int(self.config.get("dsh_port", 3080)))
 
         if open_method == "desktop":
             # 桌面版是固定单实例程序: 用进程PID身份判在线, 不用/不依赖 WebUI 心跳。
@@ -6058,10 +6519,12 @@ def main():
             app._ensure_ui_beacon_server()
             port = int(app.config.get("dsh_port", 3080))
             if app.wait_ready(port):
-                print("服务已就绪: http://127.0.0.1:%d" % port)
+                # 就绪提示用带 ?token= 的认证地址, 用户复制打印的地址可直接进界面 (新版 dsh 认证)
+                print("服务已就绪: %s" % app._web_auth_url("http://127.0.0.1:%d" % port))
                 if app.config.get("dsh_host", "127.0.0.1") == "0.0.0.0":
                     for lan_ip in app.lan_addresses():
-                        print("局域网访问地址: http://%s:%d (其他电脑浏览器打开)" % (lan_ip, port))
+                        print("局域网访问地址: %s (其他电脑浏览器打开, 请复制完整地址)"
+                              % app._web_auth_url("http://%s:%d" % (lan_ip, port)))
                 if app.config.get("auto_open_browser", True):
                     app.open_ui(force=False)   # 按默认打开方式(桌面窗口/网页窗口)打开
             # 守护模式: 保持本进程存活以维持服务子进程的 stdin 管道打开,

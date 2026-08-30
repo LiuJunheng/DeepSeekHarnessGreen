@@ -43,7 +43,9 @@ window.__ModuleLoader__.load({
 		const API_PREFIX = "/__dsh/sidebar-lite";
 		const GUARD_HEADER = "X-DSH-Sidebar-Lite";
 		const PANEL_WIDTH = 320;            // 展开宽度 (px)
+		const PREVIEW_WIDTH = 360;          // 独立文件预览侧栏框默认宽度 (px, 可拖)
 		const CSS_VAR = "--dsh-sidebar-lite-width";
+		const CSS_EXTRA_VAR = "--dsh-sidebar-lite-extra";   // 预览框额外让位量 (px)
 		const STYLE_ID = "dsh-sidebar-lite-css";
 		// 需要就地编辑的文本扩展名 (其余命中宿主端 fs.read 的 text 判定也同样可编辑)。
 		const EDITABLE_EXTS = [
@@ -358,14 +360,20 @@ window.__ModuleLoader__.load({
 				"background:var(--dsw-alias-bg-layer-2,#ffffff);box-shadow:-1px 0 0 var(--dsw-alias-border-l1,#e5e5e5);}" +
 				"#" + N + "-host." + N + "-closed{width:0;box-shadow:none;overflow:hidden;}" +
 				"#" + N + "-host." + N + "-resizing{transition:none;cursor:col-resize;user-select:none;}" +
-				"#" + N + "-ribbon{position:fixed;top:10px;right:8px;z-index:2147483000;" +
-				"border:1px solid var(--dsw-alias-border-l2,#ddd);border-radius:6px;" +
-				"background:var(--dsw-alias-bg-layer-2,#ffffff);box-shadow:0 1px 3px rgba(0,0,0,.08);" +
-				"color:var(--dsw-alias-label-secondary,#8a8f98);cursor:pointer;" +
-				"font:14px/1 ui-monospace,Menlo,monospace;padding:6px 8px;}" +
+				// 收起态开关: 右缘垂直居中的官方样式圆形图标按钮 (参考 better-sidebar 复刻的
+				// DSH 官方 icon-button: 圆形无边框, 透明底 + secondary 墨色, hover 加深填底)。
+				"#" + N + "-rail{position:fixed;right:10px;top:50%;transform:translateY(-50%);z-index:2147483000;" +
+				"display:flex;align-items:center;justify-content:center;width:32px;height:32px;" +
+				"border:none;border-radius:50%;background:var(--dsw-alias-bg-layer-2,#ffffff);" +
+				"box-shadow:0 1px 3px rgba(0,0,0,.12);color:var(--dsw-alias-label-secondary,#8a8f98);cursor:pointer;" +
+				"transition:background .18s ease,color .18s ease;}" +
+				"#" + N + "-rail:hover{background:var(--dsw-alias-interactive-bg-hover,#eef1f5);color:var(--dsw-alias-label-primary,#1f1f1f);}" +
+				// 展开态标题条右端的折叠按钮: 官方样式圆形图标按钮 (hover 加深填底)。
+				"#" + N + "-host ." + N + "-collapse{display:flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:none;border-radius:50%;background:transparent;color:var(--dsw-alias-label-secondary,#8a8f98);cursor:pointer;}" +
+				"#" + N + "-host ." + N + "-collapse:hover{background:var(--dsw-alias-interactive-bg-hover,#eef1f5);color:var(--dsw-alias-label-primary,#1f1f1f);}" +
 				"#" + N + "-host ::-webkit-scrollbar{width:8px;height:8px;}" +
 				"#" + N + "-host ::-webkit-scrollbar-thumb{background:var(--dsw-alias-scrollbar-bg-l1,#c9c9c9);border-radius:4px;}" +
-				"#root{margin-right:var(" + CSS_VAR + ",0px);transition:margin-right .18s ease;}" +
+				"#root{margin-right:calc(var(" + CSS_VAR + ",0px) + var(" + CSS_EXTRA_VAR + ",0px));transition:margin-right .18s ease;}" +
 				/* 状态卡蓝点呼吸动画: 执行中提示「AI 正在推进」。 */
 				"@keyframes dsl-pulse{0%,100%{opacity:1}50%{opacity:.25}}";
 			document.head.appendChild(style);
@@ -375,6 +383,25 @@ window.__ModuleLoader__.load({
 			try {
 				document.documentElement.style.setProperty(CSS_VAR, width + "px");
 			} catch (e) { /* ignore */ }
+		}
+
+		/** 设置预览面板的额外让位量 (#root 需再让出预览框宽度, 避免被遮挡)。 */
+		function setExtraWidth(width) {
+			try {
+				document.documentElement.style.setProperty(CSS_EXTRA_VAR, width + "px");
+			} catch (e) { /* ignore */ }
+		}
+
+		/** 右侧面板图标 (复刻官方 IconPanelRightOutline16: 外框 + 右侧竖条), 颜色随 currentColor。 */
+		function PanelGlyph(size) {
+			return react.createElement("svg", {
+				width: size, height: size, viewBox: "0 0 16 16",
+				fill: "none", stroke: "currentColor", strokeWidth: 1,
+				style: { display: "block" },
+			}, [
+				react.createElement("rect", { key: "f", x: 1.5, y: 1.5, width: 13, height: 13, rx: 1.5 }),
+				react.createElement("line", { key: "s", x1: 11, y1: 1.5, x2: 11, y2: 14.5 }),
+			]);
 		}
 
 		// ---- 小控件 ----
@@ -486,7 +513,6 @@ window.__ModuleLoader__.load({
 			const [busy, setBusy] = react.useState(false);
 			const [error, setError] = react.useState(null);
 			const [rootEntries, setRootEntries] = react.useState(null);
-			const [detail, setDetail] = react.useState(null);
 			const [refreshTick, setRefreshTick] = react.useState(0);
 			// 单个共享右键菜单 (与原版一致): 记录触发行 + 光标位置; 复制成功短暂显示"已复制"。
 			const [rowMenu, setRowMenu] = react.useState(null);
@@ -554,7 +580,8 @@ window.__ModuleLoader__.load({
 			};
 
 			const openFile = (entry) => {
-				setDetail({ entry, scope });
+				// 点击文件: 上抛给顶层, 在独立预览侧栏框里打开 (不再挤占列表)。
+				onOpenFile(entry);
 			};
 
 			// 打开右键菜单 (记录触发行与光标位置)。
@@ -667,12 +694,6 @@ window.__ModuleLoader__.load({
 						onSelect: onMenuSelect,
 					}),
 				]),
-				detail !== null && react.createElement(FileViewer, {
-					key: "fv",
-					entry: detail.entry,
-					scope: detail.scope,
-					onClose: () => setDetail(null),
-				}),
 			]);
 		}
 
@@ -773,6 +794,29 @@ window.__ModuleLoader__.load({
 				]),
 				error !== null && kind !== "error" && react.createElement("div", { key: "err2", style: { padding: 6, fontSize: 12, color: "var(--dsw-alias-state-error-primary)" } }, error),
 				bodyElem,
+			]);
+		}
+
+		// ---- 独立文件预览侧栏框 ----
+		// 点击文件后在主侧栏旁的"第二个侧栏框"里预览/编辑, 不再挤占资源管理器列表;
+		// 复用 FileViewer (其自带「返回」= 关闭预览)。宽度可拖 (左缘), 固定定位右缘
+		// 贴住主面板左缘 (right: panelWidth), 并让 #root 额外让位 (CSS_EXTRA_VAR)。
+
+		function PreviewPane({ entry, scope, panelWidth, previewWidth, onClose, onResizeStart }) {
+			return react.createElement("div", { key: "preview-pane", style: {
+				position: "fixed", top: 0, right: panelWidth, bottom: 0, width: previewWidth,
+				zIndex: 2147482998, display: "flex", flexDirection: "column", minHeight: 0,
+				background: "var(--dsw-alias-bg-layer-2,#ffffff)",
+				boxShadow: "-1px 0 0 var(--dsw-alias-border-l1,#e5e5e5)",
+			}}, [
+				// 左缘拖拽条: 拖动调节预览框宽度。
+				react.createElement("div", {
+					key: "pvres",
+					style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 5, zIndex: 2147483001, cursor: "ew-resize", background: "transparent" },
+					title: "拖动调节预览宽度",
+					onMouseDown: onResizeStart,
+				}),
+				react.createElement(FileViewer, { key: "pvfile", entry, scope, onClose }),
 			]);
 		}
 
@@ -1029,6 +1073,8 @@ window.__ModuleLoader__.load({
 				} else {
 					lastWidthRef.current = panelWidth;
 					setPanelWidthState(0);
+					setExtraWidth(0);      // 收起时立即清预览让位
+					setPreview(null);      // 收起时关闭预览框
 				}
 			}, [open]);
 
@@ -1051,6 +1097,41 @@ window.__ModuleLoader__.load({
 					document.removeEventListener("mouseup", onEnd);
 				};
 			}, [resizing]);
+
+			// ---- 独立文件预览侧栏框 ----
+			// 点击文件后打开一个"第二个侧栏框" (位于主面板左侧, right:panelWidth)。
+			const [preview, setPreview] = react.useState(null);   // { entry, scope }
+			const [previewWidth, setPreviewWidth] = react.useState(PREVIEW_WIDTH);
+			const [previewResizing, setPreviewResizing] = react.useState(false);
+
+			const openPreview = react.useCallback((entry) => {
+				setPreview({ entry, scope });
+			}, [scope]);
+
+			// 预览框存在时额外让位 (让 #root 左右内容避让), 关闭后归零。
+			react.useEffect(() => {
+				setExtraWidth(preview !== null ? previewWidth : 0);
+			}, [preview, previewWidth]);
+
+			// 拖动预览框左缘: 宽度 = 视口宽 - 光标x - 主面板宽; 最小 200px。
+			const onPreviewResizeStart = (event) => {
+				event.preventDefault();
+				setPreviewResizing(true);
+			};
+			react.useEffect(() => {
+				if (!previewResizing) return undefined;
+				const onMove = (moveEvent) => {
+					const nextWidth = Math.max(200, window.innerWidth - moveEvent.clientX - panelWidth);
+					setPreviewWidth(nextWidth);
+				};
+				const onEnd = () => setPreviewResizing(false);
+				document.addEventListener("mousemove", onMove);
+				document.addEventListener("mouseup", onEnd);
+				return () => {
+					document.removeEventListener("mousemove", onMove);
+					document.removeEventListener("mouseup", onEnd);
+				};
+			}, [previewResizing, panelWidth]);
 
 			// 订阅当前激活会话 (ctx.sessions.list 外部 store)。
 			const [, force] = react.useReducer((x) => x + 1, 0);
@@ -1146,14 +1227,14 @@ window.__ModuleLoader__.load({
 				style: { flex: 1, cursor: "pointer", padding: "6px 4px", fontSize: 12, border: "none", borderBottom: tab === id ? "2px solid #4a7bff" : "2px solid transparent", background: "transparent", color: tab === id ? "inherit" : "var(--dsw-alias-label-secondary)", fontWeight: tab === id ? 600 : 400 },
 			}, label);
 
-			// 折叠时显示右侧细条, 便于重新展开。
+			// 折叠时显示右边缘垂直居中的官方样式圆形图标按钮, 便于重新展开。
 			if (!open) {
 				return react.createElement("button", {
 					type: "button",
-					id: N + "-ribbon",
+					id: N + "-rail",
 					onClick: () => setOpen(true),
 					title: "展开侧边栏",
-				}, "‹‹");
+				}, react.createElement(PanelGlyph, { size: 18 }));
 			}
 
 			return react.createElement("div", { key: "main", id: N + "-host", className: resizing ? N + "-resizing" : undefined }, [
@@ -1163,9 +1244,19 @@ window.__ModuleLoader__.load({
 					style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 5, zIndex: 2147483001, cursor: "ew-resize", background: "transparent" },
 					onMouseDown: onResizeStart,
 				}),
-				react.createElement("div", { key: "title", style: { display: "flex", alignItems: "center", gap: 4, padding: "6px 8px", borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)", fontSize: 12.5, fontWeight: 600 } }, [
+				react.createElement("div", { key: "title", style: { position: "relative", display: "flex", alignItems: "center", gap: 4, padding: "6px 8px", borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)", fontSize: 12.5, fontWeight: 600 } }, [
 					react.createElement("span", { key: "t", style: { flex: 1 } }, "侧边栏"),
-					react.createElement("button", { key: "cl", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 6px" }, onClick: () => setOpen(false), title: "收起" }, "›"),
+					// 折叠按钮: 固定在标题条右端 (内容区之外), 点击收起。参考 better-sidebar
+					// 的 toggle cluster: 开关始终在面板顶部, 绝不叠在列表/内容中间高度上 — 那会
+					// 挡住文件列表。展开时官方 header 已被 #root 的 margin-right 推到面板左侧,
+					// 面板右上角无官方按钮, 故标题条右端安全, 不与下载对话按钮重叠。
+					react.createElement("button", {
+						key: "collapse",
+						type: "button",
+						className: N + "-collapse",
+						title: "收起侧边栏",
+						onClick: () => setOpen(false),
+					}, react.createElement(PanelGlyph, { size: 14 })),
 				]),
 				react.createElement("div", { key: "tabs", style: { display: "flex", borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)" } }, [
 					tabButton("explorer", "资源管理"),
@@ -1176,13 +1267,23 @@ window.__ModuleLoader__.load({
 				sessionErr !== null && react.createElement("div", { key: "serr", style: { padding: 6, fontSize: 11, color: "var(--dsw-alias-state-error-primary)" } }, "会话定位失败: " + sessionErr),
 				react.createElement("div", { key: "body", style: { flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" } }, [
 					tab === "explorer"
-						? react.createElement(ExplorerView, { key: "ex", scope, cwd, workspaceRoot, rootName, onOpenFile: () => { }, bridge })
+						? react.createElement(ExplorerView, { key: "ex", scope, cwd, workspaceRoot, rootName, onOpenFile: openPreview, bridge })
 						: tab === "terminal"
 						? react.createElement(TerminalView, { key: "te", scope, tab: "1" })
 						: tab === "tasks"
 						? react.createElement(TasksView, { key: "ta", scope, jobs, active: activeSummary })
 						: react.createElement(BrowserView, { key: "br", scope }),
 				]),
+				// 独立文件预览侧栏框: 点击文件时在主面板左侧出现, 关闭或收起侧栏后隐藏。
+				preview !== null && react.createElement(PreviewPane, {
+					key: "preview",
+					entry: preview.entry,
+					scope: preview.scope,
+					panelWidth,
+					previewWidth,
+					onClose: () => setPreview(null),
+					onResizeStart: onPreviewResizeStart,
+				}),
 			]);
 		}
 

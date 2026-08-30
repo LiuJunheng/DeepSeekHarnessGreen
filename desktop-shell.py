@@ -321,10 +321,33 @@ def open_in_shell_window(server_url, port, icon_path):
         remove_pid_file()
 
 
+def parse_url_arg():
+    """解析命令行 --url 参数: 由启动器传入带 ?token= 的认证地址 (新版 dsh 要求,
+    见 launcher.py _web_auth_url), 桌面壳直接用它打开即可完成认证换 Cookie。
+    不存在时返回 None (桌面壳按 config 自行构建地址, 兼容旧版/手动直启)。"""
+    arguments = sys.argv[1:]
+    if "--url" in arguments:
+        url_index = arguments.index("--url")
+        if url_index + 1 < len(arguments):
+            return arguments[url_index + 1]
+    return None
+
+
 def main():
     """桌面壳入口：选定加载方式并保持进程存活直到窗口/浏览器关闭。"""
     host, port = read_server_address()
-    server_url = "http://%s:%d" % (host, port)
+    override_url = parse_url_arg()
+    if override_url:
+        server_url = override_url
+        # 从认证地址解析端口 (用于就绪轮询); 解析失败沿用 config 端口
+        try:
+            parsed_port = urllib.parse.urlparse(override_url).port
+            if parsed_port is not None:
+                port = int(parsed_port)
+        except (ValueError, TypeError):
+            pass
+    else:
+        server_url = "http://%s:%d" % (host, port)
     icon_path = ICON_FILE if os.path.isfile(ICON_FILE) else None
     print("[DSH Shell] 目标地址:", server_url, flush=True)
 
