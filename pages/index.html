@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="DeepSeek Harness 桌面绿色整合版启动器——双击即用、绿色便携、可持续更新的本地发布与下载入口。">
+  <title>DeepSeek Harness 桌面绿色整合版启动器</title>
+  <link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <!-- 背景光晕与网格 -->
+  <div class="bg-aurora" aria-hidden="true"></div>
+  <div class="bg-grid" aria-hidden="true"></div>
+
+  <!-- 顶部导航 -->
+  <header class="nav" id="top">
+    <a class="nav-brand" href="#top">
+      <span class="brand-glyph" aria-hidden="true">◆</span>
+      <span class="brand-text">DeepSeek Harness · 绿色整合版</span>
+    </a>
+    <nav class="nav-links" aria-label="页面导航">
+      <a href="#quickstart">快速上手</a>
+      <a href="#features">特性</a>
+      <a href="#download">下载</a>
+      <a href="#plugins">内置插件</a>
+      <a href="#faq">常见问题</a>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Hero -->
+    <section class="hero" id="top">
+      <div class="hero-badge">
+        <span class="badge-dot" aria-hidden="true"></span>
+        双平台发布 · Gitee / GitHub
+      </div>
+      <h1 class="hero-title">
+        把 DeepSeek Harness<br>
+        装进一个<span class="gradient-text">绿色便携启动器</span>
+      </h1>
+      <p class="hero-sub">
+        双击即用，无需命令，内置便携 Python / Node 环境，不污染电脑。
+        整包拷走就能用，环境与会话数据全部收在本目录，一键获取官方 DSH 自动更新。
+      </p>
+
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="https://gitee.com/liujunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">
+          下载 Windows 绿色版（国内）</a>
+        <a class="btn btn-ghost" href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">
+          从 GitHub 下载</a>
+      </div>
+      <p class="hero-meta">
+        最新版本 <span class="version-chip" id="hero-version">见 Release</span>
+        · <a class="inline-link" href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">查看 Release 页</a>
+      </p>
+    </section>
+
+    <!-- 快速上手 -->
+    <section class="section" id="quickstart">
+      <h2 class="section-title">快速上手</h2>
+      <ol class="steps">
+        <li><strong>解压</strong>下载的绿色 zip 到任意目录。</li>
+        <li>双击 <code>DSH_Launcher.exe</code>（或 <code>start.bat</code>）。</li>
+        <li>点【安装环境】：自动下载便携 Node → 安装 dsh → 补齐内置 Python（首次需要联网）。</li>
+        <li>点【启动服务】→ 自动打开独立桌面窗口（也可切到网页窗口）。</li>
+        <li>在网页里设置 → 模型 → 填入 <strong>DeepSeek API Key</strong>，并选择工作区，即可开始。</li>
+      </ol>
+    </section>
+
+    <!-- 特性 -->
+    <section class="section" id="features">
+      <h2 class="section-title">核心特性</h2>
+      <p class="section-sub">一句话看懂它能替你做什么</p>
+      <div class="feature-grid">
+
+        <article class="card">
+          <div class="card-icon">⚡</div>
+          <h3>双击即用</h3>
+          <p>用 DSH_Launcher.exe 或 start.bat，首次点「安装环境」即自动就绪，之后双击即启动。</p>
+        </article>
+
+        <article class="card">
+          <div class="card-icon">🖥️</div>
+          <h3>独立桌面窗口</h3>
+          <p>默认以独立桌面窗口打开（内嵌 WebView2，像原生桌面 App），也可一键切回原始网页。</p>
+        </article>
+
+        <article class="card">
+          <div class="card-icon">🌱</div>
+          <h3>绿色便携</h3>
+          <p>Node / dsh / 缓存 / 会话全在本目录 runtime/，不写主目录、不装系统、不写注册表。</p>
+        </article>
+
+        <article class="card">
+          <div class="card-icon">📦</div>
+          <h3>内置多款实用插件</h3>
+          <p>会话回退 / 导入、用量统计、文件浏览、清理归档、侧边栏、背景影画、Ollama 接入等。</p>
+        </article>
+
+        <article class="card">
+          <div class="card-icon">🔁</div>
+          <h3>双通道独立自更新</h3>
+          <p>官方核心与绿色版外围各查各的、互不干扰；更新前自动备份，失败给出手动地址。</p>
+        </article>
+
+        <article class="card">
+          <div class="card-icon">🏠</div>
+          <h3>局域网远程访问</h3>
+          <p>一键绑定 0.0.0.0 并自动放行防火墙，手机 / 其它电脑直接打开 WebUI。</p>
+        </article>
+
+      </div>
+    </section>
+
+    <!-- 下载 -->
+    <section class="section" id="download">
+      <h2 class="section-title">下载</h2>
+      <p class="section-sub">绿色 zip 不带预装环境，体积小；新机联网后由启动器自动补齐运行环境</p>
+
+      <div class="download-panel">
+        <div class="download-left">
+          <div class="dl-version">
+            <span class="version-chip" id="dl-version">见 Release</span>
+          </div>
+          <p class="dl-desc">仅一个绿色 zip，内含启动器、内置插件与文档；解压即可按「快速上手」三步使用。</p>
+          <ul class="dl-points">
+            <li>国内访问快，建议选 Gitee 通道</li>
+            <li>下载后请核对文件、注意安全软件提示</li>
+            <li>解压到任意路径即可，无需安装到系统目录</li>
+          </ul>
+        </div>
+        <div class="download-right">
+          <a class="btn btn-primary btn-lg" href="https://gitee.com/liujunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">
+            Gitee 下载（推荐）</a>
+          <a class="btn btn-ghost btn-lg" href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">
+            GitHub 下载</a>
+          <div class="dl-links">
+            <a href="https://gitee.com/liujunheng/DeepSeekHarnessGreen" target="_blank" rel="noopener">Gitee 仓库</a>
+            <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen" target="_blank" rel="noopener">GitHub 仓库</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 内置插件 -->
+    <section class="section" id="plugins">
+      <h2 class="section-title">内置插件</h2>
+      <p class="section-sub">全部为纯插件，不修改官方文件；安装后重启服务生效</p>
+      <div class="plugin-grid">
+
+        <article class="plugin-card">
+          <h3>会话回退</h3>
+          <p>会话被工具崩溃“毒化”时，一键回退到某可行回合，派生干净续聊。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>会话导入</h3>
+          <p>把导出的会话 ZIP / JSONL 导回本机，与官方导出互逆。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>用量统计</h3>
+          <p>用量统计 + 每条消息的「本次 token / 预估费用」。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>文件浏览</h3>
+          <p>WebUI 内文件浏览 / 预览 / 右键把官方 @引用、路径或内容塞进对话。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>清理归档</h3>
+          <p>WebUI 查看已归档会话，清理归档只读页。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>侧边栏</h3>
+          <p>WebUI 右侧边栏：文件管理 / 预览 / 浏览器 / 终端 / 任务。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>背景影画</h3>
+          <p>本地目录视频作为 WebUI 背景播放（画面 + 声音）。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>Ollama 接入</h3>
+          <p>自动识别本机 Ollama 服务并接入，模型选择器直接选 Ollama 模型对话。</p>
+        </article>
+
+      </div>
+    </section>
+
+    <!-- 常见问题 -->
+    <section class="section" id="faq">
+      <h2 class="section-title">常见问题</h2>
+      <div class="faq">
+        <details>
+          <summary>提示找不到 Python？</summary>
+          <p>多为内置便携 Python 下载失败（网络问题）。按 start.bat 提示手动安装 Python 3 并勾选 “Add to PATH” 兜底。</p>
+        </details>
+        <details>
+          <summary>下载 Node / 安装 dsh 慢？</summary>
+          <p>在界面设置把镜像源切到「国内」或「官方」再试（默认已是国内优先）。</p>
+        </details>
+        <details>
+          <summary>端口被占用？</summary>
+          <p>设置里改端口（如 3090）后保存重启服务。</p>
+        </details>
+        <details>
+          <summary>网页打不开？</summary>
+          <p>查看 runtime/server.log；确认防火墙没拦 127.0.0.1。</p>
+        </details>
+        <details>
+          <summary>绿色版更新失败？</summary>
+          <p>更新程序会弹窗给出手动下载地址（GitHub / Gitee 发布页 + 直链），解压后覆盖到程序根目录—注意不要覆盖 config.json 与 runtime/。</p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>DeepSeek Harness 桌面绿色整合版启动器 · <span class="version-chip" id="footer-version">最新版本见 Release</span></p>
+    <p>Apache License 2.0 · Copyright (c) 2026 LiuJunheng</p>
+    <p class="footer-note">
+      独立社区项目，非 DeepSeek 官方产品，也不代表 DeepSeek 官方提供支持、认证或安全保证。
+    </p>
+  </footer>
+
+  <script src="./assets/app.js" defer></script>
+</body>
+</html>
