@@ -1,6 +1,6 @@
 /* =========================================================
    DeepSeek Harness 绿色版发布页 · 轻量交互（无外部依赖）
-   吸顶导航高亮 + 滚动淡入
+   吸顶导航高亮 + 滚动淡入 + 粒子网络 + 水波纹动效
    ========================================================= */
 (function () {
   "use strict";
@@ -120,12 +120,175 @@
 
   fetchLatestVersion();
 
-  /* 4. 水纹动效：横向流动水波 + 扩散涟漪（Canvas 2D，纯本地渲染）
-       遵循系统“减少动态”偏好，无 Canvas / 被禁用时静默跳过，不阻塞页面 */
+  /* 4. 粒子网络动效：漂浮的光点 + 邻近连线（Canvas 2D，纯本地渲染）
+       遵循系统"减少动态"偏好，无 Canvas / 被禁用时静默跳过，不阻塞页面 */
+  var particlesCanvas = document.getElementById("particles-canvas");
+  var particlesContext = particlesCanvas ? particlesCanvas.getContext("2d") : null;
+  var prefersReducedMotion =
+    window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  if (particlesContext && !prefersReducedMotion) {
+    startParticlesNetwork(particlesCanvas, particlesContext);
+  }
+
+  function startParticlesNetwork(canvas, context) {
+    var devicePixelRatio = window.devicePixelRatio || 1;
+    var canvasWidth = 0;
+    var canvasHeight = 0;
+    var particles = [];
+    var maxParticles = 55;
+    var connectDistance = 130;   // 粒子间连线距离阈值
+    var pointerX = -9999;
+    var pointerY = -9999;
+    var pointerConnectDistance = 160;
+
+    // 粒子对象：{ x, y, vx, vy, radius, alpha }
+    function createParticle() {
+      return {
+        x: Math.random() * canvasWidth,
+        y: Math.random() * canvasHeight,
+        vx: (Math.random() - 0.5) * 0.4,
+        vy: (Math.random() - 0.5) * 0.4,
+        radius: 1 + Math.random() * 2,
+        alpha: 0.3 + Math.random() * 0.5
+      };
+    }
+
+    function resizeCanvas() {
+      canvasWidth = window.innerWidth;
+      canvasHeight = window.innerHeight;
+      canvas.width = Math.floor(canvasWidth * devicePixelRatio);
+      canvas.height = Math.floor(canvasHeight * devicePixelRatio);
+      canvas.style.width = canvasWidth + "px";
+      canvas.style.height = canvasHeight + "px";
+      context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+
+      // 根据屏幕大小调整粒子数量
+      var targetCount = Math.min(maxParticles, Math.floor((canvasWidth * canvasHeight) / 18000));
+      if (particles.length < targetCount) {
+        while (particles.length < targetCount) {
+          particles.push(createParticle());
+        }
+      } else if (particles.length > targetCount) {
+        particles.length = targetCount;
+      }
+    }
+
+    function updateParticles() {
+      for (var i = 0; i < particles.length; i++) {
+        var p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+
+        // 边界反弹
+        if (p.x < 0 || p.x > canvasWidth) p.vx *= -1;
+        if (p.y < 0 || p.y > canvasHeight) p.vy *= -1;
+
+        // 指针轻微吸引（增加互动感）
+        if (pointerX >= 0 && pointerY >= 0) {
+          var dx = pointerX - p.x;
+          var dy = pointerY - p.y;
+          var dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < pointerConnectDistance && dist > 0) {
+            var force = (pointerConnectDistance - dist) / pointerConnectDistance * 0.02;
+            p.vx += (dx / dist) * force;
+            p.vy += (dy / dist) * force;
+            // 限制速度
+            var speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+            if (speed > 1.2) {
+              p.vx = (p.vx / speed) * 1.2;
+              p.vy = (p.vy / speed) * 1.2;
+            }
+          }
+        }
+
+        // 速度缓慢回归到基础值（避免被指针加速后停不下来）
+        p.vx *= 0.995;
+        p.vy *= 0.995;
+      }
+    }
+
+    function drawParticles() {
+      // 绘制粒子
+      for (var i = 0; i < particles.length; i++) {
+        var p = particles[i];
+        context.beginPath();
+        context.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        context.fillStyle = "rgba(130, 170, 215, " + p.alpha + ")";
+        context.fill();
+        // 外发光
+        context.beginPath();
+        context.arc(p.x, p.y, p.radius + 3, 0, Math.PI * 2);
+        context.fillStyle = "rgba(104, 148, 214, " + (p.alpha * 0.2) + ")";
+        context.fill();
+      }
+
+      // 绘制连线
+      context.lineWidth = 1;
+      for (var i = 0; i < particles.length; i++) {
+        for (var j = i + 1; j < particles.length; j++) {
+          var p1 = particles[i];
+          var p2 = particles[j];
+          var dx = p1.x - p2.x;
+          var dy = p1.y - p2.y;
+          var dist = Math.sqrt(dx * dx + dy * dy);
+
+          if (dist < connectDistance) {
+            var alpha = (1 - dist / connectDistance) * 0.25;
+            context.strokeStyle = "rgba(110, 150, 205, " + alpha + ")";
+            context.beginPath();
+            context.moveTo(p1.x, p1.y);
+            context.lineTo(p2.x, p2.y);
+            context.stroke();
+          }
+        }
+
+        // 指针与邻近粒子连线
+        if (pointerX >= 0 && pointerY >= 0) {
+          var pdx = particles[i].x - pointerX;
+          var pdy = particles[i].y - pointerY;
+          var pdist = Math.sqrt(pdx * pdx + pdy * pdy);
+          if (pdist < pointerConnectDistance) {
+            var palpha = (1 - pdist / pointerConnectDistance) * 0.5;
+            context.strokeStyle = "rgba(104, 148, 214, " + palpha + ")";
+            context.lineWidth = 1;
+            context.beginPath();
+            context.moveTo(particles[i].x, particles[i].y);
+            context.lineTo(pointerX, pointerY);
+            context.stroke();
+          }
+        }
+      }
+    }
+
+    function animate() {
+      context.clearRect(0, 0, canvasWidth, canvasHeight);
+      updateParticles();
+      drawParticles();
+      requestAnimationFrame(animate);
+    }
+
+    function onPointerMove(event) {
+      pointerX = event.clientX;
+      pointerY = event.clientY;
+    }
+
+    function onPointerLeave() {
+      pointerX = -9999;
+      pointerY = -9999;
+    }
+
+    window.addEventListener("resize", resizeCanvas, { passive: true });
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    window.addEventListener("pointerleave", onPointerLeave, { passive: true });
+    resizeCanvas();
+    animate();
+  }
+
+  /* 5. 水波纹动效：横向流动水波 + 扩散涟漪（Canvas 2D，纯本地渲染）
+       遵循系统"减少动态"偏好，无 Canvas / 被禁用时静默跳过，不阻塞页面 */
   var waterCanvas = document.getElementById("water-background");
   var waterContext = waterCanvas ? waterCanvas.getContext("2d") : null;
-  var prefersReducedMotion =
-    window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce).matches");
 
   if (waterContext && !prefersReducedMotion) {
     startWaterRipples(waterCanvas, waterContext);
@@ -141,19 +304,20 @@
     var ripples = [];
     var maxRipples = 22;
     var lastAutoSpawn = -9;
-    var autoSpawnGap = 1.4;
+    var autoSpawnGap = 3.5;   // 自动涟漪间隔（秒），数值越大涟漪越稀疏
 
     // 指针位置（生成细微涟漪，增强互动）
     var pointerX = -1;
     var pointerY = -1;
     var lastPointerSpawn = -9;
-    var pointerSpawnGap = 0.35;
+    var pointerSpawnGap = 2.2;   // 鼠标涟漪限频（秒），数值越大越稀疏
 
-    // 三条横向流动水波带参数（青/蓝/紫，低透明度叠加光效）
+    // 三条横向流动水波带参数（柔和蓝色渐变：上浅 → 下深，低透明度，安静不抢眼）
+    // speed 值越小流动越慢；当前为极缓流动，营造安静深水感
     var waveBands = [
-      { baseY: 0.30, amplitude: 0.075, speed: 0.10, color: [57, 211, 255], alpha: 0.24 },
-      { baseY: 0.55, amplitude: 0.080, speed: 0.16, color: [64, 151, 255], alpha: 0.24 },
-      { baseY: 0.80, amplitude: 0.070, speed: 0.13, color: [154, 107, 255], alpha: 0.26 }
+      { baseY: 0.28, amplitude: 0.070, speed: 0.009, color: [104, 148, 214], alpha: 0.14 },
+      { baseY: 0.52, amplitude: 0.075, speed: 0.013, color: [80, 118, 198], alpha: 0.13 },
+      { baseY: 0.78, amplitude: 0.065, speed: 0.011, color: [58, 90, 178], alpha: 0.12 }
     ];
 
     function resizeCanvas() {
@@ -166,8 +330,17 @@
       context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
     }
 
-    function spawnRipple(originX, originY) {
-      ripples.push({ x: originX, y: originY, radius: 10 + Math.random() * 22, life: 0 });
+    // 生成涟漪
+    // spreadFactor：扩散速度倍率（1=标准，越小扩散越慢），用于区分自动/鼠标涟漪
+    // initialRadius：初始半径；不传则用随机默认值
+    function spawnRipple(originX, originY, spreadFactor, initialRadius) {
+      ripples.push({
+        x: originX,
+        y: originY,
+        radius: initialRadius || (10 + Math.random() * 22),
+        life: 0,
+        spreadFactor: spreadFactor || 1
+      });
       if (ripples.length > maxRipples) {
         ripples.shift(); // 超出上限移除最早
       }
@@ -205,41 +378,42 @@
         context.fillStyle = colorString + band.alpha + ")";
         context.fill();
 
-        // 2) 沿波峰描一条较亮的光边，让“流动的水纹”清晰可见
+        // 2) 沿波峰描一条较柔的光边，让"流动的水纹"隐约可见
         context.beginPath();
         context.moveTo(0, baseY);
         for (var x = 0; x <= canvasWidth; x += 4) {
           context.lineTo(x, baseY + computeWaveHeight(x, band, amplitude, speedFactor, time));
         }
-        context.strokeStyle = colorString + 0.9 + ")";
-        context.lineWidth = 2;
+        context.strokeStyle = colorString + 0.45 + ")";
+        context.lineWidth = 1.5;
         context.stroke();
       }
       context.globalCompositeOperation = "source-over";
     }
 
     // 绘制扩散涟漪（外圈 + 内圈，随 life 淡出）
+    // radius 增量越小扩散越慢、life 增量越小存活越久；当前为慢速优雅扩散
     function drawRipples() {
       for (var i = ripples.length - 1; i >= 0; i--) {
         var ripple = ripples[i];
-        ripple.life += 0.02;
-        ripple.radius += canvasHeight * 0.0032;
+        ripple.life += 0.009 * ripple.spreadFactor;
+        ripple.radius += canvasHeight * 0.0012 * ripple.spreadFactor;
 
         if (ripple.life >= 1) {
           ripples.splice(i, 1);
           continue;
         }
 
-        var alpha = (1 - ripple.life) * 0.55;
+        var alpha = (1 - ripple.life) * 0.35;
         context.beginPath();
         context.arc(ripple.x, ripple.y, ripple.radius, 0, Math.PI * 2);
-        context.strokeStyle = "rgba(120, 190, 255, " + alpha + ")";
+        context.strokeStyle = "rgba(140, 170, 220, " + alpha + ")";
         context.lineWidth = 2;
         context.stroke();
 
         context.beginPath();
         context.arc(ripple.x, ripple.y, Math.max(2, ripple.radius * 0.4), 0, Math.PI * 2);
-        context.strokeStyle = "rgba(57, 211, 255, " + alpha * 0.6 + ")";
+        context.strokeStyle = "rgba(110, 160, 230, " + alpha * 0.6 + ")";
         context.lineWidth = 1;
         context.stroke();
       }
@@ -256,9 +430,9 @@
         spawnRipple(Math.random() * canvasWidth, Math.random() * canvasHeight * 0.9);
         lastAutoSpawn = time;
       }
-      // 指针移动时生成涟漪（限频）
+      // 指针移动时生成涟漪（限频；倍率 0.45 使鼠标涟漪扩散更慢、更小，避免跟手过快）
       if (pointerX >= 0 && pointerY >= 0 && time - lastPointerSpawn > pointerSpawnGap) {
-        spawnRipple(pointerX, pointerY);
+        spawnRipple(pointerX, pointerY, 0.45, 6 + Math.random() * 6);
         lastPointerSpawn = time;
       }
 
