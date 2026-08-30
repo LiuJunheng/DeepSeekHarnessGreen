@@ -3,7 +3,7 @@
 ## 初始搭建
 
 - [ ] 项目目录结构完整（`lib/index.js` + `lib/client.js` + `cordis.patch.yml` + `package.json`）
-- [ ] **`lib/index.js` 必须存在（哪怕纯客户端插件也要，官方 no-op：`function apply(){} export { apply }`）**——宿主 cordis loader 会 import 每个包的 main/exports["."]，缺失 → `ERR_MODULE_NOT_FOUND` → **服务启动即退出**（2026-08-16 dsh-message-actions 实测）
+- [ ] **`lib/index.js` 必须存在（哪怕纯客户端插件也要，官方 no-op：`function apply(){} export { apply }`）**——宿主 cordis loader 会 import 每个包的 main/exports["."]，缺失 → `ERR_MODULE_NOT_FOUND` → **服务启动即退出**（见 SKILL.md 5.4）
 - [ ] `package.json` 含 `dsh.bundle.patch` 指向 `cordis.patch.yml`
 - [ ] `package.json` 含 `dsh.client` 声明（`inject` + `platform: "web"`）
 - [ ] `files` 数组包含 `cordis.patch.yml`（否则发布/安装后文件缺失）
@@ -51,7 +51,7 @@
 - [ ] 不存在的会话/不含 ids 的 POST 正确处理
 - [ ] 运行中的会话自动跳过
 
-## 启用 / 停用（2026-08-16 新增）
+## 启用 / 停用
 
 - [ ] 插件管理窗口已安装列表显示状态列（启用/停用/—）
 - [ ] 停用选中 → 从 `dsh.profile.bundles` 移除 + 写入 `dsh.profile.disabled`；启用选中反向

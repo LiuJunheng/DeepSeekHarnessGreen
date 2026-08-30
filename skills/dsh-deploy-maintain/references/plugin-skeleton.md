@@ -50,7 +50,7 @@ dsh-xxx-plugin/
 > function apply() {}
 > export { apply };
 > ```
-> （对照官方 `@deepseek-ai/dsh-client-ui-message-feedback` 的宿主端。2026-08-16 `dsh-message-actions` 实测踩坑，见 SKILL.md 4.9 / DEV_NOTES 避坑 #49）
+> （对照官方 `@deepseek-ai/dsh-client-ui-message-feedback` 的宿主端；「纯客户端插件缺宿主端 `lib/index.js` 服务起不来」坑见 SKILL.md 5.4 / DEV_NOTES 避坑）
 
 ## cordis.patch.yml
 
