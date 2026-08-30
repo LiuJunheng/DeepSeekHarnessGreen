@@ -4398,7 +4398,7 @@ def run_gui():
         about_window = tk.Toplevel(root)
         about_window.title("关于")
         about_window.resizable(False, False)
-        about_window.geometry("480x585")
+        about_window.geometry("500x545")
         about_window.transient(root)    # 依附主窗口
         about_window.grab_set()         # 模态, 关闭前不能操作主窗口
 
@@ -4409,23 +4409,36 @@ def run_gui():
                   font=("Microsoft YaHei", 9), foreground="#666666").pack(pady=(0, 12))
 
         # 信息表 (左标签 / 右取值)
+        # 链接项: value 用 (url, 显示文本) 元组, 以可点击链接文字呈现, 鼠标手型 + 点击跳转
         info_items = [
             ("作者", "刘俊亨"),
             ("版本号", "v" + GREEN_VERSION),
             ("版本日期", GREEN_VERSION_DATE),
-            ("GitHub 仓库", "github.com/LiuJunheng/DeepSeekHarnessGreen"),
-            ("Gitee 仓库", "gitee.com/liujunheng/DeepSeekHarnessGreen"),
-            ("发布主页", GREEN_HOME_PAGE_URL.replace("https://", "")),
+            ("GitHub 仓库", ("https://github.com/LiuJunheng/DeepSeekHarnessGreen",
+                              "github.com/LiuJunheng/DeepSeekHarnessGreen")),
+            ("Gitee 仓库", ("https://gitee.com/liujunheng/DeepSeekHarnessGreen",
+                             "gitee.com/liujunheng/DeepSeekHarnessGreen")),
+            ("发布主页", (GREEN_HOME_PAGE_URL,
+                           GREEN_HOME_PAGE_URL.replace("https://", ""))),
             ("官方 dsh", "@deepseek-ai/dsh (DeepSeek Harness)"),
-            ("官方仓库", "https://github.com/deepseek-ai/deepseek-harness"),
+            ("官方仓库", ("https://github.com/deepseek-ai/deepseek-harness",
+                           "github.com/deepseek-ai/deepseek-harness")),
         ]
         info_frame = ttk.Frame(about_window)
         info_frame.pack(fill="x", padx=24, pady=4)
         for row_index, (label, value) in enumerate(info_items):
             ttk.Label(info_frame, text=label, font=("Microsoft YaHei", 9),
                       foreground="#666666").grid(row=row_index, column=0, sticky="w", pady=2, padx=(0, 14))
-            ttk.Label(info_frame, text=value, font=("Microsoft YaHei", 9)).grid(
-                row=row_index, column=1, sticky="w", pady=2)
+            if isinstance(value, tuple):
+                # 链接项: 蓝色文字 + 手型光标 + 点击跳转
+                url, link_text = value
+                link_label = ttk.Label(info_frame, text=link_text, font=("Microsoft YaHei", 9),
+                                       foreground="#0052d9", cursor="hand2")
+                link_label.grid(row=row_index, column=1, sticky="w", pady=2)
+                link_label.bind("<Button-1>", lambda _event, u=url: webbrowser.open(u))
+            else:
+                ttk.Label(info_frame, text=value, font=("Microsoft YaHei", 9)).grid(
+                    row=row_index, column=1, sticky="w", pady=2)
 
         # 绿色便携·本地化说明区块 (2026-08-16 补充: 强调所有文件与依赖全部本地化)
         local_frame = ttk.Frame(about_window)
@@ -4444,23 +4457,8 @@ def run_gui():
             ttk.Label(local_frame, text=point, font=("Microsoft YaHei", 9),
                       foreground="#444444").pack(anchor="w", pady=1)
 
-        # 按钮行
-        def open_link(url):
-            """用系统默认浏览器打开链接"""
-            webbrowser.open(url)
-        button_row1 = ttk.Frame(about_window)
-        button_row1.pack(pady=(14, 4))
-        ttk.Button(button_row1, text="打开发布主页", command=lambda: open_link(
-            GREEN_HOME_PAGE_URL)).pack(side="left", padx=4)
-        ttk.Button(button_row1, text="打开 GitHub 仓库", command=lambda: open_link(
-            "https://github.com/LiuJunheng/DeepSeekHarnessGreen")).pack(side="left", padx=4)
-        ttk.Button(button_row1, text="打开 Gitee 仓库", command=lambda: open_link(
-            "https://gitee.com/liujunheng/DeepSeekHarnessGreen")).pack(side="left", padx=4)
-        button_row2 = ttk.Frame(about_window)
-        button_row2.pack(pady=(4, 14))
-        ttk.Button(button_row2, text="打开官方仓库", command=lambda: open_link(
-            "https://github.com/deepseek-ai/deepseek-harness")).pack(side="left", padx=4)
-        ttk.Button(button_row2, text="关闭", command=about_window.destroy).pack(side="left", padx=4)
+        # 按钮行 (仅关闭; 跳转统一用上方可点击链接文字)
+        ttk.Button(about_window, text="关闭", command=about_window.destroy).pack(pady=(18, 18))
 
     about_btn = ttk.Button(status_frame, text="关于", command=show_about)
     about_btn.pack(side="right", padx=(10, 0))
