@@ -274,6 +274,8 @@
     window.addEventListener("resize", resizeCanvas, { passive: true });
     window.addEventListener("pointermove", onPointerMove, { passive: true });
     resizeCanvas();
+    // 先同步绘制首帧，避免首屏 canvas 空白（rAF 在后台/节流时可能不触发；有兜底更稳）
+    drawWaves(time);
     animate();
   }
 })();
