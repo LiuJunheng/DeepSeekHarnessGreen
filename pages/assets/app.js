@@ -151,9 +151,9 @@
 
     // 三条横向流动水波带参数（青/蓝/紫，低透明度叠加光效）
     var waveBands = [
-      { baseY: 0.30, amplitude: 0.075, speed: 0.10, color: [57, 211, 255], alpha: 0.16 },
-      { baseY: 0.55, amplitude: 0.080, speed: 0.16, color: [64, 151, 255], alpha: 0.16 },
-      { baseY: 0.80, amplitude: 0.070, speed: 0.13, color: [154, 107, 255], alpha: 0.18 }
+      { baseY: 0.30, amplitude: 0.075, speed: 0.10, color: [57, 211, 255], alpha: 0.24 },
+      { baseY: 0.55, amplitude: 0.080, speed: 0.16, color: [64, 151, 255], alpha: 0.24 },
+      { baseY: 0.80, amplitude: 0.070, speed: 0.13, color: [154, 107, 255], alpha: 0.26 }
     ];
 
     function resizeCanvas() {
@@ -173,6 +173,14 @@
       }
     }
 
+    // 计算某横坐标点在当前时刻的波峰高度（叠加两个频率，制造起伏感）
+    function computeWaveHeight(x, band, amplitude, speedFactor, time) {
+      return (
+        Math.sin(x * 0.0045 * speedFactor + time * band.speed * 55) * amplitude
+        + Math.sin(x * 0.012 + time * band.speed * 22) * amplitude * 0.35
+      );
+    }
+
     // 绘制横向流动水波（加法混合，营造霓虹感）
     function drawWaves(time) {
       context.globalCompositeOperation = "lighter";
@@ -181,23 +189,31 @@
         var baseY = band.baseY * canvasHeight;
         var amplitude = band.amplitude * canvasHeight;
         var speedFactor = 1 + i * 0.5;
+        var color = band.color;
+        var colorString =
+          "rgba(" + color[0] + "," + color[1] + "," + color[2] + ",";
 
+        // 1) 填充波峰到屏幕底部的半透明色带（加法混合，若隐若现的水光）
         context.beginPath();
         context.moveTo(0, baseY);
         for (var x = 0; x <= canvasWidth; x += 8) {
-          var waveHeight =
-            Math.sin(x * 0.0045 * speedFactor + time * band.speed * 55) * amplitude
-            + Math.sin(x * 0.012 + time * band.speed * 22) * amplitude * 0.35;
-          context.lineTo(x, baseY + waveHeight);
+          context.lineTo(x, baseY + computeWaveHeight(x, band, amplitude, speedFactor, time));
         }
         context.lineTo(canvasWidth, canvasHeight);
         context.lineTo(0, canvasHeight);
         context.closePath();
-
-        var color = band.color;
-        context.fillStyle =
-          "rgba(" + color[0] + "," + color[1] + "," + color[2] + "," + band.alpha + ")";
+        context.fillStyle = colorString + band.alpha + ")";
         context.fill();
+
+        // 2) 沿波峰描一条较亮的光边，让“流动的水纹”清晰可见
+        context.beginPath();
+        context.moveTo(0, baseY);
+        for (var x = 0; x <= canvasWidth; x += 4) {
+          context.lineTo(x, baseY + computeWaveHeight(x, band, amplitude, speedFactor, time));
+        }
+        context.strokeStyle = colorString + 0.9 + ")";
+        context.lineWidth = 2;
+        context.stroke();
       }
       context.globalCompositeOperation = "source-over";
     }
@@ -214,11 +230,11 @@
           continue;
         }
 
-        var alpha = (1 - ripple.life) * 0.40;
+        var alpha = (1 - ripple.life) * 0.55;
         context.beginPath();
         context.arc(ripple.x, ripple.y, ripple.radius, 0, Math.PI * 2);
         context.strokeStyle = "rgba(120, 190, 255, " + alpha + ")";
-        context.lineWidth = 1.5;
+        context.lineWidth = 2;
         context.stroke();
 
         context.beginPath();
