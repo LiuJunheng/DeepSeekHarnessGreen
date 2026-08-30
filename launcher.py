@@ -4394,11 +4394,11 @@ def run_gui():
 
     # ---------- 关于入口 (右上角) ----------
     def show_about():
-        """弹出「关于」对话框: 作者 / 版本 / 本仓库 / 官方 dsh 引用 (2026-08-16)"""
+        """弹出「关于」对话框: 作者 / 版本 / 本仓库 / 发布主页 / 官方 dsh 引用 (2026-08-16)"""
         about_window = tk.Toplevel(root)
         about_window.title("关于")
         about_window.resizable(False, False)
-        about_window.geometry("500x545")
+        about_window.geometry("500x525")
         about_window.transient(root)    # 依附主窗口
         about_window.grab_set()         # 模态, 关闭前不能操作主窗口
 
@@ -4420,7 +4420,6 @@ def run_gui():
                              "gitee.com/liujunheng/DeepSeekHarnessGreen")),
             ("发布主页", (GREEN_HOME_PAGE_URL,
                            GREEN_HOME_PAGE_URL.replace("https://", ""))),
-            ("官方 dsh", "@deepseek-ai/dsh (DeepSeek Harness)"),
             ("官方仓库", ("https://github.com/deepseek-ai/deepseek-harness",
                            "github.com/deepseek-ai/deepseek-harness")),
         ]
