@@ -267,6 +267,7 @@ GITEE_RAW_LAUNCHER_URL = ("https://gitee.com/%s/raw/%s/launcher.py"
 GITEE_RELEASES_API = ("https://gitee.com/api/v5/repos/%s/releases"
                       % GITEE_REPO)  # Gitee 发布版列表 (公开读无需令牌)
 GITEE_REPO_PAGE_URL = "https://gitee.com/%s" % GITEE_REPO  # Gitee 仓库主页 (失败手动提示)
+GREEN_HOME_PAGE_URL = "https://liujunheng.github.io/DeepSeekHarnessGreen/"  # 发布主页 (GitHub Pages, About 里跳转)
 
 # 「加载推荐」一键展示的 dsh 插件列表 (按社区目录站 dsh-plugins.top / awesome-deepseek-harness / 官方 dsh-plugin 话题筛选出的高口碑款, 2026-08 底校准)
 # 字段说明: name=展示名; category=分类(显示在「分类」列); source=来源平台(github/npm, 与搜索项统一, 显示在「来源」列);
@@ -4397,7 +4398,7 @@ def run_gui():
         about_window = tk.Toplevel(root)
         about_window.title("关于")
         about_window.resizable(False, False)
-        about_window.geometry("480x520")
+        about_window.geometry("480x585")
         about_window.transient(root)    # 依附主窗口
         about_window.grab_set()         # 模态, 关闭前不能操作主窗口
 
@@ -4414,6 +4415,7 @@ def run_gui():
             ("版本日期", GREEN_VERSION_DATE),
             ("GitHub 仓库", "github.com/LiuJunheng/DeepSeekHarnessGreen"),
             ("Gitee 仓库", "gitee.com/liujunheng/DeepSeekHarnessGreen"),
+            ("发布主页", GREEN_HOME_PAGE_URL.replace("https://", "")),
             ("官方 dsh", "@deepseek-ai/dsh (DeepSeek Harness)"),
             ("官方仓库", "https://github.com/deepseek-ai/deepseek-harness"),
         ]
@@ -4446,15 +4448,19 @@ def run_gui():
         def open_link(url):
             """用系统默认浏览器打开链接"""
             webbrowser.open(url)
-        button_row = ttk.Frame(about_window)
-        button_row.pack(pady=14)
-        ttk.Button(button_row, text="打开 GitHub 仓库", command=lambda: open_link(
+        button_row1 = ttk.Frame(about_window)
+        button_row1.pack(pady=(14, 4))
+        ttk.Button(button_row1, text="打开发布主页", command=lambda: open_link(
+            GREEN_HOME_PAGE_URL)).pack(side="left", padx=4)
+        ttk.Button(button_row1, text="打开 GitHub 仓库", command=lambda: open_link(
             "https://github.com/LiuJunheng/DeepSeekHarnessGreen")).pack(side="left", padx=4)
-        ttk.Button(button_row, text="打开 Gitee 仓库", command=lambda: open_link(
+        ttk.Button(button_row1, text="打开 Gitee 仓库", command=lambda: open_link(
             "https://gitee.com/liujunheng/DeepSeekHarnessGreen")).pack(side="left", padx=4)
-        ttk.Button(button_row, text="打开官方仓库", command=lambda: open_link(
+        button_row2 = ttk.Frame(about_window)
+        button_row2.pack(pady=(4, 14))
+        ttk.Button(button_row2, text="打开官方仓库", command=lambda: open_link(
             "https://github.com/deepseek-ai/deepseek-harness")).pack(side="left", padx=4)
-        ttk.Button(button_row, text="关闭", command=about_window.destroy).pack(side="left", padx=4)
+        ttk.Button(button_row2, text="关闭", command=about_window.destroy).pack(side="left", padx=4)
 
     about_btn = ttk.Button(status_frame, text="关于", command=show_about)
     about_btn.pack(side="right", padx=(10, 0))

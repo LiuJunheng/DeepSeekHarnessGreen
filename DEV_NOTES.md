@@ -51,6 +51,7 @@
 - **命令行**：`--start`(守护) / `--stop` / `--purge-archived` / `--purge-session <ID>` / `--restore-session <ID>` / `--install-plugin` / `--remove-plugin`。
 - **内置插件自动同步**：`update_bundled_plugins()` 把 `plugins/` 源码镜像进运行副本（逐文件 MD5 比对、只写变化、清理源码已删陈旧文件）；入口＝打开插件管理窗口 / 「一键安装内置插件」/ 绿色版更新后首启。
 - **pnpm 构建白名单已自动化**：`ensure_pnpm_native_allowbuilds`（装插件/环境时幂等补原生依赖 `false`）+ `auto_allow_git_build`（`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` 时从报错提取含完整 commit 的 allowBuilds key 写 `true` 并重试，幂等）。**绿色版 zip 不含 runtime/，此补丁必须在启动器内自动做**。
+- **【关于】对话框**：右上角「关于」入口，含作者/版本/仓库/发布主页/官方 dsh 引用；按钮两行（发布主页 + GitHub + Gitee / 官方 + 关闭）避免宽度溢出。发布主页常量 `GREEN_HOME_PAGE_URL`（GitHub Pages 地址）新增后同步在信息表与跳转按钮引用。
 
 ## 五、避坑经验（按主题聚合，均实证）
 
