@@ -139,21 +139,21 @@
 
     // 涟漪列表：{ x, y, radius, life(0~1) }
     var ripples = [];
-    var maxRipples = 14;
+    var maxRipples = 22;
     var lastAutoSpawn = -9;
-    var autoSpawnGap = 2.6;
+    var autoSpawnGap = 1.4;
 
     // 指针位置（生成细微涟漪，增强互动）
     var pointerX = -1;
     var pointerY = -1;
     var lastPointerSpawn = -9;
-    var pointerSpawnGap = 0.5;
+    var pointerSpawnGap = 0.35;
 
     // 三条横向流动水波带参数（青/蓝/紫，低透明度叠加光效）
     var waveBands = [
-      { baseY: 0.30, amplitude: 0.045, speed: 0.10, color: [57, 211, 255], alpha: 0.05 },
-      { baseY: 0.55, amplitude: 0.050, speed: 0.16, color: [64, 151, 255], alpha: 0.05 },
-      { baseY: 0.80, amplitude: 0.045, speed: 0.13, color: [154, 107, 255], alpha: 0.06 }
+      { baseY: 0.30, amplitude: 0.075, speed: 0.10, color: [57, 211, 255], alpha: 0.16 },
+      { baseY: 0.55, amplitude: 0.080, speed: 0.16, color: [64, 151, 255], alpha: 0.16 },
+      { baseY: 0.80, amplitude: 0.070, speed: 0.13, color: [154, 107, 255], alpha: 0.18 }
     ];
 
     function resizeCanvas() {
@@ -207,14 +207,14 @@
       for (var i = ripples.length - 1; i >= 0; i--) {
         var ripple = ripples[i];
         ripple.life += 0.02;
-        ripple.radius += canvasHeight * 0.0022;
+        ripple.radius += canvasHeight * 0.0032;
 
         if (ripple.life >= 1) {
           ripples.splice(i, 1);
           continue;
         }
 
-        var alpha = (1 - ripple.life) * 0.26;
+        var alpha = (1 - ripple.life) * 0.40;
         context.beginPath();
         context.arc(ripple.x, ripple.y, ripple.radius, 0, Math.PI * 2);
         context.strokeStyle = "rgba(120, 190, 255, " + alpha + ")";
