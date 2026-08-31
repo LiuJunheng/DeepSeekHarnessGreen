@@ -124,6 +124,15 @@
 
 50. **web token 认证开关（2026-08-31，需求 #49）**：DSH 0.1.2-alpha.2+ 的 BrowserAuth 是强制开启的（官方 Config 里没有 enableAuth 开关），关掉只能 patch。绿色版实现：`launcher.py` 加 `dsh_require_auth` config 字段（默认 True）+ GUI 网络设置区复选框（动态安全警告：0.0.0.0+关auth 时红框、127.0.0.1+关auth 时橙框提示风险极低）+ `patch_auth(require_auth=True/False)` 条件式补丁函数（双副本覆盖 core+shared、幂等、支持正向关闭+反向还原）。patch **只关 token/Cookie 层**（BrowserAuth.isAuthenticated 跳过），**保留 Host/Origin 围栏**（isTrustedApiRequest → 403）。所以 "关 token" ≠ 回到旧版 0.1.1-rc.2 裸奔（旧版两层都没），而是 401 那层的安全门拆了但 403 Host 防火墙还在。127.0.0.1 下 loopback 自动放行 403，实际差异为零；0.0.0.0 下等于"局域网任何人靠 Host header 就能直接访问界面"。两个精确 patch 点（官方打包纯 tab 缩进）：① `requestRejection()` 第二行 `return this.browserAuth.isAuthenticated(request) ? void 0 : 401` → 改 `return void 0;`；② `authorizeIndex()` 方法体开头插入 `return true;` 跳过 token/Cookie 校验。启动前 patch 链（两处：install_dsh 安装后 + 启动服务前）根据 config 决定 patch 方向；`_web_auth_url()` 在 auth 关闭时直接返回裸地址短路，省掉 8s token 竞态等待。**还原方向**（用户改回 require_auth=True）会把两处 patch 还原回官方原始代码，不留残留。dsh 升级重装会清除所有 patch，启动前自动重新应用。
 
+51. **dsh-sidebar-lite rail 开关位置 + 初始宽度最小化（2026-09-01）**：
+    - **rail 位置**：从 
+ight:10px;top:50%（右侧垂直居中）→ 
+ight:16px;top:56px（右上角 header 下方）。避开官方「下载日志」按钮（~top:48px right:8px）。Rail 从「仅收起态显示」改为「始终显示」——展开态用 Fragment 包装 host + rail，rail fixed 定位独立于 host 不占内部空间。onClick 从 ()=>setOpen(true) 改为 ()=>setOpen(o=>!o) toggle，title/aria-label 随状态切换。展开态侧栏内部 collapse 按钮保留作为次级关闭入口。
+    - **初始宽度**：useState(PANEL_WIDTH=320) → useState(MIN_PANEL_WIDTH=200)。新增常量 MIN_PANEL_WIDTH=200 统一所有硬编码 200px（主面板拖拽最小值、预览框拖拽最小值、lastWidthRef 初始值、挂载 setPanelWidth）。首次打开 200px 不挡太多主内容，用户按需拖宽。收起/展开记忆的 lastWidthRef 同样从 200 起步（用户拖宽后再收起会记住更宽的值）。
+    - **Fragment 双元素返回**：原来 SidebarShell 要么返回 rail（!open），要么返回 host（open）。现在 open=true 时返回 
+eact.createElement(react.Fragment, null, [host, rail])——React 16+ Fragment 允许返回数组，且 rail fixed 定位不依赖 host DOM 层级。
+
+
 ## 六、维护提醒
 - 跨机 / 整包覆盖会吞掉本地未提交改动（实测覆盖过）→ 发布前先 `git diff` / `git log` 核对，或先把改动 commit。
 - 改内置插件源码后必须同步运行副本并**在运行端目验**（见坑 17）。同步已自动化：打开插件管理窗口即同步 / 「一键安装内置插件」/ 绿色版更新后首启。
