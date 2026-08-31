@@ -132,6 +132,24 @@ ight:16px;top:56px（右上角 header 下方）。避开官方「下载日志」
     - **Fragment 双元素返回**：原来 SidebarShell 要么返回 rail（!open），要么返回 host（open）。现在 open=true 时返回 
 eact.createElement(react.Fragment, null, [host, rail])——React 16+ Fragment 允许返回数组，且 rail fixed 定位不依赖 host DOM 层级。
 
+52. **发布规范：绿色 zip 不含 runtime/（2026-09-01，v1.0.24 重打包发现之前没记录）**：
+    - **绿色 zip 目的**：启动器 exe 自身无能力下载 runtime，首次运行后才下载 DSH 核心（Node.js + 插件树）。zip 只携带**启动器层**文件，用户双击 exe 启动，联网后自动拉取 runtime。
+    - **zip 内容清单**（由 `runtime/tmp/build_release_zip.py` 的 `GREEN_TOP_FILES` + `GREEN_TOP_DIRS` 定义）：
+        - 顶层文件：`launcher.py`、`desktop-shell.py`、`update_agent.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`DSH_Update.exe`、`DSH_Launcher.ico`、`config.json`、`README.md`、`README_EN.md`、`LICENSE`
+        - 顶层目录：`plugins/`（全量）、`skills/dsh-deploy-maintain/`
+        - **绝不含**：`runtime/`、`build/`、`dist/`、`.git/`、`DEV_NOTES.md`、config.json 运行时用户配置
+    - **发布流程 checklist**（每次发版必走）：
+        1. 更新 `launcher.py` 的 `GREEN_VERSION`（唯一版本来源，不要硬编码版本号到 zip 名里）
+        2. 改了 `launcher.py` 或 `update_agent.py` → 重跑 `build_exe.bat`（两个 exe 里的版本日期会同步）
+        3. 运行 `python runtime/tmp/build_release_zip.py`（自动回写 `GREEN_VERSION_DATE` 为构建当天日期 → 打 zip → verify 根目录齐全）
+        4. `git add launcher.py DSH_Launcher.exe DSH_Update.exe` → commit → push
+        5. `git tag -a v{version} -m "v{version}: 版本说明"` → push --tags
+        6. **Gitee Release 上传**：`set GITEE_TOKEN=xxx` + `python runtime/tmp/gitee_upload_release.py --zip <zip_path> --tag v{version} --name "v{version}: 版本说明" --body "<release_body>"`（脚本自动查已有 release，有则直接传附件，无则先建 release 再传）
+        7. **GitHub Release 上传**：MCP 工具只有 `create_release` 没有 `upload_asset` → 用临时 Python 脚本直接调 GitHub REST API（标准库 urllib 即可，不需要 requests）：先 POST `/releases` 建 release，再 POST `uploads.github.com/repos/{owner}/{repo}/releases/{id}/assets?name={filename}` 以 `application/octet-stream` 传 body。脚本可以存 `runtime/tmp/github_upload_release.py` 以后复用。
+        8. **清理**：删除本地构建产物 zip（已上传到 Release 的 zip 不在 gitignore 里，别 commit）
+    - **zip 文件名**：`DSH_Launcher_GreenPortable_Online_<YYYYMMDD>_v<version>.zip`（日期=构建当天，版本号=GREEN_VERSION）。`build_release_zip.py` 自动生成，不要手写。
+    - **双平台 token**：Gitee 在网页「个人设置 → 安全 → 私人令牌」勾 `projects`；GitHub 在网页「Settings → Developer settings → Personal access tokens → Tokens (classic)」勾 `repo`（完整 repo 访问，需 upload asset）。命令行临时 `set GITEE_TOKEN=xxx` / `set GITHUB_TOKEN=xxx` 用完即弃，别写入任何文件。
+    - **为什么不用 gh CLI / hub CLI**：新环境默认没装，临时装浪费时间。Python 标准库 urllib + multipart 手写足够（两个脚本都已实现）。
 
 ## 六、维护提醒
 - 跨机 / 整包覆盖会吞掉本地未提交改动（实测覆盖过）→ 发布前先 `git diff` / `git log` 核对，或先把改动 commit。
