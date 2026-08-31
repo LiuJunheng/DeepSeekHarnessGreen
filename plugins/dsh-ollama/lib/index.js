@@ -203,8 +203,16 @@ async function probeOllamaModels(baseUrl, timeoutMs) {
 		const body = await response.json();
 		const entries = Array.isArray(body && body.models) ? body.models : [];
 		const modelNames = [];
+		// 防御: 过滤掉含多层 "-数字k" 后缀的垃圾模型 (如 gemma4:latest-62.5k-62.5k),
+		// 这类模型由历史 bug 在同一次探测循环里反复 ollama create 产生,
+		// 源头拦截能防止 ensureContextVariants 被脏输入污染。
+		const multiVariantRegex = /-\d+(?:\.\d+)?k(?:-\d+(?:\.\d+)?k)+$/;
 		for (const entry of entries) {
 			if (typeof entry.name === "string" && entry.name.length > 0) {
+				if (multiVariantRegex.test(entry.name)) {
+					// 静默跳过: 这是源头防御, 不应让上层流程感知
+					continue;
+				}
 				modelNames.push(entry.name);
 			}
 		}
@@ -298,7 +306,7 @@ async function ensureContextVariants(baseUrl, modelNames, settings, logger) {
 	const resolved = new Map(); // model -> 要写入的名字
 	const pendingCreate = [];   // { model, variant } 需要 ollama create 的
 	for (const model of modelNames) {
-		if (/-\d+k$/.test(model)) continue; // 变体本身不参与决策, 只作为"已存在"信号
+		if (/-\d+(?:\.\d+)?k$/.test(model)) continue; // 变体本身不参与决策, 只作为"已存在"信号。正则支持 -32k / -62.5k / -3.1k 等。
 		const variant = model + "-" + (target / 1024) + "k";
 		const already = modelNames.includes(variant);
 		const native = await probeModelContextLength(baseUrl, model, settings.probeTimeoutMs || 3000);
@@ -313,6 +321,13 @@ async function ensureContextVariants(baseUrl, modelNames, settings, logger) {
 		// 变体 (Modelfile 固化 num_ctx, 任何方式启动都生效)。
 		if (already) {
 			resolved.set(model, variant);
+			continue;
+		}
+		// 防御纵深: variant 必须是 "原始模型名 + 单个后缀", 不能已含后缀
+		// (虽然 L310 已过滤所有变体, 这里再兜一层防止未来逻辑变动回归)
+		if (/-\d+(?:\.\d+)?k(?:-\d+(?:\.\d+)?k)+$/.test(variant)) {
+			logger.warn("[dsh-ollama] variant 名异常 (多层后缀), 跳过创建: %s", variant);
+			resolved.set(model, model);
 			continue;
 		}
 		if (!cli) {
