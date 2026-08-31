@@ -805,27 +805,33 @@ window.__ModuleLoader__.load({
 
 		/**
 		 * 汇总某个回合所有助手消息的 usage。
-		 * 数据源: 会话快照顶层兼容字段 snapshot.nodes 里的 AssistantMessageNode
-		 * (kind === "assistant", 带 turn 与 usage)。
+		 * 数据源兼容两代 dsh 快照结构:
+		 *   - rc.6: 顶层兼容字段 snapshot.nodes (ConversationSnapshot, AssistantMessageNode 数组)
+		 *           + snapshot.chat.nodes (ChatNodeStore) 兜底;
+		 *   - 0.1.2+: chat.legacy.nodes (ChatSnapshot, ConversationNode 数组, 官方 StatsLine 同源)
+		 *           + chat.nodes (ChatNodeStore) 兜底。
 		 * 返回: 该回合汇总 totals + perModel (按模型分组的 usage, 用于按模型分别计价,
 		 * 模型名取节点 provenance.model, 缺失归 "unknown")。
 		 */
-		function sumTurnUsage(snapshot, turnNum) {
-			const total = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, found: false, perModel: {} };
-			const nodes = snapshot && Array.isArray(snapshot.nodes) ? snapshot.nodes : [];
-			for (const n of nodes) {
-				if (!n || n.kind !== "assistant") continue;
-				if (typeof n.turn !== "number" || n.turn !== turnNum) continue;
-				const u = n.usage;
-				if (!u || typeof u !== "object") continue;
+		function sumTurnUsage(data, turnNum) {
+			// 兼容两种快照形态的 legacy 节点数组
+			const nodes = data && Array.isArray(data.nodes) ? data.nodes
+				: (data && data.legacy && Array.isArray(data.legacy.nodes)) ? data.legacy.nodes
+				: [];
+			// 兼容两种快照形态的 ChatNodeStore
+			const store = data && data.nodes && typeof data.nodes.values === "function" ? data.nodes
+				: (data && data.chat && data.chat.nodes && typeof data.chat.nodes.values === "function") ? data.chat.nodes
+				: null;
+
+			const accumulate = (u) => {
 				total.found = true;
 				total.inputTokens += num(u.inputTokens);
 				total.outputTokens += num(u.outputTokens);
 				total.cacheReadTokens += num(u.cacheReadTokens);
 				total.cacheWriteTokens += num(u.cacheWriteTokens);
 				total.reasoningTokens += num(u.reasoningTokens);
-				// 按模型分组 (用于按模型价格分别计价)
-				const model = (n.provenance && typeof n.provenance.model === "string" && n.provenance.model) || "unknown";
+			};
+			const accumulateModel = (u, model) => {
 				if (!total.perModel[model]) {
 					total.perModel[model] = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 };
 				}
@@ -835,6 +841,36 @@ window.__ModuleLoader__.load({
 				m.cacheReadTokens += num(u.cacheReadTokens);
 				m.cacheWriteTokens += num(u.cacheWriteTokens);
 				m.reasoningTokens += num(u.reasoningTokens);
+			};
+			const total = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, found: false, perModel: {} };
+
+			// ① legacy 节点数组 (已完成的 AssistantMessageNode, 含 usage/provenance)
+			for (const n of nodes) {
+				if (!n || n.kind !== "assistant") continue;
+				if (typeof n.turn !== "number" || n.turn !== turnNum) continue;
+				const u = n.usage;
+				if (!u || typeof u !== "object") continue;
+				accumulate(u);
+				const model = (n.provenance && typeof n.provenance.model === "string" && n.provenance.model) || "unknown";
+				accumulateModel(u, model);
+			}
+
+			// ② 兜底: chat 视图实时节点库 (assistant-step 的 finalNode / turn-tail 的 closing.finalNode)
+			if (!total.found && store) {
+				try {
+					for (const viewNode of store.values()) {
+						if (!viewNode || typeof viewNode !== "object") continue;
+						const d = viewNode.data;
+						const fn = d && (d.finalNode || (d.closing && d.closing.finalNode));
+						if (!fn || typeof fn !== "object") continue;
+						if (fn.kind !== "assistant" || typeof fn.turn !== "number" || fn.turn !== turnNum) continue;
+						const u = fn.usage;
+						if (!u || typeof u !== "object") continue;
+						accumulate(u);
+						const model = (fn.provenance && typeof fn.provenance.model === "string" && fn.provenance.model) || "unknown";
+						accumulateModel(u, model);
+					}
+				} catch (e) { /* 节点库不可用时忽略 */ }
 			}
 			return total;
 		}
@@ -842,6 +878,7 @@ window.__ModuleLoader__.load({
 		/** 回合 token 用量显示 (带「本次token：」前缀, 右对齐, 无数据时静默不渲染)。 */
 		function TurnTokens(props) {
 			const useSession = props.useSession;
+			const useChat = props.useChat;
 			const matched = props.matched;
 
 			// 真实余额 (DeepSeek 账户)/预估消耗一起展示: 需在条件 return 之前声明 hook, 保证 hooks 顺序稳定
@@ -860,15 +897,17 @@ window.__ModuleLoader__.load({
 				return () => { alive = false; };
 			}, []);
 
-			// 防御: standard kit 缺失时静默不渲染
-			if (!useSession || typeof useSession !== "function") return null;
+			// 防御: standard kit 缺失时静默不渲染 (0.1.2+ 提供 useChat, rc.6 提供 useSession)
+			if ((!useSession || typeof useSession !== "function") && (!useChat || typeof useChat !== "function")) return null;
 
-			const snapshot = useSession((s) => s);
 			const turnObj = matched && matched.turn;
 			const turnNum = typeof turnObj === "number" ? turnObj : (turnObj && typeof turnObj.turn === "number" ? turnObj.turn : null);
 			if (turnNum === null) return null;
 
-			const usage = sumTurnUsage(snapshot, turnNum);
+			// 取会话/聊天数据: 0.1.2+ 用 useChat (ChatSnapshot: chat.legacy.nodes / chat.nodes),
+			// rc.6 用 useSession (ConversationSnapshot: nodes / chat.nodes); sumTurnUsage 兼容两种形态。
+			const data = (useChat && typeof useChat === "function") ? useChat((s) => s) : useSession((s) => s);
+			const usage = sumTurnUsage(data, turnNum);
 			if (!usage.found) return null;
 
 			// 预估费用: 按回合内各模型分别计价 (价格表取 localStorage 已保存值, 未保存用官方默认价)

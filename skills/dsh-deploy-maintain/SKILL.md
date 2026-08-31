@@ -194,7 +194,8 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 - **消息行两个官方插槽**（只做官方没有的，别重复官方已有能力）：
   - `conversation.chat.assistant-actions`：每条已完成助手的 IconActions 操作行，`owner={messageId}`，list 按 `order` 升序（官方 👍👎 用 10，第三方从 20 起）。
   - `conversation.chat.turnTail`：操作行**上方**内容区，chain——`select` 必填返回匹配值（全拒渲染空），`priority` 控选举；组件拿 `matched`+`useSession`。
-- **读快照拿消息数据**：`useSession((s)=>s)` 的 `snapshot.nodes`（legacy，`kind:'assistant'`/`turn`/`usage`）与 `snapshot.chat.nodes.values()`（实时节点库，`data.finalNode` 等）双源；`finalNode.usage` 即事件原始 usage。
+- **读快照拿消息数据**：`useSession((s)=>s)` 的 `snapshot.nodes`（legacy，`kind:'assistant'`/`turn`/`usage`）与 `snapshot.chat.nodes.values()`（实时节点库，`data.finalNode` 等）双源；`finalNode.usage` 即事件原始 usage。**0.1.2+ 重构**：`useSession` 改返回 SessionSnapshot（生命周期），聊天数据走新 standard-kit hook **`useChat`**（`chat.legacy.nodes` / `chat.nodes` store）；兼容写法 `const data = useChat ? useChat(s=>s) : useSession(s=>s)` 再按两种形态取节点（官方 StatsLine = `useChat(s=>s.legacy.nodes)`）。
+- **官方 0.1.2 新增（与统计插件不冲突）**：① **ContextMeter**（输入框右侧环形仪表）——当前会话**上下文窗口占用**（~已用/窗口+系统/工具/消息三段，估算、无费用）；② 逐回合精确记账 `turn-tail` 节点 `data.tokenUsage`（`TurnTokenUsage`，含 routes 模型归属）——消息行"实际消耗"的最权威来源。本插件 = 实际计费 token + 费用估算 + 账户余额（账单视角），互补。
 - **官方已原生覆盖、别重复做**：消息正文「复制」、回合尾「在新对话中分支」、悬停"用时/首 token/速率"、会话级 token 合计（官方 StatsLine，`useProjection("tokenUsage")`）。项目价值插件 = 官方没有的（清理/回退/统计）。
 
 ### 5.6 客户端 UI 通用坑
