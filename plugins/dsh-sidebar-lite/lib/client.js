@@ -1229,12 +1229,18 @@ window.__ModuleLoader__.load({
 				style: { flex: 1, cursor: "pointer", padding: "6px 4px", fontSize: 12, border: "none", borderBottom: tab === id ? "2px solid #4a7bff" : "2px solid transparent", background: "transparent", color: tab === id ? "inherit" : "var(--dsw-alias-label-secondary)", fontWeight: tab === id ? 600 : 400 },
 			}, label);
 
-			// rail 开关按钮: 始终渲染在右上角 (fixed 定位独立于 host),
-			// 作为全局 toggle 开关 — 收起时显示"展开", 展开时显示"收起"。
-			// 展开态侧栏内部标题条右端的 collapse 按钮保留, 作为次级关闭入口。
+			// rail 开关按钮: fixed 定位, 作为全局 toggle 开关。
+			// right 值随状态自适应:
+			//   - 收起态 (open=false, panelWidth 未被 effect 清零): 用 CSS 默认 right:16px, 贴视口右上角
+			//   - 展开态 (open=true): inline style 覆盖为 right:panelWidth+16px, 贴侧栏左边缘外
+			// 这样 rail 始终可见, 展开时不被侧栏遮挡, 收起时回到右上角原位。
+			const railStyle = open
+				? { right: (panelWidth + 16) + "px" }
+				: undefined;
 			const railButton = react.createElement("button", {
 				type: "button",
 				id: N + "-rail",
+				style: railStyle,
 				onClick: () => setOpen((previous) => !previous),
 				title: open ? "收起侧边栏" : "展开侧边栏",
 				"aria-label": open ? "收起侧边栏" : "展开侧边栏",
