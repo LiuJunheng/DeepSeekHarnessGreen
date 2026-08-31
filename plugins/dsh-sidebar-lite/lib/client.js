@@ -42,7 +42,8 @@ window.__ModuleLoader__.load({
 		// ---- 常量 ----
 		const API_PREFIX = "/__dsh/sidebar-lite";
 		const GUARD_HEADER = "X-DSH-Sidebar-Lite";
-		const PANEL_WIDTH = 320;            // 展开宽度 (px)
+		const PANEL_WIDTH = 320;            // 展开默认宽度 (px, 用户可拖到更大)
+		const MIN_PANEL_WIDTH = 200;        // 最小/初始宽度 (px, 拖到最小就是它, 首次打开默认它, 不挡太多主内容)
 		const PREVIEW_WIDTH = 360;          // 独立文件预览侧栏框默认宽度 (px, 可拖)
 		const CSS_VAR = "--dsh-sidebar-lite-width";
 		const CSS_EXTRA_VAR = "--dsh-sidebar-lite-extra";   // 预览框额外让位量 (px)
@@ -360,9 +361,11 @@ window.__ModuleLoader__.load({
 				"background:var(--dsw-alias-bg-layer-2,#ffffff);box-shadow:-1px 0 0 var(--dsw-alias-border-l1,#e5e5e5);}" +
 				"#" + N + "-host." + N + "-closed{width:0;box-shadow:none;overflow:hidden;}" +
 				"#" + N + "-host." + N + "-resizing{transition:none;cursor:col-resize;user-select:none;}" +
-				// 收起态开关: 右缘垂直居中的官方样式圆形图标按钮 (参考 better-sidebar 复刻的
-				// DSH 官方 icon-button: 圆形无边框, 透明底 + secondary 墨色, hover 加深填底)。
-				"#" + N + "-rail{position:fixed;right:10px;top:50%;transform:translateY(-50%);z-index:2147483000;" +
+				// rail 开关: 始终显示在右上角 (header 下方, right:16px top:56px),
+				// 不与官方「下载日志」按钮重叠 (官方按钮在 ~top:48px right:8px 位置)。
+				// 参考 better-sidebar 复刻的 DSH 官方 icon-button: 圆形无边框,
+				// 透明底 + secondary 墨色, hover 加深填底。
+				"#" + N + "-rail{position:fixed;right:16px;top:56px;z-index:2147483000;" +
 				"display:flex;align-items:center;justify-content:center;width:32px;height:32px;" +
 				"border:none;border-radius:50%;background:var(--dsw-alias-bg-layer-2,#ffffff);" +
 				"box-shadow:0 1px 3px rgba(0,0,0,.12);color:var(--dsw-alias-label-secondary,#8a8f98);cursor:pointer;" +
@@ -1057,9 +1060,10 @@ window.__ModuleLoader__.load({
 
 			// ---- 侧边栏宽度自由拉伸 ----
 			// 拖动左边缘调整面板宽度 (右停靠, 宽度=视口宽-光标x); 记录收起前宽度以便展开复位。
-			const [panelWidth, setPanelWidthState] = react.useState(PANEL_WIDTH);
+			// 初始宽度用 MIN_PANEL_WIDTH (200px): 首次打开不挡太多主内容, 需要时用户自己拖宽。
+			const [panelWidth, setPanelWidthState] = react.useState(MIN_PANEL_WIDTH);
 			const [resizing, setResizing] = react.useState(false);
-			const lastWidthRef = react.useRef(PANEL_WIDTH);
+			const lastWidthRef = react.useRef(MIN_PANEL_WIDTH);
 
 			// 宽度变化时同步 CSS 变量 (驱动 #root 让位 + 面板宽度)。
 			react.useEffect(() => {
@@ -1078,7 +1082,7 @@ window.__ModuleLoader__.load({
 				}
 			}, [open]);
 
-			// 拖动左边缘: 全局监听 mousemove / mouseup 连续更新宽度, 最小 200px。
+			// 拖动左边缘: 全局监听 mousemove / mouseup 连续更新宽度, 最小 MIN_PANEL_WIDTH。
 			const onResizeStart = (event) => {
 				event.preventDefault();
 				setResizing(true);
@@ -1086,7 +1090,7 @@ window.__ModuleLoader__.load({
 			react.useEffect(() => {
 				if (!resizing) return undefined;
 				const onMove = (moveEvent) => {
-					const nextWidth = Math.max(200, window.innerWidth - moveEvent.clientX);
+					const nextWidth = Math.max(MIN_PANEL_WIDTH, window.innerWidth - moveEvent.clientX);
 					setPanelWidthState(nextWidth);
 				};
 				const onEnd = () => setResizing(false);
@@ -1118,7 +1122,7 @@ window.__ModuleLoader__.load({
 			react.useEffect(() => {
 				if (!previewResizing) return undefined;
 				const onMove = (moveEvent) => {
-					const nextWidth = Math.max(200, window.innerWidth - moveEvent.clientX - panelWidth);
+					const nextWidth = Math.max(MIN_PANEL_WIDTH, window.innerWidth - moveEvent.clientX - panelWidth);
 					setPreviewWidth(nextWidth);
 				};
 				const onEnd = () => setPreviewResizing(false);
@@ -1227,17 +1231,25 @@ window.__ModuleLoader__.load({
 				style: { flex: 1, cursor: "pointer", padding: "6px 4px", fontSize: 12, border: "none", borderBottom: tab === id ? "2px solid #4a7bff" : "2px solid transparent", background: "transparent", color: tab === id ? "inherit" : "var(--dsw-alias-label-secondary)", fontWeight: tab === id ? 600 : 400 },
 			}, label);
 
-			// 折叠时显示右边缘垂直居中的官方样式圆形图标按钮, 便于重新展开。
+			// rail 开关按钮: 始终渲染在右上角 (fixed 定位独立于 host),
+			// 作为全局 toggle 开关 — 收起时显示"展开", 展开时显示"收起"。
+			// 展开态侧栏内部标题条右端的 collapse 按钮保留, 作为次级关闭入口。
+			const railButton = react.createElement("button", {
+				type: "button",
+				id: N + "-rail",
+				onClick: () => setOpen((previous) => !previous),
+				title: open ? "收起侧边栏" : "展开侧边栏",
+				"aria-label": open ? "收起侧边栏" : "展开侧边栏",
+			}, react.createElement(PanelGlyph, { size: 18 }));
+
 			if (!open) {
-				return react.createElement("button", {
-					type: "button",
-					id: N + "-rail",
-					onClick: () => setOpen(true),
-					title: "展开侧边栏",
-				}, react.createElement(PanelGlyph, { size: 18 }));
+				// 收起态: host 不渲染 (省 DOM), 只显示 rail
+				return railButton;
 			}
 
-			return react.createElement("div", { key: "main", id: N + "-host", className: resizing ? N + "-resizing" : undefined }, [
+			// 展开态: Fragment 包装 host + rail (rail fixed 在右上角, 不占 host 内部空间)
+			return react.createElement(react.Fragment, null, [
+				react.createElement("div", { key: "main", id: N + "-host", className: resizing ? N + "-resizing" : undefined }, [
 				// 左边缘拖动手柄: 透明分隔条, 悬停显示横向拖拽光标, 拖动即调整宽度。
 				react.createElement("div", {
 					key: "resizer",
@@ -1284,6 +1296,9 @@ window.__ModuleLoader__.load({
 					onClose: () => setPreview(null),
 					onResizeStart: onPreviewResizeStart,
 				}),
+				]),
+				// rail 固定在右上角, 独立于 host (fixed 定位不占 host 内部空间)
+				railButton,
 			]);
 		}
 
@@ -1305,7 +1320,7 @@ window.__ModuleLoader__.load({
 					document.body.appendChild(host);
 					root = createRootFn(host);
 					root.render(react.createElement(SidebarShell, { ctx }));
-					setPanelWidth(PANEL_WIDTH);
+					setPanelWidth(MIN_PANEL_WIDTH);  // 与 SidebarShell 初始 state 一致, 等 effect 接管
 				} catch (error) {
 					console.error("[dsh-sidebar-lite] mount error:", error);
 				}
