@@ -707,8 +707,13 @@ window.__ModuleLoader__.load({
 			const [truncated, setTruncated] = react.useState(false);
 			const [mediaUrl, setMediaUrl] = react.useState(null);
 			const [error, setError] = react.useState(null);
+			// html/htm only: preview=iframe render, source=show raw code
+			const [viewMode, setViewMode] = react.useState("preview");
 
 			const editable = EDITABLE_EXTS.includes(extOf(entry.name));
+			// hoist up, needed by both branch logic and render
+			const ext = extOf(entry.name);
+			const isHtml = ext === "html" || ext === "htm";
 
 			react.useEffect(() => {
 				let cancelled = false;
@@ -718,16 +723,26 @@ window.__ModuleLoader__.load({
 					try {
 						const data = await postMethod("fs.read", { sessionId: scope.sessionId, ...(scope.cwd ? { cwd: scope.cwd } : {}), path: entry.path });
 						if (cancelled) return;
-						if (data.file && data.file.kind === "text" && editable) {
+						// html/htm: always fetch both source and blob,
+						// let viewMode decide initial kind (binary=iframe / text=source).
+						// Switching viewMode only changes kind, no re-fetch.
+						if (isHtml) {
+							setText(data.file.content || "");
+							setTruncated(!!(data.file && data.file.truncated));
+							setKind(viewMode === "preview" ? "binary" : "text");
+							const url = await fetchBlobUrl({ sessionId: scope.sessionId, cwd: scope.cwd }, entry.path);
+							if (cancelled) { URL.revokeObjectURL(url); return; }
+							setMediaUrl(url);
+						} else if (data.file && data.file.kind === "text" && editable) {
 							setKind("text");
 							setText(data.file.content);
 							setTruncated(!!data.file.truncated);
 						} else if (data.file && data.file.kind === "text") {
-							setKind("text");          // 未在可编辑表但在服务端被判定为文本, 仍只读展示
+							setKind("text");          // treated as text by server, read-only
 							setText(data.file.content);
 							setTruncated(!!data.file.truncated);
 						} else {
-							// 二进制: 走媒体路由取 blob 再按扩展名显示
+							// binary: fetch blob and render by extension
 							setKind("binary");
 							setTruncated(!!(data.file && data.file.truncated));
 							const url = await fetchBlobUrl({ sessionId: scope.sessionId, cwd: scope.cwd }, entry.path);
@@ -740,6 +755,13 @@ window.__ModuleLoader__.load({
 				})();
 				return () => { cancelled = true; };
 			}, [entry.path, scope.sessionId]);
+
+			// html viewMode toggle: only change kind, no re-fetch
+			react.useEffect(() => {
+				if (!isHtml) return;
+				if (kind !== "binary" && kind !== "text") return;
+				setKind(viewMode === "preview" ? "binary" : "text");
+			}, [viewMode]);
 
 			react.useEffect(() => () => {
 				if (mediaUrl) URL.revokeObjectURL(mediaUrl);
@@ -756,10 +778,8 @@ window.__ModuleLoader__.load({
 				}
 			};
 
-			const ext = extOf(entry.name);
 			const isImage = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"].includes(ext);
 			const isPdf = ext === "pdf";
-			const isHtml = ext === "html" || ext === "htm";
 			const isMd = ext === "md";
 
 			const headerStyle = { display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)", fontSize: 12.5 };
@@ -791,6 +811,7 @@ window.__ModuleLoader__.load({
 					react.createElement("span", { key: "t", title: entry.path, style: { flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, "📄 " + entry.name),
 					kind === "text" && editable && react.createElement("button", { key: "edit", type: "button", disabled: !editDirty, style: { cursor: editDirty ? "pointer" : "default", fontSize: 12, padding: "2px 8px", opacity: editDirty ? 1 : 0.5 }, onClick: () => { if (!editDirty) { setEditDirty(true); } else { save(); } } }, saved ? "已保存 ✓" : (editDirty ? "保存" : "编辑")),
 					isMd && kind === "text" && react.createElement("button", { key: "md", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 8px", opacity: 0.85 }, onClick: () => window.open("/__dsh/sidebar-lite/file?" + new URLSearchParams({ sessionId: scope.sessionId, ...(scope.cwd ? { cwd: scope.cwd } : {}), path: entry.path }), "_blank") }, "在新窗口查看"),
+					isHtml && react.createElement("button", { key: "toggle-html-view", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 6px", opacity: 0.85 }, onClick: () => setViewMode((v) => v === "preview" ? "source" : "preview"), title: viewMode === "preview" ? "View source" : "Render page" }, viewMode === "preview" ? "📄 源码" : "🌐 预览"),
 				]),
 				error !== null && kind !== "error" && react.createElement("div", { key: "err2", style: { padding: 6, fontSize: 12, color: "var(--dsw-alias-state-error-primary)" } }, error),
 				bodyElem,
