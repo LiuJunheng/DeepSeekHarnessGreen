@@ -361,11 +361,10 @@ window.__ModuleLoader__.load({
 				"background:var(--dsw-alias-bg-layer-2,#ffffff);box-shadow:-1px 0 0 var(--dsw-alias-border-l1,#e5e5e5);}" +
 				"#" + N + "-host." + N + "-closed{width:0;box-shadow:none;overflow:hidden;}" +
 				"#" + N + "-host." + N + "-resizing{transition:none;cursor:col-resize;user-select:none;}" +
-				// rail 开关: 始终显示在右上角 (header 下方, right:16px top:56px),
-				// 不与官方「下载日志」按钮重叠 (官方按钮在 ~top:48px right:8px 位置)。
-				// 参考 better-sidebar 复刻的 DSH 官方 icon-button: 圆形无边框,
-				// 透明底 + secondary 墨色, hover 加深填底。
-				"#" + N + "-rail{position:fixed;right:16px;top:56px;z-index:2147483000;" +
+				// rail 开关: 始终显示在右上角 (与官方 header 顶部线条对齐, right:16px top:48px),
+				// 不与官方「下载日志」按钮重叠 (官方按钮在 ~top:44px right:8px 位置)。
+				// 预览框打开时 inline style 会覆盖 right, 额外让出 previewWidth 空间。
+				"#" + N + "-rail{position:fixed;right:16px;top:48px;z-index:2147483000;" +
 				"display:flex;align-items:center;justify-content:center;width:32px;height:32px;" +
 				"border:none;border-radius:50%;background:var(--dsw-alias-bg-layer-2,#ffffff);" +
 				"box-shadow:0 1px 3px rgba(0,0,0,.12);color:var(--dsw-alias-label-secondary,#8a8f98);cursor:pointer;" +
@@ -1231,12 +1230,11 @@ window.__ModuleLoader__.load({
 
 			// rail 开关按钮: fixed 定位, 作为全局 toggle 开关。
 			// right 值随状态自适应:
-			//   - 收起态 (open=false, panelWidth 未被 effect 清零): 用 CSS 默认 right:16px, 贴视口右上角
-			//   - 展开态 (open=true): inline style 覆盖为 right:panelWidth+16px, 贴侧栏左边缘外
-			// 这样 rail 始终可见, 展开时不被侧栏遮挡, 收起时回到右上角原位。
-			const railStyle = open
-				? { right: (panelWidth + 16) + "px" }
-				: undefined;
+			//   - 收起态 (open=false): CSS 默认 right:16px, 贴视口右上角
+			//   - 展开态 (open=true): right = panelWidth + previewWidth + 16px
+			//     (主侧栏 + 预览框宽度 + 间距), 贴最左侧面板的左边缘外
+			const extraRight = open ? (panelWidth + (preview !== null ? previewWidth : 0) + 16) : null;
+			const railStyle = extraRight !== null ? { right: extraRight + "px" } : undefined;
 			const railButton = react.createElement("button", {
 				type: "button",
 				id: N + "-rail",
