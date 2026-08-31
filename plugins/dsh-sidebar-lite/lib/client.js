@@ -1104,9 +1104,6 @@ window.__ModuleLoader__.load({
 			const [previewWidth, setPreviewWidth] = react.useState(PREVIEW_WIDTH);
 			const [previewResizing, setPreviewResizing] = react.useState(false);
 
-			const openPreview = react.useCallback((entry) => {
-				setPreview({ entry, scope });
-			}, [scope]);
 
 			// 预览框存在时额外让位 (让 #root 左右内容避让), 关闭后归零。
 			react.useEffect(() => {
@@ -1154,6 +1151,11 @@ window.__ModuleLoader__.load({
 			// 用于在任务页明确展示 AI 当前任务进度与目标。
 			const activeSummary = sessionId ? ((snapshot && snapshot.byId && snapshot.byId[sessionId]) || null) : null;
 
+			const scope = { sessionId: sessionId || "", cwd: cwd || undefined };
+
+			const openPreview = react.useCallback((entry) => {
+				setPreview({ entry, scope });
+			}, [scope]);
 			// 已做过"无会话兜底根解析"的标记: 只兜底一次, 避免频繁轮询宿主端点根。
 			const fallbackResolved = react.useRef(false);
 
@@ -1197,8 +1199,6 @@ window.__ModuleLoader__.load({
 				}
 				return () => { cancelled = true; };
 			}, [sessionId]);
-
-			const scope = { sessionId: sessionId || "", cwd: cwd || undefined };
 
 			// 官方 @ 引用插入需要的会话级通道 (与 dsh-file-browser 插件相同):
 			//   provideInfo(id) -> standard-kit 提供包 { hooks: { input: 输入机状态 store }, props: { inputActions } }
