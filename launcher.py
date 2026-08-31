@@ -150,6 +150,10 @@ DEFAULT_CONFIG = {
     "python_release": "20260807",# python-build-standalone 发布标签(日期)
     "dsh_port": 3080,            # dsh web 服务端口
     "dsh_host": "127.0.0.1",     # dsh web 服务绑定地址: "127.0.0.1"=仅本机 / "0.0.0.0"=局域网可访问
+    "dsh_require_auth": True,   # dsh web 认证开关: True=首次访问需 ?token=<launchToken> 换 Cookie (安全默认);
+                                # False=关闭 token 认证, 直接裸地址即可打开 (仅保留 Host/Origin 围栏).
+                                # 注意: 关闭后若绑定 0.0.0.0 局域网模式, 局域网内任何人可直接访问界面.
+                                # 127.0.0.1 本机模式下关闭几乎无额外风险 (外部请求打不到 loopback).
     "trusted_hosts": [],         # 受信任主机列表 (host 或 host:port); 空=局域网模式自动信任全部局域网, 非空=只信任填写的
     "dsh_package": "@deepseek-ai/dsh",   # dsh 包名
     # 启动服务后是否自动打开 WebUI 页面 (False 则只启动服务, 需手动点「桌面窗口/网页窗口」)
@@ -799,6 +803,9 @@ class Launcher:
         if not lan_api_patched:
             self.log("[警告] client-connection 局域网补丁未生效: 局域网模式 /api 可能报 403 "
                      "(本机模式不受影响); 可稍后重启服务重试, 或等 dsh 更新后再装一次环境")
+        # 安装/升级后同步 web token 认证开关 (2026-08-31, 需求 #49):
+        # dsh 重装会还原所有 client-connection 代码, 之前打的 auth patch 会丢, 需重新应用.
+        self.patch_auth(require_auth=bool(self.config.get("dsh_require_auth", True)))
         return True
 
     def prepare_dsh(self, force=False, package_spec=None):
@@ -3636,6 +3643,141 @@ class Launcher:
             self.log("已补丁 dsh client-connection 双副本: /api 不再 403")
         return any_ok
 
+    # ---------- dsh web token 认证开关 (2026-08-31, 需求 #49) ----------
+    # DSH 0.1.2-alpha.2+ 在 client-connection 里加了 BrowserAuth: 启动时生成一次性
+    # ?token=<launchToken> URL, 首次访问换 30 天 Cookie, 之后裸地址返回 401。这套机制
+    # 强制开启 (Config 里没有 enableAuth/disableAuth 开关), 用户要关掉只能 patch。
+    # patch 只关 token 层 (BrowserAuth), Host/Origin 围栏 (isTrustedApiRequest) 保留。
+    # 所以"关 token"≠ 回到旧版裸奔——旧版两层都没; 我们只关一层, 403 Host 防火墙还在。
+    # 127.0.0.1 模式下 loopback 自动放行 403, 实际差异为零; 0.0.0.0 模式下关 token 等于
+    # "局域网任何人靠 Host header 就能访问"——风险较高, GUI 会弹醒目警告。
+    # 幂等: 搜 "dsh-launcher auth patch" 判断当前状态, 已打则跳过, 未打则补, 用户改回
+    # require_auth=True 时自动还原原始代码。双副本覆盖 (core + shared), 与其它 patch 一致。
+
+    # ---- 关闭 auth 时要 patch 的精确锚点 (官方打包纯 tab 缩进) ----
+    _AUTH_PATCH_ORIGINAL_1 = "\t\treturn this.browserAuth.isAuthenticated(request) ? void 0 : 401;"
+    _AUTH_PATCH_NEW_1 = (
+        "\t\t// dsh-launcher auth patch (2026-08-31): 跳过 BrowserAuth 校验, "
+        "只保留 Host/Origin 围栏 (isTrustedApiRequest → 403). "
+        "用户 config dsh_require_auth=False 主动要求关闭 token 认证.\n"
+        "\t\treturn void 0;"
+    )
+    _AUTH_PATCH_ORIGINAL_2 = "\tauthorizeIndex(req, res) {\n\t\t/* v8 ignore next -- node:http always supplies url on server requests. */\n\t\tconst url = new URL(req.url ?? \"/\", \"http://dsh.invalid\");"
+    _AUTH_PATCH_NEW_2 = (
+        "\tauthorizeIndex(req, res) {\n"
+        "\t\t// dsh-launcher auth patch (2026-08-31): 直接放行, 跳过 token/Cookie 校验. "
+        "与 requestRejection 里的 browserAuth 跳过配套. 用户 config dsh_require_auth=False.\n"
+        "\t\treturn true;\n"
+        "\t\t/* v8 ignore next -- node:http always supplies url on server requests. */\n"
+        "\t\tconst url = new URL(req.url ?? \"/\", \"http://dsh.invalid\");"
+    )
+
+    def patch_auth(self, require_auth=True):
+        """补丁 dsh client-connection 的 token 认证层 (条件式, 幂等可重复, 双副本覆盖)。
+
+        背景 (2026-08-31): DSH 0.1.2-alpha.2+ 在 dsh-client-connection 里内置 BrowserAuth——
+        启动时生成一次性 ?token=<launchToken> URL, 首次访问换 30 天 Cookie, 之后裸地址返回 401。
+        官方 Config 里没有 enableAuth 开关, 想要裸地址直开只能 patch。
+        本补丁只关 token/Cookie 层 (BrowserAuth), 保留 Host/Origin 围栏 (isTrustedApiRequest → 403)。
+        所以"关 token"≠ 回到旧版 0.1.1-rc.2 裸奔 (旧版两层都没), 仅 127.0.0.1 下 loopback 自动
+        放行 403, 与旧版无异; 0.0.0.0 下等于"局域网任何人靠 Host header 就能直接访问"。
+
+        两个精确 patch 点 (官方打包纯 tab 缩进):
+          1. requestRejection(): 第二行 "return this.browserAuth.isAuthenticated... ? void 0 : 401"
+             → 改为 "return void 0;" 让 /api RPC 通道跳过 cookie 校验 (Host 围栏保留)。
+          2. authorizeIndex(): 方法体开头插入 "return true;" 让 index.html 直接放行, 跳过 401。
+
+        双副本覆盖: core (DSH_DIR/node_modules) + shared (DSH_HOME_DIR/profiles/node_modules),
+        与 patch_lan_api_trust / patch_commands_backoff 套路一致。
+
+        Args:
+            require_auth: True=确保 auth 开启 (若之前被关则还原原始代码);
+                          False=关掉 auth (patch 两处)。默认 True (安全方向)。
+
+        Returns:
+            True 表示至少一个副本成功达到目标状态 (或已经是目标状态)。
+        """
+        connection_paths = [
+            os.path.join(DSH_DIR, "node_modules", "@deepseek-ai",
+                         "dsh-client-connection", "lib", "index.js"),
+            os.path.join(DSH_HOME_DIR, "profiles", "node_modules",
+                         "@deepseek-ai", "dsh-client-connection",
+                         "lib", "index.js"),
+        ]
+        any_ok = False
+
+        for connection_path in connection_paths:
+            if not os.path.isfile(connection_path):
+                continue
+            try:
+                with open(connection_path, "r", encoding="utf-8") as file_handle:
+                    text = file_handle.read()
+            except OSError:
+                continue
+
+            # ---------- 状态检测 + 幂等 ----------
+            has_patch = "dsh-launcher auth patch" in text
+
+            if require_auth:
+                # 目标: auth 开启 (原始状态). 已 patch 过才需要还原, 没 patch 就跳过.
+                if not has_patch:
+                    any_ok = True   # 已是原始状态, 幂等跳过
+                    continue
+                # 还原 patch 1: requestRejection
+                if self._AUTH_PATCH_NEW_1 in text:
+                    text = text.replace(self._AUTH_PATCH_NEW_1, self._AUTH_PATCH_ORIGINAL_1, 1)
+                # 还原 patch 2: authorizeIndex
+                if self._AUTH_PATCH_NEW_2 in text:
+                    text = text.replace(self._AUTH_PATCH_NEW_2, self._AUTH_PATCH_ORIGINAL_2, 1)
+                # 残留检查: 如果还有其它 auth patch 标记, 可能是旧版 patch 格式, 一并清理
+                if "dsh-launcher auth patch" in text:
+                    self.log("[警告] auth patch 还原后仍存在 'dsh-launcher auth patch' 标记, "
+                             "可能是旧版 patch 格式残留, 建议手动检查 %s" % connection_path)
+            else:
+                # 目标: auth 关闭 (patch 状态). 已 patch 就跳过, 未 patch 则补.
+                if has_patch:
+                    any_ok = True   # 已是 patch 状态, 幂等跳过
+                    continue
+                # patch 1: requestRejection —— 跳 browserAuth, 保留 Host/Origin 围栏
+                if self._AUTH_PATCH_ORIGINAL_1 in text:
+                    text = text.replace(self._AUTH_PATCH_ORIGINAL_1, self._AUTH_PATCH_NEW_1, 1)
+                else:
+                    self.log("[警告] auth patch: 未找到 requestRejection 原始锚点, "
+                             "结构不匹配跳过 @ %s" % connection_path)
+                    continue
+                # patch 2: authorizeIndex —— 直接 return true 跳过 token/Cookie 校验
+                if self._AUTH_PATCH_ORIGINAL_2 in text:
+                    text = text.replace(self._AUTH_PATCH_ORIGINAL_2, self._AUTH_PATCH_NEW_2, 1)
+                else:
+                    self.log("[警告] auth patch: 未找到 authorizeIndex 原始锚点, "
+                             "结构不匹配跳过 @ %s" % connection_path)
+                    continue
+
+            # 写回文件
+            try:
+                with open(connection_path, "w", encoding="utf-8") as file_handle:
+                    file_handle.write(text)
+                any_ok = True
+            except OSError:
+                self.log("[警告] auth patch 写回失败: %s" % connection_path)
+                continue
+
+        if require_auth:
+            if any_ok:
+                self.log("已还原 dsh client-connection: auth 开启 (默认安全状态)")
+            elif any(p not in text for p in [self._AUTH_PATCH_NEW_1, self._AUTH_PATCH_NEW_2]):
+                self.log("已还原 dsh client-connection: auth 恢复开启 (无残留)")
+        else:
+            if any_ok:
+                bind_host = self.config.get("dsh_host", "127.0.0.1")
+                if bind_host == "0.0.0.0":
+                    self.log("[注意] 已关闭 web token 认证, 但当前绑定 0.0.0.0 局域网模式! "
+                             "局域网内任何人可直接访问界面 (Host/Origin 围栏仍在). "
+                             "如不需要局域网访问, 改回 127.0.0.1 可彻底消除外部暴露面.")
+                else:
+                    self.log("已关闭 dsh web token 认证 (本机模式 127.0.0.1, 外部无法访问, 风险极低)")
+        return any_ok
+
     def lan_addresses(self):
         """枚举本机非内网 IPv4 地址列表 (绑定 0.0.0.0 时用于提示局域网访问地址)。
         仅作提示用途, 不保证覆盖所有网卡; 出错时静默返回空列表"""
@@ -3891,6 +4033,11 @@ class Launcher:
             self.log("[警告] client-connection 局域网补丁未生效: 局域网模式 /api 可能报 403 "
                      "(本机模式不受影响); 可重启服务重试")
 
+        # 确保 web token 认证开关与用户 config 一致 (2026-08-31, 需求 #49):
+        # dsh_require_auth=False 时关掉 BrowserAuth, 允许裸地址直开; True 时还原原始代码.
+        # 只关 token/Cookie 层, Host/Origin 围栏 (isTrustedApiRequest → 403) 保留.
+        self.patch_auth(require_auth=bool(self.config.get("dsh_require_auth", True)))
+
         # 局域网模式下为 Web 端口自动放行防火墙 (按端口放行, 任意电脑绿色版可用, 幂等)
         if self.config.get("dsh_host", "127.0.0.1") == "0.0.0.0":
             try:
@@ -4034,7 +4181,14 @@ class Launcher:
         竞态处理 (2026-08-31): dsh 先绑定端口、等插件树加载完成才打印带 token 的
         URL, 故"端口已就绪但 token 还没落盘"是常见窗口期。这里在端口已监听的前提
         下最多短等 wait_seconds 秒等 token 打印; 服务根本没启动时端口未开, 直接返回
-        不白等, 兼容旧版无认证逻辑。"""
+        不白等, 兼容旧版无认证逻辑。
+
+        auth 关闭短路 (2026-08-31, 需求 #49): 当用户 config dsh_require_auth=False 时
+        直接返回裸地址, 不做 token 解析也不等 dsh 打印 token——反正 patch_auth 已关了
+        BrowserAuth, 裸地址就能正常打开, 省掉启动时的 8s 竞态等待。"""
+        # 用户显式关闭 web token 认证 → 裸地址直出, 跳过全部 token 逻辑
+        if not bool(self.config.get("dsh_require_auth", True)):
+            return base_url
         token = self._read_launch_token()
         if not token and wait_seconds > 0:
             try:
@@ -6495,6 +6649,45 @@ def run_gui():
               foreground="#606060", justify="left", wraplength=430).grid(
                   row=2, column=0, columnspan=2, padx=8, pady=(0, 6), sticky="w")
 
+    # web token 认证开关 (2026-08-31, 需求 #49):
+    # DSH 0.1.2-alpha.2+ 强制 BrowserAuth, 关掉 token 层后裸地址直开 (Host/Origin 围栏仍在).
+    # 默认 True (安全方向), 允许用户显式关掉. 127.0.0.1 下关了几乎无风险 (外部打不到),
+    # 0.0.0.0 下关了 = 局域网任何人可直接访问, 需醒目警告.
+    auth_var = tk.BooleanVar(value=bool(app.config.get("dsh_require_auth", True)))
+    auth_checkbox = ttk.Checkbutton(network_frame,
+                                    text="启用 Web 安全认证 (首次访问需 token 换取 Cookie)",
+                                    variable=auth_var)
+    auth_checkbox.grid(row=3, column=0, columnspan=2, padx=8, pady=4, sticky="w")
+
+    # 动态安全警告: 仅当 "关 auth + 绑定 0.0.0.0" 时才显示 (红色醒目)
+    auth_warning_label = ttk.Label(network_frame, text="",
+                                   foreground="#c03030", justify="left",
+                                   wraplength=430)
+    auth_warning_label.grid(row=4, column=0, columnspan=2, padx=8, pady=(0, 6), sticky="w")
+
+    def _refresh_auth_warning(*_args):
+        """auth_var / bind_var 任一变化时刷新安全警告标签的内容与可见性。"""
+        require_auth = bool(auth_var.get())
+        is_lan = "局域网" in bind_var.get()
+        if not require_auth and is_lan:
+            auth_warning_label.config(
+                text="[安全警告] 当前已关闭 Web token 认证 + 绑定局域网 0.0.0.0: "
+                     "局域网内任何人可直接访问界面 (仅 Host/Origin 围栏防护). "
+                     "如不需要局域网访问, 建议改回「本机 127.0.0.1」彻底消除外部暴露面.",
+                foreground="#c03030")
+        elif not require_auth and not is_lan:
+            auth_warning_label.config(
+                text="[提示] 已关闭 Web token 认证, 但当前绑定本机 127.0.0.1, "
+                     "外部网络无法访问, 实际风险极低. 打开局域网绑定后请慎重考虑.",
+                foreground="#b07030")
+        else:
+            auth_warning_label.config(text="")   # auth 开启时清空警告
+
+    # 监测两个变量的变化, 实时刷新警告 (用户在 GUI 上改绑定地址或 auth 开关时立即反馈)
+    auth_var.trace_add("write", _refresh_auth_warning)
+    bind_var.trace_add("write", _refresh_auth_warning)
+    _refresh_auth_warning()   # 初始渲染
+
     # ===== 右: 常规设置 =====
     settings_frame = ttk.LabelFrame(config_area, text="常规设置")
     settings_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
@@ -6562,6 +6755,9 @@ def run_gui():
             if item:
                 trusted_list.append(item)
         app.config["trusted_hosts"] = trusted_list
+        # web token 认证开关 (2026-08-31, 需求 #49):
+        # 关掉 auth 后启动服务前 patch_auth 会跳过 BrowserAuth, 裸地址直开.
+        app.config["dsh_require_auth"] = bool(auth_var.get())
         # 常规设置: 镜像源 / 默认打开方式 / 自动打开 / 背景视频目录
         raw = mirror_var.get()
         app.config["mirror"] = "cn" if "国内" in raw else ("official" if "官方" in raw else "auto")
