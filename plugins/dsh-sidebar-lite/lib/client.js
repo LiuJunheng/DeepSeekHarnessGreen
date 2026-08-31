@@ -371,9 +371,7 @@ window.__ModuleLoader__.load({
 				"box-shadow:0 1px 3px rgba(0,0,0,.12);color:var(--dsw-alias-label-secondary,#8a8f98);cursor:pointer;" +
 				"transition:background .18s ease,color .18s ease;}" +
 				"#" + N + "-rail:hover{background:var(--dsw-alias-interactive-bg-hover,#eef1f5);color:var(--dsw-alias-label-primary,#1f1f1f);}" +
-				// 展开态标题条右端的折叠按钮: 官方样式圆形图标按钮 (hover 加深填底)。
-				"#" + N + "-host ." + N + "-collapse{display:flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:none;border-radius:50%;background:transparent;color:var(--dsw-alias-label-secondary,#8a8f98);cursor:pointer;}" +
-				"#" + N + "-host ." + N + "-collapse:hover{background:var(--dsw-alias-interactive-bg-hover,#eef1f5);color:var(--dsw-alias-label-primary,#1f1f1f);}" +
+				// 收起按钮已移到 rail (见上方), 此处不再保留 .collapse 样式。
 				"#" + N + "-host ::-webkit-scrollbar{width:8px;height:8px;}" +
 				"#" + N + "-host ::-webkit-scrollbar-thumb{background:var(--dsw-alias-scrollbar-bg-l1,#c9c9c9);border-radius:4px;}" +
 				"#root{margin-right:calc(var(" + CSS_VAR + ",0px) + var(" + CSS_EXTRA_VAR + ",0px));transition:margin-right .18s ease;}" +
@@ -1258,17 +1256,8 @@ window.__ModuleLoader__.load({
 				}),
 				react.createElement("div", { key: "title", style: { position: "relative", display: "flex", alignItems: "center", gap: 4, padding: "6px 8px", borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)", fontSize: 12.5, fontWeight: 600 } }, [
 					react.createElement("span", { key: "t", style: { flex: 1 } }, "侧边栏"),
-					// 折叠按钮: 固定在标题条右端 (内容区之外), 点击收起。参考 better-sidebar
-					// 的 toggle cluster: 开关始终在面板顶部, 绝不叠在列表/内容中间高度上 — 那会
-					// 挡住文件列表。展开时官方 header 已被 #root 的 margin-right 推到面板左侧,
-					// 面板右上角无官方按钮, 故标题条右端安全, 不与下载对话按钮重叠。
-					react.createElement("button", {
-						key: "collapse",
-						type: "button",
-						className: N + "-collapse",
-						title: "收起侧边栏",
-						onClick: () => setOpen(false),
-					}, react.createElement(PanelGlyph, { size: 14 })),
+					// 收起开关已移到右上角 rail (fixed 定位 toggle, 不与官方按钮重叠),
+					// 标题条内部不再重复放 collapse 按钮 — 避免两个相同图标挤在一起。
 				]),
 				react.createElement("div", { key: "tabs", style: { display: "flex", borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)" } }, [
 					tabButton("explorer", "资源管理"),
