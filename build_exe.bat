@@ -55,7 +55,7 @@ if exist "%~dp0runtime\python\python\vcruntime140_1.dll" set "VC_BINARIES=%VC_BI
 if exist "%~dp0runtime\python\python\vcruntime140_threads.dll" set "VC_BINARIES=%VC_BINARIES% --add-binary "%~dp0runtime\python\python\vcruntime140_threads.dll;.""
 set "PYTHONPATH=%PYINSTALLER_DIR%;%PYTHONPATH%"
 echo [INFO] Building DSH_Launcher.exe ...
-"%PYTHON_CMD%" -m PyInstaller --onefile --windowed --noupx --name DSH_Launcher --icon "%~dp0DSH_Launcher.ico" --add-data "%~dp0DSH_Launcher.ico;."%VC_BINARIES% --distpath dist --workpath build --specpath build "%~dp0launcher.py"
+"%PYTHON_CMD%" -m PyInstaller --clean --noconfirm --onefile --windowed --noupx --name DSH_Launcher --icon "%~dp0DSH_Launcher.ico" --add-data "%~dp0DSH_Launcher.ico;."%VC_BINARIES% --distpath dist --workpath build --specpath build "%~dp0launcher.py"
 if errorlevel 1 (
     echo [ERROR] Build failed. See messages above.
     pause
@@ -68,7 +68,7 @@ rem      main launcher exits, so it can replace a locked DSH_Launcher.exe. It sh
 rem      with the green zip and self-replaces itself during updates. It also embeds
 rem      python, so it needs the same VC binaries as above (already in %VC_BINARIES%).
 echo [INFO] Building DSH_Update.exe ...
-"%PYTHON_CMD%" -m PyInstaller --onefile --windowed --noupx --name DSH_Update --icon "%~dp0DSH_Launcher.ico" --add-data "%~dp0DSH_Launcher.ico;."%VC_BINARIES% --distpath dist --workpath build --specpath build "%~dp0update_agent.py"
+"%PYTHON_CMD%" -m PyInstaller --clean --noconfirm --onefile --windowed --noupx --name DSH_Update --icon "%~dp0DSH_Launcher.ico" --add-data "%~dp0DSH_Launcher.ico;."%VC_BINARIES% --distpath dist --workpath build --specpath build "%~dp0update_agent.py"
 if errorlevel 1 (
     echo [ERROR] DSH_Update build failed. See messages above.
     pause

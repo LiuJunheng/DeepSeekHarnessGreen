@@ -792,6 +792,7 @@ class Launcher:
         self.patch_frontend_uuid()  # 安装/升级后注入 crypto.randomUUID polyfill (局域网 http 用)
         self.patch_web_startup()  # 安装/升级后补丁 startup.js, 放开 --host 0.0.0.0 (局域网访问)
         self.patch_lan_trust()    # 安装/升级后补丁 resolveLanTrust, 支持「只信任填写的主机」
+        self.patch_commands_backoff()     # 确保 ui-commands 目录退避补丁已打 (阻断 commands/list 热重拉风暴)
         # 局域网 /api 补丁 (pickDirectory 等特权 API 不再 403)。失败时给出醒目提示,
         # 不让用户"装了才发现局域网用不了" (2026-08-17, 避坑 #56)。
         lan_api_patched = self.patch_lan_api_trust()
@@ -1406,9 +1407,11 @@ class Launcher:
 
         exit_code, output = run_once()
         if exit_code != 0:
-            # 失败后清一遍本次新装包的 BOM、补 git 源插件放行, 再重试一次 (幂等)
+            # 失败后清一遍本次新装包的 BOM、补两类放行 (git 源 prepare + 原生依赖 ignore),
+            # 再重试一次 (幂等)。两类拦截分别用各自方法处理, 互不干扰。
             self.strip_bom_from_profile_packages(profile)
             self.auto_allow_git_build(profile, output)
+            self.auto_approve_ignored_builds(profile, output)
             exit_code, output = run_once()
         if exit_code != 0:
             raise RuntimeError("重建 profile 依赖树失败, 请检查网络后重试 (详见上方 pnpm 输出)")
@@ -2490,10 +2493,14 @@ class Launcher:
             # 本次 pnpm 刚下载的包可能带 BOM 导致 dsh JSON.parse 崩溃;
             # 清掉 BOM 后重试一次 (pnpm 幂等, 不重复下载, 很快完成)
             self.strip_bom_from_profile_packages(profile)
-            # pnpm 11: git 源插件 prepare 构建脚本被拦 (ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED,
-            # 避坑 44) → 提取报错里的放行 key 写入 profile 的 allowBuilds true (幂等);
-            # 无论是否写入都重试一次, 以保留原有 BOM 修复重试能力
+            # pnpm 11 两类构建拦截互补处理:
+            #   - git 源插件 prepare 脚本 (ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED, 避坑 44)
+            #     → 提取报错里的放行 key 写入 allowBuilds true (幂等);
+            #   - 注册表原生依赖被忽略的构建脚本 (ERR_PNPM_IGNORED_BUILDS)
+            #     → 把报错提示里的包名写入 allowBuilds false (幂等);
+            # 无论是否发生写入都重试一次, 以保留原有 BOM 修复重试能力
             self.auto_allow_git_build(profile, output)
+            self.auto_approve_ignored_builds(profile, output)
             exit_code, output = execute_once()
         # 无论 pnpm 退出码如何, 只要命令执行完就同步一次编排层:
         # 官方 reconcile 只在 pnpm exit 0 时运行, 且不识别 disabled 列表,
@@ -2515,9 +2522,16 @@ class Launcher:
         """返回 profile 的 pnpm-workspace.yaml 绝对路径"""
         return os.path.join(DSH_HOME_DIR, "profiles", profile, "pnpm-workspace.yaml")
 
+    def _format_allow_build_key(self, each_key):
+        """key 含冒号时自动加单引号包裹 (与现有 git 源 key 的写法一致),
+        避免 YAML 把第一个冒号误判为 key 分隔。"""
+        if ":" in each_key:
+            return "'%s'" % each_key.replace("'", "''")
+        return each_key
+
     def set_allow_builds(self, profile, entry_mapping):
         """把 {全key: bool} 合并写入 profile 的 pnpm-workspace.yaml 的 allowBuilds 节。
-        幂等: 已存在的 key 不动, 只补缺失项; 返回是否发生了修改。
+        幂等: 已存在的布尔声明 key 不动, 占位行/重复行/缺失项统一规范化; 返回是否发生了修改。
         key 含冒号 (如 git 源的 dshmarket@https://...) 时自动加单引号包裹,
         避免 YAML 把第一个冒号误判为 key 分隔。"""
         yaml_path = self._pnpm_workspace_yaml(profile)
@@ -2525,35 +2539,88 @@ class Launcher:
             return False
         with open(yaml_path, "r", encoding="utf-8") as file_handle:
             text = file_handle.read()
-        # 收集已有 allowBuilds 顶层条目的 key (支持带引号或裸 key, 值 true/false)
-        existing_keys = set()
+
+        changed = False
+        mapping = {}   # key -> {"line": str, "is_bool": bool}
+        order = []     # [{"kind": "key", "key": str}, {"kind": "line", "line": str}, ...]
+
         allow_match = re.search(r"(?m)^allowBuilds:\s*\n((?:[ \t]+[^\n]*\n)*)", text)
         if allow_match:
             block = allow_match.group(1)
             for each_line in block.splitlines():
+                if not each_line.strip():
+                    order.append({"kind": "line", "line": each_line})
+                    continue
                 item_match = re.match(
-                    r"[ \t]+(['\"]?)([^\n]*?)\1\s*:\s*(?:true|false)\s*$", each_line)
-                if item_match:
-                    existing_keys.add(item_match.group(2))
-        # 构造缺失条目; key 含冒号才加引号 (与现有 git 源 key 的写法一致)
-        adds = []
+                    r"[ \t]+(['\"]?)([^\n]*?)\1\s*:\s*(.+?)\s*$", each_line)
+                if not item_match:
+                    # 注释或其他非 key:value 行
+                    order.append({"kind": "line", "line": each_line})
+                    continue
+                key = item_match.group(2)
+                value = item_match.group(3).strip()
+                is_bool = value in ("true", "false")
+
+                if key in mapping:
+                    # 重复 key → 去重
+                    existing = mapping[key]
+                    # 先从 order 里删掉旧的那条 key 条目
+                    for idx, entry in enumerate(order):
+                        if entry.get("kind") == "key" and entry.get("key") == key:
+                            del order[idx]
+                            break
+                    if is_bool and not existing["is_bool"]:
+                        # 新行是布尔 + 存量是占位 → 用新行替换
+                        mapping[key] = {"line": each_line, "is_bool": True}
+                        order.append({"kind": "key", "key": key})
+                        changed = True
+                    else:
+                        # 新行是占位/非布尔 → 丢弃; 或两个都是布尔 → 保留先出现的那个
+                        # 先出现的 mapping 还在, 需要重新加回 order
+                        order.append({"kind": "key", "key": key})
+                        changed = True
+                else:
+                    mapping[key] = {"line": each_line, "is_bool": is_bool}
+                    order.append({"kind": "key", "key": key})
+
+        # 合并 entry_mapping
         for each_key, each_value in entry_mapping.items():
-            if each_key in existing_keys:
-                continue
-            if ":" in each_key:
-                formatted_key = "'%s'" % each_key.replace("'", "''")
-            else:
-                formatted_key = each_key
-            adds.append("  %s: %s" % (formatted_key, "true" if each_value else "false"))
-        if not adds:
+            if each_key not in mapping:
+                formatted_key = self._format_allow_build_key(each_key)
+                target_line = "  %s: %s" % (formatted_key, "true" if each_value else "false")
+                mapping[each_key] = {"line": target_line, "is_bool": True}
+                order.append({"kind": "key", "key": each_key})
+                changed = True
+            elif not mapping[each_key]["is_bool"]:
+                # 占位行 → 替换为目标布尔行
+                formatted_key = self._format_allow_build_key(each_key)
+                target_line = "  %s: %s" % (formatted_key, "true" if each_value else "false")
+                mapping[each_key]["line"] = target_line
+                mapping[each_key]["is_bool"] = True
+                changed = True
+            # 已是布尔 → 不动 (保留用户设置)
+
+        # 写入阶段
+        if allow_match is None and not mapping:
+            # 没有 allowBuilds 节且无新条目可加
             return False
-        insertion_text = "\n" + "\n".join(adds)
+        if not changed:
+            return False
+
+        # 重建块
+        new_block_lines = []
+        for entry in order:
+            if entry["kind"] == "key":
+                new_block_lines.append(mapping[entry["key"]]["line"])
+            else:
+                new_block_lines.append(entry["line"])
+        new_block = "\n".join(new_block_lines) + "\n"
+
         if allow_match:
-            anchor_match = re.search(r"(?m)^allowBuilds:\s*$", text)
-            anchor_index = anchor_match.start() if anchor_match else allow_match.start()
-            text = text[:anchor_index] + "allowBuilds:" + insertion_text + text[anchor_index + len("allowBuilds:"):]
+            text = text[:allow_match.start(1)] + new_block + text[allow_match.end(1):]
         else:
-            text = text.rstrip() + "\n\nallowBuilds:" + insertion_text + "\n"
+            text = text.rstrip() + "\n\nallowBuilds:\n" + new_block
+
         with open(yaml_path, "w", encoding="utf-8") as file_handle:
             file_handle.write(text)
         return True
@@ -2562,8 +2629,8 @@ class Launcher:
         """首次装插件/装环境时幂等补齐已预构建原生依赖的 false 声明, 避免
         ERR_PNPM_IGNORED_BUILDS 让安装以非 0 退出 (避坑 44)。"""
         entry_mapping = {}
-        for package_name in ("cloudflared", "cpu-features", "node-pty",
-                             "protobufjs", "ssh2"):
+        for package_name in ("cloudflared", "cpu-features", "koffi",
+                             "node-pty", "protobufjs", "ssh2"):
             entry_mapping[package_name] = False
         try:
             if self.set_allow_builds(profile, entry_mapping):
@@ -2571,6 +2638,32 @@ class Launcher:
                          % profile)
         except Exception as error:
             self.log("[警告] 补充 pnpm allowBuilds 失败: %s" % error)
+
+    def auto_approve_ignored_builds(self, profile, command_output):
+        """检测 pnpm 的 ERR_PNPM_IGNORED_BUILDS, 把报错提示里"被忽略构建脚本"的
+        注册表原生依赖 (如 koffi, 其发布包自带预编译产物) 按包名写入 allowBuilds
+        false (幂等), 消除非 0 退出码, 返回是否发生写入。
+        与 auto_allow_git_build 互补: 那个处理 git 源依赖的 prepare 构建拦截,
+        本方法处理注册表里"有构建脚本但无需重复构建"的原生依赖。"""
+        if "ERR_PNPM_IGNORED_BUILDS" not in command_output:
+            return False
+        match = re.search(r"Ignored build scripts:\s*([^\n]+)", command_output)
+        if not match:
+            return False
+        package_names = set()
+        for token in match.group(1).split(","):
+            token = token.strip()
+            if not token:
+                continue
+            # 去掉版本号后缀 (koffi@3.1.6 -> koffi), allowBuilds 用裸包名
+            package_name = re.split(r"@", token, maxsplit=1)[0].strip()
+            if package_name:
+                package_names.add(package_name)
+        if not package_names:
+            return False
+        self.log("检测到 pnpm 忽略构建脚本的原生依赖, 已按否写入 allowBuilds: %s"
+                 % ", ".join(sorted(package_names)))
+        return self.set_allow_builds(profile, {name: False for name in package_names})
 
     def auto_allow_git_build(self, profile, command_output):
         """检测安装失败输出里的 ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED, 提取 git 源插件的
@@ -3264,12 +3357,89 @@ class Launcher:
         self.log("已补丁 dsh web 信任围栏: 受信任主机非空时只信任显式填写的地址")
         return True
 
+    def patch_commands_backoff(self):
+        """补丁 dsh-client-ui-commands 的目录拉取失败退避 (双副本, 幂等可重复)。
+        背景 (2026-08-31, 避坑 #102): 官方 ensureReady 原实现里目录拉取失败后直接 throw,
+        上层 (输入触发 / 命令候选) 随后会立刻再次调用 ensureReady, 在服务不可用期间形成
+        commands/list 高频热重拉风暴——刷爆浏览器连接池 (ERR_INSUFFICIENT_RESOURCES,
+        侧栏与各插件界面一直"加载中"), 也加剧服务端 JS 堆压力。补丁在失败后加 1.5s
+        退避再重试, 并保留 signal 中止语义。dsh 升级重装后由 install_dsh() 自动重新补丁。"""
+        commands_paths = [
+            os.path.join(DSH_DIR, "node_modules", "@deepseek-ai",
+                         "dsh-client-ui-commands", "lib", "client.js"),
+            os.path.join(DSH_HOME_DIR, "profiles", "node_modules",
+                         "@deepseek-ai", "dsh-client-ui-commands", "lib", "client.js"),
+        ]
+        any_ok = False
+        # 精确匹配原始代码块 (TAB 缩进 + LF 行尾, 与 dsh 官方打包保持一致)
+        original_block = (
+            '\t\t\tasync ensureReady(sessionId, signal) {\n'
+            '\t\t\t\tconst entry = this.entry(sessionId);\n'
+            '\t\t\t\twhile (true) {\n'
+            '\t\t\t\t\tif (entry.state === "ready") return entry.commands;\n'
+            '\t\t\t\t\tif (entry.state !== "pending") this.refresh(sessionId);\n'
+            '\t\t\t\t\tawait settled(entry, signal);\n'
+            '\t\t\t\t\tif (entry.state === "failed") throw new Error(`command directory warmup failed: '
+            '${entry.lastError instanceof Error ? entry.lastError.message : String(entry.lastError)}`);\n'
+            '\t\t\t\t}\n'
+            '\t\t\t}'
+        )
+        patched_block = (
+            '\t\t\tasync ensureReady(sessionId, signal) {\n'
+            '\t\t\t\tconst entry = this.entry(sessionId);\n'
+            '\t\t\t\twhile (true) {\n'
+            '\t\t\t\t\tif (entry.state === "ready") return entry.commands;\n'
+            '\t\t\t\t\tif (entry.state !== "pending") this.refresh(sessionId);\n'
+            '\t\t\t\t\tawait settled(entry, signal);\n'
+            '\t\t\t\t\tif (entry.state === "failed") {\n'
+            '\t\t\t\t\t\t// dsh-launcher patch (2026-08-31): 目录拉取失败后加 1.5s 退避再重试,\n'
+            '\t\t\t\t\t\t// 避免服务不可用期间 ensureReady 被高频重复调用, 造成 commands/list\n'
+            '\t\t\t\t\t\t// 热重拉风暴 (刷爆浏览器连接池 + 加剧服务端内存压力)。\n'
+            '\t\t\t\t\t\tawait new Promise((resolve) => setTimeout(resolve, 1500));\n'
+            '\t\t\t\t\t\tif (signal.aborted) throw abortReason(signal);\n'
+            '\t\t\t\t\t\tif (entry.state !== "ready") entry.state = "cold";\n'
+            '\t\t\t\t\t\tcontinue;\n'
+            '\t\t\t\t\t}\n'
+            '\t\t\t\t}\n'
+            '\t\t\t}'
+        )
+        for commands_path in commands_paths:
+            if not os.path.isfile(commands_path):
+                continue
+            try:
+                with open(commands_path, "r", encoding="utf-8") as file_handle:
+                    text = file_handle.read()
+            except OSError:
+                continue
+            # 幂等检查: 只要存在 1.5s 退避即视为已打
+            if "await new Promise((resolve) => setTimeout(resolve, 1500))" in text:
+                any_ok = True
+                continue
+            if original_block not in text:
+                self.log("[警告] ui-commands 文件结构不匹配, 目录退避补丁未应用 @ %s "
+                         "(dsh 版本可能已变化, 待人工确认)" % commands_path)
+                continue
+            new_text = text.replace(original_block, patched_block, 1)
+            try:
+                with open(commands_path, "w", encoding="utf-8") as file_handle:
+                    file_handle.write(new_text)
+                any_ok = True
+            except OSError:
+                continue
+        if any_ok:
+            self.log("已补丁 ui-commands 目录拉取失败退避 (阻断 commands/list 热重拉风暴, 双副本覆盖)")
+        return any_ok
+
     def patch_lan_api_trust(self):
-        """补丁 dsh client-connection 的 /api 信任围栏 (两段式, 幂等可重复)。
+        """补丁 dsh client-connection 的 /api 信任围栏 (两段式, 幂等可重复, 双副本覆盖)。
         背景 (2026-08-17 实测): dsh 官方把 client-connection 的 /api 通道与特权方法
         (host.pickDirectory 等 PRIVILEGED_METHODS) 默认 pin 死在 loopback——局域网模式
         (0.0.0.0) 下用局域网 IP / 本机局域网 IP 访问 WebUI 时, 所有 /api 请求都返回
         HTTP 403, 报 "transport failure for /api/host.pickDirectory: HTTP 403"。
+        dsh-client-connection 在两个位置都有副本:
+          core   : DSH_DIR/node_modules/... —— 宿主核心自带的
+          shared : DSH_HOME_DIR/profiles/node_modules/... —— profile 通过 pnpm 软链引用的共享副本
+        dsh 运行时实际加载的是 shared 副本, 但两个副本可能独立存在, 两个都要 patch。
         两段式拆分 (更灵活, 可随官方演进逐步停用; 任一段结构不匹配只跳过该段并告警,
         绝不整块跳过或破坏运行):
           段1 (hostname 兼容): 只把 Origin 同源比较从 host(带端口) 放开为 hostname(忽略
@@ -3282,178 +3452,189 @@ class Launcher:
         CSRF 防护 (sec-fetch-site / origin 同 hostname) 与 DNS-rebinding 防护均保留。
         说明: register() 是类方法, 闭包访问不到 apply() 内的 log403, 故用内联
         console.error; 其余出口 (route/websocket/fetchHandler) 在 apply 作用域内可用。
-        dsh 升级重装后由 install_dsh() 自动重新补丁。返回 True 表示就绪(或已是最新)。"""
-        connection_path = os.path.join(DSH_DIR, "node_modules", "@deepseek-ai",
-                                       "dsh-client-connection", "lib", "index.js")
-        if not os.path.isfile(connection_path):
-            return False
-        try:
-            with open(connection_path, "r", encoding="utf-8") as file_handle:
-                text = file_handle.read()
-        except OSError:
-            return False
-        # 完整 v3 幂等检查: 具备 hostname 比较 + 各出口日志
-        if ("new URL(origin).hostname" in text
-                and 'log403("fetchHandler"' in text and 'log403("route"' in text
-                and 'log403("websocket"' in text
-                and "[client-connection:403] register" in text):
-            return True   # 已是完整 v3 补丁, 幂等返回
+        dsh 升级重装后由 install_dsh() 自动重新补丁。返回 True 表示至少一个副本成功就绪。"""
+        # dsh-client-connection 在两个位置都有副本:
+        #   core   : DSH_DIR/node_modules/... —— 宿主核心自带的
+        #   shared : DSH_HOME_DIR/profiles/node_modules/... —— profile 通过 pnpm 软链引用的共享副本
+        # dsh 运行时实际加载的是 shared 副本, 但两个副本可能独立存在, 两个都要 patch。
+        connection_paths = [
+            os.path.join(DSH_DIR, "node_modules", "@deepseek-ai",
+                         "dsh-client-connection", "lib", "index.js"),
+            os.path.join(DSH_HOME_DIR, "profiles", "node_modules",
+                         "@deepseek-ai", "dsh-client-connection",
+                         "lib", "index.js"),
+        ]
+        any_ok = False
 
-        # ---------- 官方面貌 (用于还原与替换锚点) ----------
-        original_trust = "const trustedHosts = config?.trustedHosts ?? [];"
-        original_privileged = "!isTrustedApiRequest(request, [])) return new Response(\"forbidden\", { status: 403 });"
-        original_route = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
-                          "\t\t\tres.writeHead(403);\n"
-                          "\t\t\tres.end(\"forbidden\");\n"
-                          "\t\t\treturn;\n"
-                          "\t\t}")
-        original_register = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
-                             "\t\t\t\tres.writeHead(403);\n"
-                             "\t\t\t\tres.end(\"forbidden\");\n"
-                             "\t\t\t\treturn;\n"
-                             "\t\t\t}")
-        original_ws = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
-                       "\t\t\t\t\trejectWebSocketUpgrade(socket);\n"
-                       "\t\t\t\t\treturn;\n"
-                       "\t\t\t\t}")
-        original_interceptor = ('if (interceptor.options.authority === "loopback" && !isTrustedApiRequest(request, [])) '
-                                'return Promise.resolve(new Response("forbidden", { status: 403 }));')
-        original_origin = ("try {\n"
-                           "\t\treturn new URL(origin).host === hostUrl.host;\n"
-                           "\t} catch {")
+        for connection_path in connection_paths:
+            if not os.path.isfile(connection_path):
+                continue
+            try:
+                with open(connection_path, "r", encoding="utf-8") as file_handle:
+                    text = file_handle.read()
+            except OSError:
+                continue
+            # 幂等检查 (v4, 2026-08-31): 只要具备 hostname 兼容比较(段1)即视为已打。
+            # 段1 才是修复 Chrome150+ 无端口 Origin 导致 /api 全 403 的关键; log403 是
+            # 旧版 dsh 结构的 段2 诊断日志, 新版结构未必存在, 不再作为幂等必要条件,
+            # 避免每次启动都走"还原再重打"造成噪声与误伤风险。
+            if "new URL(origin).hostname" in text:
+                any_ok = True   # 已具备 hostname 兼容(段1), 幂等返回
+                continue
 
-        # ---------- v1 / v2 已知补丁片段 (用于还原) ----------
-        v1_trust = ("let trustedHosts = config?.trustedHosts ?? [];\n"
-                    "\t// dsh-launcher LAN patch: 局域网模式(0.0.0.0)且未显式配置信任主机时, 自动把\n"
-                    "\t// dsh-web-app 提供的本机局域网 IPv4 (webRuntime.lanAddresses) 并入信任列表;\n"
-                    "\t// 否则 /api 通道与 pickDirectory 等特权 API 被 client-connection 默认 pin 死在\n"
-                    "\t// loopback, 局域网 IP / 本机局域网 IP 访问会全部 HTTP 403 (仅 127.0.0.1 可用)。\n"
-                    "\tconst webRuntime = ctx.get?.(\"webRuntime\");\n"
-                    "\tif (trustedHosts.length === 0 && webRuntime?.lanAddresses?.length > 0) {\n"
-                    "\t\ttrustedHosts = [...webRuntime.lanAddresses];\n"
-                    "\t}")
-        v1_privileged = "!isTrustedApiRequest(request, trustedHosts)) return new Response(\"forbidden\", { status: 403 });"
-        v2_trust = (
-            "let trustedHosts = config?.trustedHosts ?? [];\n"
-            "\t// dsh-launcher LAN patch: 局域网模式(0.0.0.0)且未显式配置信任主机时, 自动把\n"
-            "\t// dsh-web-app 提供的本机局域网 IPv4 (webRuntime.lanAddresses) 并入信任列表;\n"
-            "\t// 否则 /api 通道与 pickDirectory 等特权 API 被 client-connection 默认 pin 死在\n"
-            "\t// loopback, 局域网 IP / 本机局域网 IP 访问会全部 HTTP 403 (仅 127.0.0.1 可用)。\n"
-            "\tconst webRuntime = ctx.get?.(\"webRuntime\");\n"
-            "\tif (trustedHosts.length === 0 && webRuntime?.lanAddresses?.length > 0) {\n"
-            "\t\ttrustedHosts = [...webRuntime.lanAddresses];\n"
-            "\t}\n"
-            "\t// dsh-launcher: 403 诊断日志 (v2) —— 记录被信任围栏拒绝的请求头, 排查\n"
-            "\t// \"transport failure for /api/host.pickDirectory: HTTP 403\" 时看 server.log。\n"
-            "\tconsole.error(\"[client-connection] LAN patch v2 active, trustedHosts=\" + JSON.stringify(trustedHosts)\n"
-            "\t\t+ \" lanAddresses=\" + JSON.stringify(webRuntime?.lanAddresses));\n"
-            "\tconst log403 = (where, request) => {\n"
-            "\t\tconsole.error(\"[client-connection:403] \" + where\n"
-            "\t\t\t+ \" url=\" + request.url\n"
-            "\t\t\t+ \" method=\" + (request.method ?? \"\")\n"
-            "\t\t\t+ \" ua=\" + header(request.headers, \"user-agent\")\n"
-            "\t\t\t+ \" host=\" + header(request.headers, \"host\")\n"
-            "\t\t\t+ \" origin=\" + header(request.headers, \"origin\")\n"
-            "\t\t\t+ \" sec-fetch-site=\" + header(request.headers, \"sec-fetch-site\")\n"
-            "\t\t\t+ \" referer=\" + header(request.headers, \"referer\")\n"
-            "\t\t\t+ \" trustedHosts=\" + JSON.stringify(trustedHosts));\n"
-            "\t};")
-        v2_privileged = ("!isTrustedApiRequest(request, trustedHosts)) { log403(\"fetchHandler\", request); "
-                         "return new Response(\"forbidden\", { status: 403 }); }")
-        v2_route = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
-                    "\t\t\tlog403(\"route\", req);\n"
-                    "\t\t\tres.writeHead(403);\n"
-                    "\t\t\tres.end(\"forbidden\");\n"
-                    "\t\t\treturn;\n"
-                    "\t\t}")
-        v2_register = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
-                       "\t\t\t\tconsole.error(\"[client-connection:403] register host=\" + header(req.headers, \"host\")\n"
-                       "\t\t\t\t\t+ \" origin=\" + header(req.headers, \"origin\")\n"
-                       "\t\t\t\t\t+ \" sec-fetch-site=\" + header(req.headers, \"sec-fetch-site\"));\n"
-                       "\t\t\t\tres.writeHead(403);\n"
-                       "\t\t\t\tres.end(\"forbidden\");\n"
-                       "\t\t\t\treturn;\n"
-                       "\t\t\t}")
-        v2_register_flat = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
-                            "\t\t\t\tconsole.error(\"[client-connection:403] register host=\" + header(req.headers, \"host\")"
-                            " + \" origin=\" + header(req.headers, \"origin\")"
-                            " + \" sec-fetch-site=\" + header(req.headers, \"sec-fetch-site\"));\n"
-                            "\t\t\t\tres.writeHead(403);\n"
-                            "\t\t\t\tres.end(\"forbidden\");\n"
-                            "\t\t\t\treturn;\n"
-                            "\t\t\t}")
-        v2_ws = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
-                 "\t\t\t\t\tlog403(\"websocket\", req);\n"
-                 "\t\t\t\t\trejectWebSocketUpgrade(socket);\n"
-                 "\t\t\t\t\treturn;\n"
-                 "\t\t\t\t}")
-        v2_interceptor = ('if (interceptor.options.authority === "loopback" && !isTrustedApiRequest(request, [])) { '
-                          'console.error("[client-connection:403] interceptor host=" + header(request.headers, "host") '
-                          '+ " origin=" + header(request.headers, "origin") '
-                          '+ " sec-fetch-site=" + header(request.headers, "sec-fetch-site")); '
-                          'return Promise.resolve(new Response("forbidden", { status: 403 })); }')
-        v3_origin = ("try {\n"
-                     "\t\t// dsh-launcher patch v3: 只比较 hostname, 忽略端口。\n"
-                     "\t\t// Chrome 150+ 对 http://127.0.0.1:<port> 页面的同源请求会发送不带端口的\n"
-                     "\t\t// Origin (http://127.0.0.1), 官方用 new URL(origin).host === hostUrl.host\n"
-                     "\t\t// 比较会把 \"127.0.0.1\" 与 \"127.0.0.1:3080\" 判为不等 → 全部 /api 403。\n"
-                     "\t\t// 端口不是 CSRF / DNS-rebinding 边界, 忽略它不影响安全语义。\n"
-                     "\t\treturn new URL(origin).hostname === hostUrl.hostname;\n"
-                     "\t} catch {")
+            # ---------- 官方面貌 (用于还原与替换锚点) ----------
+            original_trust = "const trustedHosts = config?.trustedHosts ?? [];"
+            original_privileged = "!isTrustedApiRequest(request, [])) return new Response(\"forbidden\", { status: 403 });"
+            original_route = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
+                              "\t\t\tres.writeHead(403);\n"
+                              "\t\t\tres.end(\"forbidden\");\n"
+                              "\t\t\treturn;\n"
+                              "\t\t}")
+            original_register = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
+                                 "\t\t\t\tres.writeHead(403);\n"
+                                 "\t\t\t\tres.end(\"forbidden\");\n"
+                                 "\t\t\t\treturn;\n"
+                                 "\t\t\t}")
+            original_ws = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
+                           "\t\t\t\t\trejectWebSocketUpgrade(socket);\n"
+                           "\t\t\t\t\treturn;\n"
+                           "\t\t\t\t}")
+            original_interceptor = ('if (interceptor.options.authority === "loopback" && !isTrustedApiRequest(request, [])) '
+                                    'return Promise.resolve(new Response("forbidden", { status: 403 }));')
+            original_origin = ("try {\n"
+                               "\t\treturn new URL(origin).host === hostUrl.host;\n"
+                               "\t} catch {")
 
-        # ---------- 还原所有已知补丁片段为官方原样 ----------
-        for old, new in ((v3_origin, original_origin),
-                         (v2_trust, original_trust), (v1_trust, original_trust),
-                         (v2_privileged, original_privileged), (v1_privileged, original_privileged),
-                         (v2_route, original_route), (v2_register, original_register),
-                         (v2_register_flat, original_register),
-                         (v2_ws, original_ws), (v2_interceptor, original_interceptor)):
-            text = text.replace(old, new, 1)
+            # ---------- v1 / v2 已知补丁片段 (用于还原) ----------
+            v1_trust = ("let trustedHosts = config?.trustedHosts ?? [];\n"
+                        "\t// dsh-launcher LAN patch: 局域网模式(0.0.0.0)且未显式配置信任主机时, 自动把\n"
+                        "\t// dsh-web-app 提供的本机局域网 IPv4 (webRuntime.lanAddresses) 并入信任列表;\n"
+                        "\t// 否则 /api 通道与 pickDirectory 等特权 API 被 client-connection 默认 pin 死在\n"
+                        "\t// loopback, 局域网 IP / 本机局域网 IP 访问会全部 HTTP 403 (仅 127.0.0.1 可用)。\n"
+                        "\tconst webRuntime = ctx.get?.(\"webRuntime\");\n"
+                        "\tif (trustedHosts.length === 0 && webRuntime?.lanAddresses?.length > 0) {\n"
+                        "\t\ttrustedHosts = [...webRuntime.lanAddresses];\n"
+                        "\t}")
+            v1_privileged = "!isTrustedApiRequest(request, trustedHosts)) return new Response(\"forbidden\", { status: 403 });"
+            v2_trust = (
+                "let trustedHosts = config?.trustedHosts ?? [];\n"
+                "\t// dsh-launcher LAN patch: 局域网模式(0.0.0.0)且未显式配置信任主机时, 自动把\n"
+                "\t// dsh-web-app 提供的本机局域网 IPv4 (webRuntime.lanAddresses) 并入信任列表;\n"
+                "\t// 否则 /api 通道与 pickDirectory 等特权 API 被 client-connection 默认 pin 死在\n"
+                "\t// loopback, 局域网 IP / 本机局域网 IP 访问会全部 HTTP 403 (仅 127.0.0.1 可用)。\n"
+                "\tconst webRuntime = ctx.get?.(\"webRuntime\");\n"
+                "\tif (trustedHosts.length === 0 && webRuntime?.lanAddresses?.length > 0) {\n"
+                "\t\ttrustedHosts = [...webRuntime.lanAddresses];\n"
+                "\t}\n"
+                "\t// dsh-launcher: 403 诊断日志 (v2) —— 记录被信任围栏拒绝的请求头, 排查\n"
+                "\t// \"transport failure for /api/host.pickDirectory: HTTP 403\" 时看 server.log。\n"
+                "\tconsole.error(\"[client-connection] LAN patch v2 active, trustedHosts=\" + JSON.stringify(trustedHosts)\n"
+                "\t\t+ \" lanAddresses=\" + JSON.stringify(webRuntime?.lanAddresses));\n"
+                "\tconst log403 = (where, request) => {\n"
+                "\t\tconsole.error(\"[client-connection:403] \" + where\n"
+                "\t\t\t+ \" url=\" + request.url\n"
+                "\t\t\t+ \" method=\" + (request.method ?? \"\")\n"
+                "\t\t\t+ \" ua=\" + header(request.headers, \"user-agent\")\n"
+                "\t\t\t+ \" host=\" + header(request.headers, \"host\")\n"
+                "\t\t\t+ \" origin=\" + header(request.headers, \"origin\")\n"
+                "\t\t\t+ \" sec-fetch-site=\" + header(request.headers, \"sec-fetch-site\")\n"
+                "\t\t\t+ \" referer=\" + header(request.headers, \"referer\")\n"
+                "\t\t\t+ \" trustedHosts=\" + JSON.stringify(trustedHosts));\n"
+                "\t};")
+            v2_privileged = ("!isTrustedApiRequest(request, trustedHosts)) { log403(\"fetchHandler\", request); "
+                             "return new Response(\"forbidden\", { status: 403 }); }")
+            v2_route = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
+                        "\t\t\tlog403(\"route\", req);\n"
+                        "\t\t\tres.writeHead(403);\n"
+                        "\t\t\tres.end(\"forbidden\");\n"
+                        "\t\t\treturn;\n"
+                        "\t\t}")
+            v2_register = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
+                           "\t\t\t\tconsole.error(\"[client-connection:403] register host=\" + header(req.headers, \"host\")\n"
+                           "\t\t\t\t\t+ \" origin=\" + header(req.headers, \"origin\")\n"
+                           "\t\t\t\t\t+ \" sec-fetch-site=\" + header(req.headers, \"sec-fetch-site\"));\n"
+                           "\t\t\t\tres.writeHead(403);\n"
+                           "\t\t\t\tres.end(\"forbidden\");\n"
+                           "\t\t\t\treturn;\n"
+                           "\t\t\t}")
+            v2_register_flat = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
+                                "\t\t\t\tconsole.error(\"[client-connection:403] register host=\" + header(req.headers, \"host\")"
+                                " + \" origin=\" + header(req.headers, \"origin\")"
+                                " + \" sec-fetch-site=\" + header(req.headers, \"sec-fetch-site\"));\n"
+                                "\t\t\t\tres.writeHead(403);\n"
+                                "\t\t\t\tres.end(\"forbidden\");\n"
+                                "\t\t\t\treturn;\n"
+                                "\t\t\t}")
+            v2_ws = ("if (!isTrustedApiRequest(req, trustedHosts)) {\n"
+                     "\t\t\t\t\tlog403(\"websocket\", req);\n"
+                     "\t\t\t\t\trejectWebSocketUpgrade(socket);\n"
+                     "\t\t\t\t\treturn;\n"
+                     "\t\t\t\t}")
+            v2_interceptor = ('if (interceptor.options.authority === "loopback" && !isTrustedApiRequest(request, [])) { '
+                              'console.error("[client-connection:403] interceptor host=" + header(request.headers, "host") '
+                              '+ " origin=" + header(request.headers, "origin") '
+                              '+ " sec-fetch-site=" + header(request.headers, "sec-fetch-site")); '
+                              'return Promise.resolve(new Response("forbidden", { status: 403 })); }')
+            v3_origin = ("try {\n"
+                         "\t\t// dsh-launcher patch v3: 只比较 hostname, 忽略端口。\n"
+                         "\t\t// Chrome 150+ 对 http://127.0.0.1:<port> 页面的同源请求会发送不带端口的\n"
+                         "\t\t// Origin (http://127.0.0.1), 官方用 new URL(origin).host === hostUrl.host\n"
+                         "\t\t// 比较会把 \"127.0.0.1\" 与 \"127.0.0.1:3080\" 判为不等 → 全部 /api 403。\n"
+                         "\t\t// 端口不是 CSRF / DNS-rebinding 边界, 忽略它不影响安全语义。\n"
+                         "\t\treturn new URL(origin).hostname === hostUrl.hostname;\n"
+                         "\t} catch {")
 
-        # ---------- 打补丁: 段1 本机/共用 Chrome150 兼容 (仅 Origin 比较) ----------
-        # 只改那一行判定: host(带端口) -> hostname(忽略端口)。
-        origin_patched = False
-        if "new URL(origin).hostname" in text:
-            origin_patched = True                 # 官方已自行放宽/修复, 幂等跳过
-        elif original_origin in text:
-            text = text.replace(original_origin, v3_origin, 1)
-            origin_patched = True
-        else:
-            self.log("跳过 client-connection 段1(Origin hostname 兼容) 补丁: 目标代码结构不匹配")
+            # ---------- 还原所有已知补丁片段为官方原样 ----------
+            for old, new in ((v3_origin, original_origin),
+                             (v2_trust, original_trust), (v1_trust, original_trust),
+                             (v2_privileged, original_privileged), (v1_privileged, original_privileged),
+                             (v2_route, original_route), (v2_register, original_register),
+                             (v2_register_flat, original_register),
+                             (v2_ws, original_ws), (v2_interceptor, original_interceptor)):
+                text = text.replace(old, new, 1)
 
-        # ---------- 打补丁: 段2 局域网 trustedHosts 注入 + 403 诊断日志 ----------
-        # 官方把 trustedHosts 暴露为插件级 config schema; 这里仍以运行时代码注入兜底,
-        # 端口/结构一旦不对只跳过本段, 不影响段1。
-        lan_patched = False
-        if "[client-connection:403]" in text and "LAN patch v2 active" in text:
-            lan_patched = True                    # 已打
-        elif original_trust not in text or original_privileged not in text:
-            self.log("跳过 client-connection 段2(局域网 trustedHosts) 补丁: 目标代码结构不匹配 (dsh 版本可能已大改)")
-        else:
-            text = text.replace(original_trust, v2_trust, 1)
-            text = text.replace(original_privileged, v2_privileged, 1)
-            text = text.replace(original_route, v2_route, 1)
-            text = text.replace(original_register, v2_register, 1)
-            text = text.replace(original_ws, v2_ws, 1)
-            text = text.replace(original_interceptor, v2_interceptor, 1)
-            lan_patched = True
+            # ---------- 打补丁: 段1 本机/共用 Chrome150 兼容 (仅 Origin 比较) ----------
+            # 只改那一行判定: host(带端口) -> hostname(忽略端口)。
+            origin_patched = False
+            if "new URL(origin).hostname" in text:
+                origin_patched = True                 # 官方已自行放宽/修复, 幂等跳过
+            elif original_origin in text:
+                text = text.replace(original_origin, v3_origin, 1)
+                origin_patched = True
+            else:
+                self.log("跳过 client-connection 段1(Origin hostname 兼容) 补丁: 目标代码结构不匹配")
 
-        if not (origin_patched or lan_patched):
-            # 两段结构都不匹配 (dsh 版本大改时), 不强行写回, 避免破坏运行
-            self.log("跳过 client-connection 补丁: 两段目标结构均不匹配 (dsh 版本可能已大改)")
-            return False
-        try:
-            with open(connection_path, "w", encoding="utf-8") as file_handle:
-                file_handle.write(text)
-        except OSError:
-            return False
-        applied_segments = []
-        if origin_patched:
-            applied_segments.append("段1 Chrome150 hostname 兼容")
-        if lan_patched:
-            applied_segments.append("段2 局域网 trustedHosts+403日志")
-        self.log("已补丁 dsh client-connection (两段式, " + " + ".join(applied_segments) + "): /api 不再 403")
-        return True
+            # ---------- 打补丁: 段2 局域网 trustedHosts 注入 + 403 诊断日志 ----------
+            # 官方把 trustedHosts 暴露为插件级 config schema; 这里仍以运行时代码注入兜底,
+            # 端口/结构一旦不对只跳过本段, 不影响段1。
+            lan_patched = False
+            if "[client-connection:403]" in text and "LAN patch v2 active" in text:
+                lan_patched = True                    # 已打
+            elif original_trust not in text or original_privileged not in text:
+                self.log("跳过 client-connection 段2(局域网 trustedHosts) 补丁: 目标代码结构不匹配 (dsh 版本可能已大改)")
+            else:
+                text = text.replace(original_trust, v2_trust, 1)
+                text = text.replace(original_privileged, v2_privileged, 1)
+                text = text.replace(original_route, v2_route, 1)
+                text = text.replace(original_register, v2_register, 1)
+                text = text.replace(original_ws, v2_ws, 1)
+                text = text.replace(original_interceptor, v2_interceptor, 1)
+                lan_patched = True
+
+            if not (origin_patched or lan_patched):
+                # 两段结构都不匹配 (dsh 版本大改时), 不强行写回, 避免破坏运行
+                self.log("跳过 client-connection 补丁: 两段目标结构均不匹配 (dsh 版本可能已大改)")
+                continue
+            try:
+                with open(connection_path, "w", encoding="utf-8") as file_handle:
+                    file_handle.write(text)
+            except OSError:
+                continue
+            any_ok = True
+
+        if any_ok:
+            self.log("已补丁 dsh client-connection 双副本: /api 不再 403")
+        return any_ok
 
     def lan_addresses(self):
         """枚举本机非内网 IPv4 地址列表 (绑定 0.0.0.0 时用于提示局域网访问地址)。
@@ -3702,6 +3883,7 @@ class Launcher:
         self.patch_frontend_uuid()        # 确保 crypto.randomUUID polyfill 已注入 (局域网 http 用)
         self.patch_web_startup()          # 确保 startup.js 已补丁 (dsh 升级重装后自动补齐, 局域网绑定用)
         self.patch_lan_trust()            # 确保 resolveLanTrust 已补丁 (受信任主机精确语义)
+        self.patch_commands_backoff()     # 确保 ui-commands 目录退避补丁已打 (阻断 commands/list 热重拉风暴)
         # 确保 /api 通道在局域网模式下可用 (pickDirectory 等特权 API 不再 403);
         # 失败时给出醒目提示, 避免"局域网模式下静默 403" (2026-08-17, 避坑 #56)。
         lan_api_patched = self.patch_lan_api_trust()
