@@ -332,3 +332,39 @@ launcher.py 侧注意事项（插件集成相关）：
 * launcher 启动时会对 node_modules 里的插件做完整性校验（hash 比对），发现"被污染"会删掉从 `file:plugins/<插件名>` 重新 `dsh plugin add` 安装。修改插件源码后**直接重启 launcher 即可**，不用手动 copy。
 
 * 插件文件必须**无 BOM UTF-8**。launcher 跑 pnpm install 时如果 JSON/YAML 有 BOM 会报 `SyntaxError: Unexpected token '\uFEFF'`。
+
+## 十、profile package.json 与 cordis hoisting
+
+### 1. 三层 node_modules 结构（pnpm hoisted 模式）
+
+```
+runtime/dsh/node_modules/@deepseek-ai/cordis   ← DSH 框架自带 (唯一物理源)
+runtime/dsh-home/profiles/node_modules/…       ← hoist 硬链接到上面
+runtime/dsh-home/profiles/web/node_modules/…   ← hoist 硬链接到上面
+```
+
+pnpm hoisting 把三层 node_modules 都指向同一份物理目录，不是三份拷贝。`os.path.islink()` 在 Windows hoisted 模式下返回 False（用的是 junction/硬链接不是 symlink）。
+
+### 2. 插件管理里看到 cordis 不是"重复安装"
+
+插件管理读 `list_installed_plugins()` → 扫 profile/package.json 的 dependencies → 无差别显示。cordis 家族恰好在 dependencies 里（hoisted 残留），所以被误显示为"已装插件"。
+
+**不是真的装了两份**，是显示逻辑没过滤内部包。
+
+### 3. profile/cordis.yml 不 import cordis
+
+v1.0.25 自愈系统里 `_clean_profile_manifest` 的 `_EXCEPTIONAL_PROFILE_DEPS` 注释写的"profile 的 cordis.yml 直接 import cordis"——**实测 cordis.yml 只是 bundle 加载说明，没有任何 `import cordis`**。例外名单是保守过度设计。
+
+### 4. 例外名单已移除（v1.0.25 hotfix）
+
+验证方法：
+- 手动在插件管理里移除 cordis → 重启 DSH → 服务正常（pnpm hoisting 残留 + Node.js 模块解析自动向上回溯 → 不崩）
+- 移除后 profile dependencies 变干净：只剩 file: 本地插件 + 用户主动安装的外部插件
+
+**结论**：cordis 家族、schemastery 等内部包**应该全被 `_clean_profile_manifest` 洗掉**。例外名单已删除（-18 行）。如果未来 DSH 升级后发现某些内部包真的被 profile 代码 import 了，**届时再加精确例外**，而不是先留着所有内部包污染 dependencies。
+
+### 5. 清掉内部包后的好处
+
+- profile/package.json dependencies 干净（只有真正的插件）
+- 插件管理列表不再误显示 cordis / schemastery 等内部包
+- 依赖溯源清晰：装了什么插件 → package.json 里就看到什么

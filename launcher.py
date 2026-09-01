@@ -1285,9 +1285,7 @@ class Launcher:
         删除判定 (同时满足):
         1) 名字是黑名单前缀 (@deepseek-ai/* / cordis* / schemastery / node-addon*)
            或 是 dsh-* 前缀的顶层包 (runtime 的 dsh-xxx 内部模块, 不是插件);
-        2) 不是 file: 本地插件 (本地插件在 plugins/ 目录下, 以 file: 协议声明);
-        3) 不在例外名单里 (cordis / cordis-plugin-* / schemastery 在 hoisted 模式下
-           被 profile 的 cordis.yml 直接 import, 需要保留)。
+        2) 不是 file: 本地插件 (本地插件在 plugins/ 目录下, 以 file: 协议声明)。
         其他名字不在这个黑名单里的依赖 (如 dsh-ollama, dsh-archive-purge 等) 一律保留,
         即使它们碰巧也在 runtime 里有同名——因为可能是用户装了不同版本的。"""
         manifest = self.read_profile_manifest(profile)
@@ -1297,24 +1295,11 @@ class Launcher:
         if not dependencies:
             return False
         version_map = self._host_core_versions()
-        # 例外名单: 这些包虽然是 @deepseek-ai 或 cordis 相关, 但 profile 确实需要
-        _EXCEPTIONAL_PROFILE_DEPS = {
-            "@deepseek-ai/cordis",
-            "@deepseek-ai/cordis-plugin-loader",
-            "@deepseek-ai/cordis-plugin-include",
-            "@deepseek-ai/cordis-plugin-hmr",
-            "@deepseek-ai/cordis-plugin-timer",
-            "@deepseek-ai/cordis-plugin-group",
-            "@deepseek-ai/schemastery",
-        }
         removed_packages = []
         for package_name in list(dependencies.keys()):
             spec = str(dependencies[package_name] or "")
             # file: 本地插件永远保留
             if spec.startswith("file:"):
-                continue
-            # 例外名单里的 cordis / schemastery 也保留
-            if package_name in _EXCEPTIONAL_PROFILE_DEPS:
                 continue
             # 清洗判定: 属于黑名单前缀之一
             # 对于 dsh-* 非 scoped 顶层包, 还要额外检查:
