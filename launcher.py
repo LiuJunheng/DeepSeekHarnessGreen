@@ -35,6 +35,9 @@ import zlib
 import webbrowser
 import threading
 import subprocess
+# Windows 下所有子进程统一隐藏控制台窗口, 避免启动/停止时 cmd 黑框闪关
+# (subprocess.run / call / Popen 均接受 creationflags, 非 Windows 自动为 0)
+_SUBPROC_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 import urllib.request
 import urllib.parse
 import zipfile
@@ -706,7 +709,8 @@ class Launcher:
         process = subprocess.Popen(
             command, cwd=cwd, env=env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding="utf-8", errors="replace")
+            text=True, encoding="utf-8", errors="replace",
+            creationflags=_SUBPROC_NO_WINDOW)
         collected_lines = []
         read_errors = []
         started_time = time.time()
@@ -857,7 +861,7 @@ class Launcher:
             result = subprocess.run(command, cwd=DSH_DIR, env=env,
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     text=True, encoding="utf-8", errors="replace",
-                                    timeout=60)
+                                    timeout=60, creationflags=_SUBPROC_NO_WINDOW)
             output = (result.stdout or "").strip()
             if result.returncode != 0 or not output:
                 self.log("npm view 查询失败, 输出: %s" % (result.stdout or result.stderr or ""))
@@ -3807,7 +3811,8 @@ class Launcher:
         try:
             probe_result = subprocess.run(
                 [python_exe, "-c", "import webview"],
-                capture_output=True, timeout=30)
+                capture_output=True, timeout=30,
+                creationflags=_SUBPROC_NO_WINDOW)
             return probe_result.returncode == 0
         except Exception:
             return False
@@ -4378,7 +4383,8 @@ class Launcher:
         try:
             subprocess.call(
                 ["netsh", "advfirewall", "firewall", "delete", "rule", "name=%s" % rule_name],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=_SUBPROC_NO_WINDOW)
         except OSError:
             pass
         try:
@@ -4386,7 +4392,8 @@ class Launcher:
                        "name=%s" % rule_name, "dir=in", "action=allow",
                        "protocol=TCP", "localport=%d" % port]
             result = subprocess.call(command, stdout=subprocess.DEVNULL,
-                                     stderr=subprocess.DEVNULL)
+                                     stderr=subprocess.DEVNULL,
+                                     creationflags=_SUBPROC_NO_WINDOW)
             if result != 0:
                 self.log("[警告] 无法写入 Windows 防火墙放行规则 (需要管理员权限): "
                          "局域网访问端口 %d 可能不可达" % port)
@@ -4796,7 +4803,7 @@ class Launcher:
             result = subprocess.run(
                 ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                text=True, timeout=8)
+                text=True, timeout=8, creationflags=_SUBPROC_NO_WINDOW)
         except Exception:
             return []
         owners = []
@@ -4839,7 +4846,7 @@ class Launcher:
             try:
                 subprocess.run(["taskkill", "/F", "/PID", str(pid)],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                               timeout=8)
+                               timeout=8, creationflags=_SUBPROC_NO_WINDOW)
                 self.log("已清理残留 dsh 进程 (PID: %s)" % pid)
                 cleaned += 1
             except Exception as error:
@@ -4863,7 +4870,8 @@ class Launcher:
                         result = subprocess.run(
                             ["tasklist", "/FI", "PID eq %d" % pid],
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                            text=True, timeout=5)   # 加超时, 避免刷新状态时界面卡住
+                            text=True, timeout=5,
+                            creationflags=_SUBPROC_NO_WINDOW)   # 加超时, 避免刷新状态时界面卡住
                         return str(pid) in result.stdout
                     else:
                         if os.path.isdir("/proc/%d" % pid):
@@ -4895,7 +4903,8 @@ class Launcher:
                     pid = int(file_handle.read().strip())
                 if sys.platform == "win32":
                     subprocess.run(["taskkill", "/F", "/PID", str(pid)],
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   creationflags=_SUBPROC_NO_WINDOW)
                 else:
                     os.kill(pid, 15)
                 stopped = True
