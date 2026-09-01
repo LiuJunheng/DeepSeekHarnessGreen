@@ -327,15 +327,15 @@
 
 launcher.py 侧注意事项（插件集成相关）：
 
-* `_bundled_plugin_dirs()` 自动扫描 `plugins/` 下含 `package.json` 的子目录，无需手动注册。首次启动时 `install_bundled_plugins()` 自动装进 profile node_modules，后续 `update_bundled_plugins()` 自动同步源码更新。
+* `_bundled_plugin_dirs()` 自动扫描 `plugins/` 下含 `package.json` 的子目录，无需手动注册。首次启动时 `install_bundled_plugins()` 自动装进 profile node\_modules，后续 `update_bundled_plugins()` 自动同步源码更新。
 
-* launcher 启动时会对 node_modules 里的插件做完整性校验（hash 比对），发现"被污染"会删掉从 `file:plugins/<插件名>` 重新 `dsh plugin add` 安装。修改插件源码后**直接重启 launcher 即可**，不用手动 copy。
+* launcher 启动时会对 node\_modules 里的插件做完整性校验（hash 比对），发现"被污染"会删掉从 `file:plugins/<插件名>` 重新 `dsh plugin add` 安装。修改插件源码后**直接重启 launcher 即可**，不用手动 copy。
 
 * 插件文件必须**无 BOM UTF-8**。launcher 跑 pnpm install 时如果 JSON/YAML 有 BOM 会报 `SyntaxError: Unexpected token '\uFEFF'`。
 
 ## 十、profile package.json 与 cordis hoisting
 
-### 1. 三层 node_modules 结构（pnpm hoisted 模式）
+### 1. 三层 node\_modules 结构（pnpm hoisted 模式）
 
 ```
 runtime/dsh/node_modules/@deepseek-ai/cordis   ← DSH 框架自带 (唯一物理源)
@@ -343,7 +343,7 @@ runtime/dsh-home/profiles/node_modules/…       ← hoist 硬链接到上面
 runtime/dsh-home/profiles/web/node_modules/…   ← hoist 硬链接到上面
 ```
 
-pnpm hoisting 把三层 node_modules 都指向同一份物理目录，不是三份拷贝。`os.path.islink()` 在 Windows hoisted 模式下返回 False（用的是 junction/硬链接不是 symlink）。
+pnpm hoisting 把三层 node\_modules 都指向同一份物理目录，不是三份拷贝。`os.path.islink()` 在 Windows hoisted 模式下返回 False（用的是 junction/硬链接不是 symlink）。
 
 ### 2. 插件管理里看到 cordis 不是"重复安装"
 
@@ -353,18 +353,82 @@ pnpm hoisting 把三层 node_modules 都指向同一份物理目录，不是三�
 
 ### 3. profile/cordis.yml 不 import cordis
 
-v1.0.25 自愈系统里 `_clean_profile_manifest` 的 `_EXCEPTIONAL_PROFILE_DEPS` 注释写的"profile 的 cordis.yml 直接 import cordis"——**实测 cordis.yml 只是 bundle 加载说明，没有任何 `import cordis`**。例外名单是保守过度设计。
+v1.0.25 自愈系统里 `_clean_profile_manifest` 的 `_EXCEPTIONAL_PROFILE_DEPS` 注释写的"profile 的 cordis.yml 直接 import cordis"——**实测 cordis.yml 只是 bundle 加载说明，没有任何** **`import cordis`**。例外名单是保守过度设计。
 
 ### 4. 例外名单已移除（v1.0.25 hotfix）
 
 验证方法：
-- 手动在插件管理里移除 cordis → 重启 DSH → 服务正常（pnpm hoisting 残留 + Node.js 模块解析自动向上回溯 → 不崩）
-- 移除后 profile dependencies 变干净：只剩 file: 本地插件 + 用户主动安装的外部插件
 
-**结论**：cordis 家族、schemastery 等内部包**应该全被 `_clean_profile_manifest` 洗掉**。例外名单已删除（-18 行）。如果未来 DSH 升级后发现某些内部包真的被 profile 代码 import 了，**届时再加精确例外**，而不是先留着所有内部包污染 dependencies。
+* 手动在插件管理里移除 cordis → 重启 DSH → 服务正常（pnpm hoisting 残留 + Node.js 模块解析自动向上回溯 → 不崩）
+
+* 移除后 profile dependencies 变干净：只剩 file: 本地插件 + 用户主动安装的外部插件
+
+**结论**：cordis 家族、schemastery 等内部包**应该全被** **`_clean_profile_manifest`** **洗掉**。例外名单已删除（-18 行）。如果未来 DSH 升级后发现某些内部包真的被 profile 代码 import 了，**届时再加精确例外**，而不是先留着所有内部包污染 dependencies。
 
 ### 5. 清掉内部包后的好处
 
-- profile/package.json dependencies 干净（只有真正的插件）
-- 插件管理列表不再误显示 cordis / schemastery 等内部包
-- 依赖溯源清晰：装了什么插件 → package.json 里就看到什么
+* profile/package.json dependencies 干净（只有真正的插件）
+
+* 插件管理列表不再误显示 cordis / schemastery 等内部包
+
+* 依赖溯源清晰：装了什么插件 → package.json 里就看到什么
+
+## 十一、system-prompt/assemble 插件注入机制
+
+### 1. 事件签名
+
+import '@deepseek-ai/dsh-system-prompt';
+
+ctx.on('system-prompt/assemble', async (assembly, context, next) => {
+// waterfall 模式: 可以修改 assembly, 然后调 next() 继续链
+assembly.contexts.push({
+name: 'unique-context-name',  // 必填, 全局唯一, 不能重复
+text: '注入的纯文本内容',       // 必填, 必须是字符串
+weight: 0.9,                  // 可选, 权重越高越优先
+});
+return next();  // 必须继续传下去
+});
+
+### 2. assembly 对象结构
+
+* assembly.sections\[] — 官方预设的 section (persona, tools, 等)
+
+* assembly.contexts\[] — 插件追加的 contexts (唯一可扩展的点)
+
+* contexts 里的 name 必须全局唯一 (invariant.js 校验, 重复会 fail)
+
+### 3. 已有使用者 (两个, 不冲突)
+
+| 插件         | context name       | 内容          |
+| ---------- | ------------------ | ----------- |
+| dsh-memory | zuzong:auto-recall | 祖宗记忆库最近 4 条 |
+| dsh-rules  | user-rules         | 用户手写的规则文件   |
+
+### 4. 实现注意事项
+
+* 必须 import @deepseek-ai/dsh-system-prompt — 否则事件没注册
+
+* 钩子失败要静默 — 读文件失败/bridge 断开时别 throw, 用 try-catch 吞掉
+
+* context name 全局唯一 — 两个插件用同一个 name 会报 invariant 错
+
+* hook 是 async 的 — 可以 await bridge.callTool() 异步取数据
+
+* 缓存策略 — 规则/记忆这种"读多写少"的内容应该本地缓存 (2s TTL), 避免每次请求磁盘 IO
+
+### 5. 参考实现
+
+* plugins/dsh-rules/lib/hooks.js — 纯文件读取注入, 带 fs.watch autoReload + BOM 清洗 + maxLength 截断
+
+* plugins/dsh-memory/lib/hooks.js — 异步 bridge 取记忆 + 脱敏
+
+### 6. dsh-rules 插件备忘
+
+* 规则文件位置: DSH\_HOME/rules/user-rules.md (绿色版 = runtime/dsh-home/rules/)
+
+* 规则存 DSH\_HOME 而非插件目录 — 插件升级不覆盖用户数据
+
+* 自动创建: 首次启动时 ensureRulesFile() 从 default-rules.md 拷贝
+
+* autoReload: fs.watch 监听目录 + 清缓存 — 下次请求生效
+

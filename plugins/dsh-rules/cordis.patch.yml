@@ -1,0 +1,8 @@
+# dsh-rules bundle patch: 把本插件注册到 profile 插件树。
+# 格式与官方 bundle (如 @deepseek-ai/dsh-base) 完全一致:
+#   - insert: 新增一行插件行 (id 是本插件行标识, name 是包名)。
+# dsh plugin 命令 reconcile 时会据此把 dsh-rules 加入
+# profile 的 dsh.profile.bundles 层列表, 服务启动时才真正被加载。
+- insert:
+    - id: rules
+      name: dsh-rules

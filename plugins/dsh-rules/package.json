@@ -1,0 +1,29 @@
+{
+  "name": "dsh-rules",
+  "version": "0.1.0",
+  "description": "用户规则注入插件 - 每次对话自动注入自定义 system prompt (类似 TRAE Work 的规则功能)",
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {},
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "keywords": [
+    "dsh",
+    "plugin",
+    "rules",
+    "system-prompt",
+    "user-preferences"
+  ]
+}
