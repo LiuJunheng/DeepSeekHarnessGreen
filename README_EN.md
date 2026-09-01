@@ -30,8 +30,7 @@ simply copy the whole folder to any other computer and keep using it.
   registry**. Bundled portable Node/Python download domestic mirrors first and
   fall back to the official source automatically. Copy the whole folder to any
   new computer and use it as-is, no reinstall needed.
-- **📦 7 practical built-in plugins**: session rewind, session import, usage
-  stats, file browser, archive purge, **local-video background** and more — one-click install (see
+- **📦 10 practical built-in plugins**: session rewind / import, usage stats, file browser, archive purge, sidebar, local-video background, **Ollama local LLM integration**, **Ancestral Memory (cross-session auto-recall, v3 default OFF)**, **User Rules injection (like TRAE Rules, v4 with WebUI in-place editing)** — one-click install (see
   [Built-in Plugins at a Glance](#built-in-plugins-at-a-glance)).
 - **🏠 LAN remote access**: one-click switch to 0.0.0.0 binding + **automatic
   Windows firewall port exception**, so phones / other computers can open the
@@ -71,7 +70,17 @@ DeepSeekHarnessLauncher/
 │   ├── tmp/               # Temporary files
 │   ├── server.pid         # Service process ID
 │   └── server.log         # Service runtime log
-├── plugins/               # Built-in plugin sources (7, see「Built-in Plugins at a Glance」)
+├── plugins/               # Built-in plugin sources (10, see「Built-in Plugins at a Glance」)
+│   ├── dsh-file-browser/      # WebUI file browse / preview / right-click insert @
+│   ├── dsh-archive-purge/     # Read-only archive purge viewer
+│   ├── dsh-session-rewind/    # One-click rewind poisoned sessions
+│   ├── dsh-session-import/    # Import ZIP / JSONL sessions back
+│   ├── dsh-usage-stats/       # Usage stats + per-turn token readout
+│   ├── dsh-sidebar-lite/     # WebUI right sidebar panel
+│   ├── dsh-media-background/  # Local-video WebUI background
+│   ├── dsh-ollama/            # Auto-detect & connect Ollama local LLM
+│   ├── dsh-memory/            # Ancestral Memory (cross-session SQLite, v3 default OFF)
+│   └── dsh-rules/             # User Rules injection + WebUI in-place editor (v4)
 ├── skills/                # This project's DSH experience Skill (installed to TRAE global skills)
 └── README.md / README_EN.md  # Chinese (maintained) / English (refreshed per release)
 ```
@@ -246,7 +255,7 @@ This zip is maintained and distributed by the author with each release; users si
   GitHub-source repos aren't necessarily npm packages, so install failure is normal — the window shows the reason, and
   you can switch to the same-named package in the npm registry.
 
-### Built-in Plugins at a Glance (7 bundled)
+### Built-in Plugins at a Glance (10 bundled)
 Installation: any built-in plugin can be installed via「Plugin Manager → Install from local plugin folder…」selecting its
 directory (CLI equivalent: `python launcher.py --install-plugin plugins\<plugin>`); **restart the service** for it to take
 effect. After an official-core or green-edition self-update, an already-installed older copy is a pnpm copy — reinstall
@@ -261,6 +270,9 @@ the local plugin for it to take effect. See each plugin's README for full usage.
 | `dsh-usage-stats` | Usage stats + per-message「this-turn tokens / estimated cost」 | [README](plugins/dsh-usage-stats/README.md) |
 | `dsh-sidebar-lite` | WebUI right sidebar (file management / preview / browser / terminal / tasks; right-click a file to insert it as an official @ reference) | [README](plugins/dsh-sidebar-lite/README.md) |
 | `dsh-media-background` | Play local-directory videos as the WebUI background (video + audio, add to a playlist) | [README](plugins/dsh-media-background/README.md) |
+| `dsh-ollama` | Auto-detect local Ollama service and wire it in — Ollama models appear directly in the WebUI model selector | [README](plugins/dsh-ollama/README.md) |
+| `dsh-memory` | **Ancestral Memory**: auto-condenses chat history into SQLite, recalls relevant memories into system prompt on next chat. v3 adds **【Test】label** + **default OFF** (saves tokens) + WebUI toggle + memory-type tags. Zero-LLM-cost ruleSummarize engine strips small talk / thinking noise. | [README](plugins/dsh-memory/README.md) |
+| `dsh-rules` | **User Rules injection** (like TRAE Rules): write a Markdown of personal preferences / code style / communication habits, auto-injected into system prompt on every chat. v4 upgraded to dual-end plugin with **WebUI in-place editor** (preview + textarea + .md download fallback) + **default OFF**. | [README](plugins/dsh-rules/README.md) |
 
 All built-in plugins are **pure plugins** (modify no official files) and are open-sourced together with the green edition
 under the **Apache License 2.0** (see Section 11).
