@@ -155,6 +155,32 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 
 ## 五、DSH 插件开发（双端加载 + 路由注册）
 
+### 5.0 Cordis 插件协议核心约束（必须先记住，否则装完服务直接炸）
+
+五条硬约束，踩任何一条都会导致"装完插件服务起不来"：
+
+| # | 约束 | 违反症状 | 正确写法 |
+|---|---|---|---|
+| 1 | **宿主端导出函数名必须是 apply** | `invalid plugin, expect function or object with an "apply" method, received object` | `export async function apply(ctx, config)` |
+| 2 | **纯客户端插件也必须带宿主端 lib/index.js** | `ERR_MODULE_NOT_FOUND: ...lib/index.js` 服务启动即退出 | 纯客户端用官方 no-op: `function apply() {}; export { apply }` |
+| 3 | **exports 必须包含 `"./package.json": "./package.json"`** | 客户端 bundle 跳过 → WebUI 入口不出现 | 检查 package.json exports 字段 |
+| 4 | **files 数组必须包含 cordis.patch.yml** | pnpm 安装时文件被排除 → 插件树注册失败 | `files: ["lib", "cordis.patch.yml"]` |
+| 5 | **name 字段与目录名一致** | 包名/目录名对不上时 pnpm 安装可能出问题 | 目录 `dsh-rules/` → package.json `name: "dsh-rules"` |
+
+**导出契约完整版**（所有插件都应遵守）：
+
+```javascript
+import z from '@deepseek-ai/schemastery';  // 可选
+import '@deepseek-ai/dsh-system-prompt';   // 纯 hook 插件必需
+
+export const name = 'dsh-xxx';         // 插件名, 与目录一致
+export const inject = ['webServer'];    // 按需声明依赖服务, 纯 hook 可空 []
+export const Config = z.object({...});  // 可选: schemastery 配置 schema
+export async function apply(ctx, config) { ... }  // 必须叫 apply, 可用 async
+```
+
+完整检查清单见 `checklists/plugin-dev-checklist.md` 零节；代码骨架见 `references/plugin-skeleton.md`。
+
 ### 5.1 插件 = npm 包 + 双入口（最容易漏）
 
 - **`dsh.bundle.patch`** → 指向 `cordis.patch.yml`（`- insert: [{id, name}]` 把插件作为一行插入 profile 插件树）。`dsh plugin add` reconcile 据此写进 `dsh.profile.bundles`；服务启动时 `dsh-app-boot` 的 `loadProfile` 按序合成 **bundle 补丁 → 用户 cordis.patch.yml → --patch 覆盖层**。
@@ -220,12 +246,58 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 - 改 `lib/index.js`/`cordis.patch.yml` 需**重启服务**；纯客户端 `lib/client.js` 强刷页面即可。
 - **验证插件树必须设 DSH_HOME**：`--dump-config` 要先 `$env:DSH_HOME=runtime\dsh-home`，否则加载 `~/.dsh` 默认 home（只有内置 bundle），误判没进树。
 
-### 5.9 第三方"工具型"插件（无 UI）
+### 5.9 system-prompt/assemble 插件注入机制（纯 hook 插件的核心）
+
+除了"路由 + 客户端"双端插件，DSH 还支持**纯 hook 插件**：只监听 DSH 内部事件，注入内容到 system prompt。dsh-rules（用户规则注入）和 dsh-memory（祖宗记忆库注入）就是这个模式。
+
+#### 运作原理
+
+```
+DSH 组装 system prompt 时
+  → 触发 waterfall 事件 system-prompt/assemble
+  → 所有监听者依次修改 assembly.contexts
+  → DSH runtime 把所有 contexts 拼成完整 prompt
+  → 发给 LLM
+```
+
+#### 事件签名
+
+```javascript
+import '@deepseek-ai/dsh-system-prompt';  // 声明依赖, 否则事件总线不存在
+
+ctx.on('system-prompt/assemble', async (assembly, _ctx, next) => {
+    assembly.contexts.push({
+        name: 'unique-context-name',  // 必填, 全局唯一 (invariant.js 校验, 重复会 fail)
+        text: '注入的纯文本内容',        // 必填, 必须是字符串
+        weight: 0.9,                   // 可选, 权重越高越优先
+    });
+    return next();  // waterfall 链必须继续传下去
+});
+```
+
+#### 两个已存在的 context.name（不要重复）
+
+| 插件 | context.name | 内容 |
+|---|---|---|
+| dsh-rules | `user-rules` | 用户手写的规则文件 |
+| dsh-memory | `zuzong:auto-recall` | 祖宗记忆库自动召回的最近对话 |
+
+#### 实现注意事项
+
+- **钩子失败要静默**：读文件失败/bridge 断开时别 throw，用 try-catch 吞掉，下一次请求继续试
+- **context name 全局唯一**：两个插件用同一个 name 会报 invariant 错
+- **hook 是 async 的**：可以 `await bridge.callTool()` 异步取数据，不阻塞 waterfall
+- **缓存策略**：规则/记忆这种"读多写少"的内容应该本地缓存（2s TTL），避免每次请求磁盘 IO
+- **文件变化自动重载**：用 `fs.watch` 监听目录 + 清缓存 → 下次请求生效
+
+完整代码骨架见 `references/plugin-skeleton.md` 类型 B。
+
+### 5.10 第三方"工具型"插件（无 UI）
 
 - 分类：**宿主端工具/路由插件**（package.json 只有 dsh.bundle.patch）与**客户端 UI 插件**（有 dsh.client）。工具型插件只 `ctx.tools.register(defineTool(...))`，**界面上不出现任何 UI**（"装完没见 UI"正常），靠 agent 在对话里按需调用。安装后重启 `dsh web`。
 - **排查"装了没反应"顺序**：① dependencies + bundles 是否含包；② 设 DSH_HOME dump-config 看插件层；③ package.json 有无 dsh.client（无则无 UI）；④ **插件自身运行时/凭据前提**（外部解释器版本、下载型依赖、API key所属，最易忽略）→ 看 server.log 里插件 `ctx.logger.error` 的降级提示；⑤ 重启服务。
 
-### 5.10 接入第三方模型/Provider（Ollama 等）：写 pi-ai 的 providers 配置
+### 5.11 接入第三方模型/Provider（Ollama 等）：写 pi-ai 的 providers 配置
 
 - 官方多 Provider 底座 = `dsh-llm-pi-ai`（命名空间 `llm-pi-ai`）。给 DSH 加模型源**绝不要**自己调 `ctx.llm.registerAdapter`（对 provider 路由**排他**）或 `registerModelDiscovery`（每 namespace 只能一个）。**正解**：经 `sctx.settings.mutate("llm-pi-ai", ops)` 写 `providers.<id>`，pi-ai 监听变更自动注册模型目录 + 对话路由 + 发现。
 - **Ollama 接入配方**：`api:"openai-completions"` + `baseURL:"{url}/v1"` + `models:[{id,name,contextWindow,maxTokens}]`（从 `/api/tags` 探测）。
@@ -238,7 +310,7 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 - **thinking 模型"Deep diving…"是正常思考态**（先流 reasoning-delta 后出正文，本地 4B 冷启动+思考十几秒~几十秒）；`curl` 直测注意 PowerShell 单引号 JSON 被吃（写临时文件 `--data-binary "@file"`）；`api/ps` 空 = 模型未加载。
 - **后台探测型插件要提供「主动重接入」入口**（外部服务比 DSH 晚启动时用户无重试入口）：加独立路由 `POST /<route>/reconnect`（复用 `runDetection(force:true)`），与配置路由**不同 path**（避免同 path 只能注册一次）；`force:true` 全量重写但 `mergeModelParams` 保留手改项；内部只 runDetection，**不写**配置文件（避免点一下清空面板覆盖值）；离线也是正常返回（reconnected:false + lastError）；客户端按钮置忙。
 
-### 5.11 WebUI 悬浮侧栏/浮层的开关按钮：别钉右上角、也别叠内容区
+### 5.12 WebUI 悬浮侧栏/浮层的开关按钮：别钉右上角、也别叠内容区
 
 - 官方 WebUI 右上角自带宽操作按钮（下载对话等）；自建侧栏/浮层的**展开收拢开关若 `position:fixed; top/right` 固定右上角会盖住官方按钮**（第一处坑）。**把折叠开关垂直居中叠在面板内容区（文件列表）高度上会挡住列表点击**（第二处坑，两面都踩过，`dsh-sidebar-lite`）。
 - 参考社区 better-sidebar 的 **toggle cluster**：开关**始终固定在面板顶部**——
