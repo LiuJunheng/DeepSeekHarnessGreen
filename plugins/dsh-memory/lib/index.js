@@ -97,15 +97,17 @@ export const Config = z.object({
     ]).default(['remember', 'recall', 'search', 'timeline', 'service_info', 'list_all', 'delete']),
     memory: z.object({
         userMessage: z.boolean().default(true),
-        assistantMessage: z.boolean().default(false),
+        assistantMessage: z.boolean().default(true),   // v2: 默认开启 AI 回复记忆
         toolResult: z.boolean().default(false),
         importance: z.number().default(0.6),
         autoRecall: z.boolean().default(true),
-        autoRecallLimit: z.number().default(4),
+        autoRecallLimit: z.number().default(6),        // v2: 提到 6 (按 type 分组后更紧凑)
         desensitize: z.boolean().default(true),
+        useSummarize: z.boolean().default(true),       // v2: 规则提炼开关 (精简 summary)
     }).default({
-        userMessage: true, assistantMessage: false, toolResult: false,
-        importance: 0.6, autoRecall: true, autoRecallLimit: 4, desensitize: true,
+        userMessage: true, assistantMessage: true, toolResult: false,
+        importance: 0.6, autoRecall: true, autoRecallLimit: 6, desensitize: true,
+        useSummarize: true,
     }),
     toolCallTimeoutMs: z.number().default(60_000),
     maxRetryDelayMs: z.number().default(30_000),

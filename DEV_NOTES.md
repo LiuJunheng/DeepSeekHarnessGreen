@@ -432,3 +432,55 @@ return next();  // 必须继续传下去
 
 * autoReload: fs.watch 监听目录 + 清缓存 — 下次请求生效
 
+
+### 7. dsh-memory v2 记忆引擎升级 (2026-09-02)
+
+#### 7.1 核心改动
+
+* **数据库 schema 升级** — 新增 summary TEXT (AI 精简概要) + 	ype TEXT (记忆分类: user/assistant/decision/preference/fact) + 索引 idx_memories_type。旧库 ALTER TABLE 增量迁移, 向后兼容。
+
+* **规则提炼引擎 (ruleSummarize)** — 零 LLM 成本, 纯正则规则生成精简概要 (60-120 字):
+  * 用户消息: 去掉 "帮我/请/请问" 等寒暄 + 第二人称 "你", 取第一句核心 query, 去句尾标点, 最多 80 字
+  * AI 回复: 跳过 "好的/明白了/收到" 等寒暄 + "这是/下面是" 等套话, 按信息量评分 (含数字 +10, 技术关键词 +15), 取 top 1-2 句, 最多 120 字
+  * 日志噪音检测: 以 [HH:MM:SS] 开头的行占比 > 50% → 从最后一行抽提示或返回 null (跳过写入)
+  * 纯寒暄的 AI 回复 (只剩 "好的") → 返回 null 跳过写入
+
+* **assistantMessage 默认开启** — v1 默认 false, v2 默认 true, 让 AI 回复也沉淀进记忆库 (importance × 0.8)
+
+* **autoRecall 按 type 分组注入** — v1 是一个大文本块塞 4 条原文, v2 分三部分:
+  * 【用户提问】· bullet 列表, 用 summary 而非原文
+  * 【AI 回答】· bullet 列表
+  * 【其他记忆】· bullet 列表
+  * 引擎 recall 空 query 时自动优先有 summary 的条目 (ORDER BY CASE WHEN summary IS NOT NULL THEN 1 ELSE 0 END DESC)
+
+#### 7.2 配置项变化
+
+* ssistantMessage: false → true (默认开启)
+* utoRecallLimit: 4 → 6 (按 type 分组后更紧凑, 可以多放)
+* **新增** useSummarize: true — 规则提炼开关, 关掉就退回 v1 原文模式
+
+#### 7.3 修改文件清单
+
+* plugins/dsh-memory/engine/zuzong_memory.py — 版本 1.0.0 → 2.0.0
+  * _init_db() — 加 ALTER TABLE 增量迁移 + type 索引
+  * _tool_remember() — 接受 summary + type 可选参数, 白名单校验 type
+  * _tool_recall() — 空 query 时优先有 summary 的, 有 query 时同时搜 content + summary, 返回 display 字段 (优先 summary)
+  * _tool_timeline() — 同样优先有 summary 的
+  * _tool_search() — 同时搜 content + summary, 返回新字段
+  * _tool_service_info() — 版本号 + summarized_count 统计
+  * _tool_list_all() — 返回 summary + type
+* plugins/dsh-memory/lib/hooks.js
+  * 新增 uleSummarize(text, kind) 规则提炼函数 (~60 行)
+  * session/event 三个分支都加 summary + type 写入, 根据 opts.useSummarize 开关
+  * autoRecall 改为解析 recall JSON → 按 type 分组 → 用 display 优先 summary → 结构化注入
+* plugins/dsh-memory/lib/index.js — Config 默认值 + useSummarize 新配置
+
+#### 7.4 关键坑
+
+* **pnpm workspace 硬链接** — 改源码 plugins/dsh-memory/ 下的文件, 运行时 node_modules/ 里自动同步 (MD5 一致), 不需要手动复制。这是 pnpm 的特性, 不是 bug。
+
+* **旧数据库增量迁移** — 不要 DROP TABLE 重建, 用 ALTER TABLE ADD COLUMN, 旧数据 type='raw' + summary=null 保持可用。引擎层 _init_db 每次启动都会检查列是否存在并自动迁移。
+
+* **纯寒暄 AI 回复跳过写入** — 用户发 "好的" 或 AI 回 "好的" 这种没实质内容的, ruleSummarize 返回 null, hooks.js 检测到后 return, 不进数据库。
+
+* **recall 空 query 的排序逻辑** — 引擎层用 CASE WHEN summary IS NOT NULL AND summary != '' THEN 1 ELSE 0 END DESC, 再按 importance DESC, 再按 created_at DESC。保证有摘要的 > 重要的 > 新的。

@@ -55,18 +55,27 @@ _conn.execute("PRAGMA synchronous=NORMAL")
 
 
 def _init_db():
-    """建表 (幂等)。"""
+    """建表 + 增量迁移 (幂等, 向后兼容 v1.0.0 库)。"""
     _conn.execute("""
         CREATE TABLE IF NOT EXISTS memories (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             content      TEXT    NOT NULL,
+            summary      TEXT,                      -- v2: AI 提炼的精简概要
+            type         TEXT    DEFAULT 'raw',     -- v2: raw | user | assistant | decision | preference | fact
             tags         TEXT    DEFAULT '[]',      -- JSON 数组
-            importance   REAL    DEFAULT 0.6,        -- 0.0 ~ 1.0
-            note_count   INTEGER DEFAULT 0,          -- 被 recall 次数
-            created_at   INTEGER NOT NULL,           -- Unix 时间戳 (秒)
+            importance   REAL    DEFAULT 0.6,       -- 0.0 ~ 1.0
+            note_count   INTEGER DEFAULT 0,         -- 被 recall 次数
+            created_at   INTEGER NOT NULL,          -- Unix 时间戳 (秒)
             updated_at   INTEGER NOT NULL
         )
     """)
+    # --- v1 → v2 增量迁移 (旧库没有 summary/type 列) ---
+    existing_cols = [row[1] for row in _conn.execute("PRAGMA table_info(memories)").fetchall()]
+    if "summary" not in existing_cols:
+        _conn.execute("ALTER TABLE memories ADD COLUMN summary TEXT")
+    if "type" not in existing_cols:
+        _conn.execute("ALTER TABLE memories ADD COLUMN type TEXT DEFAULT 'raw'")
+    # 建索引
     _conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_memories_created
         ON memories(created_at DESC)
@@ -74,6 +83,10 @@ def _init_db():
     _conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_memories_importance
         ON memories(importance DESC)
+    """)
+    _conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_memories_type
+        ON memories(type)
     """)
     _conn.commit()
 
@@ -102,7 +115,7 @@ def _tool_result(text, is_error=False):
 # 工具实现
 # ---------------------------------------------------------------------------
 def _tool_remember(args):
-    """写入一条记忆。"""
+    """写入一条记忆 (v2: 支持 summary / type 字段)。"""
     content = (args.get("content") or "").strip()
     if not content:
         return _tool_result("content 不能为空", is_error=True)
@@ -111,16 +124,25 @@ def _tool_remember(args):
         tags = [t.strip() for t in tags.split(",") if t.strip()]
     importance = float(args.get("importance", 0.6))
     importance = max(0.0, min(1.0, importance))
+    # --- v2 新增可选字段 ---
+    summary = (args.get("summary") or "").strip() or None
+    memory_type = (args.get("type") or "raw").strip()
+    # type 白名单校验
+    allowed_types = {"raw", "user", "assistant", "decision", "preference", "fact"}
+    if memory_type not in allowed_types:
+        memory_type = "raw"
     now = int(time.time())
     cursor = _conn.execute(
-        "INSERT INTO memories(content, tags, importance, created_at, updated_at) "
-        "VALUES(?, ?, ?, ?, ?)",
-        (content, json.dumps(tags, ensure_ascii=False), importance, now, now),
+        "INSERT INTO memories(content, summary, type, tags, importance, created_at, updated_at) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?)",
+        (content, summary, memory_type, json.dumps(tags, ensure_ascii=False), importance, now, now),
     )
     _conn.commit()
     result = {
         "id": cursor.lastrowid,
         "content": content[:200] + ("..." if len(content) > 200 else ""),
+        "summary": summary,
+        "type": memory_type,
         "tags": tags,
         "importance": importance,
         "created_at": now,
@@ -129,7 +151,7 @@ def _tool_remember(args):
 
 
 def _tool_recall(args):
-    """关键词召回 (简单 LIKE + 按重要性/时间排序)。"""
+    """关键词召回 (v2: 空 query 时优先返回有 summary 的高价值条目, 有 query 时同时搜 content + summary)。"""
     query = (args.get("query") or "").strip()
     limit = int(args.get("limit", 5))
     limit = max(1, min(50, limit))
@@ -139,16 +161,19 @@ def _tool_recall(args):
         like = f"%{query}%"
         cur = _conn.execute(
             "SELECT * FROM memories "
-            "WHERE content LIKE ? "
+            "WHERE content LIKE ? OR summary LIKE ? "
             "ORDER BY importance DESC, created_at DESC "
             "LIMIT ?",
-            (like, limit),
+            (like, like, limit),
         )
         rows = cur.fetchall()
     else:
-        # 无 query → 返回最近 N 条
+        # v2: 空 query → 优先有 summary + 高 importance + 最近
         cur = _conn.execute(
-            "SELECT * FROM memories ORDER BY created_at DESC LIMIT ?",
+            "SELECT * FROM memories "
+            "ORDER BY (CASE WHEN summary IS NOT NULL AND summary != '' THEN 1 ELSE 0 END) DESC, "
+            "importance DESC, created_at DESC "
+            "LIMIT ?",
             (limit,),
         )
         rows = cur.fetchall()
@@ -162,9 +187,14 @@ def _tool_recall(args):
         _conn.commit()
     results = []
     for row in rows:
+        # 优先用 summary 展示, 没有才用 content 截断
+        display_text = (row["summary"] or row["content"][:300])
         results.append({
             "id": row["id"],
             "content": row["content"][:300],
+            "summary": row["summary"],
+            "type": row["type"],
+            "display": display_text,
             "tags": json.loads(row["tags"] or "[]"),
             "importance": row["importance"],
             "created_at": row["created_at"],
@@ -174,7 +204,7 @@ def _tool_recall(args):
 
 
 def _tool_search(args):
-    """内容搜索 (全文 LIKE, 比 recall 返回更全的上下文)。"""
+    """内容搜索 (v2: 同时搜 content + summary, 返回完整 content)。"""
     query = (args.get("query") or "").strip()
     limit = int(args.get("limit", 10))
     limit = max(1, min(100, limit))
@@ -183,10 +213,10 @@ def _tool_search(args):
     like = f"%{query}%"
     cur = _conn.execute(
         "SELECT * FROM memories "
-        "WHERE content LIKE ? "
+        "WHERE content LIKE ? OR summary LIKE ? "
         "ORDER BY importance DESC, created_at DESC "
         "LIMIT ?",
-        (like, limit),
+        (like, like, limit),
     )
     rows = cur.fetchall()
     results = []
@@ -194,6 +224,8 @@ def _tool_search(args):
         results.append({
             "id": row["id"],
             "content": row["content"],
+            "summary": row["summary"],
+            "type": row["type"],
             "tags": json.loads(row["tags"] or "[]"),
             "importance": row["importance"],
             "created_at": row["created_at"],
@@ -203,11 +235,14 @@ def _tool_search(args):
 
 
 def _tool_timeline(args):
-    """时间线 (最近 N 条, 按 created_at 倒序)。"""
+    """时间线 (v2: 优先返回有 summary 的精简条目, 按 created_at 倒序)。"""
     limit = int(args.get("limit", 10))
     limit = max(1, min(200, limit))
     cur = _conn.execute(
-        "SELECT * FROM memories ORDER BY created_at DESC LIMIT ?",
+        "SELECT * FROM memories "
+        "ORDER BY (CASE WHEN summary IS NOT NULL AND summary != '' THEN 1 ELSE 0 END) DESC, "
+        "created_at DESC "
+        "LIMIT ?",
         (limit,),
     )
     rows = cur.fetchall()
@@ -216,6 +251,8 @@ def _tool_timeline(args):
         results.append({
             "id": row["id"],
             "content": row["content"][:200],
+            "summary": row["summary"],
+            "type": row["type"],
             "tags": json.loads(row["tags"] or "[]"),
             "importance": row["importance"],
             "created_at": row["created_at"],
@@ -224,7 +261,7 @@ def _tool_timeline(args):
 
 
 def _tool_service_info(args):
-    """服务状态。"""
+    """服务状态 (v2: 版本号 + summary 统计)。"""
     cur = _conn.execute("SELECT COUNT(*) as cnt FROM memories")
     total = cur.fetchone()["cnt"]
     cur = _conn.execute("SELECT AVG(importance) as avg_imp FROM memories")
@@ -233,21 +270,26 @@ def _tool_service_info(args):
     cur = _conn.execute("SELECT MAX(created_at) as latest FROM memories")
     latest_row = cur.fetchone()
     latest_ts = latest_row["latest"]
+    # v2: summary 统计
+    summarized_count = _conn.execute(
+        "SELECT COUNT(*) as cnt FROM memories WHERE summary IS NOT NULL AND summary != ''"
+    ).fetchone()["cnt"]
     return _tool_result(json.dumps({
         "ok": True,
         "identity": IDENTITY,
         "db_path": DB_PATH,
         "db_exists": os.path.isfile(DB_PATH),
         "total_memories": total,
+        "summarized_count": summarized_count,
         "avg_importance": round(avg_importance, 3),
         "latest_memory_ts": latest_ts,
         "engine": "zuzong-memory-lite",
-        "version": "1.0.0",
+        "version": "2.0.0",
     }, ensure_ascii=False))
 
 
 def _tool_list_all(args):
-    """列出全部记忆 (调试 / 管理卡片用)。"""
+    """列出全部记忆 (调试 / 管理卡片用, v2: 返回 summary/type)。"""
     limit = int(args.get("limit", 500))
     limit = max(1, min(5000, limit))
     offset = int(args.get("offset", 0))
@@ -262,6 +304,8 @@ def _tool_list_all(args):
         results.append({
             "id": row["id"],
             "content": row["content"],
+            "summary": row["summary"],
+            "type": row["type"],
             "tags": json.loads(row["tags"] or "[]"),
             "importance": row["importance"],
             "created_at": row["created_at"],
@@ -292,11 +336,13 @@ def _tool_delete(args):
 TOOLS = [
     {
         "name": "remember",
-        "description": "写入一条记忆到祖宗记忆库库。content 必填；importance 0.0~1.0 (默认 0.6)；tags 可选数组或逗号分隔字符串。",
+        "description": "写入一条记忆到祖宗记忆库 (v2: 支持 AI 提炼后的 summary 和 type 分类)。content 必填；importance 0.0~1.0 (默认 0.6)；tags 可选数组或逗号分隔字符串；summary 可选精简概要；type 可选 (raw/user/assistant/decision/preference/fact)。",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "content": {"type": "string", "description": "要记住的内容"},
+                "content": {"type": "string", "description": "要记住的完整原文"},
+                "summary": {"type": "string", "description": "AI 提炼的精简概要 (可选, v2 新增)"},
+                "type": {"type": "string", "description": "记忆类型 (raw/user/assistant/decision/preference/fact, 默认 raw, v2 新增)"},
                 "tags": {"type": "array", "items": {"type": "string"}, "description": "标签数组 (可选)"},
                 "importance": {"type": "number", "description": "重要性 0.0~1.0 (默认 0.6)"},
             },
@@ -406,7 +452,7 @@ def main():
                 "id": rid,
                 "result": {
                     "protocolVersion": "2024-11-05",
-                    "serverInfo": {"name": "zuzong-memory-lite", "version": "1.0.0"},
+                    "serverInfo": {"name": "zuzong-memory-lite", "version": "2.0.0"},
                     "capabilities": {"tools": {"listChanged": False}},
                 },
             })
