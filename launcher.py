@@ -217,6 +217,24 @@ DEFAULT_PROFILE = "web"
 # 其余未知的不兼容插件由冒烟启动验证 + 启动日志模式匹配自动定位移除。
 UPGRADE_INCOMPATIBLE_BUNDLES = ["dshmarket"]
 
+# ---- core bundles 常量 ----
+# DSH v0.1.2-alpha.3 开始, profile 的 dsh.profile.bundles 必须显式列出
+# 核心 bundle (不再由框架自动注入)。每个 profile 类型有固定的 core 组合:
+#   - 所有 profile 都需要 @deepseek-ai/dsh-base (提供 timer/llm/session 等基础服务)
+#   - web profile 需额外 @deepseek-ai/dsh-web-app (提供 webserver/webStartup 服务)
+#   - headless profile 需额外 @deepseek-ai/dsh-headless (提供 headless runner)
+#   - sdk profile 需额外 @deepseek-ai/dsh-sdk-app (提供 SDK 入口)
+# core bundle 在 runtime 的 node_modules/@deepseek-ai/ 下, 不在 profile
+# 的 dependencies 中 (属于框架内部包), reconcile_bundles 不会自动补它们,
+# 必须由 _ensure_core_bundles 主动注入 bundles 列表最前端 (patch 栈底层)。
+REQUIRED_CORE_BUNDLES_BY_PROFILE = {
+    "web": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"],
+    "headless": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-headless"],
+    "sdk": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-sdk-app"],
+}
+# 任何 profile 都至少需要的基础 core bundle (兜底)
+_MINIMUM_CORE_BUNDLES = ["@deepseek-ai/dsh-base"]
+
 # 服务启动失败日志里代表"插件与核心不兼容"的关键字 (冒烟验证/历史日志匹配用)。
 # 匹配到任意关键字 + 日志堆栈里出现 profile 的 bundle 插件路径, 即判定该插件不兼容。
 UPGRADE_INCOMPATIBLE_LOG_KEYWORDS = [
@@ -255,7 +273,7 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # 发布流程: 打 tag v{GREEN_VERSION} + Release 资产 DSH_Launcher_GreenPortable_Online_<日期>_v<tag>.zip
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
-GREEN_VERSION = "1.0.24"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
+GREEN_VERSION = "1.0.25"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
 GREEN_VERSION_DATE = "2026年09月01日"               # 绿色版版本日期 (build_release_zip.py 会按构建当天回写)
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
@@ -1191,14 +1209,24 @@ class Launcher:
         return version_map
 
     def _host_peer_dependencies(self):
-        """收集宿主核心所有已装 @deepseek-ai 作用域包声明的 peerDependencies 包名集合。
-        pnpm 工作区 autoInstallPeers: false 时这些 peer 不会被自动安装, 升级后
-        往往缺失 (如 @deepseek-ai/cordis / @deepseek-ai/dsh-scope), 需显式补进
-        profile 的 dependencies。"""
+        """收集宿主核心需要 profile 补装的 peerDependencies 包名集合。
+        只收集「宿主核心所有 @deepseek-ai 包都依赖、且宿主自身无法闭环提供」的 peer。
+        排除规则:
+        1) peer 本身也是 @deepseek-ai/* — runtime 内部 peer 互相引用, 由 runtime 自己
+           闭环解决, 不应泄漏到 profile (这是之前 package.json 被污染的根因之一);
+        2) peer 在宿主 node_modules 里已存在 — runtime 自己能解决;
+        3) peer 在宿主 dependencies / bundledDependencies 里声明 — runtime 自己装了。
+        这些情况下 profile 都不需要管。"""
         peer_names = set()
         scoped_root = os.path.join(DSH_DIR, "node_modules", "@deepseek-ai")
+        runtime_modules_root = os.path.join(DSH_DIR, "node_modules")
         if not os.path.isdir(scoped_root):
             return peer_names
+        # 先扫 runtime node_modules 里实际存在的包 (含作用域和非作用域)
+        runtime_present = set()
+        if os.path.isdir(runtime_modules_root):
+            for entry_name in os.listdir(runtime_modules_root):
+                runtime_present.add(entry_name)
         for entry_name in os.listdir(scoped_root):
             package_json = os.path.join(scoped_root, entry_name, "package.json")
             if not os.path.isfile(package_json):
@@ -1210,6 +1238,13 @@ class Launcher:
                 continue
             peers = manifest.get("peerDependencies") or {}
             for peer_name in peers:
+                # 过滤规则 1: peer 是 @deepseek-ai/* — runtime 内部闭环, 跳过
+                if peer_name.startswith("@deepseek-ai/"):
+                    continue
+                # 过滤规则 2: peer 在 runtime node_modules 里已存在 — runtime 自己解决
+                if peer_name in runtime_present:
+                    continue
+                # 通过所有过滤, 这才是 profile 需要补的
                 peer_names.add(peer_name)
         return peer_names
 
@@ -1241,13 +1276,87 @@ class Launcher:
                 changed = True
         return changed
 
+    def _clean_profile_manifest(self, profile=DEFAULT_PROFILE):
+        """清洗 profile package.json 里被污染的依赖 (防线):
+        自愈逻辑的副作用: runtime 内部的 @deepseek-ai/* 包被错误地写入 profile 的
+        dependencies, 导致 package.json 膨胀到 100+ 个依赖 (96 个都是不该在这的
+        内部包)。本方法在其他自愈步骤之前执行, 把污染依赖删掉, 只保留真正的
+        本地插件 (file:) 和用户主动通过 pnpm add 安装的外部插件。
+        删除判定 (同时满足):
+        1) 名字是黑名单前缀 (@deepseek-ai/* / cordis* / schemastery / node-addon*)
+           或 是 dsh-* 前缀的顶层包 (runtime 的 dsh-xxx 内部模块, 不是插件);
+        2) 不是 file: 本地插件 (本地插件在 plugins/ 目录下, 以 file: 协议声明);
+        3) 不在例外名单里 (cordis / cordis-plugin-* / schemastery 在 hoisted 模式下
+           被 profile 的 cordis.yml 直接 import, 需要保留)。
+        其他名字不在这个黑名单里的依赖 (如 dsh-ollama, dsh-archive-purge 等) 一律保留,
+        即使它们碰巧也在 runtime 里有同名——因为可能是用户装了不同版本的。"""
+        manifest = self.read_profile_manifest(profile)
+        if manifest is None:
+            return False
+        dependencies = manifest.get("dependencies") or {}
+        if not dependencies:
+            return False
+        version_map = self._host_core_versions()
+        # 例外名单: 这些包虽然是 @deepseek-ai 或 cordis 相关, 但 profile 确实需要
+        _EXCEPTIONAL_PROFILE_DEPS = {
+            "@deepseek-ai/cordis",
+            "@deepseek-ai/cordis-plugin-loader",
+            "@deepseek-ai/cordis-plugin-include",
+            "@deepseek-ai/cordis-plugin-hmr",
+            "@deepseek-ai/cordis-plugin-timer",
+            "@deepseek-ai/cordis-plugin-group",
+            "@deepseek-ai/schemastery",
+        }
+        removed_packages = []
+        for package_name in list(dependencies.keys()):
+            spec = str(dependencies[package_name] or "")
+            # file: 本地插件永远保留
+            if spec.startswith("file:"):
+                continue
+            # 例外名单里的 cordis / schemastery 也保留
+            if package_name in _EXCEPTIONAL_PROFILE_DEPS:
+                continue
+            # 清洗判定: 属于黑名单前缀之一
+            # 对于 dsh-* 非 scoped 顶层包, 还要额外检查:
+            #   runtime 里是否有对应的 scoped 版 (@deepseek-ai/dsh-*)
+            #   或 version_map 里有精确名
+            is_runtime_internal = (
+                package_name.startswith("@deepseek-ai/")
+                or package_name.startswith("cordis")
+                or package_name.startswith("schemastery")
+                or package_name.startswith("node-addon-")
+                or (
+                    package_name.startswith("dsh-")
+                    and (
+                        package_name in version_map
+                        or "@deepseek-ai/%s" % package_name in version_map
+                    )
+                )
+            )
+            if not is_runtime_internal:
+                continue
+            del dependencies[package_name]
+            removed_packages.append(package_name)
+        if removed_packages:
+            self.log("[清洗] 发现并移除 %d 个被污染的 runtime 内部依赖: %s"
+                     % (len(removed_packages), ", ".join(removed_packages[:10])
+                        + (" ..." if len(removed_packages) > 10 else "")))
+            self.write_profile_manifest(profile, manifest)
+            return True
+        return False
+
     def _heal_profile_dependencies(self, profile=DEFAULT_PROFILE):
         """升级 dsh 后自动修复 profile 依赖 (自愈第二步):
+        0) 先清洗 package.json 里被污染的 runtime 内部依赖 (防线, 必须最先执行);
         1) 补充宿主核心声明的 peer 依赖到 profile 的 dependencies (autoInstallPeers: false
            下 pnpm 不会自动装, 缺了会导致插件 import 宿主核心时报 not in cache);
         2) 把 profile 自身及 file: 本地插件 package.json 里的 @deepseek-ai/* 核心依赖
            同步到宿主已装版本 (避免插件钉在旧版核心上导致模块导出不匹配)。
         返回是否发生了改动 (改动后调用方需重建依赖树)。"""
+        # ---- 0) 先清洗污染的 runtime 内部依赖 ----
+        # 这是最关键的防线: 如果 package.json 已被污染 (96 个 @deepseek-ai/* 内部包),
+        # 必须在做任何"补 peer"之前先清掉, 否则补 peer 会叠加在污染之上越补越多。
+        self._clean_profile_manifest(profile)
         manifest = self.read_profile_manifest(profile)
         if manifest is None:
             self.log("[自愈] 未找到 profile 配置, 跳过依赖修复: %s" % profile)
@@ -1332,6 +1441,71 @@ class Launcher:
                 return package_name
         return None
 
+    def _diagnose_framework_failure(self, log_text, profile=DEFAULT_PROFILE):
+        """从启动失败日志里识别"框架级故障" (vs "单个插件不兼容")。
+
+        框架级故障特征:
+          - 日志含 "plugin tree failed to load" + "entries did not activate"
+          - 多个 bundle 都在 "waiting for services: XXX" (相同的缺失服务名)
+          - 缺失的服务 (如 webServer, workspaceRegistry) 应该由 runtime 里的
+            profile 级 core bundle 提供 (不是用户插件能提供的)
+
+        这种故障的修复方式不是"移除不兼容插件", 而是"确保 core bundles 存在"——
+        也就是 DSH v0.1.2-alpha.3 自动注入机制失效后, profile 缺了 core 层。
+
+        返回 (is_framework_failure: bool, missing_services: list[str], suggestion: str)。
+        is_framework_failure=True 时调用方应先尝试 _ensure_core_bundles() 再重试。"""
+        if not log_text:
+            return False, [], ""
+
+        # 检查核心特征
+        has_plugin_tree_fail = "plugin tree failed to load" in log_text or \
+                               "entries did not activate" in log_text
+        has_waiting_services = "waiting for services" in log_text or \
+                               "waiting for service" in log_text
+
+        if not (has_plugin_tree_fail and has_waiting_services):
+            return False, [], ""
+
+        # 提取等待的服务名: 匹配 "waiting for services: a, b" 或 "waiting for service: x"
+        # 注意日志里可能是单数 service 或复数 services, 后面跟一个或多个逗号分隔的服务名
+        waiting_pattern = re.findall(
+            r"waiting for services?:\s*([a-zA-Z0-9_, \t]+?)(?=\)|$)", log_text)
+        if not waiting_pattern:
+            return False, [], ""
+
+        # 收集所有等待的服务 (去重 + 保持顺序)
+        all_services = []
+        seen = set()
+        # 日志里 "waiting for services: webServer, workspaceRegistry" 可能被逗号分开
+        for raw in waiting_pattern:
+            for svc in raw.split(","):
+                svc_clean = svc.strip()
+                if svc_clean and svc_clean not in seen:
+                    all_services.append(svc_clean)
+                    seen.add(svc_clean)
+
+        if not all_services:
+            return False, [], ""
+
+        # 判断: 这些服务里有没有"应该由 runtime core bundle 提供的服务"?
+        # 常见 core 服务清单 (不是用户插件能提供的):
+        CORE_SERVICE_NAMES = {
+            "webServer", "webStartup", "workspaceRegistry",
+            "session", "llm", "timer", "gateway",
+            "deepseekLlmApiExtensions", "typert",
+        }
+        missing_core_services = [s for s in all_services if s in CORE_SERVICE_NAMES]
+
+        if missing_core_services:
+            suggestion = ("检测到框架级故障: 多个 bundle 等待核心服务 %s, "
+                          "应尝试确保 core bundles 存在后重试"
+                          % ", ".join(missing_core_services))
+            return True, missing_core_services, suggestion
+
+        # 如果全是非核心服务, 可能真的是用户插件问题 (但罕见)
+        return True, all_services, ""
+
     def _remove_incompatible_bundles(self, profile=DEFAULT_PROFILE, extra_names=None):
         """升级 dsh 后自动移除与新版核心不兼容的 bundle 插件 (自愈第一步)。
         来源:
@@ -1394,6 +1568,10 @@ class Launcher:
         if not self.pnpm_installed():
             self.install_pnpm()
         profile_dir = os.path.join(DSH_HOME_DIR, "profiles", profile)
+        # ---- 前置清洗: 如果 package.json 已被污染, 先清掉 runtime 内部依赖 ----
+        # 双保险: 即使不经过升级流程, 用户手动点"重建依赖树"也会触发清洗。
+        # 清完再 strip BOM / allowBuilds / pnpm install, 避免污染被固化到 node_modules。
+        self._clean_profile_manifest(profile)
         # 复用既有经验: 先清 BOM、补 pnpm 原生依赖 allowBuilds, 避免装到一半报错
         self.strip_bom_from_profile_packages(profile)
         self.ensure_pnpm_native_allowbuilds(profile)
@@ -1429,13 +1607,16 @@ class Launcher:
             self.log("[警告] 重建后同步编排层失败: %s" % error)
         self.log("profile 依赖树重建完成: %s" % profile)
 
-    def _smoke_verify_core_upgrade(self, profile=DEFAULT_PROFILE, max_rounds=2):
+    def _smoke_verify_core_upgrade(self, profile=DEFAULT_PROFILE, max_rounds=3):
         """升级后冒烟启动验证 (自愈第四步): 用独立子进程启动一次服务, 确认插件树能加载。
         启动成功判定: 在冒烟超时内服务端口被监听。
-        若启动失败且日志能定位到不兼容 bundle, 自动移除该 bundle 并重建依赖后重试,
-        最多 max_rounds 轮 (每轮最多移除一个, 避免一次误删多个)。
-        仅当服务当前未运行时执行 (运行中会占用端口且无需验证); 结束后一定结束探针进程,
-        不触碰正在运行的服务。返回 True 表示最终验证通过。"""
+        若启动失败, 按优先级尝试自动修复:
+          1) **框架级故障诊断**: 日志含 "all entries waiting for services: webServer"
+             等特征时, 自动调 _ensure_core_bundles() 确保 core bundles 存在后重试;
+             这是 DSH v0.1.2-alpha.3 自动注入机制失效后的主要故障模式。
+          2) **不兼容插件诊断**: 原有逻辑, 从日志提取不兼容 bundle, 移除后重试。
+        最多 max_rounds 轮 (框架修复算一轮, 插件移除算一轮)。
+        返回 True 表示最终验证通过。"""
         if self.is_server_running():
             self.log("[自愈] 服务正在运行, 跳过冒烟验证 (请重启服务使新版核心生效)")
             return True
@@ -1468,22 +1649,52 @@ class Launcher:
                 if boot_success:
                     self.log("[自愈] 冒烟启动验证通过: 服务端口 %d 已就绪" % port)
                     return True
-                # 启动失败: 读探针日志定位不兼容 bundle
+                # 启动失败: 读探针日志, 按优先级尝试两种诊断
                 log_text = ""
                 try:
                     with open(probe_log, "r", encoding="utf-8", errors="replace") as file_handle:
                         log_text = file_handle.read()
                 except OSError:
                     pass
+
+                # 诊断路径 1: 框架级故障 (优先 —— 这是 DSH 版本升级的高频故障模式)
+                is_framework_failure, missing_services, suggestion = \
+                    self._diagnose_framework_failure(log_text, profile)
+                if is_framework_failure:
+                    self.log("[自愈] %s" % suggestion)
+                    # 框架级故障的修复: 确保 core bundles 存在 + reconcile
+                    core_changed = False
+                    try:
+                        core_changed, _ = self._ensure_core_bundles(profile)
+                    except Exception as error:
+                        self.log("[自愈] _ensure_core_bundles 异常 (不阻断): %s" % error)
+                    try:
+                        bundle_changed = self.reconcile_bundles(profile)[0]
+                        if bundle_changed and not core_changed:
+                            core_changed = True
+                    except Exception as error:
+                        self.log("[自愈] reconcile_bundles 异常 (不阻断): %s" % error)
+                    if core_changed:
+                        self.log("[自愈] 已尝试修复 core bundles, 重试启动 (轮 %d/%d) ..."
+                                 % (round_index, max_rounds))
+                        self._rebuild_dependency_tree(profile)
+                        continue   # 进入下一轮重试
+                    else:
+                        self.log("[自愈] core bundles 未修复任何东西, 框架级诊断无效, 放弃本轮")
+                        # 框架诊断无效, 也不能再试插件移除了, 直接走失败
+                        self.log("[自愈] 冒烟启动失败且无法自动修复, 日志: %s" % probe_log)
+                        return False
+
+                # 诊断路径 2: 不兼容插件 (原有逻辑)
                 incompatible_bundle = self._extract_bundle_from_log(log_text, profile)
                 if incompatible_bundle:
                     self.log("[自愈] 冒烟启动失败, 定位到不兼容 bundle: %s" % incompatible_bundle)
-                    # 移除该 bundle (含黑名单/历史日志包) 并重建后进入下一轮重试
                     self._remove_incompatible_bundles(profile, extra_names=[incompatible_bundle])
                     self._rebuild_dependency_tree(profile)
-                    continue
-                # 无法自动定位: 保留日志供人工排查
-                self.log("[自愈] 冒烟启动失败且无法自动定位不兼容插件, 日志: %s" % probe_log)
+                    continue  # 进入下一轮重试
+
+                # 两种诊断都无效
+                self.log("[自愈] 冒烟启动失败且无法自动定位原因, 日志: %s" % probe_log)
                 return False
             except Exception as error:
                 self.log("[自愈] 冒烟启动验证出错: %s" % error)
@@ -1497,6 +1708,180 @@ class Launcher:
                         pass
         self.log("[自愈] 冒烟启动验证重试 %d 轮仍失败, 请查看 %s 日志" % (max_rounds, probe_log))
         return False
+
+    def verify_environment_integrity(self, profile=DEFAULT_PROFILE):
+        """安装环境时同步执行依赖完整性检查与自动修复 (幂等)。
+
+        这是「安装环境」按钮点击时触发的通用检查流程, 与升级自愈流程不同:
+        - 升级自愈 (_heal_after_core_upgrade) 只在 dsh 版本变更后跑一次, 且会强制重建 + 冒烟验证
+        - 本函数每次安装环境都跑, 但只在发现问题时才执行修复, 已好的项直接跳过
+
+        检查清单 (按优先级):
+        1) package.json 污染检查: runtime 内部包被误写入 → 调用 _clean_profile_manifest()
+        2) package.json 与 node_modules 一致性: 锁文件/元数据缺失或声明的依赖在
+           node_modules 里找不到 → 需要 pnpm install 重建
+        3) peer 依赖补齐: 宿主核心需要的 peer, profile 没声明 → 写入 package.json 后重建
+        4) 核心版本同步: profile 声明的 @deepseek-ai/* 版本落后于宿主 → 同步版本
+
+        所有 package.json 改动合并后一次性 pnpm install, 避免多次联网下载。
+        返回三元组 (problems_found, problems_fixed, problems_unfixed), 供调用方记录日志。
+        如果 profile 目录根本不存在, 返回 (0, 0, 0) —— 首次安装, 不算问题。"""
+        profile_dir = os.path.join(DSH_HOME_DIR, "profiles", profile)
+        manifest_path = os.path.join(profile_dir, "package.json")
+        node_modules_dir = os.path.join(profile_dir, "node_modules")
+        modules_yaml = os.path.join(node_modules_dir, ".modules.yaml")
+        lockfile_path = os.path.join(profile_dir, "pnpm-lock.yaml")
+
+        problems_found = 0
+        problems_fixed = 0
+        problems_unfixed = 0
+        need_rebuild = False
+
+        # profile 目录或 package.json 不存在 → 首次安装, 跳过检查
+        if not os.path.isfile(manifest_path):
+            self.log("[环境检查] profile %s 尚未初始化 (首次安装), 跳过完整性检查" % profile)
+            return (0, 0, 0)
+
+        self.log("--- 环境完整性检查开始 (profile: %s) ---" % profile)
+
+        # ---- 检查 1: package.json 污染 ----
+        manifest = self.read_profile_manifest(profile)
+        version_map = self._host_core_versions()
+        if manifest is not None:
+            dependencies = manifest.get("dependencies") or {}
+            # 简单估算: 如果依赖数 > 50, 大概率被污染 (正常应该 < 20)
+            if len(dependencies) > 50:
+                problems_found += 1
+                self.log("[环境检查] package.json 依赖数异常 (%d 个), 疑似被污染"
+                         % len(dependencies))
+            # 真正跑一次清洗 (即使依赖数不多, 也可能有零星污染)
+            cleaned = self._clean_profile_manifest(profile)
+            if cleaned:
+                problems_found += 1
+                need_rebuild = True
+
+            # ---- 检查 1.5: core bundles 存在性 ----
+            # DSH v0.1.2-alpha.3 起框架不再自动注入 core bundles, profile 必须在
+            # dsh.profile.bundles 里显式声明 @deepseek-ai/dsh-base / dsh-web-app 等,
+            # 否则所有依赖它们提供的服务 (webServer, workspaceRegistry 等) 的本地
+            # 插件都无法激活, 启动时会报 "plugin tree failed to load: 8 entries
+            # did not activate, waiting for services: webServer".
+            try:
+                core_changed, _ = self._ensure_core_bundles(profile)
+                if core_changed:
+                    problems_found += 1
+                    # core bundles 主要是改 package.json, 不一定需要重建
+                    # (它们在 runtime 里, 不是 profile 的普通依赖)
+                    # 但如果之前 dependencies 里没这些包, 版本写入后可能需要 install
+            except Exception as error:
+                self.log("[环境检查] 补 core bundles 失败: %s" % error)
+
+        # ---- 检查 2: node_modules 元数据一致性 ----
+        # pnpm 安装后 node_modules/.modules.yaml 一定会存在, 它是 pnpm 的内部状态文件
+        # 如果这个文件缺失 → 说明上次 install 被中断 / node_modules 被手动删过
+        has_node_modules = os.path.isdir(node_modules_dir)
+        has_modules_yaml = os.path.isfile(modules_yaml)
+        has_lockfile = os.path.isfile(lockfile_path)
+        if has_lockfile and not has_node_modules:
+            problems_found += 1
+            self.log("[环境检查] pnpm-lock.yaml 存在但 node_modules 缺失 → 上次安装被中断")
+            need_rebuild = True
+        elif has_lockfile and has_node_modules and not has_modules_yaml:
+            problems_found += 1
+            self.log("[环境检查] node_modules 存在但 .modules.yaml 缺失 → 依赖树不完整")
+            need_rebuild = True
+
+        # ---- 检查 3: package.json 声明的依赖能否在 node_modules 中解析 ----
+        # 只有 node_modules 基本存在时才查, 否则直接跳到重建
+        if has_node_modules and has_modules_yaml:
+            manifest = self.read_profile_manifest(profile)
+            if manifest is not None:
+                dependencies = manifest.get("dependencies") or {}
+                missing_packages = []
+                for package_name in dependencies:
+                    if package_name.startswith("@"):
+                        # 作用域包: node_modules/@scope/name
+                        parts = package_name.split("/", 1)
+                        pkg_dir = os.path.join(node_modules_dir, parts[0], parts[1])
+                    else:
+                        pkg_dir = os.path.join(node_modules_dir, package_name)
+                    if not os.path.isdir(pkg_dir):
+                        missing_packages.append(package_name)
+                if missing_packages:
+                    problems_found += 1
+                    self.log("[环境检查] 声明的依赖在 node_modules 中找不到: %s"
+                             % ", ".join(missing_packages[:8])
+                             + (" ..." if len(missing_packages) > 8 else ""))
+                    need_rebuild = True
+
+        # ---- 检查 4: peer 依赖补齐 + 核心版本同步 ----
+        # 复用 _heal_profile_dependencies 里的逻辑, 但只做 package.json 改动, 不重建
+        if self.dsh_installed():
+            manifest = self.read_profile_manifest(profile)
+            if manifest is not None:
+                changed = False
+                dependencies = manifest.setdefault("dependencies", {})
+                # 4a: peer 依赖补齐
+                for peer_name in self._host_peer_dependencies():
+                    if peer_name in dependencies:
+                        continue
+                    if peer_name not in version_map:
+                        continue
+                    dependencies[peer_name] = version_map[peer_name]
+                    self.log("[环境检查] 补充缺失的 peer 依赖 %s: %s"
+                             % (peer_name, version_map[peer_name]))
+                    changed = True
+                # 4b: 核心版本同步
+                if self._sync_manifest_core_deps(manifest, version_map, "profile %s" % profile):
+                    changed = True
+                # 4c: file: 本地插件的核心版本同步
+                for package_spec in list(dependencies.values()):
+                    plugin_dir = self._resolve_file_dependency_dir(package_spec)
+                    if plugin_dir is None:
+                        continue
+                    plugin_manifest_path = os.path.join(plugin_dir, "package.json")
+                    if not os.path.isfile(plugin_manifest_path):
+                        continue
+                    try:
+                        with open(plugin_manifest_path, "r", encoding="utf-8") as fh:
+                            plugin_manifest = json.load(fh)
+                    except Exception as error:
+                        self.log("[环境检查] 读取插件配置失败, 跳过: %s (%s)"
+                                 % (plugin_dir, error))
+                        continue
+                    plugin_name = plugin_manifest.get("name") or os.path.basename(plugin_dir)
+                    if self._sync_manifest_core_deps(
+                            plugin_manifest, version_map, "插件 %s" % plugin_name):
+                        changed = True
+                        try:
+                            with open(plugin_manifest_path, "w", encoding="utf-8") as fh:
+                                json.dump(plugin_manifest, fh, ensure_ascii=False, indent=2)
+                                fh.write("\n")
+                        except Exception as error:
+                            self.log("[环境检查] 写回插件配置失败: %s (%s)"
+                                     % (plugin_dir, error))
+                if changed:
+                    problems_found += 1
+                    self.write_profile_manifest(profile, manifest)
+                    need_rebuild = True
+
+        # ---- 一次性重建依赖树 ----
+        if need_rebuild:
+            self.log("[环境检查] 发现 %d 个问题, 开始重建 profile 依赖树 ..." % problems_found)
+            try:
+                self._rebuild_dependency_tree(profile)
+                problems_fixed += problems_found
+                self.log("[环境检查] 依赖修复完成, 共修复 %d 个问题" % problems_found)
+            except Exception as error:
+                problems_unfixed += problems_found
+                self.log("[环境检查] 依赖重建失败, 未修复 %d 个问题: %s"
+                         % (problems_found, error))
+        else:
+            self.log("[环境检查] profile 依赖完整性良好, 无需修复 ✅")
+
+        self.log("--- 环境完整性检查结束 (发现=%d 修复=%d 未修复=%d) ---"
+                 % (problems_found, problems_fixed, problems_unfixed))
+        return (problems_found, problems_fixed, problems_unfixed)
 
     def cleanup_update_files(self):
         """清空绿色版更新目录 (runtime/update): 暂存 zip / 解压内容 / 覆盖前旧文件备份 / 更新任务文件。
@@ -2742,15 +3127,207 @@ class Launcher:
         except Exception:
             return False
 
-    def reconcile_bundles(self, profile=DEFAULT_PROFILE, removed=None):
-        """把 dependencies 中声明 dsh.bundle 且未停用的包同步进 dsh.profile.bundles;
-        停用的依赖包从 bundles 移除; removed 中列出的包 (本次移除操作的目标) 强制清除。
-        内置 bundle (如 @deepseek-ai/dsh-base / dsh-web-app) 不在 dependencies 中,
-        与官方 reconcile 一致永不触碰。
-        返回 (是否有变更, 当前 bundles 列表)。"""
+    def _detect_runtime_profile_core_bundles(self, profile=DEFAULT_PROFILE):
+        """主动探测 runtime 里的 profile 级 core bundle, 并按 profile 名筛出需要的组合。
+
+        这是对 REQUIRED_CORE_BUNDLES_BY_PROFILE 硬编码常量的自适应补充:
+        - 先扫描 runtime/node_modules/@deepseek-ai/ 下所有有 cordis.patch.yml 的包;
+        - 排除 client 侧包 (dsh-client-ui-xxx 等, 它们是 patch 不是 profile 层);
+        - 从包的 description 推断它属于哪种 profile (web/headless/sdk/acp/base);
+        - 按 profile 名匹配, 返回 [(profile 专用层), base 底座];
+
+        返回 [core bundle 全名 (如 @deepseek-ai/dsh-base), ...], 空列表表示无法探测。
+        """
+        runtime_core_dir = os.path.join(DSH_DIR, "node_modules", "@deepseek-ai")
+        if not os.path.isdir(runtime_core_dir):
+            return []
+
+        all_profile_bundles = []  # runtime 里所有 profile 级 core bundle
+        for entry_name in os.listdir(runtime_core_dir):
+            entry_path = os.path.join(runtime_core_dir, entry_name)
+            patch_yml = os.path.join(entry_path, "cordis.patch.yml")
+            pkg_json = os.path.join(entry_path, "package.json")
+            if not os.path.isdir(entry_path) or not os.path.isfile(patch_yml):
+                continue
+            # 排除 client 侧包 (dsh-client-ui-xxx 等不是 profile 级)
+            if entry_name.startswith("dsh-client-ui-"):
+                continue
+            # 有些 runtime 包也有 patch.yml 但不是 profile 级, 跳过明显非 profile 的
+            # (host-*, gateway 等, 它们是 web-app 内部依赖, 不是独立 profile)
+            if any(entry_name.startswith(prefix) for prefix in [
+                "dsh-host-", "dsh-api-gateway", "dsh-sdk-minimal",
+            ]):
+                continue
+            # 读 description 判断
+            try:
+                with open(pkg_json, "r", encoding="utf-8", errors="replace") as fh:
+                    manifest = json.load(fh)
+                description = (manifest.get("description") or "").lower()
+            except Exception:
+                description = ""
+
+            # 识别各种 profile 类型
+            is_base = "shared dsh core as a profile bundle" in description or "dsh-base" in entry_name
+            is_web = "browser-surface" in description or ("web" in entry_name and "app" in entry_name)
+            is_headless = "one-shot" in description or "headless" in entry_name
+            is_sdk = ("sdk" in description and "minimal" not in description
+                      and "sdk" in entry_name and "minimal" not in entry_name)
+            is_acp = "acp" in description or "acp" in entry_name
+
+            bundle_type = None
+            if is_base:
+                bundle_type = "base"
+            elif is_web:
+                bundle_type = "web"
+            elif is_headless:
+                bundle_type = "headless"
+            elif is_sdk:
+                bundle_type = "sdk"
+            elif is_acp:
+                bundle_type = "acp"
+            else:
+                continue   # 不认识的包跳过
+
+            all_profile_bundles.append({
+                "name": "@deepseek-ai/%s" % entry_name,
+                "type": bundle_type,
+            })
+
+        if not all_profile_bundles:
+            return []
+
+        # 按 profile 名匹配: 所有 profile 都要 base + 对应的 profile 层
+        type_to_bundle = {b["type"]: b["name"] for b in all_profile_bundles}
+        required = []
+
+        # 1) base 底座 (所有 profile 都要)
+        if "base" in type_to_bundle:
+            required.append(type_to_bundle["base"])
+
+        # 2) profile 专用层
+        profile_lower = profile.lower()
+        # 尝试匹配 profile 名
+        matched_profile_type = None
+        for ptype in ["web", "headless", "sdk", "acp"]:
+            if ptype in profile_lower and ptype in type_to_bundle:
+                matched_profile_type = ptype
+                break
+        if matched_profile_type is None:
+            # 兜底: 如果只有 base, 就只返回 base
+            return required
+
+        # 如果 profile 名匹配, 加专用层
+        if matched_profile_type in type_to_bundle:
+            required.append(type_to_bundle[matched_profile_type])
+
+        return required
+
+    def _ensure_core_bundles(self, profile=DEFAULT_PROFILE):
+        """确保 profile 的 dsh.profile.bundles 包含必需的核心 bundle (幂等)。
+
+        DSH v0.1.2-alpha.3 起框架不再自动注入 core bundles (如 @deepseek-ai/dsh-base,
+        @deepseek-ai/dsh-web-app), 必须由 profile 的 bundles 列表显式声明。
+        本函数负责:
+        1) **先主动探测 runtime** 里的 profile 级 core bundle (自适应, 适合未来版本变化);
+           探测失败/返回空 → 再用硬编码常量 REQUIRED_CORE_BUNDLES_BY_PROFILE 兜底。
+        2) 检查 runtime 的 node_modules/@deepseek-ai/ 下确实存在这些包 (不存在则跳过,
+           不强行写入 —— 避免 dsh-web-app 在 runtime 里缺失时导致 patch 加载失败);
+        3) 把缺失的 core bundle 插入 bundles 列表最前端 (core 层是 patch 栈底层,
+           必须在所有本地插件之前, 否则本地插件依赖的服务 (如 webServer) 不存在);
+
+        注意: core bundles 只需要在 dsh.profile.bundles 数组里出现即可, 不需要写入
+        dependencies —— 它们在 runtime 的 node_modules 里已经装好了 (框架自带),
+        pnpm 不需要也不应该尝试安装它们。DSH 框架加载 bundle 时, 直接按名字在
+        runtime/@deepseek-ai/ 下找对应的包, 不走 profile 的 node_modules。
+
+        返回 (是否有变更, 完整 bundles 列表)。"""
         manifest = self.read_profile_manifest(profile)
         if manifest is None:
             return False, []
+
+        # 1) 确定需要哪些 core bundles —— 优先主动探测, 失败再硬编码兜底
+        required_cores = self._detect_runtime_profile_core_bundles(profile)
+        if not required_cores:
+            # 兜底: 用硬编码常量
+            required_cores = list(REQUIRED_CORE_BUNDLES_BY_PROFILE.get(
+                profile, _MINIMUM_CORE_BUNDLES))
+            self.log("[core bundle] 主动探测无结果, 用硬编码常量: %s"
+                     % ", ".join(required_cores))
+
+        # 2) 检查 runtime 里实际存在哪些 —— 不存在的跳过 (core bundle 在 runtime 里不是普通
+        #    依赖, 是框架自带的, 理论上应该全存在, 但万一 runtime 残缺就不要强行写进去)
+        runtime_core_dir = os.path.join(DSH_DIR, "node_modules", "@deepseek-ai")
+        available_cores = []
+        missing_cores_in_runtime = []
+        for core_name in required_cores:
+            # core 包名格式: @deepseek-ai/dsh-base → 目录名就是 dsh-base
+            pkg_dir_name = core_name.split("/", 1)[1] if "/" in core_name else core_name
+            pkg_dir = os.path.join(runtime_core_dir, pkg_dir_name)
+            if os.path.isdir(pkg_dir):
+                available_cores.append(core_name)
+            else:
+                missing_cores_in_runtime.append(core_name)
+
+        if missing_cores_in_runtime:
+            self.log("[警告] core bundle 在 runtime 里找不到, 跳过: %s"
+                     % ", ".join(missing_cores_in_runtime))
+
+        if not available_cores:
+            return False, []
+
+        # 3) 检查 bundles 列表里缺失哪些 available_cores
+        bundles = manifest.setdefault("dsh", {}).setdefault("profile", {}).setdefault("bundles", [])
+        bundles_set = set(bundles)
+        missing_cores_in_bundles = [c for c in available_cores if c not in bundles_set]
+
+        if not missing_cores_in_bundles:
+            return False, list(bundles)
+
+        # 4) 把缺失的 core bundles 插到最前端 (保持 required_cores 里的顺序)
+        #    先在 required_cores 里过滤出 bundles 里已有的和缺失的
+        existing_core_in_bundles = [c for c in required_cores if c in bundles_set]
+        # 找到 bundles 里第一个非 core 的位置 (在这之前插入)
+        insert_at = 0
+        for existing in existing_core_in_bundles:
+            pos = bundles.index(existing)
+            insert_at = max(insert_at, pos + 1)
+        # 在 insert_at 处插入所有缺失的 cores, 保持它们在 required_cores 里的相对顺序
+        # 但要确保 core 整体都在最底层 —— 如果已有 core 在 insert_at 前面, 我们不打乱它们
+        for offset, new_core in enumerate(missing_cores_in_bundles):
+            bundles.insert(insert_at + offset, new_core)
+
+        self.log("已补 core bundles 到 dsh.profile.bundles: %s"
+                 % ", ".join(missing_cores_in_bundles))
+
+        # 注意: 不写 dependencies —— core bundles 在 runtime 里已装好,
+        # profile 不需要 (也不应该) 自己 pnpm install 它们
+
+        manifest["dsh"]["profile"]["bundles"] = bundles
+        self.write_profile_manifest(profile, manifest)
+        return True, list(bundles)
+
+    def reconcile_bundles(self, profile=DEFAULT_PROFILE, removed=None):
+        """把 dependencies 中声明 dsh.bundle 且未停用的包同步进 dsh.profile.bundles;
+        停用的依赖包从 bundles 移除; removed 中列出的包 (本次移除操作的目标) 强制清除。
+
+        DSH v0.1.2-alpha.3 起, 框架不再自动注入 core bundles (dsh-base / dsh-web-app 等),
+        但本函数维护的"移除逻辑"只会移除 dependencies 里声明 bundle 的包 —— core bundle
+        不在 dependencies 里, 所以 remove 分支不会碰它们 (符合注释里"永不触碰"的承诺)。
+        但"补齐"逻辑只会从 dependencies 里扫描, core bundle 不在其中, 所以丢了也补不回来。
+        解决: 开头先调 _ensure_core_bundles 把必需的 core bundle 注入 bundles 列表最前端,
+        然后再做常规的本地插件 reconcile。
+
+        返回 (是否有变更, 当前 bundles 列表)。"""
+        # 前置: 确保 core bundles 存在 (v0.1.2-alpha.3+ 必需)
+        core_changed = False
+        try:
+            core_changed, _ = self._ensure_core_bundles(profile)
+        except Exception as error:
+            self.log("[警告] 补 core bundles 失败 (不阻断): %s" % error)
+
+        manifest = self.read_profile_manifest(profile)
+        if manifest is None:
+            return core_changed, []
         dependencies = manifest.get("dependencies") or {}
         profile_section = manifest.setdefault("dsh", {}).setdefault("profile", {})
         bundles = profile_section.get("bundles") or []
@@ -2779,9 +3356,9 @@ class Launcher:
                 bundles.remove(package_name)
                 changed = True
         profile_section["bundles"] = bundles
-        if changed:
+        if changed or core_changed:
             self.write_profile_manifest(profile, manifest)
-        return changed, list(bundles)
+        return (changed or core_changed), list(bundles)
 
     def get_plugin_state(self, package_name, profile=DEFAULT_PROFILE):
         """返回插件当前状态: enabled / disabled / plain (非 bundle 依赖) / missing"""
@@ -3205,6 +3782,14 @@ class Launcher:
         python_ok = self.prepare_python()
         self.prepare_node()
         self.prepare_dsh()
+        # dsh 装好后, 同步检查 profile 依赖完整性: package.json 污染清理、node_modules
+        # 元数据一致性、peer 依赖补齐、核心版本同步。幂等, 已好的项直接跳过; 发现问题
+        # 时自动 pnpm install 修复, 让「安装环境」一次到位而不会留下隐藏的依赖隐患。
+        if self.dsh_installed():
+            found, fixed, unfixed = self.verify_environment_integrity()
+            if unfixed > 0:
+                self.log("[警告] 发现 %d 个依赖问题未能自动修复, 服务可能无法正常加载 "
+                         "插件 (详见上方日志)" % unfixed)
         # 安装环境最后自动把所有计划内置的插件都装上 (已装的跳过, 单个失败不中断)。
         # 注意: prepare_all 在每次启动服务前也会调用, 因"已装跳过"故幂等, 无重复安装开销。
         if self.dsh_installed():
