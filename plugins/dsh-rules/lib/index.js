@@ -102,12 +102,12 @@ function ensureRulesFile(rulesPath) {
 }
 
 /**
- * Cordis 插件生命周期入口: 插件被加载时调用。
+ * Cordis 插件生命周期入口: 插件被加载时调用 (Cordis 协议要求导出函数名为 apply)。
  *
  * @param {import('@deepseek-ai/cordis').Context} ctx - Cordis 上下文 (含 logger, on, waterfall 等)
  * @param {z.infer<typeof Config>} config - 用户在 cordis.yml 里配置的值 (或默认值)
  */
-export function setup(ctx, config) {
+export async function apply(ctx, config) {
     // 1. 解析规则文件路径
     const dshHome = resolveDshHome();
     const rulesPath = config.rulesPath || join(dshHome, 'rules', 'user-rules.md');
