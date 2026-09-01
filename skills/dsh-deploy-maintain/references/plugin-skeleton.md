@@ -209,6 +209,8 @@ window.__ModuleLoader__.load({
     "bundle": {
       "patch": "cordis.patch.yml"
     }
+    // ⚠️ 注意: 纯 hook 插件不要写 dsh.client! 写了会让客户端模块注册表
+    // 去找 exports["./client"] 找不到 → 服务启动崩溃。只有带 WebUI 的类型 A 才声明 dsh.client
   }
 }
 ```

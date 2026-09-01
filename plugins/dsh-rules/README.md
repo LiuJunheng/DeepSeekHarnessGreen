@@ -47,7 +47,9 @@ dsh plugin add file:./plugins/dsh-rules
 ### 3. 自动生效
 
 - 修改保存后, DSH 会在**下次对话请求**时自动读取最新内容
+
 - `autoReload: true` (默认) 时, 文件变化会被 `fs.watch` 监听到
+
 - 规则内容会作为 system prompt 的一个 context (`name: user-rules`) 注入
 
 ## 配置
@@ -83,13 +85,13 @@ DSH runtime 把所有 contexts 拼成完整 system prompt
 
 ## 与 dsh-memory autoRecall 的区别
 
-| | dsh-rules | dsh-memory autoRecall |
-|---|---|---|
-| 内容 | 用户手写的固定规则 | 祖宗记忆库自动召回的最近对话 |
-| 可编辑 | ✅ 手动编辑 md 文件 | ❌ 自动管理 |
-| 持久化 | 规则文件 | SQLite 数据库 |
-| context name | `user-rules` | `zuzong:auto-recall` |
-| 冲突 | 两个独立 context, 各有唯一 name, 不冲突 |
+| <br />       | dsh-rules                    | dsh-memory autoRecall |
+| ------------ | ---------------------------- | --------------------- |
+| 内容           | 用户手写的固定规则                    | 祖宗记忆库自动召回的最近对话        |
+| 可编辑          | ✅ 手动编辑 md 文件                 | ❌ 自动管理                |
+| 持久化          | 规则文件                         | SQLite 数据库            |
+| context name | `user-rules`                 | `zuzong:auto-recall`  |
+| 冲突           | 两个独立 context, 各有唯一 name, 不冲突 | <br />                |
 
 ## 故障排查
 
@@ -107,5 +109,8 @@ DSH runtime 把所有 contexts 拼成完整 system prompt
 ## 开发
 
 基于 `system-prompt/assemble` waterfall 事件实现。参考:
+
 - [dsh-memory hooks.js](../dsh-memory/lib/hooks.js) — 同一事件的另一个使用范例
+
 - `runtime/dsh/node_modules/@deepseek-ai/dsh-system-prompt/lib/invariant.js` — context 类型约束
+

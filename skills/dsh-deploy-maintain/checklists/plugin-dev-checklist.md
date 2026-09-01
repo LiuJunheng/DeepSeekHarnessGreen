@@ -7,6 +7,7 @@
 - [ ] **`exports` 必须包含 `"./package.json": "./package.json"`**——客户端 `ClientModuleRegistry.resolveMeta()` 用 `require.resolve("<插件>/package.json")` 扫描，缺失 → `ERR_PACKAGE_PATH_NOT_EXPORTED` → 客户端 bundle 跳过 → WebUI 入口不出现
 - [ ] **`files` 数组必须包含 `cordis.patch.yml`**——否则 pnpm 安装时文件被排除 → 插件树注册失败
 - [ ] **`name` 字段与目录名一致**——目录名 `dsh-rules/` → package.json `name: "dsh-rules"`
+- [ ] **纯 hook 插件（类型 B）package.json 不要写 `dsh.client`**——`client-modules: dsh-xxx declares dsh.client but exports no "./client" bundle` 会让客户端模块注册表去找不存在的 `./client` export，直接炸服务。只有带 WebUI 的"类型 A"插件才声明 `dsh.client`
 
 ## 一、两种插件类型
 
@@ -39,7 +40,7 @@ dsh-rules/
 └── README.md
 ```
 
-- [ ] `package.json` 含 `dsh.bundle.patch`，**不需要** `dsh.client`（没有 WebUI 入口）
+- [ ] `package.json` 含 `dsh.bundle.patch`，**绝对不能写** `dsh.client`（没有 WebUI 入口，写了会让客户端模块注册表找 `./client` export 炸服务）
 - [ ] `inject: []` 空数组（不依赖任何宿主服务）或按需声明
 - [ ] `import '@deepseek-ai/dsh-system-prompt'` 声明依赖（否则事件没注册）
 - [ ] 无 `lib/client.js`（不需要客户端入口）
@@ -116,5 +117,6 @@ dsh-rules/
 | 路由 405 | 没进 exact 表 | `ctx.effect(()=>register(...))` 写法 |
 | system-prompt hook 不触发 | 没 import `@deepseek-ai/dsh-system-prompt` | 补上 import |
 | plugin tree 加了两个同名 context | 两个插件用了同一个 context.name | 换唯一名字 |
+| `client-modules: xxx declares dsh.client but exports no "./client" bundle` | 纯 hook 插件误写了 `dsh.client` 块 | 删掉 package.json 里整个 `dsh.client` 块，只保留 `dsh.bundle.patch` |
 | hook 抛异常炸掉整个请求 | 读文件失败没 try-catch | try-catch 吞掉，failSilently |
 | 装完插件服务退出 | 纯客户端缺宿主端 index.js / exports 格式错 / apply 命名错 | 对照本清单零→二节排查 |

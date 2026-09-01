@@ -166,6 +166,7 @@ description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护�
 | 3 | **exports 必须包含 `"./package.json": "./package.json"`** | 客户端 bundle 跳过 → WebUI 入口不出现 | 检查 package.json exports 字段 |
 | 4 | **files 数组必须包含 cordis.patch.yml** | pnpm 安装时文件被排除 → 插件树注册失败 | `files: ["lib", "cordis.patch.yml"]` |
 | 5 | **name 字段与目录名一致** | 包名/目录名对不上时 pnpm 安装可能出问题 | 目录 `dsh-rules/` → package.json `name: "dsh-rules"` |
+| 6 | **纯 hook 插件 package.json 不能写 `dsh.client`** | `client-modules: dsh-xxx declares dsh.client but exports no "./client" bundle` → 服务启动崩溃 | 只有带 WebUI 的"类型 A"插件才声明 `dsh.client`；纯 hook 插件只声明 `dsh.bundle.patch` |
 
 **导出契约完整版**（所有插件都应遵守）：
 
@@ -177,6 +178,8 @@ export const name = 'dsh-xxx';         // 插件名, 与目录一致
 export const inject = ['webServer'];    // 按需声明依赖服务, 纯 hook 可空 []
 export const Config = z.object({...});  // 可选: schemastery 配置 schema
 export async function apply(ctx, config) { ... }  // 必须叫 apply, 可用 async
+// package.json 的 dsh.client 块: 只有带 WebUI 的"类型 A"插件才写
+// 纯 hook 插件 (类型 B) 不要写 dsh.client, 否则客户端模块注册表会去找 ./client export
 ```
 
 完整检查清单见 `checklists/plugin-dev-checklist.md` 零节；代码骨架见 `references/plugin-skeleton.md`。
