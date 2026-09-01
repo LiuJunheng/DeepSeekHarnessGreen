@@ -4,7 +4,7 @@
   "python_version": "3.10.20",
   "python_release": "20260807",
   "dsh_port": 3080,
-  "dsh_host": "0.0.0.0",
+  "dsh_host": "127.0.0.1",
   "dsh_require_auth": true,
   "trusted_hosts": [],
   "dsh_package": "@deepseek-ai/dsh",

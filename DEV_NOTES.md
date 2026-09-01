@@ -484,3 +484,107 @@ return next();  // 必须继续传下去
 * **纯寒暄 AI 回复跳过写入** — 用户发 "好的" 或 AI 回 "好的" 这种没实质内容的, ruleSummarize 返回 null, hooks.js 检测到后 return, 不进数据库。
 
 * **recall 空 query 的排序逻辑** — 引擎层用 CASE WHEN summary IS NOT NULL AND summary != '' THEN 1 ELSE 0 END DESC, 再按 importance DESC, 再按 created_at DESC。保证有摘要的 > 重要的 > 新的。
+
+---
+
+### 8. 记忆库 + 规则插件 v3 — 默认关闭 + WebUI 开关 + 持久化配置
+
+**日期:** 2026-09-02
+
+**需求:**
+1. 记忆功能会消耗 token, 改为默认关闭, WebUI 设置面板里加启用开关 + 【测试】标签
+2. dsh-rules 插件没有 WebUI 设置入口, 需要补上
+
+**改动:**
+
+#### 8.1 dsh-memory v3
+
+* **Config 加总开关 enabled (默认 false)** — 用户手动开。bridge/tool/路由始终注册, 只有自动记忆 hooks 和 autoRecall 在 enabled=false 时跳过安装 (用户仍可手动调用 remember/recall)。
+* **持久化 json 文件** — ${DSH_HOME}/memory/memory-config.json, 存 WebUI 覆盖的 enabled 值。apply() 启动时读它合并进 Config (最高优先)。
+* **新增 host 路由** — GET /__dsh/memory/config 读生效配置; POST /__dsh/memory/config 写 json (当前只支持 enabled 字段)。
+* **client.js 改 label** — 从 "祖宗记忆库" 改为 "【测试】祖宗记忆库" (橙色标签)。
+* **client.js 加开关 UI** — 标题栏右侧 checkbox, 勾上后调 POST /config → 写 json → 提示 "下次启动生效"。
+* **ruleSummarize 第四轮调优** — 长句逗号二次拆分 (修复核心信息被 80 字上限滤掉的 bug)、列举词前缀清理 ("例如"/"其中"/"包括")、"我检索" 精准过滤 (有版本号的不砍)、评分 < 10 跳过写入过渡废话。
+
+#### 8.2 dsh-rules v3
+
+* **Config 改 enabled 默认值** — 从 true 改为 false (规则占 system prompt token)。
+* **新增 inject: ['webServer']** — 之前是空数组, 现在需要注册 host 路由。
+* **持久化 json 文件** — ${DSH_HOME}/rules/rules-config.json。
+* **新增 host 路由** — GET /__dsh/rules/config 读 enabled + rulesPath + 文件状态; POST /__dsh/rules/config 写 enabled。
+* **新增 lib/client.js** — DSH 插件客户端格式 (window.__ModuleLoader__.load), 注册到 settings.section slot (id=dsh-rules, order=540, label="用户规则"), UI 含: 启用开关 + 文件路径/存在性/大小 + 自动重载状态 + 保存/刷新按钮。
+
+**关键技术点:**
+
+* **DSH WebUI 插件面板注册机制** — 每个插件放 lib/client.js, 格式 window.__ModuleLoader__.load({ id, factory }), factory 返回 { apply(ctx), inject: ["slots"] }, apply 里调 ctx.slots.inject("settings.section", () => ctx.slots.register({ name, id, order, label }, Component))。DSH runtime 自动加载。
+* **开关持久化策略** — 不用 cordis.yml 改来改去 (用户可能手动编辑覆盖), 用独立 json 文件存在 DSH_HOME 下, 插件 apply() 时读它 merge。WebUI POST → 写 json → 提示重启。这样 cordis.yml 是开发态默认值, json 是用户态覆盖, 层级清晰。
+* **registerMemoryRoutes / config 路由** — 新增了可选字段 effectiveConfig, 让 config GET 能读到当前生效配置 (dbPath 等)。
+
+**坑:**
+
+* **PowerShell && 语法** — PowerShell 5 不支持 && 只有 ;, 命令里要用分号或 cmd /c "a && b" 格式。
+* **Node 语法检查** — 用 
+ode --check <file> 验证 JS 语法, exit 0 = 通过。
+* **pnpm workspace 硬链接** — 改 plugins/dsh-memory/lib/index.js → runtime 的 node_modules 自动同步, 重启 DSH 就生效。
+
+#### 8.3 Files Changed
+
+| 文件 | 改动 |
+|------|------|
+| plugins/dsh-memory/lib/index.js | Config 加 enabled 默认 false; 加 _loadPersist/_savePersist; apply() 合并持久化 + enabled 控制 hooks; registerMemoryRoutes 加 config GET/POST |
+| plugins/dsh-memory/lib/client.js | label 加【测试】; 加 enabled 开关状态 + config 读写接口 + UI |
+| plugins/dsh-memory/lib/hooks.js | ruleSummarize 加列举词清理、评分阈值过滤、长句逗号拆分 |
+| plugins/dsh-rules/lib/index.js | Config enabled 默认 false; inject 加 webServer; 加持久化函数 + sendJson; apply() 合并持久化 + config 路由 + enabled 判断 |
+| plugins/dsh-rules/lib/client.js | **新建** — WebUI 设置面板 (开关 + 文件状态 + 保存) |
+
+
+#### 8.4 Skill 文档同步更新
+
+**原因**：dsh-rules 从 Type B（纯 hook）升级到 Type A（双端）时发现 package.json 漏了两个关键声明（exports["./client"] + dsh.client 块）——如果不补，ClientModuleRegistry.resolveMeta() 会找不到 ./client export → WebUI 入口不出现甚至服务崩溃。这是通用坑，需要沉淀进 skill。
+
+**更新内容**:
+
+| 文件 | 补充内容 |
+|------|----------|
+| skills/dsh-deploy-maintain/references/plugin-skeleton.md | 新增「类型 B → 类型 A 升级路径」完整章节（package.json 改什么 + lib/index.js 改什么 + 路由注册踩坑提醒）+ 「持久化配置 + WebUI 开关」完整章节（架构图 + 宿主端骨架 + 客户端骨架 + 设计决策表） |
+| skills/dsh-deploy-maintain/checklists/plugin-dev-checklist.md | 新增「类型 B → 类型 A 升级」9 条检查项 + 新增「持久化 config + enabled 开关」8 条检查项 + 排查速查表新增 6 条症状根因（纯 hook 加了 client.js 但 WebUI 不出现、开关改了但 hooks 没生效、Config 路由 404、Duplicate kind/path、json 不生成） |
+| skills/dsh-deploy-maintain/SKILL.md | 新增 5.9.1 章节「类型 B → 类型 A 升级路径」——三段式升级步骤 + 四个关键设计决策（enabled 默认 false / json 独立于 cordis.yml / 路由始终注册 / 下次启动生效） |
+
+**关键发现**: 原来的 plugin-skeleton.md 和 plugin-dev-checklist.md 里没有覆盖「从纯 hook 插件升级成带 WebUI 的双端插件」这个场景——只描述了从零开始创建 Type A 或 Type B。这次 dsh-rules 的实践暴露了这个缺口，补完后以后任何纯 hook 插件想加 WebUI 开关都有明确的 checklist 跟。
+
+#### 8.5 dsh-rules v4 — WebUI 内编辑规则 + v4 新路由
+
+**需求**: 用户希望在 WebUI 设置页里直接编辑规则内容 (不要每次下载文件 → 本地改 → 上传回来), 如果不行至少要有下载/打开文件的按钮。
+
+**最终方案**: **WebUI 内编辑 + 下载 .md 双保险**。浏览器安全限制无法从 WebUI 直接"打开本地文件", 所以走 textarea 编辑 + 文件下载两条路。
+
+**改动**:
+
+| 文件 | 改动 |
+|------|------|
+| plugins/dsh-rules/lib/index.js | +2 路由: GET /__dsh/rules/content (读规则文件) + POST /__dsh/rules/content (写规则文件)。写路由带 maxLength 检查 + 目录自动创建。 |
+| plugins/dsh-rules/lib/client.js | **v4 重写**: 新增规则内容卡片 (预览 <pre> + 编辑 <textarea>)、编辑/保存/取消三按钮、下载 .md 按钮、字符数统计、错误/提示状态管理。 |
+
+**路由设计**:
+- GET /__dsh/rules/content — 返回 { ok, content, path, size }, 首次访问自动 ensureRulesFile()
+- POST /__dsh/rules/content — 接受 { content: string }, 返回 { ok, size, note } (note 提示 autoReload 是否生效)
+- 长度上限: 用 config.maxLength (默认 16000), 超上限返回 413
+
+**编辑模式交互**:
+- 预览态: <pre> 只读展示 + 「编辑规则」(主按钮) + 「下载 .md」(幽灵按钮, title 提示)
+- 编辑态: <textarea> 可编辑, 实时字符数统计, 「保存规则」(绿色主按钮) + 「取消」(幽灵按钮, 重新拉服务器)
+- 保存后自动退出编辑模式, 同步刷新 ruleSize
+
+**为什么没有"打开本地文件/文件夹"按钮**:
+- 浏览器安全限制: fetch API 调不到本地文件系统, 也没有办法让浏览器触发 explorer 或系统文件关联
+- 替代方案: 下载 .md 按钮 → 浏览器下载到用户下载目录 → 用户右键用编辑器打开 → 修改后再粘贴回 WebUI textarea
+- 未来可能: 绿色版启动器 (Python tkinter) 里加"打开规则文件夹"按钮, 调 os.startfile(dir) 直接打开资源管理器。需要启动器和 DSH 服务之间额外的 IPC 通道。
+
+**坑**:
+- 	extarea value 受 React 控制, onChange 回调里要同时 setContentTip(null) 和 setContentError(null) 清掉旧提示
+- 保存成功后要退出编辑模式 + 刷新 config 里的 ruleSize (两个 state 对象, 别忘了同步)
+- 首次加载要同时拉 config 和 content (两次 fetch), 用两个独立的 state + 两个独立的 useCallback
+
+#### 8.6 config.json dsh_host 改 127.0.0.1
+
+之前 dsh_host 一直是  .0.0.0 (允许局域网访问), 这次会话里改成了 127.0.0.1 (仅本地). 原因: 官方新版 dsh 自带 PRIVILEGED_METHODS 安全保护, 回环地址外的改配置请求 403。绿色版默认更安全。

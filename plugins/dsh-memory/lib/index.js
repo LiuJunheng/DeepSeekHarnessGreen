@@ -6,19 +6,24 @@
  *   - hooks   (自动记忆 + autoRecall) : 会话事件钩子, 对用户消息脱敏后写入记忆库,
  *                                       system-prompt 组装时自动注入最近记忆
  *   - tools   (工具注册)       : 动态拉取 bridge 工具清单, 注册到 Cordis 工具系统
- *   - routes  (host 路由)      : /__dsh/memory/* 记忆库管理卡片后端
+ *   - routes  (host 路由)      : /__dsh/memory/* 记忆库管理卡片后端 + config 读写
  *
  * 用法 (cordis.yml):
  *   - id: dsh-memory
  *     name: dsh-memory
  *     config:                        # 全部可选, 以下为绿色版默认值
+ *       enabled: false              # v3: 总开关, 默认关闭 (WebUI 里可开)
  *       dbPath: '${DSH_HOME}/memory/zuzong.db'
  *       identity: '祖宗记忆库'
  *       tools: ['remember','recall','search','timeline','service_info','list_all','delete']
  *       memory: { userMessage: true, autoRecall: true, desensitize: true }
+ *
+ * v3 设计: 总开关 enabled (默认 false) 控制自动记忆/autoRecall 钩子是否安装;
+ *   bridge/tool/路由始终注册 (用户可手动调用 remember/recall 工具或 WebUI 管理卡片)。
+ *   WebUI 改开关 → 写 json 持久化文件 → 下次启动生效。
  */
 import z from '@deepseek-ai/schemastery';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -83,6 +88,8 @@ function _dshHome() {
 
 /** 精简版配置 (移除 roleplayEntryButton / mutual 等非核心)。 */
 export const Config = z.object({
+    /** v3: 总开关 —— 默认 false (记忆功能会消耗 token, 用户手动开启)。 */
+    enabled: z.boolean().default(false),
     serverName: z.string().default('zuzong'),
     python: z.string().default(''),          // 空字符串 = 自动探测绿色版便携 Python
     moduleArgs: z.array(String).default([]),  // 空数组 = 自动探测自研引擎
@@ -113,6 +120,39 @@ export const Config = z.object({
     maxRetryDelayMs: z.number().default(30_000),
     failOnStartupError: z.boolean().default(false),
 });
+
+/** Config 持久化 json 文件路径: ${DSH_HOME}/memory/memory-config.json。 */
+function _persistPath() {
+    return join(_dshHome(), 'memory', 'memory-config.json');
+}
+
+/**
+ * 读取持久化 json 覆盖 (WebUI 开关写进来的)。
+ * 文件不存在或损坏 → 返回空对象 (保持 cordis config 原样)。
+ */
+function _loadPersist() {
+    const p = _persistPath();
+    if (!existsSync(p)) return {};
+    try {
+        const raw = readFileSync(p, 'utf-8');
+        return JSON.parse(raw) || {};
+    } catch {
+        return {};
+    }
+}
+
+/** 把 WebUI 覆盖项写回 json (宿主路由 POST 调用)。 */
+function _savePersist(patch) {
+    const persist = _persistPath();
+    const dir = dirname(persist);
+    if (!existsSync(dir)) {
+        try { mkdirSync(dir, { recursive: true }); } catch { /* 静默 */ }
+    }
+    const existing = _loadPersist();
+    const merged = { ...existing, ...patch };
+    writeFileSync(persist, JSON.stringify(merged, null, 2), 'utf-8');
+    return merged;
+}
 
 /**
  * 把精简 Config 重新组装成 bridge 需要的完整字段 (ZuzongBridge 要求 python/args/dbPath 非空)。
@@ -185,14 +225,16 @@ function parseQuery(url) {
 }
 
 /**
- * 注册 4 个记忆管理 host 路由:
+ * 注册 6 个记忆管理 host 路由 (v3 新增 config GET/POST):
  *   GET  /__dsh/memory/status    → 引擎状态 (service_info)
  *   GET  /__dsh/memory/list      → 列出全部记忆 (list_all, 支持 ?limit=&offset=)
  *   GET  /__dsh/memory/search    → 搜索 (search, ?q=&limit=)
  *   POST /__dsh/memory/delete    → 删除 (body: { id: number })
  *   POST /__dsh/memory/write     → 写入 (body: { content, tags?, importance? })
+ *   GET  /__dsh/memory/config    → 读取当前生效配置 (含 enabled)
+ *   POST /__dsh/memory/config    → 保存配置到持久化 json (下次启动生效)
  */
-function registerMemoryRoutes(ctx, bridge) {
+function registerMemoryRoutes(ctx, bridge, effectiveConfig) {
     const routes = [
         { path: `${MEMORY_ROUTE_PREFIX}/status`, method: 'GET', handler: async (req, res) => {
             try {
@@ -275,6 +317,41 @@ function registerMemoryRoutes(ctx, bridge) {
                 }
             });
         }},
+        // v3: 配置读写路由 (enabled 总开关持久化)
+        { path: `${MEMORY_ROUTE_PREFIX}/config`, method: 'GET', handler: (_req, res) => {
+            const persist = _loadPersist();
+            sendJson(res, 200, {
+                ok: true,
+                config: {
+                    enabled: Boolean(persist.enabled ?? effectiveConfig.enabled ?? false),
+                    persisted: persist,
+                    dbPath: effectiveConfig.dbPath,
+                },
+            });
+        }},
+        { path: `${MEMORY_ROUTE_PREFIX}/config`, method: 'POST', handler: (req, res) => {
+            let body = '';
+            req.on('data', (chunk) => { body += chunk; });
+            req.on('end', () => {
+                let parsed = {};
+                try { parsed = JSON.parse(body) || {}; } catch { /* 忽略 */ }
+                const patch = {};
+                if (typeof parsed.enabled === 'boolean') patch.enabled = parsed.enabled;
+                if (Object.keys(patch).length === 0) {
+                    sendJson(res, 400, { ok: false, error: '无可保存字段' });
+                    return;
+                }
+                const merged = _savePersist(patch);
+                sendJson(res, 200, {
+                    ok: true,
+                    config: {
+                        enabled: Boolean(merged.enabled ?? effectiveConfig.enabled),
+                        persisted: merged,
+                    },
+                    note: '配置已保存, 下次启动 DSH 后生效',
+                });
+            });
+        }},
     ];
 
     const disposers = [];
@@ -299,16 +376,21 @@ function registerMemoryRoutes(ctx, bridge) {
 // 插件激活入口
 // ---------------------------------------------------------------------------
 export async function apply(ctx, config) {
-    // 组装有效配置 (绿色版默认值)
-    const effective = _resolveEffectiveConfig(config);
+    // v3: 合并持久化 json 覆盖 (WebUI 开关写进来的)
+    const persist = _loadPersist();
+    const mergedConfig = { ...config };
+    if (typeof persist.enabled === 'boolean') {
+        mergedConfig.enabled = persist.enabled;
+    }
+    // 组装有效配置 (绿色版默认值 + 持久化覆盖)
+    const effective = _resolveEffectiveConfig(mergedConfig);
 
     ctx.logger.info(
         `dsh-memory-lite: 祖宗记忆库记忆插件激活 · ` +
-        `python=${effective.python} args=[${effective.moduleArgs.join(' ')}] ` +
-        `db=${effective.dbPath}`
+        `enabled=${effective.enabled} python=${effective.python} db=${effective.dbPath}`
     );
 
-    // 创建 MCP stdio 桥
+    // 创建 MCP stdio 桥 (始终创建, 用户可手动调用工具或 WebUI 管理卡片)
     const bridge = new ZuzongBridge({
         python: effective.python,
         args: effective.moduleArgs,
@@ -358,15 +440,19 @@ export async function apply(ctx, config) {
             disposers.push(() => { if (toolsPoll) clearInterval(toolsPoll); });
         }
 
-        // --- 自动记忆钩子 (session/event + autoRecall) ---
-        installMemoryHooks(ctx, bridge, effective.memory);
+        // --- v3: 自动记忆钩子只在 enabled=true 时安装 ---
+        if (effective.enabled) {
+            installMemoryHooks(ctx, bridge, effective.memory);
+            ctx.logger.info('dsh-memory: 自动记忆钩子已安装 (enabled=true)');
+        } else {
+            ctx.logger.info('dsh-memory: 自动记忆已关闭 (enabled=false), 跳过 hooks 安装');
+        }
 
-        // --- 记忆库管理卡片 host 路由 ---
-        // webServer 是可选注入 (某些最小 host 没有), 缺失时跳过
+        // --- 记忆库管理卡片 host 路由 (始终注册, 含 config 读写) ---
         let webServer;
         try { webServer = ctx.get('webServer'); } catch { webServer = null; }
         if (webServer) {
-            const disposeRoutes = registerMemoryRoutes(ctx, bridge);
+            const disposeRoutes = registerMemoryRoutes(ctx, bridge, effective);
             disposers.push(disposeRoutes);
             ctx.logger.info('dsh-memory: 记忆库管理路由已注册 (可通过 /__dsh/memory/* 访问)');
         } else {

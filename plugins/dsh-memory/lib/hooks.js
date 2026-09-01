@@ -2,10 +2,18 @@
  * 规则提炼 (v2: 零 LLM 成本的精简概要生成)。
  * 输入原文 + 类型 (user/assistant), 输出精简 summary。
  * 原则: 只抓核心信息, 砍废话和噪音, 纯中文短句。
+ *
+ * 用户消息: 目标 15-25 字核心 query, 砍寒暄/修饰
+ * AI 回复:  目标 1-2 句总 ≤ 50 字, 砍思考过程/套话, 抓结论
  */
 function ruleSummarize(text, kind) {
-    if (!text || text.length < 5)
-        return text; // 太短直接返回
+    if (!text)
+        return text;
+    // 太短: AI 回复短寒暄 → null (跳过写入); 用户消息直接返回
+    if (text.length < 5) {
+        if (kind === 'assistant') return null;
+        return text;
+    }
     // --- 先过滤明显噪音 ---
     // 日志粘贴: 以 [HH:MM:SS] 开头的行占比超 50% → 跳过 (无意义)
     const logLines = text.split('\n').filter(l => /^\[\d{2}:\d{2}:\d{2}\]/.test(l.trim()));
@@ -17,49 +25,91 @@ function ruleSummarize(text, kind) {
         return null; // 纯日志, 不值得记
     }
     if (kind === 'user') {
-        // 用户消息: 取核心 query, 最多 80 字
-        // 去掉开头的 "帮我" / "请" / "请问" 等寒暄 + 第二人称
-        let trimmed = text
-            .replace(/^(帮我|请|请问|麻烦|能不能|可不可以|想知道|我想|我想问)\s*/, '')
+        // 用户消息: 15-25 字核心 query, 砍掉所有寒暄修饰
+        let s = text
+            .replace(/^(帮我|请|请问|麻烦|能不能|可不可以|想知道|我想|我想问|能不能)\s*/, '')
             .replace(/^你\s*/, '')
+            .replace(/(一下|看看|看下|又|再|重新)\s*/g, '')   // 砍冗余修饰词
+            .replace(/[，,。？?！!\s]+$/, '')
             .trim();
-        // 取第一句 (到句号/问号/换行), 去掉句尾标点
-        const firstSentence = trimmed.split(/[。？?!！\n]/)[0].trim().replace(/[，,。？?！!]+$/, '');
-        const summary = firstSentence.length > 80
-            ? firstSentence.slice(0, 80) + '...'
-            : firstSentence;
-        return summary || trimmed.slice(0, 80);
+        // 取第一句核心 query
+        const first = s.split(/[。？?!！\n]/)[0].trim().replace(/[，,。？?！!]+$/, '');
+        if (!first || first.length < 4) {
+            // 第一句太短, 取整体
+            return s.slice(0, 40) || text.slice(0, 40);
+        }
+        // 控制在 40 字以内
+        if (first.length <= 40)
+            return first;
+        return first.slice(0, 40) + '...';
     }
     else if (kind === 'assistant') {
-        // AI 回复: 跳过寒暄 (好的/明白了/收到/没问题), 抓有实质内容的句子
+        // AI 回复: 砍所有思考过程, 抓 1-2 句结论 (总 ≤ 80 字)
+        // _isPureThinking: 纯思考/套话判定; 注意有版本号/路径/结论动词的句子不砍
+        const _isPureThinking = (s) => {
+            if (/^(让我|我来|我将|我会|我需要|我们)\b/.test(s)) return true;
+            if (/^(好的|明白了|收到|没问题|可以|行|是的|对|没错|确实)/.test(s)) return true;
+            if (/^(这是|下面是|以下是|根据|由于|我理解)/.test(s)) return true;
+            if (/使用.{0,10}(工具|search|web|搜索|查询|函数)/.test(s)) return true;
+            // "我检索" 开头: 纯思考才砍; 有版本号/路径 → 保留 (有实质结论)
+            if (/^我检索/.test(s)) return !/v?\d+\.\d+/.test(s) && !/[\/\\]/.test(s);
+            return false;
+        };
         const sentences = text
             .split(/[。！？\n]/)
+            .flatMap(s => {
+                // 超过 80 字的长句: 按逗号二次拆分 (核心信息被逗号连在一起的常见情况)
+                if (s.length > 80) {
+                    return s.split(/[，,]/);
+                }
+                return [s];
+            })
             .map(s => s.trim())
-            .filter(s => s.length > 8) // 太短的跳过
-            .filter(s => !/^(好的|明白了|收到|没问题|可以|行|OK|好呀|是的|对|没错|确实)/.test(s)) // 寒暄跳过
-            .filter(s => !/^(这是|下面是|以下是|我们来|让我)/.test(s)); // 套话跳过
+            // 去掉列举词前缀 (逗号拆分后留下的 "例如"/"其中"/"包括" 等)
+            .map(s => s.replace(/^(例如|其中|包括|如|像|比如|其中包括)\s*/, ''))
+            .filter(s => s.length >= 6 && s.length <= 80)  // 太短太长都丢
+            .filter(s => !_isPureThinking(s))                // 砍思考过程
+            .filter(s => !/^\*+|^#|^```|^\d+\.\s/.test(s))  // 砍 markdown 列表标记
+            .map(s => s.replace(/^\*+\s*/, '').replace(/^[\-]\s*/, ''));  // 去列表符号
         if (sentences.length === 0) {
-            // 全部被过滤掉了 → 取原文前 60 字兜底 (去掉纯寒暄)
-            const cleaned = text.replace(/^(好的|明白了|收到|没问题|可以|行|是的|对|没错)\s*[，,!！。]?\s*/, '').trim();
-            return cleaned.length >= 5 ? cleaned.slice(0, 60) : null; // 纯寒暄返回 null 跳过写入
+            return null; // 全被过滤 → 纯套话, 跳过写入
         }
-        // 取最有信息量的 1-2 句 (优先含数字/代码/技术关键词)
+        // 评分: 优先有结论/有版本/有路径的句子, 长度作为次要因子
         const scored = sentences.map(s => {
-            let score = s.length;
-            if (/\d+/.test(s))
-                score += 10; // 含数字加分
-            if (/代码|函数|文件|路径|配置|版本|接口|工具|修复|问题|模块|字段|索引|兼容/.test(s))
-                score += 15; // 技术关键词加分
+            let score = 0;
+            // 结论动词 (核心)
+            if (/(是|有|可|需|应|返回|输出|结果|修复|改为|新增|支持|已|完成|解决|版本|更新|插件)/.test(s)) score += 25;
+            // 含版本号加分 (含 v 前缀)
+            if (/v?\d+\.\d+[\.\-_]?\d*/.test(s)) score += 20;
+            // 含路径加分
+            if (/[\.\w]+[\/\\][\w\/\\]+/.test(s)) score += 10;
+            // 长度适中 (10-50 字) 小加分
+            if (s.length >= 10 && s.length <= 50) score += 10;
+            // 太短/太长小扣分
+            if (s.length < 10) score -= 5;
+            if (s.length > 60) score -= 5;
             return { s, score };
         });
         scored.sort((a, b) => b.score - a.score);
-        const top = scored.slice(0, 2).map(x => x.s);
-        let summary = top.join('。');
-        if (summary.length > 120)
-            summary = summary.slice(0, 120) + '...';
-        return summary;
+        // top1 评分 < 10: 全是过渡废话, 跳过写入
+        if (scored[0].score < 10)
+            return null;
+        // 取前 2 句, 总 ≤ 80 字 (放宽)
+        const picks = [];
+        let totalLen = 0;
+        for (const p of scored) {
+            if (totalLen + p.s.length + 1 > 80) continue;
+            picks.push(p.s);
+            totalLen += p.s.length + 1;
+            if (picks.length >= 2) break;
+        }
+        if (picks.length === 0) {
+            const best = scored[0].s;
+            return best.length > 80 ? best.slice(0, 80) + '...' : best;
+        }
+        return picks.join(' ');
     }
-    return text.slice(0, 80);
+    return text.slice(0, 40);
 }
 
 /**

@@ -13,9 +13,11 @@
  *   绿色版: runtime/dsh-home/rules/user-rules.md
  *   非绿色版: ~/.dsh/rules/user-rules.md
  *
+ * v3: 加 enabled 总开关 (默认 false), WebUI settings 面板读写持久化 json。
+ *
  * 配置 (cordis.yml):
  *   dsh-rules:
- *     enabled: true              # 总开关
+ *     enabled: false             # v3: 总开关, 默认关闭 (WebUI 里可开)
  *     rulesPath: ''              # 空=默认 ${DSH_HOME}/rules/user-rules.md
  *     autoReload: true           # 文件变化自动重载 (fs.watch + 2s 缓存)
  *     weight: 0.9                # 注入权重 (越高越优先)
@@ -23,7 +25,7 @@
  *     failSilently: true         # 读文件失败时静默 (不报错)
  */
 import z from '@deepseek-ai/schemastery';
-import { existsSync, copyFileSync, mkdirSync } from 'node:fs';
+import { existsSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -31,16 +33,16 @@ import { installRulesHooks } from './hooks.js';
 
 export const name = 'dsh-rules';
 
-/** 本插件不依赖其他服务 (纯 system-prompt hook)。 */
-export const inject = [];
+/** v3: 注入 webServer (用于注册 /__dsh/rules/config 路由)。 */
+export const inject = ['webServer'];
 
 /**
  * 插件配置 schema (用 DSH 自带的 schemastery 校验)。
  * 全部字段都有默认值, 用户不写 cordis.yml 也能工作。
  */
 export const Config = z.object({
-    /** 总开关: false 时不安装任何钩子 (插件等于没装)。 */
-    enabled: z.boolean().default(true),
+    /** v3: 总开关 —— 默认 false (规则会占 system prompt token)。 */
+    enabled: z.boolean().default(false),
     /** 规则文件路径 (空字符串 = 自动用 DSH_HOME/rules/user-rules.md)。 */
     rulesPath: z.string().default(''),
     /** 文件变化自动重载: 用 fs.watch 监听规则文件目录, 下次请求时读取最新内容。 */
@@ -54,6 +56,46 @@ export const Config = z.object({
     /** 规则内容最大字符数 (防止用户写太长占爆 token, 0=不限)。 */
     maxLength: z.number().default(16000),
 });
+
+/** 持久化 json 文件路径: ${DSH_HOME}/rules/rules-config.json。 */
+function _persistPath() {
+    return join(resolveDshHome(), 'rules', 'rules-config.json');
+}
+
+/** 读取持久化 json (WebUI 开关覆盖)。文件不存在 → 空对象。 */
+function _loadPersist() {
+    const p = _persistPath();
+    if (!existsSync(p)) return {};
+    try {
+        return JSON.parse(readFileSync(p, 'utf-8')) || {};
+    } catch {
+        return {};
+    }
+}
+
+/** 写持久化 json。 */
+function _savePersist(patch) {
+    const persist = _persistPath();
+    const dir = dirname(persist);
+    if (!existsSync(dir)) {
+        try { mkdirSync(dir, { recursive: true }); } catch { /* 静默 */ }
+    }
+    const existing = _loadPersist();
+    const merged = { ...existing, ...patch };
+    writeFileSync(persist, JSON.stringify(merged, null, 2), 'utf-8');
+    return merged;
+}
+
+/** 向客户端返回 JSON 响应。 */
+function sendJson(res, code, obj) {
+    const body = JSON.stringify(obj, null, 2);
+    res.writeHead(code, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Length': Buffer.byteLength(body),
+        'Cache-Control': 'no-store',
+    });
+    res.end(body);
+}
 
 /**
  * 探测绿色版 runtime: 逐层向上回溯寻找 runtime/python/python/python.exe。
@@ -108,24 +150,160 @@ function ensureRulesFile(rulesPath) {
  * @param {z.infer<typeof Config>} config - 用户在 cordis.yml 里配置的值 (或默认值)
  */
 export async function apply(ctx, config) {
+    // v3: 合并持久化 json 覆盖 (WebUI 开关写进来的)
+    const persist = _loadPersist();
+    const mergedConfig = { ...config };
+    if (typeof persist.enabled === 'boolean') {
+        mergedConfig.enabled = persist.enabled;
+    }
+
     // 1. 解析规则文件路径
     const dshHome = resolveDshHome();
-    const rulesPath = config.rulesPath || join(dshHome, 'rules', 'user-rules.md');
+    const rulesPath = mergedConfig.rulesPath || join(dshHome, 'rules', 'user-rules.md');
 
     // 2. 确保规则文件存在 (首次安装自动创建)
     ensureRulesFile(rulesPath);
 
-    // 3. 禁用模式 → 不装钩子 (相当于没装这个插件)
-    if (!config.enabled) {
-        ctx.logger.info('dsh-rules: disabled by config, skipping hook installation');
+    // v3: 注册 config GET/POST 路由
+    const disposers = [];
+    let webServer;
+    try { webServer = ctx.get('webServer'); } catch { webServer = null; }
+    if (webServer) {
+        const routes = [
+            { path: '/__dsh/rules/config', method: 'GET', handler: (_req, res) => {
+                const p = _loadPersist();
+                const ruleFileExists = existsSync(rulesPath);
+                let ruleSize = 0;
+                if (ruleFileExists) {
+                    try { ruleSize = readFileSync(rulesPath, 'utf-8').length; } catch { /* 忽略 */ }
+                }
+                sendJson(res, 200, {
+                    ok: true,
+                    config: {
+                        enabled: Boolean(p.enabled ?? mergedConfig.enabled),
+                        rulesPath,
+                        ruleFileExists,
+                        ruleSize,
+                        autoReload: Boolean(mergedConfig.autoReload),
+                        headerLabel: mergedConfig.headerLabel,
+                        maxLength: mergedConfig.maxLength,
+                    },
+                    persisted: p,
+                });
+            }},
+            { path: '/__dsh/rules/config', method: 'POST', handler: (req, res) => {
+                let body = '';
+                req.on('data', (chunk) => { body += chunk; });
+                req.on('end', () => {
+                    let parsed = {};
+                    try { parsed = JSON.parse(body) || {}; } catch { /* 忽略 */ }
+                    const patch = {};
+                    if (typeof parsed.enabled === 'boolean') patch.enabled = parsed.enabled;
+                    if (Object.keys(patch).length === 0) {
+                        sendJson(res, 400, { ok: false, error: '无可保存字段' });
+                        return;
+                    }
+                    const merged = _savePersist(patch);
+                    sendJson(res, 200, {
+                        ok: true,
+                        config: { enabled: Boolean(merged.enabled ?? mergedConfig.enabled) },
+                        note: '配置已保存, 下次启动 DSH 后生效',
+                    });
+                });
+            }},
+            // v4: 规则文件内容读/写路由 (WebUI 内编辑)
+            { path: '/__dsh/rules/content', method: 'GET', handler: (_req, res) => {
+                // 确保规则文件存在 (首次 WebUI 访问时自动创建空文件)
+                ensureRulesFile(rulesPath);
+                if (!existsSync(rulesPath)) {
+                    sendJson(res, 200, { ok: true, content: '', path: rulesPath });
+                    return;
+                }
+                try {
+                    const content = readFileSync(rulesPath, 'utf-8');
+                    sendJson(res, 200, {
+                        ok: true,
+                        content,
+                        path: rulesPath,
+                        size: content.length,
+                    });
+                } catch (err) {
+                    sendJson(res, 500, { ok: false, error: '读文件失败: ' + String(err.message || err) });
+                }
+            }},
+            { path: '/__dsh/rules/content', method: 'POST', handler: (req, res) => {
+                let body = '';
+                req.on('data', (chunk) => { body += chunk; });
+                req.on('end', () => {
+                    let parsed = {};
+                    try { parsed = JSON.parse(body) || {}; } catch {
+                        sendJson(res, 400, { ok: false, error: '请求体不是合法 JSON' });
+                        return;
+                    }
+                    const newContent = typeof parsed.content === 'string' ? parsed.content : null;
+                    if (newContent === null) {
+                        sendJson(res, 400, { ok: false, error: '缺少 content 字段' });
+                        return;
+                    }
+                    // 长度上限检查 (防止写爆 token)
+                    if (mergedConfig.maxLength > 0 && newContent.length > mergedConfig.maxLength) {
+                        sendJson(res, 413, {
+                            ok: false,
+                            error: '规则内容过长 (' + newContent.length + ' 字符), 上限 ' + mergedConfig.maxLength,
+                        });
+                        return;
+                    }
+                    // 确保目录存在
+                    const rulesDir = dirname(rulesPath);
+                    if (!existsSync(rulesDir)) {
+                        try { mkdirSync(rulesDir, { recursive: true }); } catch (err) {
+                            sendJson(res, 500, { ok: false, error: '创建目录失败: ' + String(err.message || err) });
+                            return;
+                        }
+                    }
+                    try {
+                        writeFileSync(rulesPath, newContent, 'utf-8');
+                        // autoReload 模式下, 下次请求自动读最新内容 (fs.watch 清缓存)
+                        sendJson(res, 200, {
+                            ok: true,
+                            content: newContent,
+                            size: newContent.length,
+                            note: '规则已保存' + (mergedConfig.autoReload ? ', 下次对话自动生效' : ' (请手动重启 DSH 生效)'),
+                        });
+                    } catch (err) {
+                        sendJson(res, 500, { ok: false, error: '写文件失败: ' + String(err.message || err) });
+                    }
+                });
+            }},
+        ];
+        for (const route of routes) {
+            try {
+                const dispose = webServer.register({
+                    kind: 'exact', path: route.path, method: route.method, handler: route.handler,
+                }, `${name}: ${route.method} ${route.path}`);
+                disposers.push(dispose);
+            } catch (err) {
+                ctx.logger.warn(`${name}: 路由注册失败 ${route.method} ${route.path}: ${String(err)}`);
+            }
+        }
+        ctx.logger.info(`${name}: 配置路由已注册`);
+    }
+
+    // 3. v3: disabled → 不装钩子
+    if (!mergedConfig.enabled) {
+        ctx.logger.info(`${name}: disabled (enabled=false), 跳过 hooks 安装`);
+        ctx.effect(() => () => { for (const d of disposers) d(); }, name);
         return;
     }
 
     // 4. 安装 system-prompt/assemble 钩子
     installRulesHooks(ctx, {
         rulesPath,
-        config,
+        config: mergedConfig,
     });
 
-    ctx.logger.info(`dsh-rules: ready, rules file = ${rulesPath}`);
+    ctx.logger.info(`${name}: ready, rules file = ${rulesPath}`);
+
+    // effect 清理
+    ctx.effect(() => () => { for (const d of disposers) d(); }, `${name}:cleanup`);
 }

@@ -25,6 +25,8 @@ window.__ModuleLoader__.load({
         const ROUTE_SEARCH = "/__dsh/memory/search";
         const ROUTE_DELETE = "/__dsh/memory/delete";
         const ROUTE_WRITE = "/__dsh/memory/write";
+        const ROUTE_CONFIG = "/__dsh/memory/config";
+        const GUARD_HEADER = "x-dsh-memory";
 
         // ---- 工具函数 ----
 
@@ -50,7 +52,7 @@ window.__ModuleLoader__.load({
 
         // ---- React 组件 ----
 
-        /** 记忆库主面板 (卡片式)。 */
+        /** 记忆库主面板 (卡片式, 顶部启用开关 + 【测试】标签)。 */
         function MemoryCard() {
             const [status, setStatus] = react.useState(null);
             const [items, setItems] = react.useState([]);
@@ -60,8 +62,56 @@ window.__ModuleLoader__.load({
             const [error, setError] = react.useState(null);
             const [searchText, setSearchText] = react.useState("");
             const [selectedItem, setSelectedItem] = react.useState(null);
+            // v3: 总开关状态 (从 /config 路由读)
+            const [enabled, setEnabled] = react.useState(null);   // null = 未加载
+            const [savingConfig, setSavingConfig] = react.useState(false);
+            const [savedTip, setSavedTip] = react.useState(null);
 
             const PAGE_SIZE = 50;
+
+            /** 读取当前生效配置 (含 enabled)。 */
+            const loadConfig = react.useCallback(async () => {
+                try {
+                    const resp = await fetch(ROUTE_CONFIG);
+                    const payload = await resp.json().catch(() => null);
+                    if (resp.ok && payload && payload.ok) {
+                        setEnabled(Boolean(payload.config.enabled));
+                    } else {
+                        setEnabled(false); // 接口不可用时默认 false
+                    }
+                } catch {
+                    setEnabled(false);
+                }
+            }, []);
+
+            /** 保存 enabled 开关 (写持久化 json, 下次启动生效)。 */
+            const saveEnabled = react.useCallback(async (value) => {
+                setSavingConfig(true);
+                setSavedTip(null);
+                try {
+                    const resp = await fetch(ROUTE_CONFIG, {
+                        method: "POST",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({ enabled: value }),
+                    });
+                    const payload = await resp.json().catch(() => null);
+                    if (resp.ok && payload && payload.ok) {
+                        setEnabled(value);
+                        setSavedTip("已保存, 下次启动 DSH 后自动生效");
+                    } else {
+                        setError((payload && payload.error) || "保存失败");
+                    }
+                } catch (err) {
+                    setError("保存开关失败: " + String((err && err.message) || err));
+                } finally {
+                    setSavingConfig(false);
+                }
+            }, []);
+
+            /** 组件挂载时先读配置, 再加载数据。 */
+            react.useEffect(() => {
+                loadConfig();
+            }, [loadConfig]);
 
             /** 刷新全部数据。 */
             const refreshAll = react.useCallback(async () => {
@@ -148,16 +198,35 @@ window.__ModuleLoader__.load({
                     minHeight: "400px",
                 },
             },
-                // --- 标题栏 ---
+                // --- 标题栏 (v3: 加【测试】标签 + 启用开关) ---
                 react.createElement("div", { style: {
-                    display: "flex", alignItems: "center", gap: "8px",
+                    display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap",
                     marginBottom: "16px", borderBottom: "1px solid #3a4068", paddingBottom: "12px",
                 }},
                     react.createElement("span", { style: { fontSize: "18px", fontWeight: 600, color: "#a78bfa" } }, "📜 祖宗记忆库"),
                     react.createElement("span", { style: {
+                        padding: "1px 8px", borderRadius: "8px", fontSize: "10px", fontWeight: 600,
+                        background: "rgba(245, 158, 11, 0.2)", color: "#f59e0b",
+                        border: "1px solid rgba(245, 158, 11, 0.4)",
+                    }}, "【测试】"),
+                    react.createElement("span", { style: {
                         padding: "2px 10px", borderRadius: "10px", fontSize: "12px",
                         background: bridgeReady ? "#10b981" : "#f59e0b", color: "#fff",
                     }}, bridgeReady ? "就绪" : "未就绪"),
+                    // v3: 启用开关 checkbox
+                    enabled !== null && react.createElement("label", { style: {
+                        display: "flex", alignItems: "center", gap: "6px", marginLeft: "12px",
+                        fontSize: "13px", color: "#e0e0e0", cursor: "pointer",
+                    }},
+                        react.createElement("input", {
+                            type: "checkbox",
+                            checked: enabled,
+                            disabled: savingConfig,
+                            onChange: (e) => saveEnabled(e.target.checked),
+                            style: { cursor: savingConfig ? "default" : "pointer", margin: 0 },
+                        }),
+                        react.createElement("span", null, enabled ? "已启用自动记忆" : "已关闭 (节省 token)"),
+                    ),
                     react.createElement("button", {
                         onClick: refreshAll,
                         style: {
@@ -167,6 +236,11 @@ window.__ModuleLoader__.load({
                         },
                     }, "刷新"),
                 ),
+                // 开关保存提示
+                savedTip !== null && react.createElement("div", { style: {
+                    padding: "6px 12px", background: "rgba(16, 185, 129, 0.15)",
+                    borderLeft: "3px solid #10b981", color: "#6ee7b7", fontSize: "12px", marginBottom: "10px",
+                }}, savedTip),
 
                 // --- 状态行 ---
                 react.createElement("div", { style: {
@@ -363,13 +437,12 @@ window.__ModuleLoader__.load({
         }
 
         // ---- 插件契约: 通过 ctx.slots.inject("settings.section", ...) 挂载到设置页 ----
-        // 与 dsh-usage-stats / dsh-ollama 等绿色版插件保持完全一致的注册格式
         function apply(ctx) {
             ctx.slots.inject("settings.section", () => ctx.slots.register({
                 name: "settings.section",
                 id: "dsh-memory",
                 order: 530,
-                label: "祖宗记忆库",
+                label: "【测试】祖宗记忆库",
             }, MemoryCard));
         }
 

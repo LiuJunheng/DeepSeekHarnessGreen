@@ -9,6 +9,18 @@
 - [ ] **`name` 字段与目录名一致**——目录名 `dsh-rules/` → package.json `name: "dsh-rules"`
 - [ ] **纯 hook 插件（类型 B）package.json 不要写 `dsh.client`**——`client-modules: dsh-xxx declares dsh.client but exports no "./client" bundle` 会让客户端模块注册表去找不存在的 `./client` export，直接炸服务。只有带 WebUI 的"类型 A"插件才声明 `dsh.client`
 
+### 类型 B → 类型 A 升级（纯 hook 加 WebUI）
+
+- [ ] package.json **exports 加** `"./client": "./lib/client.js"`（原来只有 `".": "./lib/index.js"` + `"./package.json"`）
+- [ ] package.json **加** `dsh.client` 块（`inject: ["slots"], platform: "web"`）
+- [ ] package.json **补** `files: ["lib", "cordis.patch.yml"]`（原来可能没 files 数组）
+- [ ] lib/index.js **inject 加** `"webServer"`（原来空数组 `[]`）
+- [ ] lib/index.js **注册 config 路由**（GET/POST `/__dsh/xxx/config`，某些版本 register 不支持 method 字段时同一 handler 里按 req.method 分流）
+- [ ] 新建 lib/client.js（settings.section 插槽注册 + 持久化 enabled 开关 UI）
+- [ ] **Enabled 默认 false**（Config schema + 持久化 json 双保险）
+- [ ] 路由始终注册（enabled=false 时跳过 hooks 但保留 config 路由，方便用户随时改开关）
+- [ ] **重启服务验证**（改 package.json/exports 后必须重装 + 重启，ClientModuleRegistry 按请求扫描）
+
 ## 一、两种插件类型
 
 ### 类型 A：路由 + 客户端双端插件（有 UI）
@@ -65,6 +77,17 @@ dsh-rules/
 - [ ] 写回用 `sendJson(res, 200, { ok: true, ... })` 统一格式
 - [ ] 异常处理 `try/catch` → 返回 500 + 错误信息
 
+### 持久化 config + enabled 开关（v3 通用模式，参考 dsh-memory / dsh-rules）
+
+- [ ] Config schema 里有 `enabled: z.boolean().default(false)`（默认关闭，省 token）
+- [ ] 有 `_persistPath()` / `_loadPersist()` / `_savePersist()` 三个辅助函数，持久化到 `${DSH_HOME}/xxx/xxx-config.json`
+- [ ] `apply()` 一开始合并持久化配置：`const persist = _loadPersist(); if (typeof persist.enabled === 'boolean') mergedConfig.enabled = persist.enabled;`
+- [ ] GET config 路由返回当前生效配置 + persisted 原始值
+- [ ] POST config 路由只接受 enabled 字段（其他保持扩展点），写 json 后返回 `"note": "配置已保存, 下次启动 DSH 后生效"`
+- [ ] **路由始终注册，hooks 按 enabled 装**——enabled=false 时跳过 hooks 但保留 config 路由，方便用户随时打开 WebUI 改开关
+- [ ] `_savePersist` 自动建目录（`mkdirSync(dir, { recursive: true })`）
+- [ ] `_loadPersist` 文件不存在时返回空对象 `{}`（别抛错）
+
 ### system-prompt/assemble 监听（类型 B 专用）
 
 - [ ] **`import '@deepseek-ai/dsh-system-prompt'`**——声明依赖，否则事件总线不存在
@@ -120,3 +143,8 @@ dsh-rules/
 | `client-modules: xxx declares dsh.client but exports no "./client" bundle` | 纯 hook 插件误写了 `dsh.client` 块 | 删掉 package.json 里整个 `dsh.client` 块，只保留 `dsh.bundle.patch` |
 | hook 抛异常炸掉整个请求 | 读文件失败没 try-catch | try-catch 吞掉，failSilently |
 | 装完插件服务退出 | 纯客户端缺宿主端 index.js / exports 格式错 / apply 命名错 | 对照本清单零→二节排查 |
+| 纯 hook 插件加了 client.js 但 WebUI 不出现 | package.json 缺 `exports["./client"]` 和 `dsh.client` 块 | 补两个声明 → 重装 → 重启 |
+| WebUI 开关改了但 hooks 还是没生效 | 开关只写了 json，但 Config 默认 enabled=true 把它盖了 | apply() 里 `const persist = _loadPersist(); if (typeof persist.enabled === 'boolean') mergedConfig.enabled = persist.enabled;` 要放在 Config 默认值之后 |
+| Config 路由报 404 | `inject` 没加 `"webServer"` | 在 exports 里加 `export const inject = ["webServer"]` |
+| `Duplicate (kind,path)` 注册错误 | 某些版本 register 不支持 method 字段，同 path 注册两次 | 同一个 handler 里按 `req.method` 分流 GET/POST |
+| 持久化 json 文件不生成 | `_savePersist` 没调 `mkdirSync(dir, { recursive: true })` | 自动建目录 |

@@ -295,6 +295,48 @@ ctx.on('system-prompt/assemble', async (assembly, _ctx, next) => {
 
 完整代码骨架见 `references/plugin-skeleton.md` 类型 B。
 
+### 5.9.1 类型 B → 类型 A 升级路径（纯 hook 加 WebUI 开关）
+
+> 参考实作：dsh-rules v3、dsh-memory v3。
+>
+> 纯 hook 插件做了一段时间后，发现用户需要从 WebUI 开关（不是每次都改 cordis.yml 重启）。这时把 Type B 升级成 Type A 要改三个地方：
+
+**1. package.json 加两个声明**
+
+```json
+// 原来只有 dsh.bundle.patch，现在加:
+"exports": { "./client": "./lib/client.js" },    // 让客户端模块注册表能 resolve
+"dsh": { "client": { "inject": ["slots"], "platform": "web" } }
+// 同时补 files: ["lib", "cordis.patch.yml"]
+```
+
+**2. lib/index.js 加 inject + 路由 + 持久化配置**
+
+```javascript
+// inject 从 [] 改成 ["webServer"]
+export const inject = ["webServer"];
+
+// Config 加 enabled 默认 false (省 token)
+export const Config = z.object({ enabled: z.boolean().default(false), ... });
+
+// 持久化三个辅助函数
+function _persistPath() { return join(DSH_HOME, "xxx", "xxx-config.json"); }
+function _loadPersist() { ... }
+function _savePersist(patch) { ... }
+
+// apply() 合并持久化 → 注册 config GET/POST 路由 → enabled=false 跳过 hooks
+```
+
+**3. 新建 lib/client.js**（settings.section 插槽 + enabled 开关 checkbox）
+
+完整骨架见 `references/plugin-skeleton.md` 的「持久化配置 + WebUI 开关」章节。
+
+**关键设计决策**：
+- **enabled 默认 false**（system-prompt 注入类插件占 token，默认关闭让用户自己决定）
+- **持久化 json 独立于 cordis.yml**（用户手改 cordis.yml 可能覆盖 WebUI 开关；json 是"用户态覆盖层"，优先级更高）
+- **路由始终注册，hooks 按 enabled 装**（enabled=false 时用户仍能打开 WebUI 改开关，但不消耗 token）
+- **提示"下次启动生效"**（apply() 只在启动时跑一次，不热插拔）
+
 ### 5.10 第三方"工具型"插件（无 UI）
 
 - 分类：**宿主端工具/路由插件**（package.json 只有 dsh.bundle.patch）与**客户端 UI 插件**（有 dsh.client）。工具型插件只 `ctx.tools.register(defineTool(...))`，**界面上不出现任何 UI**（"装完没见 UI"正常），靠 agent 在对话里按需调用。安装后重启 `dsh web`。
