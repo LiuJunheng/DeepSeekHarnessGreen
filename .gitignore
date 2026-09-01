@@ -29,3 +29,6 @@ python-tkinter-desktop-dev.zip
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# 临时工作区（运行时生成的检查脚本等）
+workspace/

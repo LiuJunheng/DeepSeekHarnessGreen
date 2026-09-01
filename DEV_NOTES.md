@@ -157,7 +157,7 @@
 
 19. **pnpm git 源插件** **`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`**：pnpm 11 strictDepBuilds 拦 git 源依赖（`github:owner/repo` → codeload tar.gz）的 prepare 脚本。正解＝profile 的 `pnpm-workspace.yaml` 的 `allowBuilds` 用**错误里含完整 commit hash 的 URL** 置 `true`（用包名/版本/分支都不匹配）；预构建原生依赖（cloudflared/cpu-features/node-pty/protobufjs/ssh2）显式 `false`，否则 `ERR_PNPM_IGNORED_BUILDS` 中断。改完无需删 node\_modules，直接重跑 add。launcher 已自动化（见第四节）。
 
-20. **自建 WebUI 侧栏/悬浮件的开关按钮别钉官方右上角，也别叠在内容区中间高度**：官方右上角有「下载对话」等按钮，`position:fixed;top:right` 会盖住它们；而把折叠开关**垂直居中叠在面板（如文件列表）高度上会挡住列表点击**（两面都踩坑）。参考社区 better-sidebar 的 **toggle cluster**——开关**始终固定在面板顶部**：展开态折叠按钮在标题/tab 条右端（内容区之外），收起态开关在右上角/右缘圆形图标按钮；按钮用官方 icon-button 样式（圆形无边框 / hover 加深），图标复刻 `IconPanelRightOutline16` 而非字符箭头。重叠靠\*\*「展开时官方 header 已被 `#root` 的 `margin-right` 让位推到面板左侧」，官方按钮不在面板内右上角**来规避（`dsh-sidebar-lite`** **已如此实现）。多侧栏/浮动面板并存**时，额外面板（如独立文件预览框）用固定定位 + `right: 主面板宽`\*\* 叠在主面板左侧，并在 `#root` 的 `margin-right` 里**累加该面板宽度的让位 CSS 变量**（`calc(var(--dsh-sidebar-lite-width) + var(--dsh-sidebar-lite-extra))`），面板关闭时让位变量归零——否则主内容会被后开的浮动面板遮挡。
+20. **自建 WebUI 侧栏/悬浮件的开关按钮别钉官方右上角，也别叠在内容区中间高度**：官方右上角有「下载对话」等按钮，`position:fixed;top:right` 会盖住它们；而把折叠开关**垂直居中叠在面板（如文件列表）高度上会挡住列表点击**（两面都踩坑）。社区 better-sidebar 的 **toggle cluster**——开关**始终固定在面板顶部**：展开态折叠按钮在标题/tab 条右端（内容区之外），收起态开关在右上角/右缘圆形图标按钮；按钮用官方 icon-button 样式（圆形无边框 / hover 加深），图标复刻 `IconPanelRightOutline16` 而非字符箭头。重叠靠\*\*「展开时官方 header 已被 `#root` 的 `margin-right` 让位推到面板左侧」，官方按钮不在面板内右上角**来规避（`dsh-sidebar-lite`** **已如此实现）。多侧栏/浮动面板并存**时，额外面板（如独立文件预览框）用固定定位 + `right: 主面板宽`\*\* 叠在主面板左侧，并在 `#root` 的 `margin-right` 里**累加该面板宽度的让位 CSS 变量**（`calc(var(--dsh-sidebar-lite-width) + var(--dsh-sidebar-lite-extra))`），面板关闭时让位变量归零——否则主内容会被后开的浮动面板遮挡。
 
 21. **React 函数组件里 const/let 变量的 TDZ（Temporal Dead Zone）坑**：任何被 `useCallback(fn, [scope])` / `useEffect(fn, [scope])` **依赖数组引用**的变量（包括从 useState 返回的值、从 store/getSnapshot 计算的局部变量、`const scope = {...}` 这类派生对象），**必须在这些 hooks 声明之前定义**。JavaScript 的 TDZ 规则：`const`/`let` 声明从代码执行流到达该行时才初始化，在此之前引用抛 `ReferenceError: Cannot access "xxx" before initialization`。典型场景：SidebarShell 组件里 `openPreview = useCallback(() => { setPreview({entry,scope}) }, [scope])` 写在 L1107，而 `const scope = {...}` 直到 L1201 才声明 → 组件渲染时 useCallback 初始化就炸。**修复方式**：要么把依赖变量的定义上移到所有 hooks 之前，要么把 useCallback/useEffect 下移到变量定义之后。注意：dsh 的插件 client.js 最终被合并打包（`/plugins/??...&rev=hash`），报错堆栈里的行号是 **sourcemap 映射后的原始文件行号**（不是 bundle 里的绝对行号），修完后须用**全新浏览器标签页**验证（旧标签页的 ModuleLoader 已缓存模块，刷新不会重新执行）。
 
@@ -192,90 +192,98 @@
 
 10. **0.1.2 客户端快照重构：`useSession`** **不再含聊天数据，改用** **`useChat`（2026-08 实测，dsh-usage-stats 消息行修复）**：
 
-    * **官方 0.1.2+ 把会话数据拆成两层**：`useSession`（standard kit）返回 **SessionSnapshot**（仅生命周期：queue/running/openState/hasMore/blank…），聊天内容改由新的 standard-kit hook **`useChat`** 提供（`SnapshotSelectorHook<ChatSnapshot>`，`chat.legacy.nodes` = ConversationNode\[]、`chat.nodes` = ChatNodeStore）。旧版（rc.6）`useSession` 直接返回含顶层 `nodes`/`chat` 的 ConversationSnapshot——**读** **`snapshot.nodes`** **的插件在 0.1.2 会静默拿不到数据（消息行消失）**。兼容写法：`const data = useChat ? useChat(s=>s) : useSession(s=>s)`，再统一从 `data.nodes`（数组，rc.6 legacy）/ `data.legacy.nodes`（0.1.2）/ `data.nodes.values()` 或 `data.chat.nodes.values()`（store 兜底）取节点。官方 StatsLine 即 `useChat(s => s.legacy.nodes)`。
+* **官方 0.1.2+ 把会话数据拆成两层**：`useSession`（standard kit）返回 **SessionSnapshot**（仅生命周期：queue/running/openState/hasMore/blank…），聊天内容改由新的 standard-kit hook **`useChat`** 提供（`SnapshotSelectorHook<ChatSnapshot>`，`chat.legacy.nodes` = ConversationNode\[]、`chat.nodes` = ChatNodeStore）。旧版（rc.6）`useSession` 直接返回含顶层 `nodes`/`chat` 的 ConversationSnapshot——**读** **`snapshot.nodes`** **的插件在 0.1.2 会静默拿不到数据（消息行消失）**。兼容写法：`const data = useChat ? useChat(s=>s) : useSession(s=>s)`，再统一从 `data.nodes`（数组，rc.6 legacy）/ `data.legacy.nodes`（0.1.2）/ `data.nodes.values()` 或 `data.chat.nodes.values()`（store 兜底）取节点。官方 StatsLine 即 `useChat(s => s.legacy.nodes)`。
 
-    * **聊天 UI 包迁移**：`turnTail` / `assistant-actions` / `conversation.chat.node` 等插槽从 `dsh-client-ui-conversation` 迁至新包 **`dsh-client-ui-chat`**（契约不变：turnTail 仍 chain/session/TurnTailOwnerProps{turn,seq,openFile}、assistant-actions 仍 list/session/{messageId}；旧 conversation 包仍在但只含会话层）。
+* **聊天 UI 包迁移**：`turnTail` / `assistant-actions` / `conversation.chat.node` 等插槽从 `dsh-client-ui-conversation` 迁至新包 **`dsh-client-ui-chat`**（契约不变：turnTail 仍 chain/session/TurnTailOwnerProps{turn,seq,openFile}、assistant-actions 仍 list/session/{messageId}；旧 conversation 包仍在但只含会话层）。
 
-    * **官方 0.1.2 新增逐回合精确记账**：turn-tail 节点 `data.tokenUsage`（`TurnTokenUsage`：uncachedInputTokens/outputTokens/totalTokens/cacheRead/cacheWrite/reasoningTokens + routes 按 provider/model 归属，窗口证据不全时缺省）——消息行"实际消耗"的最权威来源（插件当前仍用 legacy 求和，二者对完整回合一致；后续可切换为官方记账）。
+* **官方 0.1.2 新增逐回合精确记账**：turn-tail 节点 `data.tokenUsage`（`TurnTokenUsage`：uncachedInputTokens/outputTokens/totalTokens/cacheRead/cacheWrite/reasoningTokens + routes 按 provider/model 归属，窗口证据不全时缺省）——消息行"实际消耗"的最权威来源（插件当前仍用 legacy 求和，二者对完整回合一致；后续可切换为官方记账）。
 
-    * **官方 ContextMeter（输入框右侧环形仪表）与用量统计不冲突**：ContextMeter 显示当前会话**上下文窗口占用**（\~已用/窗口 + 系统/工具/消息三段，估算值，无费用）；本插件显示**实际计费 token + 费用估算 + 账户余额**（账单视角）。互补关系，见插件 README「与官方功能的区别」。
+* **官方 ContextMeter（输入框右侧环形仪表）与用量统计不冲突**：ContextMeter 显示当前会话**上下文窗口占用**（\~已用/窗口 + 系统/工具/消息三段，估算值，无费用）；本插件显示**实际计费 token + 费用估算 + 账户余额**（账单视角）。互补关系，见插件 README「与官方功能的区别」。
 
-11. **web token 认证开关（2026-08-31，需求 #49）**：DSH 0.1.2-alpha.2+ 的 BrowserAuth 是强制开启的（官方 Config 里没有 enableAuth 开关），关掉只能 patch。绿色版实现：`launcher.py` 加 `dsh_require_auth` config 字段（默认 True）+ GUI 网络设置区复选框（动态安全警告：0.0.0.0+关auth 时红框、127.0.0.1+关auth 时橙框提示风险极低）+ `patch_auth(require_auth=True/False)` 条件式补丁函数（双副本覆盖 core+shared、幂等、支持正向关闭+反向还原）。patch **只关 token/Cookie 层**（BrowserAuth.isAuthenticated 跳过），**保留 Host/Origin 围栏**（isTrustedApiRequest → 403）。所以 "关 token" ≠ 回到旧版 0.1.1-rc.2 裸奔（旧版两层都没），而是 401 那层的安全门拆了但 403 Host 防火墙还在。127.0.0.1 下 loopback 自动放行 403，实际差异为零；0.0.0.0 下等于"局域网任何人靠 Host header 就能直接访问界面"。两个精确 patch 点（官方打包纯 tab 缩进）：① `requestRejection()` 第二行 `return this.browserAuth.isAuthenticated(request) ? void 0 : 401` → 改 `return void 0;`；② `authorizeIndex()` 方法体开头插入 `return true;` 跳过 token/Cookie 校验。启动前 patch 链（两处：install\_dsh 安装后 + 启动服务前）根据 config 决定 patch 方向；`_web_auth_url()` 在 auth 关闭时直接返回裸地址短路，省掉 8s token 竞态等待。**还原方向**（用户改回 require\_auth=True）会把两处 patch 还原回官方原始代码，不留残留。dsh 升级重装会清除所有 patch，启动前自动重新应用。
+1. **web token 认证开关（2026-08-31，需求 #49）**：DSH 0.1.2-alpha.2+ 的 BrowserAuth 是强制开启的（官方 Config 里没有 enableAuth 开关），关掉只能 patch。绿色版实现：`launcher.py` 加 `dsh_require_auth` config 字段（默认 True）+ GUI 网络设置区复选框（动态安全警告：0.0.0.0+关auth 时红框、127.0.0.1+关auth 时橙框提示风险极低）+ `patch_auth(require_auth=True/False)` 条件式补丁函数（双副本覆盖 core+shared、幂等、支持正向关闭+反向还原）。patch **只关 token/Cookie 层**（BrowserAuth.isAuthenticated 跳过），**保留 Host/Origin 围栏**（isTrustedApiRequest → 403）。所以 "关 token" ≠ 回到旧版 0.1.1-rc.2 裸奔（旧版两层都没），而是 401 那层的安全门拆了但 403 Host 防火墙还在。127.0.0.1 下 loopback 自动放行 403，实际差异为零；0.0.0.0 下等于"局域网任何人靠 Host header 就能直接访问界面"。两个精确 patch 点（官方打包纯 tab 缩进）：① `requestRejection()` 第二行 `return this.browserAuth.isAuthenticated(request) ? void 0 : 401` → 改 `return void 0;`；② `authorizeIndex()` 方法体开头插入 `return true;` 跳过 token/Cookie 校验。启动前 patch 链（两处：install\_dsh 安装后 + 启动服务前）根据 config 决定 patch 方向；`_web_auth_url()` 在 auth 关闭时直接返回裸地址短路，省掉 8s token 竞态等待。**还原方向**（用户改回 require\_auth=True）会把两处 patch 还原回官方原始代码，不留残留。dsh 升级重装会清除所有 patch，启动前自动重新应用。
 
-12. **dsh-sidebar-lite rail 开关位置 + 初始宽度最小化（2026-09-01）**：
+2. **dsh-sidebar-lite rail 开关位置 + 初始宽度最小化（2026-09-01）**：
 
-    * **rail 位置**：从
-      ight:10px;top:50%（右侧垂直居中）→
-      ight:16px;top:56px（右上角 header 下方）。避开官方「下载日志」按钮（\~top:48px right:8px）。Rail 从「仅收起态显示」改为「始终显示」——展开态用 Fragment 包装 host + rail，rail fixed 定位独立于 host 不占内部空间。onClick 从 ()=>setOpen(true) 改为 ()=>setOpen(o=>!o) toggle，title/aria-label 随状态切换。展开态侧栏内部 collapse 按钮保留作为次级关闭入口。
+* **rail 位置**：从
+  ight:10px;top:50%（右侧垂直居中）→
+  ight:16px;top:56px（右上角 header 下方）。避开官方「下载日志」按钮（\~top:48px right:8px）。Rail 从「仅收起态显示」改为「始终显示」——展开态用 Fragment 包装 host + rail，rail fixed 定位独立于 host 不占内部空间。onClick 从 ()=>setOpen(true) 改为 ()=>setOpen(o=>!o) toggle，title/aria-label 随状态切换。展开态侧栏内部 collapse 按钮保留作为次级关闭入口。
 
-    * **初始宽度**：useState(PANEL\_WIDTH=320) → useState(MIN\_PANEL\_WIDTH=200)。新增常量 MIN\_PANEL\_WIDTH=200 统一所有硬编码 200px（主面板拖拽最小值、预览框拖拽最小值、lastWidthRef 初始值、挂载 setPanelWidth）。首次打开 200px 不挡太多主内容，用户按需拖宽。收起/展开记忆的 lastWidthRef 同样从 200 起步（用户拖宽后再收起会记住更宽的值）。
+* **初始宽度**：useState(PANEL\_WIDTH=320) → useState(MIN\_PANEL\_WIDTH=200)。新增常量 MIN\_PANEL\_WIDTH=200 统一所有硬编码 200px（主面板拖拽最小值、预览框拖拽最小值、lastWidthRef 初始值、挂载 setPanelWidth）。首次打开 200px 不挡太多主内容，用户按需拖宽。收起/展开记忆的 lastWidthRef 同样从 200 起步（用户拖宽后再收起会记住更宽的值）。
 
-    * **Fragment 双元素返回**：原来 SidebarShell 要么返回 rail（!open），要么返回 host（open）。现在 open=true 时返回
-      eact.createElement(react.Fragment, null, \[host, rail])——React 16+ Fragment 允许返回数组，且 rail fixed 定位不依赖 host DOM 层级。
+* **Fragment 双元素返回**：原来 SidebarShell 要么返回 rail（!open），要么返回 host（open）。现在 open=true 时返回
+  eact.createElement(react.Fragment, null, \[host, rail])——React 16+ Fragment 允许返回数组，且 rail fixed 定位不依赖 host DOM 层级。
 
-13. **发布规范：绿色 zip 不含 runtime/（2026-09-01，v1.0.24 重打包发现之前没记录）**：
+1. **发布规范：绿色 zip 不含 runtime/（2026-09-01，v1.0.24 重打包发现之前没记录）**：
 
-    * **绿色 zip 目的**：启动器 exe 自身无能力下载 runtime，首次运行后才下载 DSH 核心（Node.js + 插件树）。zip 只携带**启动器层**文件，用户双击 exe 启动，联网后自动拉取 runtime。
+* **绿色 zip 目的**：启动器 exe 自身无能力下载 runtime，首次运行后才下载 DSH 核心（Node.js + 插件树）。zip 只携带**启动器层**文件，用户双击 exe 启动，联网后自动拉取 runtime。
 
-    * **zip 内容清单**（由 `runtime/tmp/build_release_zip.py` 的 `GREEN_TOP_FILES` + `GREEN_TOP_DIRS` 定义）：
+* **zip 内容清单**（由 `runtime/tmp/build_release_zip.py` 的 `GREEN_TOP_FILES` + `GREEN_TOP_DIRS` 定义）：
 
-      * 顶层文件：`launcher.py`、`desktop-shell.py`、`update_agent.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`DSH_Update.exe`、`DSH_Launcher.ico`、`config.json`、`README.md`、`README_EN.md`、`LICENSE`
+* 顶层文件：`launcher.py`、`desktop-shell.py`、`update_agent.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`DSH_Update.exe`、`DSH_Launcher.ico`、`config.json`、`README.md`、`README_EN.md`、`LICENSE`
 
-      * 顶层目录：`plugins/`（全量）、`skills/dsh-deploy-maintain/`
+* 顶层目录：`plugins/`（全量）、`skills/dsh-deploy-maintain/`
 
-      * **绝不含**：`runtime/`、`build/`、`dist/`、`.git/`、`DEV_NOTES.md`、config.json 运行时用户配置
+* **绝不含**：`runtime/`、`build/`、`dist/`、`.git/`、`DEV_NOTES.md`、config.json 运行时用户配置
 
-    * **发布流程 checklist**（每次发版必走）：
+* **发布流程 checklist**（每次发版必走）：
 
-      1. 更新 `launcher.py` 的 `GREEN_VERSION`（唯一版本来源，不要硬编码版本号到 zip 名里）
-      2. 改了 `launcher.py` 或 `update_agent.py` → 重跑 `build_exe.bat`（两个 exe 里的版本日期会同步）
-      3. 运行 `python runtime/tmp/build_release_zip.py`（自动回写 `GREEN_VERSION_DATE` 为构建当天日期 → 打 zip → verify 根目录齐全）
-      4. `git add launcher.py DSH_Launcher.exe DSH_Update.exe` → commit → push
-      5. `git tag -a v{version} -m "v{version}: 版本说明"` → push --tags
-      6. **Gitee Release 上传**：`set GITEE_TOKEN=xxx` + `python runtime/tmp/gitee_upload_release.py --zip <zip_path> --tag v{version} --name "v{version}: 版本说明" --body "<release_body>"`（脚本自动查已有 release，有则直接传附件，无则先建 release 再传）
-      7. **GitHub Release 上传**：MCP 工具只有 `create_release` 没有 `upload_asset` → 用临时 Python 脚本直接调 GitHub REST API（标准库 urllib 即可，不需要 requests）：先 POST `/releases` 建 release，再 POST `uploads.github.com/repos/{owner}/{repo}/releases/{id}/assets?name={filename}` 以 `application/octet-stream` 传 body。脚本可以存 `runtime/tmp/github_upload_release.py` 以后复用。
-      8. **清理**：删除本地构建产物 zip（已上传到 Release 的 zip 不在 gitignore 里，别 commit）
+1. 更新 `launcher.py` 的 `GREEN_VERSION`（唯一版本来源，不要硬编码版本号到 zip 名里）
+2. 改了 `launcher.py` 或 `update_agent.py` → 重跑 `build_exe.bat`（两个 exe 里的版本日期会同步）
+3. 运行 `python runtime/tmp/build_release_zip.py`（自动回写 `GREEN_VERSION_DATE` 为构建当天日期 → 打 zip → verify 根目录齐全）
+4. `git add launcher.py DSH_Launcher.exe DSH_Update.exe` → commit → push
+5. `git tag -a v{version} -m "v{version}: 版本说明"` → push --tags
+6. **Gitee Release 上传**：`set GITEE_TOKEN=xxx` + `python runtime/tmp/gitee_upload_release.py --zip <zip_path> --tag v{version} --name "v{version}: 版本说明" --body "<release_body>"`（脚本自动查已有 release，有则直接传附件，无则先建 release 再传）
+7. **GitHub Release 上传**：MCP 工具只有 `create_release` 没有 `upload_asset` → 用临时 Python 脚本直接调 GitHub REST API（标准库 urllib 即可，不需要 requests）：先 POST `/releases` 建 release，再 POST `uploads.github.com/repos/{owner}/{repo}/releases/{id}/assets?name={filename}` 以 `application/octet-stream` 传 body。脚本可以存 `runtime/tmp/github_upload_release.py` 以后复用。
+8. **清理**：删除本地构建产物 zip（已上传到 Release 的 zip 不在 gitignore 里，别 commit）
 
-    * **zip 文件名**：`DSH_Launcher_GreenPortable_Online_<YYYYMMDD>_v<version>.zip`（日期=构建当天，版本号=GREEN\_VERSION）。`build_release_zip.py` 自动生成，不要手写。
+* **zip 文件名**：`DSH_Launcher_GreenPortable_Online_<YYYYMMDD>_v<version>.zip`（日期=构建当天，版本号=GREEN\_VERSION）。`build_release_zip.py` 自动生成，不要手写。
 
-    * **双平台 token**：Gitee 在网页「个人设置 → 安全 → 私人令牌」勾 `projects`；GitHub 在网页「Settings → Developer settings → Personal access tokens → Tokens (classic)」勾 `repo`（完整 repo 访问，需 upload asset）。命令行临时 `set GITEE_TOKEN=xxx` / `set GITHUB_TOKEN=xxx` 用完即弃，别写入任何文件。
+* **双平台 token**：Gitee 在网页「个人设置 → 安全 → 私人令牌」勾 `projects`；GitHub 在网页「Settings → Developer settings → Personal access tokens → Tokens (classic)」勾 `repo`（完整 repo 访问，需 upload asset）。命令行临时 `set GITEE_TOKEN=xxx` / `set GITHUB_TOKEN=xxx` 用完即弃，别写入任何文件。
 
-    * **为什么不用 gh CLI / hub CLI**：新环境默认没装，临时装浪费时间。Python 标准库 urllib + multipart 手写足够（两个脚本都已实现）。
+* **为什么不用 gh CLI / hub CLI**：新环境默认没装，临时装浪费时间。Python 标准库 urllib + multipart 手写足够（两个脚本都已实现）。
 
+1. **DSH 0.1.2-alpha.3+ 框架契约变化：profile.bundles 必须显式声明 core bundles（2026-09-01，v1.0.25 自愈升级）**：
 
-14. **DSH 0.1.2-alpha.3+ 框架契约变化：profile.bundles 必须显式声明 core bundles（2026-09-01，v1.0.25 自愈升级）**：
+* **现象**：升级到 0.1.2-alpha.3 后启动报 plugin tree failed to load: dsh: 8 entries did not activate，所有插件等待 webServer / llm 等核心服务。
 
-    * **现象**：升级到 0.1.2-alpha.3 后启动报 plugin tree failed to load: dsh: 8 entries did not activate，所有插件等待 webServer / llm 等核心服务。
+* **根因**：旧版本框架自动注入 @deepseek-ai/dsh-base + 对应 profile 层（dsh-web-app / dsh-headless 等），新版本不再自动注入，**必须显式声明在 dsh.profile.bundles 数组里**。launcher 从第一个版本就没写过这些，升级后 bundle 栈底层 = 空，所有插件依赖的核心服务不存在。
 
-    * **根因**：旧版本框架自动注入 @deepseek-ai/dsh-base + 对应 profile 层（dsh-web-app / dsh-headless 等），新版本不再自动注入，**必须显式声明在 dsh.profile.bundles 数组里**。launcher 从第一个版本就没写过这些，升级后 bundle 栈底层 = 空，所有插件依赖的核心服务不存在。
+* **自愈体系 4 个盲区**（为什么之前的逻辑兜不住）：
 
-    * **自愈体系 4 个盲区**（为什么之前的逻辑兜不住）：
-      * ① 移除不兼容 bundle：黑名单只覆盖"已知插件不兼容"，处理不了"框架改了行为"；
-      * ② 补 peer 依赖 + 同步版本：只碰 dependencies，**从不碰 dsh.profile.bundles 数组**；
-      * ③ 重建依赖树：pnpm install 按 package.json 声明装，core bundles 不在声明里；
-      * ④ 冒烟验证：日志解析器只认 5 种关键字（ERR_MODULE_NOT_FOUND 等），waiting for services 一个都没命中。
+* ① 移除不兼容 bundle：黑名单只覆盖"已知插件不兼容"，处理不了"框架改了行为"；
 
-    * **升级后自愈体系（3 层防护）**：
-      * Layer 1 - 写入时兜底：
-econcile_bundles() 前置调 _ensure_core_bundles()，每次任何 bundle 操作都先确保 core 存在；
-      * Layer 2 - 安装时同步检查：erify_environment_integrity() 新增"检查 1.5: core bundles 存在性"；
-      * Layer 3 - 冒烟时框架级故障诊断（新增）：_diagnose_framework_failure() 识别日志特征，自动调 _ensure_core_bundles() 修复并重试（最多 3 轮）。
+* ② 补 peer 依赖 + 同步版本：只碰 dependencies，**从不碰 dsh.profile.bundles 数组**；
 
-    * **自适应探测**：_detect_runtime_profile_core_bundles() 扫描 runtime @deepseek-ai/ 包的 cordis.patch.yml 和 description，自动识别 profile 级 core bundle。探测失败才用硬编码常量兜底。
+* ③ 重建依赖树：pnpm install 按 package.json 声明装，core bundles 不在声明里；
 
-    * **关键认知**：core bundles 只需要在 dsh.profile.bundles 数组里出现即可，**不需要写入 dependencies** - 它们在 runtime 的 node_modules 里已经装好了，DSH 框架加载 bundle 时直接按名字在 runtime/@deepseek-ai/ 下找对应的包。
+* ④ 冒烟验证：日志解析器只认 5 种关键字（ERR\_MODULE\_NOT\_FOUND 等），waiting for services 一个都没命中。
 
-15. **profile package.json 依赖污染根因：_host_peer_dependencies() 扫描范围过广（2026-09-01，v1.0.25 修复）**：
+* **升级后自愈体系（3 层防护）**：
 
-    * **现象**：插件管理界面显示大量 runtime 内部包（96 个 @deepseek-ai/*），正常电脑只有 8 个本地插件。
+* Layer 1 - 写入时兜底：
+  econcile\_bundles() 前置调 \_ensure\_core\_bundles()，每次任何 bundle 操作都先确保 core 存在；
 
-    * **根因**：_host_peer_dependencies() 原逻辑收集**所有** runtime @deepseek-ai/* 包声明的 peerDependencies -> runtime 内部 peer 互相引用被当作"profile 需要补的"写入 dependencies -> 污染累积。
+* Layer 2 - 安装时同步检查：erify\_environment\_integrity() 新增"检查 1.5: core bundles 存在性"；
 
-    * **修复**：
-      * _host_peer_dependencies() 加 2 条过滤：peer 是 @deepseek-ai/* 跳过（runtime 内部闭环）、peer 在 runtime node_modules 里已存在跳过；
-      * 新增 _clean_profile_manifest() 清洗污染依赖，删除黑名单前缀（@deepseek-ai/* / cordis* / schemastery / 顶层 dsh-* 包），保留例外名单（cordis / cordis-plugin-* / schemastery 被 cordis.yml 直接 import）；
-      * _heal_profile_dependencies() 和 _rebuild_dependency_tree() 前置调用清洗。
+* Layer 3 - 冒烟时框架级故障诊断（新增）：\_diagnose\_framework\_failure() 识别日志特征，自动调 \_ensure\_core\_bundles() 修复并重试（最多 3 轮）。
 
+* **自适应探测**：\_detect\_runtime\_profile\_core\_bundles() 扫描 runtime @deepseek-ai/ 包的 cordis.patch.yml 和 description，自动识别 profile 级 core bundle。探测失败才用硬编码常量兜底。
+
+* **关键认知**：core bundles 只需要在 dsh.profile.bundles 数组里出现即可，**不需要写入 dependencies** - 它们在 runtime 的 node\_modules 里已经装好了，DSH 框架加载 bundle 时直接按名字在 runtime/@deepseek-ai/ 下找对应的包。
+
+1. **profile package.json 依赖污染根因：\_host\_peer\_dependencies() 扫描范围过广（2026-09-01，v1.0.25 修复）**：
+
+* **现象**：插件管理界面显示大量 runtime 内部包（96 个 @deepseek-ai/\*），正常电脑只有 8 个本地插件。
+
+* **根因**：\_host\_peer\_dependencies() 原逻辑收集**所有** runtime @deepseek-ai/\* 包声明的 peerDependencies -> runtime 内部 peer 互相引用被当作"profile 需要补的"写入 dependencies -> 污染累积。
+
+* **修复**：
+
+* \_host\_peer\_dependencies() 加 2 条过滤：peer 是 @deepseek-ai/\* 跳过（runtime 内部闭环）、peer 在 runtime node\_modules 里已存在跳过；
+
+* 新增 \_clean\_profile\_manifest() 清洗污染依赖，删除黑名单前缀（@deepseek-ai/\* / cordis\* / schemastery / 顶层 dsh-\* 包），保留例外名单（cordis / cordis-plugin-\* / schemastery 被 cordis.yml 直接 import）；
+
+* \_heal\_profile\_dependencies() 和 \_rebuild\_dependency\_tree() 前置调用清洗。
 
 ## 六、维护提醒
 
@@ -313,3 +321,144 @@ econcile_bundles() 前置调 _ensure_core_bundles()，每次任何 bundle 操作
 
 * **`pages/`** **不进绿色 zip**：`build_release_zip.py` 的 `GREEN_TOP_FILES` 不含 pages/，打包清单保持不变。
 
+## 九、内置插件: dsh-memory 祖宗记忆库
+
+### 9.1 插件目录结构
+
+```
+plugins/dsh-memory/
+  package.json          # 插件元信息 (name=dsh-memory, type=module, peerDependencies 对齐 DSH)
+  cordis.patch.yml      # bundle patch: insert id=dsh-memory name=dsh-memory
+  engine/
+    zuzong_memory.py    # 记忆引擎 (纯 stdlib SQLite + MCP stdio)
+  lib/
+    bridge.js           # MCP stdio 桥 (零依赖, 逐行 JSON-RPC)
+    hooks.js            # 自动记忆钩子 (session/event + autoRecall)
+    tools.js            # 工具注册 (schema 转换 + 并发安全标记)
+    index.js            # 入口 (绿色版默认值 + host 路由注册)
+    client.js           # 记忆库管理卡片 UI (设置页注入, React)
+```
+
+### 9.2 记忆引擎规格
+
+* **Python 标准库**: sqlite3 + json + sys, 零外部依赖。SQLite WAL 模式单文件存储。
+
+* **存储格式**:
+```sql
+memories 表: id / content / tags(JSON[]) / importance(0.0~1.0) / note_count / created_at / updated_at
+索引: idx_memories_created (时间倒序) + idx_memories_importance (重要性倒序)
+```
+
+* **支持 7 个 MCP 工具**: remember / recall / search / timeline / service_info / list_all / delete
+
+* **MCP 协议**: 实现 2024-11-05 版本子集 (initialize → notifications/initialized → tools/list → tools/call), 逐行 JSON-RPC。
+
+### 9.3 绿色版适配
+
+* **Python 路径自动探测**: _detectGreenRuntime() 从 import.meta.url (lib/index.js) 开始**向上最多 10 层**逐层寻找
+  runtime/python/python/python.exe, 找到即锁定绿色版根目录。兼容两种部署位置:
+
+  * A) 开发态: `<greenRoot>/plugins/dsh-memory/` → 向上 3 层
+  * B) 运行态: `<greenRoot>/runtime/dsh-home/profiles/<name>/node_modules/dsh-memory/` → 向上 7 层
+
+* **Engine 路径**: pluginDir/engine/zuzong_memory.py, 相对位置在两个部署位置都成立。
+
+* **DB 路径**: ${DSH_HOME}/memory/zuzong.db (绿色版进程 DSH_HOME=runtime/dsh-home)。
+
+* **tools 默认值**: 只暴露引擎支持的 7 个工具名数组。
+
+### 9.4 Host 路由 (记忆库管理卡片后端)
+
+注册 5 个路由 (/\_\_dsh/memory/*):
+
+| 路由                    | 方法   | 功能                                                              |
+| --------------------- | ---- | --------------------------------------------------------------- |
+| /\_\_dsh/memory/status | GET  | 引擎状态 (total_memories, avg_importance, db_path, bridgeReady)   |
+| /\_\_dsh/memory/list   | GET  | 列出全部记忆, 支持 ?limit=&offset= 分页                                   |
+| /\_\_dsh/memory/search | GET  | 搜索记忆, ?q=&limit=                                              |
+| /\_\_dsh/memory/delete | POST | 删除记忆, body: { id }                                             |
+| /\_\_dsh/memory/write  | POST | 手动写入, body: { content, tags?, importance? }                    |
+
+webServer 是可选注入: 缺失时跳过路由注册, 不阻塞插件激活。
+
+### 9.5 Client UI (记忆库管理卡片)
+
+通过 package.json `"dsh": { "client": { "inject": [], "platform": "web" } }` 声明注入。
+DSH 的 slots 机制将其挂载到设置页, 样式采用深色紫蓝渐变 (与 DSH 整体暗色风格协调)。
+功能面板:
+
+1. 状态行 (4 格: 总条数 / 平均重要性 / 引擎版本 / 最新写入时间)
+2. DB 路径展示
+3. 搜索框 (回车或点按钮触发)
+4. 快速写入表单 (textarea + tags + importance slider + 写入按钮)
+5. 记忆列表 (卡片式, 点击选中, 单条删除按钮, 最多 50 条分页)
+
+### 9.6 launcher.py 集成
+
+**不需要改 launcher.py**。_bundled_plugin_dirs() 自动扫描 plugins/ 目录下含 package.json 的子目录, 本插件完全符合条件。首次绿色版启动时, install_bundled_plugins() 会把它装进 profile 的 node_modules, 后续 update_bundled_plugins() 会自动同步源码更新。
+
+### 9.7 配置示例 (cordis.yml)
+
+```yaml
+- id: dsh-memory
+  name: dsh-memory
+
+  # 以下全部可选, 空字符串走绿色版自动探测
+  config:
+    # python: ''           # 自动探测 runtime/python/python/python.exe
+    # moduleArgs: []       # 自动用 <pluginDir>/engine/zuzong_memory.py
+    # dbPath: ''           # 自动用 /memory/zuzong.db
+
+  identity: '祖宗记忆库'
+  tools: ['remember','recall','search','timeline','service_info','list_all','delete']
+  memory:
+    userMessage: true       # 用户消息自动 remember
+    autoRecall: true        # 模型请求前自动注入最近 4 条记忆
+    desensitize: true       # 写入前过滤 API 密钥/密码/手机号等敏感信息
+    importance: 0.6
+    autoRecallLimit: 4
+```
+
+### 9.8 记忆触发时机
+
+* **自动记忆 (写入)**: 每次用户发消息 (session/event type=user/message, source.kind=user), 默认脱敏后调用 remember(content, importance=0.6, tags=['dsh','user'])
+
+* **自动召回 (读取)**: 每次模型请求组装 system prompt 时 (system-prompt/assemble), 自动调用 timeline(limit=4) 注入最近 4 条记忆到 `【祖宗记忆库最近记忆】` 区块
+
+* **Agent 主动调用**: Agent 可调用 zuzong_remember / zuzong_recall / zuzong_search / zuzong_timeline / zuzong_service_info / zuzong_list_all / zuzong_delete 7 个工具
+
+### 9.9 避坑清单
+
+* **Windows Python 3.10 默认 GBK 编码导致中文乱码**: bridge.js spawn Python 子进程时, Python 3.10 在 Windows 上 stdin/stdout 默认用系统编码 (GBK), 而 Node.js 用 UTF-8 write stdin。结果是中文 MCP JSON 被 Python 当 GBK 解析后写入 SQLite, 变成 `缁х画` 这类典型乱码。
+  **修复**: bridge.js spawn env 里显式加 `PYTHONIOENCODING: 'utf-8'`。验证方法: DB 里中文 hex 反向 `bytes.fromhex(...).decode('utf-8')` 应等于原始内容。
+  Python 3.15+ 已默认 UTF-8 模式, 但绿色版用的是 Python 3.10.20, 必须手动设。
+
+* **launcher 每次启动会跑 pnpm 重建 profile 依赖树**: 如果 launcher 检测到 node_modules 里的插件"被污染", 会删掉然后重新 `dsh plugin add` 从 `file:plugins/dsh-memory` 安装。所以修改插件文件后不用手动 copy, 直接重启 launcher 即可。但要注意: pnpm install 过程中如果 JSON 有 BOM 会报 SyntaxError, 插件文件必须无 BOM UTF-8。
+
+* **DSH_HOME 路径**: 绿色版进程会设 DSH_HOME=runtime/dsh-home, 不要硬编码 ~/.dsh。
+
+* **便携 Python 路径**: 双层嵌套 runtime/python/python/python.exe, 绿色版官方 Python 3.10.20。
+
+* **launcher.py 不识别 Python 2**: 系统默认 python 可能是 2.7, 必须确保插件用自己探测到的便携 Python。
+
+* **ESM 没有 __file__**: 用 import.meta.url + fileURLToPath()。
+
+* **ZUZONG_DB 环境变量**: 引擎和 bridge 统一用 ZUZONG_DB, 两边一致。
+
+* **search 是 LIKE 匹配**: SQLite 的 LIKE '%xxx%' 是大小写不敏感的 (默认情况下), 够用了。语义检索/向量索引暂不做。
+
+* **autoRecall 不阻塞**: recall 失败静默, 不影响模型请求。这是设计决策。
+
+* **系统 prompt 注入位置**: system-prompt/assemble 事件, 往 assembly.contexts push, 不是覆盖。
+
+* **敏感信息过滤 hooks.js 已内置**: API key / password / 身份证 / 手机号, 纯内容过滤, 不涉及身份认证。
+
+* **plugins/dsh-memory 会被完整复制**: launcher.py 的 _plugin_tree_hashes 遍历整个目录树, engine/ 子目录会被一起装进 node_modules。
+
+* **WebUI slots 注册格式**: 必须用 `ctx.slots.inject("settings.section", () => ctx.slots.register({ name: "settings.section", id: "...", order: N, label: "..." }, Component))`, 不能直接 `ctx.slots.register`。DSH 绿色版插件统一此格式。
+
+* **路由注册需包裹 ctx.effect**: index.js 里注册 /\_\_dsh/memory/* 路由必须放在 `ctx.effect(() => { ... }, name)` 回调内, 确保 webServer 服务就绪后才触发注册, 否则会 404。
+
+* **package.json 声明 client 注入**: `"dsh": { "client": { "inject": ["slots"], "platform": "web" } }`, 缺少则 WebUI 不会加载 client.js。
+
+* **index.js 必须 export name**: `export const name = 'dsh-memory'`, Cordis 插件标识, 缺失会导致插件不激活。

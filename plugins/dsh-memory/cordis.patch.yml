@@ -1,0 +1,5 @@
+# dsh-memory bundle patch: 把本插件作为一行插入 profile 插件树。
+# 格式与官方 bundle 一致: - insert 新增一行插件 (id 是本插件行标识, name 是包名)。
+- insert:
+    - id: dsh-memory
+      name: dsh-memory

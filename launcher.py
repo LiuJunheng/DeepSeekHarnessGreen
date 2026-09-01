@@ -6080,8 +6080,8 @@ def run_gui():
 
         # 加载数据
         def refresh():
-            tree.delete(*tree.get_children())
             nonlocal all_items, checked
+            tree.delete(*tree.get_children())
             checked = {}
             try:
                 all_items = app.list_sessions()
