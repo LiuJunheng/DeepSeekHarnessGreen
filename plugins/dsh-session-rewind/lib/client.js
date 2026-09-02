@@ -107,7 +107,7 @@ window.__ModuleLoader__.load({
 					react.createElement("span", { key: "t", style: titleStyle, title: s.title || s.id },
 						s.title || "(无标题)"
 					),
-					s.live && react.createElement("span", { key: "live", style: { flex: "none", fontSize: 11, color: "var(--dsw-alias-state-success-primary)", background: "var(--dsw-alias-state-success-secondary)", borderRadius: 999, padding: "1px 7px", whiteSpace: "nowrap" } }, "运行中"),
+					s.live && react.createElement("span", { key: "live", style: { flex: "none", fontSize: 11, color: "var(--dsw-alias-state-success-primary)", borderRadius: 999, padding: "1px 7px", whiteSpace: "nowrap" } }, "运行中"),
 					react.createElement("button", {
 						key: "btn",
 						type: "button",
