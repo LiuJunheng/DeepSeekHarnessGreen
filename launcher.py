@@ -3582,7 +3582,8 @@ class Launcher:
     def run_post_update_bundled_sync(self):
         """绿色版更新后自动同步一次内置插件 (幂等: 无标记直接返回)。
 
-        检测到标记时执行 update_bundled_plugins() 并把结果写入日志, 随后清除标记。
+        执行顺序: 先装"新增的内置插件"(以前版本没有、老用户机器上不存在的)
+        → 再更新"已装但源码变了的"(老插件新源码同步). 两个阶段都有独立日志。
         GUI 启动与 --start 无界面启动都会调用, 保证更新后首次启动即完成同步。"""
         marker = os.path.join(RUNTIME_DIR, "pending_bundled_plugin_check")
         if not os.path.isfile(marker):
@@ -3592,15 +3593,20 @@ class Launcher:
         except OSError:
             pass
         try:
-            updated, up_to_date, _not_installed, failed = self.update_bundled_plugins()
+            # 阶段 1: 装新增的内置插件 (以前版本没有, 老用户机器上不存在的)。
+            newly_installed, _skipped, install_failed = self.install_bundled_plugins()
+            # 阶段 2: 更新已装但源码变了的。
+            updated, up_to_date, not_installed, update_failed = self.update_bundled_plugins()
             summary = []
+            if newly_installed:
+                summary.append("新装 %d 个: %s" % (len(newly_installed), ", ".join(newly_installed)))
             if updated:
-                summary.append("已更新 %d 个: %s" % (len(updated), ", ".join(updated)))
+                summary.append("更新 %d 个: %s" % (len(updated), ", ".join(updated)))
             if up_to_date:
                 summary.append("其余 %d 个已是最新" % len(up_to_date))
-            if failed:
-                summary.append("失败: %s" % "; ".join(
-                    "%s(%s)" % (name, reason) for name, reason in failed))
+            if install_failed or update_failed:
+                all_failed = install_failed + [n for (n, _) in update_failed]
+                summary.append("失败: %s" % "; ".join(all_failed))
             self.log("绿色版更新完成, 自动同步内置插件 → "
                      + ("；".join(summary) if summary else "(无可同步)"))
         except Exception as error:
