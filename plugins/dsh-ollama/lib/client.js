@@ -109,11 +109,11 @@ window.__ModuleLoader__.load({
 				type: "text",
 				style: {
 					padding: "5px 8px",
-					border: "1px solid #d0d0d0",
+					border: "1px solid var(--dsw-alias-border-primary, #d0d0d0)",
 					borderRadius: 5,
 					fontSize: 12.5,
-					background: "#ffffff",
-					color: "#1f1f1f",
+					background: "var(--dsw-alias-bg-primary, #ffffff)",
+					color: "var(--dsw-alias-label-primary, #1f1f1f)",
 					width: "100%",
 					boxSizing: "border-box",
 				},
@@ -126,11 +126,11 @@ window.__ModuleLoader__.load({
 				type: "number",
 				style: {
 					padding: "5px 8px",
-					border: "1px solid #d0d0d0",
+					border: "1px solid var(--dsw-alias-border-primary, #d0d0d0)",
 					borderRadius: 5,
 					fontSize: 12.5,
-					background: "#ffffff",
-					color: "#1f1f1f",
+					background: "var(--dsw-alias-bg-primary, #ffffff)",
+					color: "var(--dsw-alias-label-primary, #1f1f1f)",
 					width: 180,
 					boxSizing: "border-box",
 				},
@@ -242,7 +242,7 @@ window.__ModuleLoader__.load({
 			const rootStyle = { display: "flex", flexDirection: "column", gap: 12, padding: 4, maxWidth: 720 };
 			const titleStyle = { margin: 0, fontSize: 14, fontWeight: 600, color: "var(--dsw-alias-label-primary)" };
 			const descStyle = { margin: 0, fontSize: 13, lineHeight: 1.6, color: "var(--dsw-alias-label-secondary)" };
-			const cardStyle = { border: "1px solid #dddddd", borderRadius: 6, padding: "12px 14px", background: "#ffffff" };
+			const cardStyle = { border: "1px solid var(--dsw-alias-border-primary, #dddddd)", borderRadius: 6, padding: "12px 14px", background: "var(--dsw-alias-bg-primary, #ffffff)" };
 			const btn = { padding: "6px 16px", cursor: "pointer", fontSize: 12 };
 
 			// ---- 状态卡 ----
@@ -253,34 +253,34 @@ window.__ModuleLoader__.load({
 					react.createElement("div", { key: "row", style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 } }, [
 						react.createElement("span", { key: "dot", style: {
 							width: 9, height: 9, borderRadius: "50%", flex: "none",
-							background: online ? "#2ecc71" : "#c0392b",
+							background: online ? "var(--dsw-alias-state-success-primary, #2ecc71)" : "var(--dsw-alias-state-error-primary, #c0392b)",
 						} }),
-						react.createElement("span", { key: "txt", style: { fontSize: 13, fontWeight: 600, color: "#1f1f1f" } },
+						react.createElement("span", { key: "txt", style: { fontSize: 13, fontWeight: 600, color: "var(--dsw-alias-label-primary, #1f1f1f)" } },
 							online ? "Ollama 服务在线" : "Ollama 服务未检测到"),
-						react.createElement("span", { key: "at", style: { fontSize: 11, color: "#8a8f98" } },
+						react.createElement("span", { key: "at", style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary, #8a8f98)" } },
 							"最近检测: " + fmtCheckedAt(status && status.checkedAt)),
 						providerWritten
-							? react.createElement("span", { key: "badge", style: { fontSize: 11, color: "#2ecc71", border: "1px solid #2ecc71", borderRadius: 10, padding: "1px 8px" } }, "已接入 Models 页")
-							: react.createElement("span", { key: "badge", style: { fontSize: 11, color: "#8a8f98", border: "1px solid #cccccc", borderRadius: 10, padding: "1px 8px" } }, "未接入"),
+							? react.createElement("span", { key: "badge", style: { fontSize: 11, color: "var(--dsw-alias-state-success-primary, #2ecc71)", border: "1px solid var(--dsw-alias-state-success-primary, #2ecc71)", borderRadius: 10, padding: "1px 8px" } }, "已接入 Models 页")
+							: react.createElement("span", { key: "badge", style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary, #8a8f98)", border: "1px solid var(--dsw-alias-border-primary, #cccccc)", borderRadius: 10, padding: "1px 8px" } }, "未接入"),
 						// 「一键接入」按钮: 强制按当前配置重新探测接入 (不需保存表单)。
 						react.createElement("button", { key: "reconnect", type: "button", disabled: busy, onClick: reconnectNow, style: {
 							padding: "4px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600,
-							background: "#1f4973", color: "#ffffff", border: "none", borderRadius: 4,
+							background: "var(--dsw-alias-state-business-primary, #1f4973)", color: "var(--dsw-alias-inverted-on-business, #ffffff)", border: "none", borderRadius: 4,
 						} },
 							busy ? "接入中…" : "一键接入"),
 					]),
 					status && status.lastError
-						? react.createElement("div", { key: "err", style: { fontSize: 12, color: "#c0392b", marginBottom: 6 } }, status.lastError)
+						? react.createElement("div", { key: "err", style: { fontSize: 12, color: "var(--dsw-alias-state-error-primary, #c0392b)", marginBottom: 6 } }, status.lastError)
 						: null,
 					react.createElement("div", { key: "models", style: { display: "flex", flexWrap: "wrap", gap: 6 } }, [
 						models.length === 0
-							? react.createElement("span", { key: "none", style: { fontSize: 12, color: "#8a8f98" } }, "尚未发现模型（服务在线后自动列出）")
+							? react.createElement("span", { key: "none", style: { fontSize: 12, color: "var(--dsw-alias-label-tertiary, #8a8f98)" } }, "尚未发现模型（服务在线后自动列出）")
 							: models.map((model) =>
 								react.createElement("span", { key: model, style: {
 									fontFamily: "Consolas, Menlo, monospace",
 									fontSize: 11.5,
-									background: "#f0f4f8",
-									color: "#1f4973",
+									background: "var(--dsw-alias-state-business-secondary, #f0f4f8)",
+									color: "var(--dsw-alias-state-business-primary, #1f4973)",
 									borderRadius: 4,
 									padding: "2px 8px",
 								} }, model)
@@ -297,7 +297,7 @@ window.__ModuleLoader__.load({
 				return react.createElement("div", { key: "form", style: cardStyle }, [
 					react.createElement("div", { key: "enable", style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 12 } }, [
 						react.createElement("input", { type: "checkbox", id: "ollama-enabled", checked: Boolean(draft.enabled), onChange: (e) => setDraftField("enabled", e.target.checked) }),
-						react.createElement("label", { htmlFor: "ollama-enabled", style: { fontSize: 13, color: "#1f1f1f", cursor: "pointer" } }, "启用自动识别 Ollama"),
+						react.createElement("label", { htmlFor: "ollama-enabled", style: { fontSize: 13, color: "var(--dsw-alias-label-primary, #1f1f1f)", cursor: "pointer" } }, "启用自动识别 Ollama"),
 					]),
 					react.createElement(FieldRow, { key: "baseUrl", label: "Ollama 服务地址", hint: "Ollama 原生接口根地址，不含 /v1。默认 http://localhost:11434（本机默认端口）；远程/自定义端口请按 http://主机:端口 填写。" },
 						react.createElement(TextInput, { value: draft.baseUrl || "", onChange: (e) => setDraftField("baseUrl", e.target.value) })
@@ -344,7 +344,7 @@ window.__ModuleLoader__.load({
 					react.createElement("button", { key: "refresh", type: "button", disabled: busy, onClick: () => loadAll(false), style: btn },
 						busy ? "处理中…" : "刷新状态"
 					),
-					savedTip !== null && react.createElement("span", { key: "tip", style: { fontSize: 11, color: "#2ecc71" } }, savedTip),
+					savedTip !== null && react.createElement("span", { key: "tip", style: { fontSize: 11, color: "var(--dsw-alias-state-success-primary, #2ecc71)" } }, savedTip),
 					config !== null && react.createElement("span", { key: "interval", style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)" } },
 						"当前探测间隔: " + fmtInterval(config.detectIntervalMs)
 					),
