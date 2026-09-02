@@ -1,7 +1,7 @@
 {
   "name": "dsh-session-import",
-  "version": "0.1.0",
-  "description": "在 WebUI 设置页提供「会话导入」：上传官方导出的会话 ZIP（或原始 .jsonl），校验后写回 DSH 持久化目录并挂到对应工作区",
+  "version": "0.2.0",
+  "description": "会话传输 (导入 + 导出): ZIP/JSONL 回灌持久化目录 + 官方路由直导 ZIP (showSaveFilePicker 弹另存为, 修复桌面壳静默下载到默认目录的问题)",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
