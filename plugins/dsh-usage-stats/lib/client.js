@@ -430,8 +430,8 @@ window.__ModuleLoader__.load({
 					react.createElement("span", { key: "t", style: titleStyle, title: s.title || s.id },
 						s.title || "(无标题)"
 					),
-					s.live && react.createElement("span", { key: "live", style: { ...badgeStyle, color: "var(--dsw-alias-state-success-primary)", background: "var(--dsw-alias-state-success-secondary)" } }, "运行中"),
-					s.error && react.createElement("span", { key: "err", style: { ...badgeStyle, color: "var(--dsw-alias-state-error-primary)", background: "var(--dsw-alias-state-error-secondary)" } }, "解码失败"),
+					s.live && react.createElement("span", { key: "live", style: { ...badgeStyle, color: "var(--dsw-alias-state-success-primary)" } }, "运行中"),
+					s.error && react.createElement("span", { key: "err", style: { ...badgeStyle, color: "var(--dsw-alias-state-error-primary)" } }, "解码失败"),
 					react.createElement("button", {
 						key: "btn",
 						type: "button",

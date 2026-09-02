@@ -235,7 +235,6 @@ window.__ModuleLoader__.load({
                     react.createElement("span", { style: { fontSize: "18px", fontWeight: 600, color: TEXT } }, "祖宗记忆库"),
                     react.createElement("span", { style: {
                         padding: "2px 10px", borderRadius: "10px", fontSize: "12px",
-                        background: bridgeReady ? "var(--dsw-alias-state-success-secondary)" : "var(--dsw-alias-state-warn-secondary)",
                         color: bridgeReady ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-state-warn-primary)",
                     }}, bridgeReady ? "就绪" : "未就绪"),
                     // v4: 双 checkbox —— 自动记录
@@ -393,7 +392,7 @@ window.__ModuleLoader__.load({
                     tags.slice(0, 3).map((t, i) =>
                         react.createElement("span", {
                             key: i,
-                            style: { padding: "1px 6px", borderRadius: "4px", background: "var(--dsw-alias-state-business-secondary)", color: "var(--dsw-alias-state-business-primary)" },
+                            style: { padding: "1px 6px", borderRadius: "4px", color: "var(--dsw-alias-state-business-primary)" },
                         }, t)
                     ),
                     react.createElement("span", { style: { marginLeft: "auto", color: "var(--dsw-alias-state-warn-primary)" } }, `importance ${fmtImportance(item.importance)}`),
@@ -401,7 +400,7 @@ window.__ModuleLoader__.load({
                         onClick: (e) => { e.stopPropagation(); onDelete(); },
                         style: {
                             padding: "2px 8px", borderRadius: "4px",
-                            background: "var(--dsw-alias-state-error-secondary)", color: "var(--dsw-alias-state-error-primary)",
+                            background: "var(--dsw-alias-state-error-primary)", color: "#fff",
                             border: "none", cursor: "pointer", fontSize: "11px",
                         },
                     }, "删除"),
