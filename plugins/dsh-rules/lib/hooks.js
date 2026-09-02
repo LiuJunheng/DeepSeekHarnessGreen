@@ -20,14 +20,20 @@ const CACHE_TTL_MS = 2000;
 /**
  * 安装规则注入钩子。在 Cordis effect 作用域内, 插件卸载时自动移除所有钩子。
  *
+ * v4 (实时生效): 不管 enabled 是什么状态都注册 hook —— enabled 动态变化时,
+ * 通过 isEnabled() 闭包在 callback 内懒读最新值, 下一次请求立即生效, 不用重启。
+ *
  * @param {import('@deepseek-ai/cordis').Context} ctx - Cordis 上下文
- * @param {{ rulesPath: string, config: object }} opts - 配置对象
+ * @param {{ rulesPath: string, config: object, isEnabled: () => boolean }} opts - 配置对象
  *   - rulesPath: 规则文件绝对路径
  *   - config: Config schema 校验后的配置 (enabled/rulesPath/autoReload/weight/headerLabel/failSilently/maxLength)
+ *   - isEnabled: 每次 hook 触发时被调用 → 读最新 enabled (实时生效核心)
  */
 export function installRulesHooks(ctx, opts) {
     const rulesPath = opts.rulesPath;
     const config = opts.config;
+    /** 实时 enabled 读取器 —— WebUI 改开关后下次 hook 就生效 */
+    const isEnabled = opts.isEnabled || (() => true);
 
     /** @type {string|null} 规则内容缓存 (null = 无有效内容) */
     let cachedRules = null;
@@ -118,6 +124,10 @@ export function installRulesHooks(ctx, opts) {
      */
     ctx.on('system-prompt/assemble', async (assembly, _ctx, next) => {
         try {
+            // v4: 懒读 enabled —— WebUI 改开关后下次请求立即生效, 不用重启
+            if (!isEnabled()) {
+                return next();
+            }
             const rules = readRulesContent();
             if (rules) {
                 assembly.contexts.push({

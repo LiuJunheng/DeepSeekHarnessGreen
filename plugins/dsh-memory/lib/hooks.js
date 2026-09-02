@@ -162,26 +162,44 @@ export function desensitize(text) {
     return out;
 }
 /** 安装自动记忆钩子 (effect 作用域内, 随插件卸载自动移除)。
- *  v4: autoRemember 和 autoRecall 独立控制, 两个都关就不装任何钩子。 */
+ *
+ * v5 (实时生效): 无论 autoRemember / autoRecall 是什么状态都注册 hook ——
+ * 两个开关动态变化时, 通过 isAutoRemember() / isAutoRecall() 闭包在 callback 内懒读最新值,
+ * 下次请求立即生效, 不用重启。
+ *
+ * @param {import('@deepseek-ai/cordis').Context} ctx - Cordis 上下文
+ * @param {import('../engine/zuzong_memory').ZuzongBridge} bridge - 祖宗记忆库 bridge
+ * @param {object} opts
+ * @param {() => boolean} opts.isAutoRemember - 实时 autoRemember 读取器
+ * @param {() => boolean} opts.isAutoRecall    - 实时 autoRecall 读取器
+ * @param {number} opts.autoRecallLimit        - recall 条数 (1-10)
+ * @param {boolean} opts.desensitize           - 是否脱敏
+ * @param {boolean} opts.userMessage           - 是否记用户消息
+ * @param {boolean} opts.assistantMessage      - 是否记 AI 回复
+ * @param {boolean} opts.toolResult            - 是否记工具结果
+ * @param {boolean} opts.useSummarize          - 是否规则提炼 summary
+ * @param {number} opts.importance             - 重要性权重
+ */
 export function installMemoryHooks(ctx, bridge, opts) {
     const memorize = (tool, args) => {
         void bridge
             .callTool(tool, args)
             .catch((err) => ctx.logger.warn(`dsh-memory: ${tool} 自动记忆失败: ${err.message}`));
     };
-    // v4: sanitize 恢复回来 (之前误删)
     const sanitize = (text) => {
         if (!opts.desensitize)
             return text;
         return desensitize(text);
     };
-    // P1 完善 (自动 recall 注入): 每次模型请求组装 system prompt 时, 注入祖宗记忆库记忆。
-    // v2: 按 type 分组, 优先用 summary (精简概要) 而非原文。
-    if (opts.autoRecall) {
-        const recallLimit = Math.max(1, Math.min(10, opts.autoRecallLimit || 6));
-        ctx.on('system-prompt/assemble', async (assembly, _ctx, next) => {
-            try {
-                // v2: 用 recall (空 query → 引擎自动优先有 summary 的条目)
+    const recallLimit = Math.max(1, Math.min(10, opts.autoRecallLimit || 6));
+
+    // --- 自动召回: system-prompt/assemble (总是注册, 内部懒读 autoRecall) ---
+    ctx.on('system-prompt/assemble', async (assembly, _ctx, next) => {
+        try {
+            // v5: 懒读 autoRecall —— WebUI 改开关后下次请求立即生效
+            if (!opts.isAutoRecall || !opts.isAutoRecall()) {
+                return next();
+            }
                 const r = await bridge.callTool('recall', {
                     query: '',
                     limit: recallLimit,
@@ -223,10 +241,12 @@ export function installMemoryHooks(ctx, bridge, opts) {
             catch { /* 静默: 召回失败不影响请求 */ }
             return next();
         });
-    }
-    // --- 自动记录: session/event → 写入记忆库 ---
-    if (opts.autoRemember) {
-        ctx.on('session/event', (_session, event) => {
+    // --- 自动记录: session/event → 写入记忆库 (总是注册, 内部懒读 autoRemember) ---
+    ctx.on('session/event', (_session, event) => {
+        // v5: 懒读 autoRemember —— WebUI 改开关后下次事件立即生效
+        if (!opts.isAutoRemember || !opts.isAutoRemember()) {
+            return;
+        }
         if (event.type === 'user/message' && opts.userMessage) {
             // 只记真实用户输入 (kind='user'), 跳过插件注入/系统上下文
             if (event.data.source?.kind !== 'user') {
@@ -302,5 +322,4 @@ export function installMemoryHooks(ctx, bridge, opts) {
             });
         }
     });
-    } // autoRemember
 }

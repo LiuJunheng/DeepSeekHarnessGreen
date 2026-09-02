@@ -334,17 +334,22 @@ export async function apply(ctx, config) {
         ctx.logger.warn(`${name}: webServer 不可用, 跳过配置路由注册`);
     }
 
-    // 3. v3: disabled → 不装钩子, 但路由仍注册 (让用户能在 WebUI 里改开关)
-    if (!mergedConfig.enabled) {
-        ctx.logger.info(`${name}: disabled (enabled=false), 跳过 hooks 安装; 路由已注册, 用户可在 WebUI 里开启`);
-        return;
-    }
+    // 3. v4 (实时生效): 无论 enabled 是什么都装 hooks, hook 内部通过
+    //    isEnabled() 懒读最新值 → WebUI 改开关后下次请求立即生效, 不用重启。
+    //    路由仍注册 (让用户能在 WebUI 里改开关)。
+    //    注意: 以前 enabled=false 时 apply 会直接 return, 根本不 installRulesHooks,
+    //    所以用户改了开关也没用 —— 必须重启。现在删掉这个早返回。
 
-    // 4. 安装 system-prompt/assemble 钩子
+    // 4. 安装 system-prompt/assemble 钩子 (带实时 enabled 守卫)
+    //    isEnabled 闭包每次被调用时都读最新的持久化 JSON, 避免 stale closure 问题。
     installRulesHooks(ctx, {
         rulesPath,
         config: mergedConfig,
+        isEnabled: () => {
+            const fresh = _loadPersist();
+            return Boolean(fresh.enabled ?? mergedConfig.enabled);
+        },
     });
 
-    ctx.logger.info(`${name}: ready, rules file = ${rulesPath}`);
+    ctx.logger.info(`${name}: ready, rules file = ${rulesPath}, hooks 已安装 (enabled=${mergedConfig.enabled}, 可实时切换)`);
 }

@@ -487,18 +487,26 @@ export async function apply(ctx, config) {
             disposers.push(() => { if (toolsPoll) clearInterval(toolsPoll); });
         }
 
-        // --- v4: 自动记忆 / 自动召回 钩子按需安装 ---
-        // autoRemember 管 session/event → 写入记忆库
-        // autoRecall   管 system-prompt → 注入 system prompt
-        // 两个任意开启一个就装 hooks (内部各自守卫)
-        const ar = effective.memory.autoRemember;
-        const ac = effective.memory.autoRecall;
-        if (ar || ac) {
-            installMemoryHooks(ctx, bridge, effective.memory);
-            ctx.logger.info(`dsh-memory: hooks 已安装 (autoRemember=${ar}, autoRecall=${ac})`);
-        } else {
-            ctx.logger.info('dsh-memory: autoRemember 和 autoRecall 均关闭, 跳过 hooks 安装');
-        }
+        // --- v5 (实时生效): 无论 autoRemember/autoRecall 是什么都装 hooks ---
+        // 每个 hook 内部通过 isAutoRemember() / isAutoRecall() 懒读最新值,
+        // WebUI 改开关后下次请求/事件立即生效, 不用重启。
+        // 注意: 以前是 if (ar || ac) install → 开关全关时 hooks 根本没注册,
+        // 用户改了开关也没用 —— 必须重启 apply() 才会走到 installMemoryHooks。
+        installMemoryHooks(ctx, bridge, {
+            ...effective.memory,
+            isAutoRemember: () => {
+                const fresh = _loadPersist();
+                return Boolean(fresh.autoRemember ?? effective.memory.autoRemember);
+            },
+            isAutoRecall: () => {
+                const fresh = _loadPersist();
+                return Boolean(fresh.autoRecall ?? effective.memory.autoRecall);
+            },
+        });
+        ctx.logger.info(
+            `dsh-memory: hooks 已安装 (autoRemember=${effective.memory.autoRemember}, ` +
+            `autoRecall=${effective.memory.autoRecall}, 可实时切换)`
+        );
 
         // --- 记忆库管理卡片 host 路由 (始终注册, 含 config 读写) ---
         // registerMemoryRoutes 内部自己用 ctx.effect 管理路由生命周期
