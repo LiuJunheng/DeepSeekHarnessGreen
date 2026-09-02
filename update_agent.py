@@ -40,6 +40,11 @@ from tkinter import messagebox
 MAX_WAIT_SECONDS = 30
 # bat 模式(启动器以 start.bat 运行)没有可轮询的文件锁, 直接固定睡眠
 PY_MODE_SLEEP_SECONDS = 2.5
+
+# 与 launcher.py 的 GREEN_VERSION 保持一致 —— release_upload.py 的 exe 新鲜度校验
+# 会同时对 DSH_Launcher.exe 和 DSH_Update.exe 跑 --print-green-version 对比源码版本,
+# 若版本号不同步会直接阻断打包, 因此这里硬编码是安全的 (不一致会被拦截).
+GREEN_VERSION = "1.0.27"
 # 覆盖完成后、重启前的短暂停顿, 让界面把"更新完成"状态画出来
 RELAUNCH_DELAY_SECONDS = 0.8
 
@@ -313,6 +318,14 @@ def run_apply(job_data, job_path):
 def main():
     """入口: 正常流程由启动器以 `DSH_Update.exe --apply <job.json>` 调用"""
     arguments = sys.argv[1:]
+
+    # 隐藏 flag: 发布脚本 release_upload.py 用它读取 Update.exe 内嵌版本,
+    # 与 launcher.py 的 GREEN_VERSION 做一致性校验. 直接 print 版本号后退出,
+    # 不走任何 GUI 逻辑 (避免无意义的弹窗卡住 subprocess 调用).
+    if "--print-green-version" in arguments:
+        print(GREEN_VERSION)
+        return 0
+
     if len(arguments) == 2 and arguments[0] == "--apply":
         job_path = arguments[1]
         # 1. 读取并校验更新任务 (读不了直接系统弹窗报错)

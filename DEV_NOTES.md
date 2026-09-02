@@ -26,7 +26,7 @@
 
 ## 二、当前状态（版本 / 发布 / 仓库）
 
-* **版本唯一来源 = launcher.py** **`GREEN_VERSION`**；`GREEN_VERSION_DATE` 由 `build_release_zip.py` 打包当天自动回写（禁止预写未来日期）。zip 名与发布均以此为准。当前已发布 **v1.0.22**。
+* **版本唯一来源 = launcher.py** **`GREEN_VERSION`**；`GREEN_VERSION_DATE` 由 `release_upload.py` 打包当天自动回写（禁止预写未来日期）。zip 名与发布均以此为准。当前已发布 **v1.0.22**。
 
 * **形态**：tkinter 启动器 + 便携 Node/Python + 绿色 zip 分发 + 内置桌面壳 + 双通道自更新。
 
@@ -54,7 +54,7 @@
 
 * **发版纪律**：
 
-  * 版本日期 = 制作当天真实日期（`build_release_zip.py` 自动回写 `GREEN_VERSION_DATE`）。
+  * 版本日期 = 制作当天真实日期（`release_upload.py` 自动回写 `GREEN_VERSION_DATE`）。
 
   * 上传 / 发布 / 推送前必须先经用户确认；`git push --force` 等改写操作尤其要先展示。
 
@@ -217,7 +217,7 @@
 
 * **绿色 zip 目的**：启动器 exe 自身无能力下载 runtime，首次运行后才下载 DSH 核心（Node.js + 插件树）。zip 只携带**启动器层**文件，用户双击 exe 启动，联网后自动拉取 runtime。
 
-* **zip 内容清单**（由 `runtime/tmp/build_release_zip.py` 的 `GREEN_TOP_FILES` + `GREEN_TOP_DIRS` 定义）：
+* **zip 内容清单**（由 `runtime/tmp/release_upload.py` 的 `GREEN_TOP_FILES` + `GREEN_TOP_DIRS` 定义）：
 
 * 顶层文件：`launcher.py`、`desktop-shell.py`、`update_agent.py`、`start.bat`、`stop.bat`、`build_exe.bat`、`DSH_Launcher.exe`、`DSH_Update.exe`、`DSH_Launcher.ico`、`config.json`、`README.md`、`README_EN.md`、`LICENSE`
 
@@ -227,16 +227,16 @@
 
 * **发布流程 checklist**（每次发版必走）：
 
-1. 更新 `launcher.py` 的 `GREEN_VERSION`（唯一版本来源，不要硬编码版本号到 zip 名里）
-2. 改了 `launcher.py` 或 `update_agent.py` → 重跑 `build_exe.bat`（两个 exe 里的版本日期会同步）
-3. 运行 `python runtime/tmp/build_release_zip.py`（自动回写 `GREEN_VERSION_DATE` 为构建当天日期 → 打 zip → verify 根目录齐全）
+ 1. 更新 launcher.py 的 GREEN_VERSION（唯一版本来源，不要硬编码版本号到 zip 名里）
+ 2. 改了 launcher.py 或 update_agent.py → **必须**先跑 build_exe.bat 重打包两个 exe
+ 3. 运行 python runtime/tmp/release_upload.py（**自动校验 exe 新鲜度：exe 比 launcher.py 旧会直接 exit(2) 阻断打包，输出明确提示**；校验通过后自动回写 GREEN_VERSION_DATE 为构建当天日期 → 打 zip → verify 根目录齐全）
 4. `git add launcher.py DSH_Launcher.exe DSH_Update.exe` → commit → push
 5. `git tag -a v{version} -m "v{version}: 版本说明"` → push --tags
 6. **Gitee Release 上传**：`set GITEE_TOKEN=xxx` + `python runtime/tmp/gitee_upload_release.py --zip <zip_path> --tag v{version} --name "v{version}: 版本说明" --body "<release_body>"`（脚本自动查已有 release，有则直接传附件，无则先建 release 再传）
 7. **GitHub Release 上传**：MCP 工具只有 `create_release` 没有 `upload_asset` → 用临时 Python 脚本直接调 GitHub REST API（标准库 urllib 即可，不需要 requests）：先 POST `/releases` 建 release，再 POST `uploads.github.com/repos/{owner}/{repo}/releases/{id}/assets?name={filename}` 以 `application/octet-stream` 传 body。脚本可以存 `runtime/tmp/github_upload_release.py` 以后复用。
 8. **清理**：删除本地构建产物 zip（已上传到 Release 的 zip 不在 gitignore 里，别 commit）
 
-* **zip 文件名**：`DSH_Launcher_GreenPortable_Online_<YYYYMMDD>_v<version>.zip`（日期=构建当天，版本号=GREEN\_VERSION）。`build_release_zip.py` 自动生成，不要手写。
+* **zip 文件名**：`DSH_Launcher_GreenPortable_Online_<YYYYMMDD>_v<version>.zip`（日期=构建当天，版本号=GREEN\_VERSION）。`release_upload.py` 自动生成，不要手写。
 
 * **双平台 token**：Gitee 在网页「个人设置 → 安全 → 私人令牌」勾 `projects`；GitHub 在网页「Settings → Developer settings → Personal access tokens → Tokens (classic)」勾 `repo`（完整 repo 访问，需 upload asset）。命令行临时 `set GITEE_TOKEN=xxx` / `set GITHUB_TOKEN=xxx` 用完即弃，别写入任何文件。
 
@@ -263,7 +263,8 @@
 * Layer 1 - 写入时兜底：
   econcile\_bundles() 前置调 \_ensure\_core\_bundles()，每次任何 bundle 操作都先确保 core 存在；
 
-* Layer 2 - 安装时同步检查：erify\_environment\_integrity() 新增"检查 1.5: core bundles 存在性"；
+* Layer 2 - 安装时同步检查：
+erify\_environment\_integrity() 新增"检查 1.5: core bundles 存在性"；
 
 * Layer 3 - 冒烟时框架级故障诊断（新增）：\_diagnose\_framework\_failure() 识别日志特征，自动调 \_ensure\_core\_bundles() 修复并重试（最多 3 轮）。
 
@@ -284,6 +285,56 @@
 * 新增 \_clean\_profile\_manifest() 清洗污染依赖，删除黑名单前缀（@deepseek-ai/\* / cordis\* / schemastery / 顶层 dsh-\* 包），保留例外名单（cordis / cordis-plugin-\* / schemastery 被 cordis.yml 直接 import）；
 
 * \_heal\_profile\_dependencies() 和 \_rebuild\_dependency\_tree() 前置调用清洗。
+
+ 1. **改了 launcher.py / GREEN_VERSION 但忘了重打包 exe — 运行时版本比 Release tag 低一级（2026-09-02，v1.0.27）**：
+
+   * **现象**：另一台电脑的 AI 改了 `GREEN_VERSION = "1.0.27"`，打了 v1.0.27 tag、上传了 Release zip，但没跑 `build_exe.bat`。zip 内嵌的 `DSH_Launcher.exe` 仍是 v1.0.26 构建的。用户运行 exe 后 GUI 右上角显示 v1.0.26，点「检查绿色版更新」提示有 v1.0.27 更新。
+
+   * **根因**：exe 是被 git 跟踪的文件（`git ls-files *.exe` 显示 DSH_Launcher.exe / DSH_Update.exe），git pull 只会拉仓库里已有的版本。另一台电脑只 commit 了改 GREEN_VERSION 的 launcher.py 变更、没 commit 新 exe。
+
+   * **根治**：根目录 `release_upload.py`（v3.0，已入 git）**打包前强制校验 exe 新鲜度** —— 先比 mtime（exe 必须 >= launcher.py 构建时间），再运行 `DSH_Launcher.exe --print-green-version` 和源码版本对比。任一失败直接 `sys.exit(2)` 阻断打包，输出明确提示「请先执行 build_exe.bat 重打包两个 exe」。
+
+   * **校验必须在 `sync_launcher_version_date` 之前执行**：sync 会重写 launcher.py（改 GREEN_VERSION_DATE），会让 launcher.py mtime 变新 → 校验误判。
+
+1. **update_agent.py 缺失 `--print-green-version` 导致 verify_exe_freshness 卡死（2026-09-02，v1.0.27 覆盖上传时发现）**：
+
+   * **现象**：release_upload.py 执行到 `verify_exe_freshness` 步骤（DSH_Launcher.exe 校验通过后），在对 DSH_Update.exe 跑 `subprocess.run([exe, "--print-green-version"], capture_output=True)` 时**永远卡住不超时**（脚本没任何输出，Ctrl+C 也杀不掉子进程）。
+
+   * **根因**：update_agent.py 的 `main()` 只处理 `--apply`，没有 `--print-green-version` 的隐藏 flag。当传入未知参数时，它掉进了 `show_manual_tip()`（弹 tkinter messagebox 等待用户点关闭）。因为 exe 是 PyInstaller 打出来的 runw.exe bootloader（无控制台窗口），这个 messagebox 在后台看不见，subprocess 就一直 capture_output 等用户关闭 → **永远不退出**，且不受 `timeout=5` 保护（messagebox 阻塞在主循环里，不是在 subprocess.run 的 timeout 能打断的位置）。
+
+   * **根治**：update_agent.py 的 `main()` 最前面加：
+     ```python
+     if "--print-green-version" in arguments:
+         print(GREEN_VERSION)
+         return 0
+     ```
+     GREEN_VERSION 在文件顶部硬编码（与 launcher.py 保持一致，release_upload.py 的版本号比对会兜住不一致）。
+
+   * **教训**：任何打包成独立 exe 的源文件，**都必须考虑 release_upload.py 的 exe 新鲜度校验机制**。新增 exe 源文件后，记得在里面也加 `--print-green-version` flag，否则 verify_exe_freshness 会卡死。
+
+2. **Gitee 上传同名资产不删除 → 无限堆积（2026-09-02）**：
+
+   * **现象**：Gitee Release 的 assets 列表出现 4 份同名 `DSH_Launcher_GreenPortable_Online_20260902_v1.0.27.zip`，每次覆盖上传都多一份。
+
+   * **根因**：GitHub API 给每个 asset 分配独立 id，可以先 DELETE 旧资产再 POST 新资产。**Gitee API 的 assets 列表只有 name + browser_download_url，没有 id/size 字段，也不支持删除单个 asset 的端点**。`github_upload_asset` 有"先删同名旧资产"逻辑，`gitee_upload_asset` 没有。
+
+   * **修复**：`gitee_upload_asset` 加前置检查 —— list releases → 检查目标 release 的 assets 里是否已有同名文件 → 有则跳过上传（`skip_upload = True`）。虽然没法删旧的，但能防止继续堆积。
+
+   * **当前状态**：Gitee v1.0.27 残留 4 份同名 zip（功能不受影响，下载 URL 唯一）。后续版本只会保留 1 份。如果想手动清理，得去 Gitee 网页 Release 详情页手动删。
+
+3. **release_upload.py v3.0 完整流程 + 版本整合（2026-09-02）**：
+
+   * **整合背景**：原来有 `release_upload.py`（已入 git）和 `build_release_zip.py`（未入 git，放在 `runtime/tmp/`）两个发布相关脚本。前者缺 exe 新鲜度校验，后者没上传功能。本次合并为**根目录唯一权威入口** `release_upload.py`（已入 git），覆盖打包→校验→上传全流程。
+
+   * **main() 调用顺序（铁律）**：
+     ```
+     verify_exe_freshness → sync_launcher_version_date → pack_online_zip → verify_zip → upload GitHub → upload Gitee
+     ```
+     verify_exe_freshness 必须在 sync 之前（sync 会改 launcher.py mtime）。
+
+   * **INCLUDE_ITEMS 规范**：绿色 zip 只含启动器层（exe / py / bat / 顶层文件 / plugins / skills），**绝不含** runtime/、build/、dist/、.git/、DEV_NOTES.md、config.json 用户配置。新增顶层文件（如 desktop-shell.py）必须同时改打包清单和 verify 期望列表（建议后续收敛为单一数据源）。
+
+   * **token 安全**：`set GITHUB_TOKEN=xxx` / `set GITEE_TOKEN=xxx`（PowerShell 用 `$env:GITHUB_TOKEN='xxx'`），用完即弃，别写入任何文件或 .env。脚本运行时会自动读取环境变量，不设置 token 则跳过上传。
 
 ## 六、维护提醒
 
@@ -319,7 +370,7 @@
 
 * **避坑**：纯静态、不引第三方字体/统计/CDN；`index.html` 大小写敏感、须在发布根目录；Pages 不支持动态后端；Pages 若 404 先确认 Source=GitHub Actions 且 artifact 路径正确；仓库 Gitee↔GitHub 自动同步（代码/tag 主推 Gitee），但 Pages 的 workflow 触发与站点启用都在 GitHub 侧，须保证 GitHub master 上有 `pages.yml` 且能跑 Actions。
 
-* **`pages/`** **不进绿色 zip**：`build_release_zip.py` 的 `GREEN_TOP_FILES` 不含 pages/，打包清单保持不变。
+* **`pages/`** **不进绿色 zip**：`release_upload.py` 的 `GREEN_TOP_FILES` 不含 pages/，打包清单保持不变。
 
 ## 九、内置插件
 
@@ -470,7 +521,8 @@ return next();  // 必须继续传下去
   * _tool_service_info() — 版本号 + summarized_count 统计
   * _tool_list_all() — 返回 summary + type
 * plugins/dsh-memory/lib/hooks.js
-  * 新增 uleSummarize(text, kind) 规则提炼函数 (~60 行)
+  * 新增 
+uleSummarize(text, kind) 规则提炼函数 (~60 行)
   * session/event 三个分支都加 summary + type 写入, 根据 opts.useSummarize 开关
   * autoRecall 改为解析 recall JSON → 按 type 分组 → 用 display 优先 summary → 结构化注入
 * plugins/dsh-memory/lib/index.js — Config 默认值 + useSummarize 新配置

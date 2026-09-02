@@ -86,6 +86,10 @@
 --------------------------------------------------------------------
 ## 版本历史
 --------------------------------------------------------------------
+  v3.0 (2026-09-02): 合并 runtime/tmp/build_release_zip.py 为单一权威入口;
+    新增 exe 新鲜度强制校验 (改了 launcher.py 忘了重打包 exe 会 exit(2) 阻断),
+    新增 GREEN_VERSION_DATE 自动回写, 新增 zip 根目录结构校验;
+    修正 INCLUDE_ITEMS 补 build_exe.bat, 移除错含的 DEV_NOTES.md (项目约定).
   v2.0 (2026-09-03): 重写, 整合打包逻辑, 完整避坑清单, GitHub 上传加 curl.exe fallback
   v1.0 (2026-09-02): 初始版本, 仅上传功能
 ====================================================================
@@ -142,6 +146,7 @@ RELEASE_NOTES = """## 核心更新
 # ============================================================
 
 # 必须包含的根目录项 (文件或目录, 相对 ROOT)
+# 铁律: DEV_NOTES.md 和 .gitignore 不进绿色 zip (项目约定, 只用于开发侧)
 INCLUDE_ITEMS = [
     "DSH_Launcher.exe",
     "DSH_Update.exe",
@@ -149,6 +154,7 @@ INCLUDE_ITEMS = [
     "launcher.py",
     "update_agent.py",
     "desktop-shell.py",
+    "build_exe.bat",
     "config.json",
     "start.bat",
     "stop.bat",
@@ -158,18 +164,17 @@ INCLUDE_ITEMS = [
     "README.md",
     "README_EN.md",
     "LICENSE",
-    "DEV_NOTES.md",
 ]
 
 # 遍历时必须排除的子目录 (无论在哪一层)
 EXCLUDE_SUBDIRS = {
     ".git", ".trae", "build", "dist", "workspace", "__pycache__", "runtime",
-    "node_modules", ".git",
+    "node_modules",
 }
 
 # 遍历时必须排除的文件名
 EXCLUDE_FILENAMES = {
-    "release_upload.py", "build_exe.bat", ".gitignore", "_pack_online.py",
+    "release_upload.py", ".gitignore", "_pack_online.py",
 }
 
 # 必须排除的文件扩展名
@@ -227,6 +232,98 @@ def verify_include_items():
         print("    请先构建 exe / 安装插件 / 确认目录结构")
         sys.exit(1)
     print("[✓] 所有关键文件/目录存在 (%d 项)" % len(INCLUDE_ITEMS))
+
+
+def sync_launcher_version_date(launcher_path, date_str):
+    """把 launcher.py 的 GREEN_VERSION_DATE 常量更新为制作当天日期,
+    保证 GUI 右上角【关于】弹窗显示的版本日期与 zip 文件名一致。
+    date_str 形如 20260820 -> 回写成 "2026年08月20日"。
+    若 launcher.py 里没有该常量则打印警告, 不中断打包。"""
+    if not os.path.isfile(launcher_path):
+        print("[WARN] launcher.py 不存在, 跳过版本日期回写: %s" % launcher_path)
+        return
+    chinese_date = "%s年%s月%s日" % (date_str[0:4], date_str[4:6], date_str[6:8])
+    with open(launcher_path, "r", encoding="utf-8") as file_handle:
+        source_text = file_handle.read()
+    new_line = 'GREEN_VERSION_DATE = "%s"' % chinese_date
+    updated_text, replaced_count = re.subn(
+        r'GREEN_VERSION_DATE\s*=\s*"[^"]*"', new_line, source_text, count=1)
+    if replaced_count == 0:
+        print("[WARN] launcher.py 未找到 GREEN_VERSION_DATE, 版本日期回写失败")
+        return
+    with open(launcher_path, "w", encoding="utf-8", newline="\n") as file_handle:
+        file_handle.write(updated_text)
+    print("[INFO] 已回写 launcher.py 版本日期: %s" % chinese_date)
+
+
+def verify_exe_freshness(root_dir, launcher_path):
+    """
+    强制校验 DSH_Launcher.exe 和 DSH_Update.exe 的构建时间不早于 launcher.py。
+    这样改了 launcher.py 之后若忘了重跑 build_exe.bat, 会在打包时直接报错阻断,
+    避免 zip 内嵌的 exe 仍是旧版 (用户运行后版本号比 Release tag 低一级)。
+
+    校验必须在 sync_launcher_version_date **之前**调用 —— sync 会重写 launcher.py
+    (改 GREEN_VERSION_DATE), 会让 launcher.py 的 mtime 变新, 造成误判。
+    """
+    exe_names = ("DSH_Launcher.exe", "DSH_Update.exe")
+    launcher_mtime = os.path.getmtime(launcher_path)
+    launcher_version = read_version()
+    stale = []
+    for name in exe_names:
+        exe_path = os.path.join(root_dir, name)
+        if not os.path.isfile(exe_path):
+            stale.append((name, "文件不存在"))
+            continue
+        exe_mtime = os.path.getmtime(exe_path)
+        # exe mtime 必须 >= launcher.py mtime (允许 2s 宽容, 避免同秒精度问题)
+        if exe_mtime + 2 < launcher_mtime:
+            stale.append((name, "exe 构建时间早于 launcher.py"))
+
+    # 次级校验: 运行 exe --print-green-version 对比源码版本
+    # (需要 exe 已包含该隐藏 flag, 老版本 exe 没有则跳过不报错)
+    for name in exe_names:
+        exe_path = os.path.join(root_dir, name)
+        if not os.path.isfile(exe_path):
+            continue
+        try:
+            result = subprocess.run(
+                [exe_path, "--print-green-version"],
+                capture_output=True, timeout=5,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if result.returncode == 0:
+                exe_version = result.stdout.decode("utf-8", errors="replace").strip()
+                if exe_version and exe_version != launcher_version:
+                    stale.append((name,
+                                  "exe 内嵌版本 %s != launcher.py 版本 %s"
+                                  % (exe_version, launcher_version)))
+        except Exception:
+            pass   # 新 flag 老 exe 不支持, 忽略
+
+    if stale:
+        print("[ERROR] exe 新鲜度校验失败, 打包已阻断!")
+        print("[ERROR] 根目录 launcher.py 当前 GREEN_VERSION = %s" % launcher_version)
+        for name, reason in stale:
+            print("[ERROR]   - %s: %s" % (name, reason))
+        print("")
+        print("[HINT] 请先执行 build_exe.bat 重打包两个 exe, 再重新跑本脚本")
+        print("[HINT] 原因: launcher.py (含 GREEN_VERSION) 已更新, 但 exe 还是旧构建")
+        sys.exit(2)
+    print("[✓] exe 新鲜度校验通过: DSH_Launcher.exe / DSH_Update.exe 均与 launcher.py 同步")
+
+
+def verify_zip(zip_path, expect_top):
+    """校验 zip 根目录成员是否齐全, 缺任何关键项直接 exit(1)"""
+    with zipfile.ZipFile(zip_path) as zf:
+        names = zf.namelist()
+    top_level = set()
+    for name in names:
+        first = name.split("/")[0]
+        top_level.add(first)
+    missing = [item for item in expect_top if item not in top_level]
+    if missing:
+        print("[ERROR] zip 根目录缺失关键项: %s" % missing)
+        sys.exit(1)
+    print("[✓] zip 根目录校验通过, 成员: %s" % sorted(top_level))
 
 
 # ============================================================
@@ -529,6 +626,23 @@ def gitee_upload_asset(token, release_id, file_path):
     file_size = os.path.getsize(file_path)
     mime = "application/zip"
 
+    # Gitee API 不支持删除单个 asset, 只能"同名跳过"防止无限堆积
+    print("  [→] 检查 Gitee 同名资产是否已存在...")
+    releases = gitee_list_releases(token)
+    skip_upload = False
+    for rel in releases:
+        if rel.get("id") == release_id:
+            existing_names = [a.get("name") for a in rel.get("assets", [])]
+            same_count = existing_names.count(fname)
+            if same_count > 0:
+                print("  [→] Gitee 已有 %d 份同名资产 %s, 跳过上传 (Gitee API 不支持删单个 asset)"
+                      % (same_count, fname))
+                skip_upload = True
+            break
+
+    if skip_upload:
+        return True
+
     with open(file_path, "rb") as f:
         file_data = f.read()
 
@@ -582,9 +696,30 @@ def main():
     print("[✓] 版本号: %s  (来源: launcher.py GREEN_VERSION)" % tag)
     verify_include_items()
 
+    # 发布铁律 (v3.0 起):
+    # 1) verify_exe_freshness 必须在 sync_launcher_version_date **之前** —— sync 会重写
+    #    launcher.py 改 GREEN_VERSION_DATE, 会让 mtime 变新, 导致校验误判。
+    # 2) 任一校验失败 exit(2), 阻断打包, 明确提示 "请先跑 build_exe.bat"。
+    launcher_path = os.path.join(ROOT, "launcher.py")
+    verify_exe_freshness(ROOT, launcher_path)
+
+    # Step 1.5: 自动回写 launcher.py 的 GREEN_VERSION_DATE 为构建当天
+    date_str = datetime.datetime.now().strftime("%Y%m%d")
+    sync_launcher_version_date(launcher_path, date_str)
+
     # Step 2: 打包 zip
     zip_path = pack_online_zip(version)
     print("[✓] ZIP 就绪: " + zip_path)
+
+    # 校验 zip 根目录关键项齐全 (包含 build_exe.bat / plugins / skills 等)
+    expect_top = [
+        "launcher.py", "update_agent.py", "desktop-shell.py",
+        "start.bat", "stop.bat", "build_exe.bat",
+        "DSH_Launcher.exe", "DSH_Update.exe", "DSH_Launcher.ico",
+        "config.json", "README.md", "README_EN.md", "LICENSE",
+        "plugins", "pages", "skills",
+    ]
+    verify_zip(zip_path, expect_top)
 
     # 读 token
     github_token = os.environ.get("GITHUB_TOKEN", "").strip()

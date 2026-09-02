@@ -277,7 +277,7 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
 GREEN_VERSION = "1.0.27"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
-GREEN_VERSION_DATE = "2026年09月02日"               # 绿色版版本日期 (build_release_zip.py 会按构建当天回写)
+GREEN_VERSION_DATE = "2026年09月02日"               # 绿色版版本日期 (release_upload.py 会按构建当天回写)
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
 GREEN_RELEASE_MIRROR = ("https://mirror.nju.edu.cn/github-release/%s/latest"
@@ -7463,6 +7463,12 @@ def run_gui():
 # ---------------------------------------------------------------------------
 def main():
     args = sys.argv[1:]
+    # 隐藏 flag: 发布脚本 release_upload.py 用它读取 launcher.py 当前的 GREEN_VERSION,
+    # 并与打包 exe 内的版本做一致性校验. 这里直接 import GREEN_VERSION 常量即可,
+    # 不走 Launcher() 初始化 (省启动开销).
+    if "--print-green-version" in args:
+        print(GREEN_VERSION)
+        return 0
     if "--stop" in args:
         app = Launcher()
         app.on_log = lambda message: print(message)   # 命令行模式把日志打印到终端
