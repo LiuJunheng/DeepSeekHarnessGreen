@@ -1,6 +1,7 @@
 ---
 name: dsh-deploy-maintain
 description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护、插件开发与避坑经验。覆盖便携 Node/dsh 安装、环境变量重定向、工作区 ACL 沙箱、更新备份、插件管理与 dsh 插件双端加载/路由注册等全套实操知识。"
+updated: "2026-09-02"
 ---
 
 # DeepSeek Harness 绿色整合版 · 部署维护与插件开发
@@ -383,7 +384,36 @@ const running = { color: "var(--dsw-alias-state-success-primary)" };  // 运行�
 | 离线/错误     | error（红）      | success        |
 | 信息提示横幅    | business（蓝）   | warn（橙，信息不是警告） |
 | 真正危险/毒化提示 | warn（橙）       | 其他             |
-| 模型名 chip  | business 蓝底蓝字 | warn 橙         |
+| 模型名 chip  | business 蓝字（无背景） | 蓝底蓝字（同色系糊片） |
+
+#### 颜色对比度铁律（同色系 text + bg 必糊）
+
+> 踩坑实录：先后在 dsh-market 橙色标签、dsh-usage-stats "运行中" 绿色 badge、dsh-memory "删除" 红按钮上翻了车——**任何 `state-xxx-primary`（文字）配 `state-xxx-secondary`（背景）都是同色系，深浅主题下都会糊成一片**，没有例外。
+
+**绝对规则**：同一个状态色的 `primary`（主色）和 `secondary`（淡底色）**不能同时用**在同一个元素上——不管深浅主题，对比度都不够。
+
+**正确模式**分两类：
+
+| 元素类型 | 正确写法 | 原因 |
+|--------|--------|------|
+| Badge/Chip/标签（非交互） | **只用文字色**，不要 background | 轻量标注不需要背景块，彩色文字足够识别 |
+| 按钮（可点击） | **深彩底 + 白字** | 用 `state-xxx-primary` 做背景，`#fff` 做文字，保证点击区域的存在感 |
+
+```js
+// ❌ 糊片 1: primary 文字 + secondary 背景 (同色系!)
+const badge = { color: "var(--dsw-alias-state-success-primary)", background: "var(--dsw-alias-state-success-secondary)" };
+
+// ❌ 糊片 2: 同上结构换了 error/business/warn 色值 (一样糊)
+const deleteBtn = { color: "var(--dsw-alias-state-error-primary)", background: "var(--dsw-alias-state-error-secondary)" };
+
+// ✅ Badge/Chip: 只有文字色, 无背景
+const runningBadge = { color: "var(--dsw-alias-state-success-primary)" };
+const tag = { color: "var(--dsw-alias-state-business-primary)" };
+
+// ✅ 按钮: 深彩底 + 白字
+const deleteBtn = { background: "var(--dsw-alias-state-error-primary)", color: "#fff", border: "none" };
+const warnBtn = { background: "var(--dsw-alias-state-warn-primary)", color: "#fff", border: "none" };
+```
 
 #### 排查清单
 
