@@ -131,27 +131,30 @@ window.__ModuleLoader__.load({
 		}
 
 		// ---- 背景视频层 ----
-		function ensureVideo() {
-			if (videoEl == null) {
-				videoEl = document.createElement("video");
-				videoEl.id = "dsw-mbg-video";
-				videoEl.style.cssText =
-					"position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;" +
-					"z-index:0;pointer-events:none;background:#000;";
-				videoEl.muted = (S.volume === 0);
-				videoEl.setAttribute("playsinline", "");
-				// 播放结束自动切下一首 (或按循环策略处理)。
-				videoEl.addEventListener("ended", onEnded);
-			}
-			if (videoEl.parentNode !== document.body) {
-				// 插到 <body> 最前 (firstChild): 与 harness 工作区同为普通层 (z-index auto/0) 时,
-				// DOM 顺序在后者绘制在上 → 工作区文字永久浮于视频之上, 不会随浓度拉高被遮住;
-				// 浓度只控制视频自身透明度 (applyVideoAppearance), 不影响工作区文字。
-				document.body.insertBefore(videoEl, document.body.firstChild);
-			}
-			applyVideoAppearance();
-			return videoEl;
+	function ensureVideo() {
+		if (videoEl == null) {
+			videoEl = document.createElement("video");
+			videoEl.id = "dsw-mbg-video";
+			videoEl.style.cssText =
+				"position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;" +
+				"z-index:0;pointer-events:none;background:#000;";
+			videoEl.muted = (S.volume === 0);
+			videoEl.setAttribute("playsinline", "");
+			// 播放结束自动切下一首 (或按循环策略处理)。
+			videoEl.addEventListener("ended", onEnded);
+			// 用 play/pause 事件同步图标, 比自己维护 S.playing 准确 (video.paused 才是真实状态)。
+			videoEl.addEventListener("play", () => { S.playing = true; updatePlayIcon(); });
+			videoEl.addEventListener("pause", () => { S.playing = false; updatePlayIcon(); });
 		}
+		if (videoEl.parentNode !== document.body) {
+			// 插到 <body> 最前 (firstChild): 与 harness 工作区同为普通层 (z-index auto/0) 时,
+			// DOM 顺序在后者绘制在上 → 工作区文字永久浮于视频之上, 不会随浓度拉高被遮住;
+			// 浓度只控制视频自身透明度 (applyVideoAppearance), 不影响工作区文字。
+			document.body.insertBefore(videoEl, document.body.firstChild);
+		}
+		applyVideoAppearance();
+		return videoEl;
+	}
 
 		function applyVideoAppearance() {
 			if (!videoEl) return;
@@ -216,26 +219,23 @@ window.__ModuleLoader__.load({
 			video.loop = false;
 			video.volume = S.volume;
 			video.src = S.list[idx].url;
-		video.play()
-			.then(() => { S.playing = true; })
-			.catch(() => { S.playing = false; });
-		S.active = true;
-		applyMediaMode();
-		updatePlayIcon();
-		setStatus("播放中: " + S.list[idx].name);
-		renderPlaylist();
-	}
+			// play() 是异步 Promise —— 事件监听器 play/pause 会自动 sync 图标, 这里不需手动改 S.playing。
+			video.play().catch(() => { /* autoplay 被拒等情况, 图标事件监听器自然会同步 */ });
+			S.active = true;
+			applyMediaMode();
+			updatePlayIcon();
+			setStatus("播放中: " + S.list[idx].name);
+			renderPlaylist();
+		}
 
 		/** 试播单曲 (不写入清单), 播完即回到默认背景。kind 用于区分视频/纯音乐模式。 */
 		function playPreview(url, displayName, kind) {
 			const video = ensureVideo();
 			video.volume = S.volume;
 			video.src = url;
-			video.play()
-				.then(() => { S.playing = true; })
-				.catch(() => { S.playing = false; });
+			video.play().catch(() => { /* autoplay 被拒等情况, 图标事件监听器自然会同步 */ });
 			S.cur = -1;
-			S.preview = { name: displayName, url, kind: kind || "video" };
+			S.preview = { name: displayName, url: url, kind: kind || "video" };
 			S.active = true;
 			applyMediaMode();
 			updatePlayIcon();
@@ -243,14 +243,14 @@ window.__ModuleLoader__.load({
 		}
 
 		function togglePause() {
-			if (!videoEl || videoEl.src === "") return;
+			if (!videoEl || !videoEl.src) return;
 			if (videoEl.paused) {
-				videoEl.play().finally(() => { S.playing = !videoEl.paused; updatePlayIcon(); });
+				videoEl.play().catch(() => { /* 忽略 */ });
 			} else {
 				videoEl.pause();
-				S.playing = false;
-				updatePlayIcon();
 			}
+			// 事件监听器 play/pause 会自动 sync 图标, 这里再手动补一次 (保险)。
+			updatePlayIcon();
 		}
 
 		function next() {
@@ -413,7 +413,14 @@ window.__ModuleLoader__.load({
 
 		function updatePlayIcon() {
 			if (!playIcon) return;
-			playIcon.textContent = (S.playing ? "⏸" : "▶");
+			// 读 video.paused (真实 DOM 状态), 而不是自己维护的 S.playing ——
+			// 因为 video.play() 是异步 Promise, 可能被 autoplay/rejected 暂停,
+			// 事件监听器 play/pause 会自动 sync S.playing, 这里再做最终兜底。
+			var isActuallyPlaying = false;
+			if (videoEl && videoEl.src) {
+				isActuallyPlaying = !videoEl.paused && !videoEl.ended;
+			}
+			playIcon.textContent = isActuallyPlaying ? "⏸" : "▶";
 		}
 
 		function renderFiles() {
@@ -426,41 +433,41 @@ window.__ModuleLoader__.load({
 			for (const file of S.files) {
 				const row = el("div", { className: "dsw-mbg-item" }, [
 					el("span", { className: "dsw-mbg-name", title: file.name }, file.name),
+					// ▷ 按钮 = 试播 (单次, 不入清单)
 					el("button", {
 						className: "dsw-mbg-act",
-						title: "试播",
+						title: "试播 (单次, 不入清单)",
 						textContent: "▷",
 						on: { click: (ev) => { ev.stopPropagation(); playPreview(file.url, file.name, file.kind); } },
 					}),
+					// ＋ 按钮 = 加入播放清单 (收藏夹)
 					el("button", {
 						className: "dsw-mbg-act",
-						title: "加入播放清单",
+						title: "加入播放清单 (收藏夹)",
 						textContent: "＋",
 						on: { click: (ev) => { ev.stopPropagation(); addToList(file); } },
 					}),
 				]);
-				// 整行点击 = 加入清单并从该项开始播放 (最直观的"点击就播")。
+				// 整行点击 = 单次试播 (最直观的"点一下就播这个", 不入清单 —— 加清单请点 ＋)。
 				row.addEventListener("click", () => {
-					addToList(file, true);
+					playPreview(file.url, file.name, file.kind);
 				});
 				listEl.appendChild(row);
 			}
 		}
 
-		function addToList(file, playNow) {
+		function addToList(file) {
 			const exists = S.list.some((item) => item.url === file.url);
 			if (exists) {
-				// 已在清单, 直接播它即可。
-				if (playNow) playListIndex(S.list.findIndex((item) => item.url === file.url));
+				setStatus("已在清单中: " + file.name);
 				return;
 			}
 			S.list.push({ name: file.name, url: file.url, kind: file.kind || "video" });
 			saveStore();
 			renderPlaylist();
 			updateStatus();
-			if (playNow) playListIndex(S.list.length - 1);
-			// 清单从空变成非空且尚未播放时: 自动从第一首开始播放 (自动循环开始)。
-			else if (S.list.length === 1 && !S.active) playListIndex(0);
+			// 清单从 0 → 1 且 loop=true (收藏夹默认循环) 且当前没在播放 → 自动开始循环播放。
+			if (S.list.length === 1 && !S.active) playListIndex(0);
 		}
 
 		function removeFromList(index) {
@@ -653,7 +660,14 @@ window.__ModuleLoader__.load({
 			applyVideoAppearance();
 			updatePlayIcon();
 			loadConfig().then(() => {
-				scanList();
+				scanList().then(() => {
+					// 恢复播放: loop=true 且清单有内容 → 自动从第一首开始循环 (上次关闭前的习惯延续)。
+					// 只恢复循环播放模式, 不恢复单次试播 (preview 是临时的, 关了页面就丢)。
+					if (S.loop && S.list.length > 0) {
+						playListIndex(0);
+						setStatus("恢复播放: " + S.list[0].name + " (上次循环清单, 可在面板里停掉)");
+					}
+				});
 			});
 			renderPlaylist();
 			updateStatus();
