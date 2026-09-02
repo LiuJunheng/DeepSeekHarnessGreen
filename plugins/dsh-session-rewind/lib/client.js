@@ -107,7 +107,7 @@ window.__ModuleLoader__.load({
 					react.createElement("span", { key: "t", style: titleStyle, title: s.title || s.id },
 						s.title || "(无标题)"
 					),
-					s.live && react.createElement("span", { key: "live", style: { flex: "none", fontSize: 11, color: "var(--dsw-alias-state-warn-primary)", background: "var(--dsw-alias-state-warn-secondary)", borderRadius: 999, padding: "1px 7px", whiteSpace: "nowrap" } }, "运行中"),
+					s.live && react.createElement("span", { key: "live", style: { flex: "none", fontSize: 11, color: "var(--dsw-alias-state-success-primary)", background: "var(--dsw-alias-state-success-secondary)", borderRadius: 999, padding: "1px 7px", whiteSpace: "nowrap" } }, "运行中"),
 					react.createElement("button", {
 						key: "btn",
 						type: "button",
@@ -122,7 +122,7 @@ window.__ModuleLoader__.load({
 				react.createElement("div", { key: "m", style: chipRowStyle }, [
 					react.createElement(MetaChip, { key: "ws", label: "工作区", value: (s.workspace && s.workspace.title) || s.workspaceKey || "—" }),
 					react.createElement(MetaChip, { key: "ct", label: "创建时间", value: fmtTime(s.createdAt) }),
-					react.createElement(MetaChip, { key: "st", label: "状态", value: s.live ? "运行中" : "空闲", valueStyle: { color: s.live ? "var(--dsw-alias-state-warn-primary)" : "var(--dsw-alias-label-tertiary)" } }),
+					react.createElement(MetaChip, { key: "st", label: "状态", value: s.live ? "运行中" : "空闲", valueStyle: { color: s.live ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-label-tertiary)" } }),
 				]),
 			]);
 		}
@@ -335,7 +335,7 @@ window.__ModuleLoader__.load({
 					react.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } }, [
 						react.createElement(MetaChip, { key: "ev", label: "事件数", value: summary.eventCount }),
 						react.createElement(MetaChip, { key: "turn", label: "回合", value: summary.totalTurns + " (完成 " + summary.completedTurns + " / 未完成 " + summary.unfinishedTurns + ")" }),
-						s && s.live && react.createElement(MetaChip, { key: "live", label: "状态", value: "运行中 (回退后自动切到新会话)", valueStyle: { color: "var(--dsw-alias-state-warn-primary)" } }),
+						s && s.live && react.createElement(MetaChip, { key: "live", label: "状态", value: "运行中 (回退后自动切到新会话)", valueStyle: { color: "var(--dsw-alias-state-success-primary)" } }),
 						s && s.cwd && react.createElement(MetaChip, { key: "cwd", label: "工作区路径", value: s.cwd, valueStyle: { fontFamily: "Consolas, Menlo, monospace", fontSize: 11 } }),
 					]),
 					poisonHints.length > 0 && react.createElement("div", { style: { fontSize: 13, color: "var(--dsw-alias-state-warn-primary)", background: "var(--dsw-alias-state-warn-secondary)", borderRadius: 4, padding: "8px 12px", lineHeight: 1.6 } },

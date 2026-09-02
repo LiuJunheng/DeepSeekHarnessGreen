@@ -118,7 +118,7 @@ window.__ModuleLoader__.load({
 			// 运行中标记
 			const runningStyle = {
 			fontSize: 11,
-			color: "var(--dsw-alias-state-warn-primary)",
+			color: "var(--dsw-alias-state-success-primary)",
 			marginLeft: 6
 		};
 			// 工作区标记
@@ -213,7 +213,7 @@ window.__ModuleLoader__.load({
 					{ style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
 					react.createElement(
 						"span",
-						{ style: { fontSize: 13, color: "var(--dsw-alias-state-warn-label)", background: "var(--dsw-alias-state-warn-secondary)", padding: "6px 12px", borderRadius: 4 } },
+						{ style: { fontSize: 13, color: "var(--dsw-alias-state-business-primary)", background: "var(--dsw-alias-state-business-secondary)", padding: "6px 12px", borderRadius: 4 } },
 						"删除/恢复请到启动器 GUI：停止服务 → 「数据维护」→「会话管理」"
 					),
 					react.createElement(
