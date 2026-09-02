@@ -163,6 +163,10 @@
 
 22. **dsh-ollama 变体识别正则只匹配整数、漏了小数点 → 无限递归创建多层后缀垃圾模型**：`ensureContextVariants` 用 `/-\d+k$/` 判断模型名是否已带"上下文后缀"（如 `-32k` / `-64k`），以此过滤掉变体只让原始模型参与决策。但 `targetContextWindow` 除以 1024 后可能产出 **带小数的后缀**（64000 / 1024 = `62.5k`），而正则里的 `\d` 只匹配纯数字、不匹配小数点，导致 `gemma4:latest-62.5k` **不被当作变体**、被当作原始模型进入循环 → `variant = gemma4:latest-62.5k-62.5k` → 用 Modelfile `FROM gemma4:latest-62.5k` 创建（ollama create 幂等，变体已存在不会报错）→ 下一轮探测时旧正则仍漏判 `gemma4:latest-62.5k-62.5k` → 又创建 `-62.5k-62.5k-62.5k`……**每次探测循环加一层后缀**，几十轮后 Ollama 里堆出 11 层叠加的垃圾模型（全 9.6 GB 一个，白白占几十 GB 磁盘）。**修复**：三处正则统一从 `/-\d+k$/` 改为 `/-\d+(?:\.\d+)?k$/`（支持 `-32k` / `-62.5k` / `-3.1k`）；同时加两层防御纵深：① `probeOllamaModels` 源头用 `multiVariantRegex` 过滤掉含多层后缀的 Ollama 垃圾模型（防止 `ensureContextVariants` 被脏输入污染）；② `ensureContextVariants` 在 `ollama create` 前校验 variant 名不含多层后缀（兜住未来有人改了源头过滤又回归）。**教训**：`Math.round(target/1024)` 这种整数除法假设在工程里要小心——浮点除法可能产出小数后缀，正则、字符串拼接、Map key 匹配都要留余地。
 
+23. **插件 client.js 的** **`__ModuleLoader__.load({id})`** **必须与** **`package.json`** **的** **`name`** **完全一致，否则浏览器端静默加载失败**：DSH 的 client bundle loader 按 `package.json` 的 `name` 去 bundle 里找对应的 `__ModuleLoader__.load` 注册项。如果 id 不匹配（如 package.json 叫 `dsh-session-import` 但 client.js 注册 id 写了 `dsh-session-transfer`），浏览器控制台报 `failed to import loader entry xxx (dsh-session-import): bundle ... loaded without registering "dsh-session-import" via __ModuleLoader__.load`，页面顶部出现 **"HARNESS Failed to load plugins"** 横幅。**排查方法**：浏览器 F12 看 Console → 搜 "failed to import loader entry" 或 "duplicate factory registration"；确认 package.json name、client.js `__ModuleLoader__.load({id})`、index.js `const name =` 三处完全一致。其他 9 个内置插件都是三者对齐的，唯独 dsh-session-import 改名为 "session-transfer" 时漏同步了这三处。**修复**：把三处 name 全部改回 `dsh-session-import`，重启 DSH 重新编译 bundle 生效。注意：路由 URL（如 `/__dsh/session-transfer/upload`）可以保持 session-transfer 不动——那只是 HTTP 路径，不影响 bundle 加载。
+
+24. **官方「Session 日志」按钮的静默下载无法通过 hook** **`fetch`** **拦截，必须 hook** **`HTMLAnchorElement.prototype.click`**：官方 `@deepseek-ai/dsh-session-log-export` 的下载流程是：HEAD `/api/session.export` 检查 → 创建 `<a download href=url>` → `anchor.click()` → 浏览器下载管理器处理。**浏览器拿到** **`download`** **属性后直接走下载管理器，不经过 fetch/XHR**，所以 hook 全局 `fetch` 拦不住。**唯一拦截点**是 `HTMLAnchorElement.prototype.click` —— 在 prototype 层保存 original，替换成判断 `this.download && this.href && this.href.indexOf('/api/session.export') >= 0`，命中则 `fetch → blob → showSaveFilePicker`，不命中则走 `originalAnchorClick.call(this)`。dsh-session-import v0.3.0 已实现这个 hook。**回退**：`window.showSaveFilePicker` 不存在（纯浏览器环境）时，回退到原生 `<a download>` 行为。**幂等**：prototype.click 每次安装保存上一个 original，可重复覆盖不会链断。
+
 ### PyInstaller / 打包坑
 
 1. `--onefile` 不带全运行库：**显式** **`--add-binary`** **打包 VC 运行库三件套** `vcruntime140.dll` / `vcruntime140_1.dll` / `vcruntime140_threads.dll`，否则目标机报 "Failed to load Python DLL"。
@@ -227,9 +231,9 @@
 
 * **发布流程 checklist**（每次发版必走）：
 
- 1. 更新 launcher.py 的 GREEN_VERSION（唯一版本来源，不要硬编码版本号到 zip 名里）
- 2. 改了 launcher.py 或 update_agent.py → **必须**先跑 build_exe.bat 重打包两个 exe
- 3. 运行 python runtime/tmp/release_upload.py（**自动校验 exe 新鲜度：exe 比 launcher.py 旧会直接 exit(2) 阻断打包，输出明确提示**；校验通过后自动回写 GREEN_VERSION_DATE 为构建当天日期 → 打 zip → verify 根目录齐全）
+1. 更新 launcher.py 的 GREEN\_VERSION（唯一版本来源，不要硬编码版本号到 zip 名里）
+2. 改了 launcher.py 或 update\_agent.py → **必须**先跑 build\_exe.bat 重打包两个 exe
+3. 运行 python runtime/tmp/release\_upload.py（**自动校验 exe 新鲜度：exe 比 launcher.py 旧会直接 exit(2) 阻断打包，输出明确提示**；校验通过后自动回写 GREEN\_VERSION\_DATE 为构建当天日期 → 打 zip → verify 根目录齐全）
 4. `git add launcher.py DSH_Launcher.exe DSH_Update.exe` → commit → push
 5. `git tag -a v{version} -m "v{version}: 版本说明"` → push --tags
 6. **Gitee Release 上传**：`set GITEE_TOKEN=xxx` + `python runtime/tmp/gitee_upload_release.py --zip <zip_path> --tag v{version} --name "v{version}: 版本说明" --body "<release_body>"`（脚本自动查已有 release，有则直接传附件，无则先建 release 再传）
@@ -264,7 +268,7 @@
   econcile\_bundles() 前置调 \_ensure\_core\_bundles()，每次任何 bundle 操作都先确保 core 存在；
 
 * Layer 2 - 安装时同步检查：
-erify\_environment\_integrity() 新增"检查 1.5: core bundles 存在性"；
+  erify\_environment\_integrity() 新增"检查 1.5: core bundles 存在性"；
 
 * Layer 3 - 冒烟时框架级故障诊断（新增）：\_diagnose\_framework\_failure() 识别日志特征，自动调 \_ensure\_core\_bundles() 修复并重试（最多 3 轮）。
 
@@ -286,53 +290,57 @@ erify\_environment\_integrity() 新增"检查 1.5: core bundles 存在性"；
 
 * \_heal\_profile\_dependencies() 和 \_rebuild\_dependency\_tree() 前置调用清洗。
 
- 1. **改了 launcher.py / GREEN_VERSION 但忘了重打包 exe — 运行时版本比 Release tag 低一级（2026-09-02，v1.0.27）**：
+1. **改了 launcher.py / GREEN\_VERSION 但忘了重打包 exe — 运行时版本比 Release tag 低一级（2026-09-02，v1.0.27）**：
 
-   * **现象**：另一台电脑的 AI 改了 `GREEN_VERSION = "1.0.27"`，打了 v1.0.27 tag、上传了 Release zip，但没跑 `build_exe.bat`。zip 内嵌的 `DSH_Launcher.exe` 仍是 v1.0.26 构建的。用户运行 exe 后 GUI 右上角显示 v1.0.26，点「检查绿色版更新」提示有 v1.0.27 更新。
+* **现象**：另一台电脑的 AI 改了 `GREEN_VERSION = "1.0.27"`，打了 v1.0.27 tag、上传了 Release zip，但没跑 `build_exe.bat`。zip 内嵌的 `DSH_Launcher.exe` 仍是 v1.0.26 构建的。用户运行 exe 后 GUI 右上角显示 v1.0.26，点「检查绿色版更新」提示有 v1.0.27 更新。
 
-   * **根因**：exe 是被 git 跟踪的文件（`git ls-files *.exe` 显示 DSH_Launcher.exe / DSH_Update.exe），git pull 只会拉仓库里已有的版本。另一台电脑只 commit 了改 GREEN_VERSION 的 launcher.py 变更、没 commit 新 exe。
+* **根因**：exe 是被 git 跟踪的文件（`git ls-files *.exe` 显示 DSH\_Launcher.exe / DSH\_Update.exe），git pull 只会拉仓库里已有的版本。另一台电脑只 commit 了改 GREEN\_VERSION 的 launcher.py 变更、没 commit 新 exe。
 
-   * **根治**：根目录 `release_upload.py`（v3.0，已入 git）**打包前强制校验 exe 新鲜度** —— 先比 mtime（exe 必须 >= launcher.py 构建时间），再运行 `DSH_Launcher.exe --print-green-version` 和源码版本对比。任一失败直接 `sys.exit(2)` 阻断打包，输出明确提示「请先执行 build_exe.bat 重打包两个 exe」。
+* **根治**：根目录 `release_upload.py`（v3.0，已入 git）**打包前强制校验 exe 新鲜度** —— 先比 mtime（exe 必须 >= launcher.py 构建时间），再运行 `DSH_Launcher.exe --print-green-version` 和源码版本对比。任一失败直接 `sys.exit(2)` 阻断打包，输出明确提示「请先执行 build\_exe.bat 重打包两个 exe」。
 
-   * **校验必须在 `sync_launcher_version_date` 之前执行**：sync 会重写 launcher.py（改 GREEN_VERSION_DATE），会让 launcher.py mtime 变新 → 校验误判。
+* **校验必须在** **`sync_launcher_version_date`** **之前执行**：sync 会重写 launcher.py（改 GREEN\_VERSION\_DATE），会让 launcher.py mtime 变新 → 校验误判。
 
-1. **update_agent.py 缺失 `--print-green-version` 导致 verify_exe_freshness 卡死（2026-09-02，v1.0.27 覆盖上传时发现）**：
+1. **update\_agent.py 缺失** **`--print-green-version`** **导致 verify\_exe\_freshness 卡死（2026-09-02，v1.0.27 覆盖上传时发现）**：
 
-   * **现象**：release_upload.py 执行到 `verify_exe_freshness` 步骤（DSH_Launcher.exe 校验通过后），在对 DSH_Update.exe 跑 `subprocess.run([exe, "--print-green-version"], capture_output=True)` 时**永远卡住不超时**（脚本没任何输出，Ctrl+C 也杀不掉子进程）。
+   * **现象**：release\_upload.py 执行到 `verify_exe_freshness` 步骤（DSH\_Launcher.exe 校验通过后），在对 DSH\_Update.exe 跑 `subprocess.run([exe, "--print-green-version"], capture_output=True)` 时**永远卡住不超时**（脚本没任何输出，Ctrl+C 也杀不掉子进程）。
 
-   * **根因**：update_agent.py 的 `main()` 只处理 `--apply`，没有 `--print-green-version` 的隐藏 flag。当传入未知参数时，它掉进了 `show_manual_tip()`（弹 tkinter messagebox 等待用户点关闭）。因为 exe 是 PyInstaller 打出来的 runw.exe bootloader（无控制台窗口），这个 messagebox 在后台看不见，subprocess 就一直 capture_output 等用户关闭 → **永远不退出**，且不受 `timeout=5` 保护（messagebox 阻塞在主循环里，不是在 subprocess.run 的 timeout 能打断的位置）。
+   * **根因**：update\_agent.py 的 `main()` 只处理 `--apply`，没有 `--print-green-version` 的隐藏 flag。当传入未知参数时，它掉进了 `show_manual_tip()`（弹 tkinter messagebox 等待用户点关闭）。因为 exe 是 PyInstaller 打出来的 runw\.exe bootloader（无控制台窗口），这个 messagebox 在后台看不见，subprocess 就一直 capture\_output 等用户关闭 → **永远不退出**，且不受 `timeout=5` 保护（messagebox 阻塞在主循环里，不是在 subprocess.run 的 timeout 能打断的位置）。
 
-   * **根治**：update_agent.py 的 `main()` 最前面加：
+   * **根治**：update\_agent.py 的 `main()` 最前面加：
+
      ```python
      if "--print-green-version" in arguments:
          print(GREEN_VERSION)
          return 0
      ```
-     GREEN_VERSION 在文件顶部硬编码（与 launcher.py 保持一致，release_upload.py 的版本号比对会兜住不一致）。
 
-   * **教训**：任何打包成独立 exe 的源文件，**都必须考虑 release_upload.py 的 exe 新鲜度校验机制**。新增 exe 源文件后，记得在里面也加 `--print-green-version` flag，否则 verify_exe_freshness 会卡死。
+     GREEN\_VERSION 在文件顶部硬编码（与 launcher.py 保持一致，release\_upload.py 的版本号比对会兜住不一致）。
+
+   * **教训**：任何打包成独立 exe 的源文件，**都必须考虑 release\_upload.py 的 exe 新鲜度校验机制**。新增 exe 源文件后，记得在里面也加 `--print-green-version` flag，否则 verify\_exe\_freshness 会卡死。
 
 2. **Gitee 上传同名资产不删除 → 无限堆积（2026-09-02）**：
 
    * **现象**：Gitee Release 的 assets 列表出现 4 份同名 `DSH_Launcher_GreenPortable_Online_20260902_v1.0.27.zip`，每次覆盖上传都多一份。
 
-   * **根因**：GitHub API 给每个 asset 分配独立 id，可以先 DELETE 旧资产再 POST 新资产。**Gitee API 的 assets 列表只有 name + browser_download_url，没有 id/size 字段，也不支持删除单个 asset 的端点**。`github_upload_asset` 有"先删同名旧资产"逻辑，`gitee_upload_asset` 没有。
+   * **根因**：GitHub API 给每个 asset 分配独立 id，可以先 DELETE 旧资产再 POST 新资产。**Gitee API 的 assets 列表只有 name + browser\_download\_url，没有 id/size 字段，也不支持删除单个 asset 的端点**。`github_upload_asset` 有"先删同名旧资产"逻辑，`gitee_upload_asset` 没有。
 
    * **修复**：`gitee_upload_asset` 加前置检查 —— list releases → 检查目标 release 的 assets 里是否已有同名文件 → 有则跳过上传（`skip_upload = True`）。虽然没法删旧的，但能防止继续堆积。
 
    * **当前状态**：Gitee v1.0.27 残留 4 份同名 zip（功能不受影响，下载 URL 唯一）。后续版本只会保留 1 份。如果想手动清理，得去 Gitee 网页 Release 详情页手动删。
 
-3. **release_upload.py v3.0 完整流程 + 版本整合（2026-09-02）**：
+3. **release\_upload.py v3.0 完整流程 + 版本整合（2026-09-02）**：
 
    * **整合背景**：原来有 `release_upload.py`（已入 git）和 `build_release_zip.py`（未入 git，放在 `runtime/tmp/`）两个发布相关脚本。前者缺 exe 新鲜度校验，后者没上传功能。本次合并为**根目录唯一权威入口** `release_upload.py`（已入 git），覆盖打包→校验→上传全流程。
 
    * **main() 调用顺序（铁律）**：
+
      ```
      verify_exe_freshness → sync_launcher_version_date → pack_online_zip → verify_zip → upload GitHub → upload Gitee
      ```
-     verify_exe_freshness 必须在 sync 之前（sync 会改 launcher.py mtime）。
 
-   * **INCLUDE_ITEMS 规范**：绿色 zip 只含启动器层（exe / py / bat / 顶层文件 / plugins / skills），**绝不含** runtime/、build/、dist/、.git/、DEV_NOTES.md、config.json 用户配置。新增顶层文件（如 desktop-shell.py）必须同时改打包清单和 verify 期望列表（建议后续收敛为单一数据源）。
+     verify\_exe\_freshness 必须在 sync 之前（sync 会改 launcher.py mtime）。
+
+   * **INCLUDE\_ITEMS 规范**：绿色 zip 只含启动器层（exe / py / bat / 顶层文件 / plugins / skills），**绝不含** runtime/、build/、dist/、.git/、DEV\_NOTES.md、config.json 用户配置。新增顶层文件（如 desktop-shell.py）必须同时改打包清单和 verify 期望列表（建议后续收敛为单一数据源）。
 
    * **token 安全**：`set GITHUB_TOKEN=xxx` / `set GITEE_TOKEN=xxx`（PowerShell 用 `$env:GITHUB_TOKEN='xxx'`），用完即弃，别写入任何文件或 .env。脚本运行时会自动读取环境变量，不设置 token 则跳过上传。
 
@@ -483,67 +491,89 @@ return next();  // 必须继续传下去
 
 * autoReload: fs.watch 监听目录 + 清缓存 — 下次请求生效
 
-
 ### 7. dsh-memory v2 记忆引擎升级 (2026-09-02)
 
 #### 7.1 核心改动
 
-* **数据库 schema 升级** — 新增 summary TEXT (AI 精简概要) + 	ype TEXT (记忆分类: user/assistant/decision/preference/fact) + 索引 idx_memories_type。旧库 ALTER TABLE 增量迁移, 向后兼容。
+* **数据库 schema 升级** — 新增 summary TEXT (AI 精简概要) + 	ype TEXT (记忆分类: user/assistant/decision/preference/fact) + 索引 idx\_memories\_type。旧库 ALTER TABLE 增量迁移, 向后兼容。
 
 * **规则提炼引擎 (ruleSummarize)** — 零 LLM 成本, 纯正则规则生成精简概要 (60-120 字):
+
   * 用户消息: 去掉 "帮我/请/请问" 等寒暄 + 第二人称 "你", 取第一句核心 query, 去句尾标点, 最多 80 字
+
   * AI 回复: 跳过 "好的/明白了/收到" 等寒暄 + "这是/下面是" 等套话, 按信息量评分 (含数字 +10, 技术关键词 +15), 取 top 1-2 句, 最多 120 字
-  * 日志噪音检测: 以 [HH:MM:SS] 开头的行占比 > 50% → 从最后一行抽提示或返回 null (跳过写入)
+
+  * 日志噪音检测: 以 \[HH:MM:SS] 开头的行占比 > 50% → 从最后一行抽提示或返回 null (跳过写入)
+
   * 纯寒暄的 AI 回复 (只剩 "好的") → 返回 null 跳过写入
 
 * **assistantMessage 默认开启** — v1 默认 false, v2 默认 true, 让 AI 回复也沉淀进记忆库 (importance × 0.8)
 
 * **autoRecall 按 type 分组注入** — v1 是一个大文本块塞 4 条原文, v2 分三部分:
+
   * 【用户提问】· bullet 列表, 用 summary 而非原文
+
   * 【AI 回答】· bullet 列表
+
   * 【其他记忆】· bullet 列表
+
   * 引擎 recall 空 query 时自动优先有 summary 的条目 (ORDER BY CASE WHEN summary IS NOT NULL THEN 1 ELSE 0 END DESC)
 
 #### 7.2 配置项变化
 
 * ssistantMessage: false → true (默认开启)
+
 * utoRecallLimit: 4 → 6 (按 type 分组后更紧凑, 可以多放)
+
 * **新增** useSummarize: true — 规则提炼开关, 关掉就退回 v1 原文模式
 
 #### 7.3 修改文件清单
 
-* plugins/dsh-memory/engine/zuzong_memory.py — 版本 1.0.0 → 2.0.0
-  * _init_db() — 加 ALTER TABLE 增量迁移 + type 索引
-  * _tool_remember() — 接受 summary + type 可选参数, 白名单校验 type
-  * _tool_recall() — 空 query 时优先有 summary 的, 有 query 时同时搜 content + summary, 返回 display 字段 (优先 summary)
-  * _tool_timeline() — 同样优先有 summary 的
-  * _tool_search() — 同时搜 content + summary, 返回新字段
-  * _tool_service_info() — 版本号 + summarized_count 统计
-  * _tool_list_all() — 返回 summary + type
+* plugins/dsh-memory/engine/zuzong\_memory.py — 版本 1.0.0 → 2.0.0
+
+  * \_init\_db() — 加 ALTER TABLE 增量迁移 + type 索引
+
+  * \_tool\_remember() — 接受 summary + type 可选参数, 白名单校验 type
+
+  * \_tool\_recall() — 空 query 时优先有 summary 的, 有 query 时同时搜 content + summary, 返回 display 字段 (优先 summary)
+
+  * \_tool\_timeline() — 同样优先有 summary 的
+
+  * \_tool\_search() — 同时搜 content + summary, 返回新字段
+
+  * \_tool\_service\_info() — 版本号 + summarized\_count 统计
+
+  * \_tool\_list\_all() — 返回 summary + type
+
 * plugins/dsh-memory/lib/hooks.js
-  * 新增 
-uleSummarize(text, kind) 规则提炼函数 (~60 行)
+
+  * 新增
+    uleSummarize(text, kind) 规则提炼函数 (\~60 行)
+
   * session/event 三个分支都加 summary + type 写入, 根据 opts.useSummarize 开关
+
   * autoRecall 改为解析 recall JSON → 按 type 分组 → 用 display 优先 summary → 结构化注入
+
 * plugins/dsh-memory/lib/index.js — Config 默认值 + useSummarize 新配置
 
 #### 7.4 关键坑
 
-* **pnpm workspace 硬链接** — 改源码 plugins/dsh-memory/ 下的文件, 运行时 node_modules/ 里自动同步 (MD5 一致), 不需要手动复制。这是 pnpm 的特性, 不是 bug。
+* **pnpm workspace 硬链接** — 改源码 plugins/dsh-memory/ 下的文件, 运行时 node\_modules/ 里自动同步 (MD5 一致), 不需要手动复制。这是 pnpm 的特性, 不是 bug。
 
-* **旧数据库增量迁移** — 不要 DROP TABLE 重建, 用 ALTER TABLE ADD COLUMN, 旧数据 type='raw' + summary=null 保持可用。引擎层 _init_db 每次启动都会检查列是否存在并自动迁移。
+* **旧数据库增量迁移** — 不要 DROP TABLE 重建, 用 ALTER TABLE ADD COLUMN, 旧数据 type='raw' + summary=null 保持可用。引擎层 \_init\_db 每次启动都会检查列是否存在并自动迁移。
 
 * **纯寒暄 AI 回复跳过写入** — 用户发 "好的" 或 AI 回 "好的" 这种没实质内容的, ruleSummarize 返回 null, hooks.js 检测到后 return, 不进数据库。
 
-* **recall 空 query 的排序逻辑** — 引擎层用 CASE WHEN summary IS NOT NULL AND summary != '' THEN 1 ELSE 0 END DESC, 再按 importance DESC, 再按 created_at DESC。保证有摘要的 > 重要的 > 新的。
+* **recall 空 query 的排序逻辑** — 引擎层用 CASE WHEN summary IS NOT NULL AND summary != '' THEN 1 ELSE 0 END DESC, 再按 importance DESC, 再按 created\_at DESC。保证有摘要的 > 重要的 > 新的。
 
----
+***
 
 ### 8. 记忆库 + 规则插件 v3 — 默认关闭 + WebUI 开关 + 持久化配置
 
 **日期:** 2026-09-02
 
 **需求:**
+
 1. 记忆功能会消耗 token, 改为默认关闭, WebUI 设置面板里加启用开关 + 【测试】标签
 2. dsh-rules 插件没有 WebUI 设置入口, 需要补上
 
@@ -552,55 +582,67 @@ uleSummarize(text, kind) 规则提炼函数 (~60 行)
 #### 8.1 dsh-memory v3
 
 * **Config 加总开关 enabled (默认 false)** — 用户手动开。bridge/tool/路由始终注册, 只有自动记忆 hooks 和 autoRecall 在 enabled=false 时跳过安装 (用户仍可手动调用 remember/recall)。
-* **持久化 json 文件** — ${DSH_HOME}/memory/memory-config.json, 存 WebUI 覆盖的 enabled 值。apply() 启动时读它合并进 Config (最高优先)。
-* **新增 host 路由** — GET /__dsh/memory/config 读生效配置; POST /__dsh/memory/config 写 json (当前只支持 enabled 字段)。
+
+* **持久化 json 文件** — ${DSH\_HOME}/memory/memory-config.json, 存 WebUI 覆盖的 enabled 值。apply() 启动时读它合并进 Config (最高优先)。
+
+* **新增 host 路由** — GET /\_\_dsh/memory/config 读生效配置; POST /\_\_dsh/memory/config 写 json (当前只支持 enabled 字段)。
+
 * **client.js 改 label** — 从 "祖宗记忆库" 改为 "【测试】祖宗记忆库" (橙色标签)。
+
 * **client.js 加开关 UI** — 标题栏右侧 checkbox, 勾上后调 POST /config → 写 json → 提示 "下次启动生效"。
+
 * **ruleSummarize 第四轮调优** — 长句逗号二次拆分 (修复核心信息被 80 字上限滤掉的 bug)、列举词前缀清理 ("例如"/"其中"/"包括")、"我检索" 精准过滤 (有版本号的不砍)、评分 < 10 跳过写入过渡废话。
 
 #### 8.2 dsh-rules v3
 
 * **Config 改 enabled 默认值** — 从 true 改为 false (规则占 system prompt token)。
-* **新增 inject: ['webServer']** — 之前是空数组, 现在需要注册 host 路由。
-* **持久化 json 文件** — ${DSH_HOME}/rules/rules-config.json。
-* **新增 host 路由** — GET /__dsh/rules/config 读 enabled + rulesPath + 文件状态; POST /__dsh/rules/config 写 enabled。
-* **新增 lib/client.js** — DSH 插件客户端格式 (window.__ModuleLoader__.load), 注册到 settings.section slot (id=dsh-rules, order=540, label="用户规则"), UI 含: 启用开关 + 文件路径/存在性/大小 + 自动重载状态 + 保存/刷新按钮。
+
+* **新增 inject: \['webServer']** — 之前是空数组, 现在需要注册 host 路由。
+
+* **持久化 json 文件** — ${DSH\_HOME}/rules/rules-config.json。
+
+* **新增 host 路由** — GET /\_\_dsh/rules/config 读 enabled + rulesPath + 文件状态; POST /\_\_dsh/rules/config 写 enabled。
+
+* **新增 lib/client.js** — DSH 插件客户端格式 (window\.__ModuleLoader__.load), 注册到 settings.section slot (id=dsh-rules, order=540, label="用户规则"), UI 含: 启用开关 + 文件路径/存在性/大小 + 自动重载状态 + 保存/刷新按钮。
 
 **关键技术点:**
 
-* **DSH WebUI 插件面板注册机制** — 每个插件放 lib/client.js, 格式 window.__ModuleLoader__.load({ id, factory }), factory 返回 { apply(ctx), inject: ["slots"] }, apply 里调 ctx.slots.inject("settings.section", () => ctx.slots.register({ name, id, order, label }, Component))。DSH runtime 自动加载。
-* **开关持久化策略** — 不用 cordis.yml 改来改去 (用户可能手动编辑覆盖), 用独立 json 文件存在 DSH_HOME 下, 插件 apply() 时读它 merge。WebUI POST → 写 json → 提示重启。这样 cordis.yml 是开发态默认值, json 是用户态覆盖, 层级清晰。
+* **DSH WebUI 插件面板注册机制** — 每个插件放 lib/client.js, 格式 window\.__ModuleLoader__.load({ id, factory }), factory 返回 { apply(ctx), inject: \["slots"] }, apply 里调 ctx.slots.inject("settings.section", () => ctx.slots.register({ name, id, order, label }, Component))。DSH runtime 自动加载。
+
+* **开关持久化策略** — 不用 cordis.yml 改来改去 (用户可能手动编辑覆盖), 用独立 json 文件存在 DSH\_HOME 下, 插件 apply() 时读它 merge。WebUI POST → 写 json → 提示重启。这样 cordis.yml 是开发态默认值, json 是用户态覆盖, 层级清晰。
+
 * **registerMemoryRoutes / config 路由** — 新增了可选字段 effectiveConfig, 让 config GET 能读到当前生效配置 (dbPath 等)。
 
 **坑:**
 
 * **PowerShell && 语法** — PowerShell 5 不支持 && 只有 ;, 命令里要用分号或 cmd /c "a && b" 格式。
-* **Node 语法检查** — 用 
-ode --check <file> 验证 JS 语法, exit 0 = 通过。
-* **pnpm workspace 硬链接** — 改 plugins/dsh-memory/lib/index.js → runtime 的 node_modules 自动同步, 重启 DSH 就生效。
+
+* **Node 语法检查** — 用
+  ode --check <file> 验证 JS 语法, exit 0 = 通过。
+
+* **pnpm workspace 硬链接** — 改 plugins/dsh-memory/lib/index.js → runtime 的 node\_modules 自动同步, 重启 DSH 就生效。
 
 #### 8.3 Files Changed
 
-| 文件 | 改动 |
-|------|------|
-| plugins/dsh-memory/lib/index.js | Config 加 enabled 默认 false; 加 _loadPersist/_savePersist; apply() 合并持久化 + enabled 控制 hooks; registerMemoryRoutes 加 config GET/POST |
-| plugins/dsh-memory/lib/client.js | label 加【测试】; 加 enabled 开关状态 + config 读写接口 + UI |
-| plugins/dsh-memory/lib/hooks.js | ruleSummarize 加列举词清理、评分阈值过滤、长句逗号拆分 |
-| plugins/dsh-rules/lib/index.js | Config enabled 默认 false; inject 加 webServer; 加持久化函数 + sendJson; apply() 合并持久化 + config 路由 + enabled 判断 |
-| plugins/dsh-rules/lib/client.js | **新建** — WebUI 设置面板 (开关 + 文件状态 + 保存) |
-
+| 文件                               | 改动                                                                                                                                 |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| plugins/dsh-memory/lib/index.js  | Config 加 enabled 默认 false; 加 \_loadPersist/\_savePersist; apply() 合并持久化 + enabled 控制 hooks; registerMemoryRoutes 加 config GET/POST |
+| plugins/dsh-memory/lib/client.js | label 加【测试】; 加 enabled 开关状态 + config 读写接口 + UI                                                                                     |
+| plugins/dsh-memory/lib/hooks.js  | ruleSummarize 加列举词清理、评分阈值过滤、长句逗号拆分                                                                                                 |
+| plugins/dsh-rules/lib/index.js   | Config enabled 默认 false; inject 加 webServer; 加持久化函数 + sendJson; apply() 合并持久化 + config 路由 + enabled 判断                             |
+| plugins/dsh-rules/lib/client.js  | **新建** — WebUI 设置面板 (开关 + 文件状态 + 保存)                                                                                               |
 
 #### 8.4 Skill 文档同步更新
 
-**原因**：dsh-rules 从 Type B（纯 hook）升级到 Type A（双端）时发现 package.json 漏了两个关键声明（exports["./client"] + dsh.client 块）——如果不补，ClientModuleRegistry.resolveMeta() 会找不到 ./client export → WebUI 入口不出现甚至服务崩溃。这是通用坑，需要沉淀进 skill。
+**原因**：dsh-rules 从 Type B（纯 hook）升级到 Type A（双端）时发现 package.json 漏了两个关键声明（exports\["./client"] + dsh.client 块）——如果不补，ClientModuleRegistry.resolveMeta() 会找不到 ./client export → WebUI 入口不出现甚至服务崩溃。这是通用坑，需要沉淀进 skill。
 
 **更新内容**:
 
-| 文件 | 补充内容 |
-|------|----------|
-| skills/dsh-deploy-maintain/references/plugin-skeleton.md | 新增「类型 B → 类型 A 升级路径」完整章节（package.json 改什么 + lib/index.js 改什么 + 路由注册踩坑提醒）+ 「持久化配置 + WebUI 开关」完整章节（架构图 + 宿主端骨架 + 客户端骨架 + 设计决策表） |
+| 文件                                                            | 补充内容                                                                                                                                                                       |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| skills/dsh-deploy-maintain/references/plugin-skeleton.md      | 新增「类型 B → 类型 A 升级路径」完整章节（package.json 改什么 + lib/index.js 改什么 + 路由注册踩坑提醒）+ 「持久化配置 + WebUI 开关」完整章节（架构图 + 宿主端骨架 + 客户端骨架 + 设计决策表）                                              |
 | skills/dsh-deploy-maintain/checklists/plugin-dev-checklist.md | 新增「类型 B → 类型 A 升级」9 条检查项 + 新增「持久化 config + enabled 开关」8 条检查项 + 排查速查表新增 6 条症状根因（纯 hook 加了 client.js 但 WebUI 不出现、开关改了但 hooks 没生效、Config 路由 404、Duplicate kind/path、json 不生成） |
-| skills/dsh-deploy-maintain/SKILL.md | 新增 5.9.1 章节「类型 B → 类型 A 升级路径」——三段式升级步骤 + 四个关键设计决策（enabled 默认 false / json 独立于 cordis.yml / 路由始终注册 / 下次启动生效） |
+| skills/dsh-deploy-maintain/SKILL.md                           | 新增 5.9.1 章节「类型 B → 类型 A 升级路径」——三段式升级步骤 + 四个关键设计决策（enabled 默认 false / json 独立于 cordis.yml / 路由始终注册 / 下次启动生效）                                                                |
 
 **关键发现**: 原来的 plugin-skeleton.md 和 plugin-dev-checklist.md 里没有覆盖「从纯 hook 插件升级成带 WebUI 的双端插件」这个场景——只描述了从零开始创建 Type A 或 Type B。这次 dsh-rules 的实践暴露了这个缺口，补完后以后任何纯 hook 插件想加 WebUI 开关都有明确的 checklist 跟。
 
@@ -612,31 +654,43 @@ ode --check <file> 验证 JS 语法, exit 0 = 通过。
 
 **改动**:
 
-| 文件 | 改动 |
-|------|------|
-| plugins/dsh-rules/lib/index.js | +2 路由: GET /__dsh/rules/content (读规则文件) + POST /__dsh/rules/content (写规则文件)。写路由带 maxLength 检查 + 目录自动创建。 |
-| plugins/dsh-rules/lib/client.js | **v4 重写**: 新增规则内容卡片 (预览 <pre> + 编辑 <textarea>)、编辑/保存/取消三按钮、下载 .md 按钮、字符数统计、错误/提示状态管理。 |
+| 文件                              | 改动                                                                                                          |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| plugins/dsh-rules/lib/index.js  | +2 路由: GET /\_\_dsh/rules/content (读规则文件) + POST /\_\_dsh/rules/content (写规则文件)。写路由带 maxLength 检查 + 目录自动创建。 |
+| plugins/dsh-rules/lib/client.js | **v4 重写**: 新增规则内容卡片 (预览 <pre> + 编辑 <textarea>)、编辑/保存/取消三按钮、下载 .md 按钮、字符数统计、错误/提示状态管理。                       |
 
 **路由设计**:
-- GET /__dsh/rules/content — 返回 { ok, content, path, size }, 首次访问自动 ensureRulesFile()
-- POST /__dsh/rules/content — 接受 { content: string }, 返回 { ok, size, note } (note 提示 autoReload 是否生效)
-- 长度上限: 用 config.maxLength (默认 16000), 超上限返回 413
+
+* GET /\_\_dsh/rules/content — 返回 { ok, content, path, size }, 首次访问自动 ensureRulesFile()
+
+* POST /\_\_dsh/rules/content — 接受 { content: string }, 返回 { ok, size, note } (note 提示 autoReload 是否生效)
+
+* 长度上限: 用 config.maxLength (默认 16000), 超上限返回 413
 
 **编辑模式交互**:
-- 预览态: <pre> 只读展示 + 「编辑规则」(主按钮) + 「下载 .md」(幽灵按钮, title 提示)
-- 编辑态: <textarea> 可编辑, 实时字符数统计, 「保存规则」(绿色主按钮) + 「取消」(幽灵按钮, 重新拉服务器)
-- 保存后自动退出编辑模式, 同步刷新 ruleSize
+
+* 预览态: <pre> 只读展示 + 「编辑规则」(主按钮) + 「下载 .md」(幽灵按钮, title 提示)
+
+* 编辑态: <textarea> 可编辑, 实时字符数统计, 「保存规则」(绿色主按钮) + 「取消」(幽灵按钮, 重新拉服务器)
+
+* 保存后自动退出编辑模式, 同步刷新 ruleSize
 
 **为什么没有"打开本地文件/文件夹"按钮**:
-- 浏览器安全限制: fetch API 调不到本地文件系统, 也没有办法让浏览器触发 explorer 或系统文件关联
-- 替代方案: 下载 .md 按钮 → 浏览器下载到用户下载目录 → 用户右键用编辑器打开 → 修改后再粘贴回 WebUI textarea
-- 未来可能: 绿色版启动器 (Python tkinter) 里加"打开规则文件夹"按钮, 调 os.startfile(dir) 直接打开资源管理器。需要启动器和 DSH 服务之间额外的 IPC 通道。
+
+* 浏览器安全限制: fetch API 调不到本地文件系统, 也没有办法让浏览器触发 explorer 或系统文件关联
+
+* 替代方案: 下载 .md 按钮 → 浏览器下载到用户下载目录 → 用户右键用编辑器打开 → 修改后再粘贴回 WebUI textarea
+
+* 未来可能: 绿色版启动器 (Python tkinter) 里加"打开规则文件夹"按钮, 调 os.startfile(dir) 直接打开资源管理器。需要启动器和 DSH 服务之间额外的 IPC 通道。
 
 **坑**:
-- 	extarea value 受 React 控制, onChange 回调里要同时 setContentTip(null) 和 setContentError(null) 清掉旧提示
-- 保存成功后要退出编辑模式 + 刷新 config 里的 ruleSize (两个 state 对象, 别忘了同步)
-- 首次加载要同时拉 config 和 content (两次 fetch), 用两个独立的 state + 两个独立的 useCallback
 
-#### 8.6 config.json dsh_host 改 127.0.0.1
+* extarea value 受 React 控制, onChange 回调里要同时 setContentTip(null) 和 setContentError(null) 清掉旧提示
 
-之前 dsh_host 一直是  .0.0.0 (允许局域网访问), 这次会话里改成了 127.0.0.1 (仅本地). 原因: 官方新版 dsh 自带 PRIVILEGED_METHODS 安全保护, 回环地址外的改配置请求 403。绿色版默认更安全。
+* 保存成功后要退出编辑模式 + 刷新 config 里的 ruleSize (两个 state 对象, 别忘了同步)
+
+* 首次加载要同时拉 config 和 content (两次 fetch), 用两个独立的 state + 两个独立的 useCallback
+
+#### 8.6 config.json dsh\_host 改 127.0.0.1
+
+之前 dsh\_host 一直是 �.0.0.0 (允许局域网访问), 这次会话里改成了 127.0.0.1 (仅本地). 原因: 官方新版 dsh 自带 PRIVILEGED\_METHODS 安全保护, 回环地址外的改配置请求 403。绿色版默认更安全。

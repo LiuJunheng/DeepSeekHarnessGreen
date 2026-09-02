@@ -28,7 +28,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { unzipSync } from "fflate";
 import { SESSION_FORMAT_VERSION } from "@deepseek-ai/dsh-session";
 
-const name = "dsh-session-transfer";
+const name = "dsh-session-import";
 const inject = ["webServer", "workspaceRegistry"];
 
 const ROUTE_HEALTH = "/__dsh/session-transfer/health";

@@ -1,7 +1,7 @@
 {
   "name": "dsh-session-import",
-  "version": "0.2.0",
-  "description": "会话传输 (导入 + 导出): ZIP/JSONL 回灌持久化目录 + 官方路由直导 ZIP (showSaveFilePicker 弹另存为, 修复桌面壳静默下载到默认目录的问题)",
+  "version": "0.3.0",
+  "description": "会话传输: 全局 hook 官方「Session 日志」按钮 → fetch+showSaveFilePicker 弹系统另存为对话框; 设置面板保留导入功能 (ZIP/JSONL → 写回持久化目录)",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
