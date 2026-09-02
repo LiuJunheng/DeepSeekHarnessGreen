@@ -109,12 +109,41 @@ window.__ModuleLoader__.load({
 		// ------ 设置面板: 导入 Tab ------
 
 		const theme = {
-			box: { border: "1px solid var(--dsw-alias-border-l1)", borderRadius: 4, padding: 12, maxWidth: 640, fontSize: 13, lineHeight: 1.6, background: "var(--dsw-alias-bg-layer-2)" },
-			row: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" },
-			hint: { color: "var(--dsw-alias-label-tertiary)", margin: 0, fontSize: 13 },
-			err: { color: "var(--dsw-alias-state-error-primary)", margin: 0, fontSize: 13 },
-			ok: { color: "var(--dsw-alias-state-success-primary)", margin: 0, fontSize: 13 }
-		};
+                        box: { border: "1px solid var(--dsw-alias-border-l1)", borderRadius: 4, padding: 12, maxWidth: 640, fontSize: 13, lineHeight: 1.6, background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-primary)" },
+                        row: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" },
+                        hint: { color: "var(--dsw-alias-label-tertiary)", margin: 0, fontSize: 13 },
+                        err: { color: "var(--dsw-alias-state-error-primary)", margin: 0, fontSize: 13 },
+                        ok: { color: "var(--dsw-alias-state-success-primary)", margin: 0, fontSize: 13 },
+                        // file input / button 深色主题样式 —— 浏览器默认白底黑字在深色 WebUI 里扎眼
+                        fileInput: {
+                                color: "var(--dsw-alias-label-primary)",
+                                fontSize: 12,
+                                padding: "6px 10px",
+                                background: "var(--dsw-alias-bg-layer-1)",
+                                border: "1px solid var(--dsw-alias-border-l1)",
+                                borderRadius: 4,
+                                cursor: "pointer",
+                        },
+                        btn: {
+                                padding: "6px 16px",
+                                borderRadius: 4,
+                                border: "1px solid var(--dsw-alias-button-primary-fill)",
+                                background: "transparent",
+                                color: "var(--dsw-alias-button-primary-fill)",
+                                fontSize: 13,
+                                fontWeight: 600,
+                                cursor: "pointer",
+                        },
+                        btnGhost: {
+                                padding: "6px 16px",
+                                borderRadius: 4,
+                                border: "1px solid var(--dsw-alias-border-l1)",
+                                background: "var(--dsw-alias-bg-layer-2)",
+                                color: "var(--dsw-alias-label-primary)",
+                                fontSize: 13,
+                                cursor: "pointer",
+                        },
+                };
 
 		function ImportTab() {
 			const [busy, setBusy] = react.useState(false);
@@ -145,6 +174,7 @@ window.__ModuleLoader__.load({
 					const payload = await response.json().catch(() => null);
 					if (!response.ok || payload === null || payload.ok !== true) throw new Error((payload && payload.error) || ("HTTP " + response.status));
 					setResult(payload);
+
 				} catch (err) {
 					setError("导入失败: " + String((err && err.message) || err));
 				} finally { setBusy(false); }
@@ -152,25 +182,26 @@ window.__ModuleLoader__.load({
 
 			return react.createElement(react.Fragment, null,
 				react.createElement("p", { style: { margin: 0, fontSize: 13, lineHeight: 1.5, color: "var(--dsw-alias-label-secondary)" } },
-					"把官方「Session 日志 ↓」按钮导出的 ZIP（或单个 .jsonl 日志）导入回本机。导入后按日志头部的 cwd 写回持久化目录，并自动挂到对应工作区；刷新会话列表即可看到。重复导入同一会话会被跳过。"
+					"把官方「Session 日志 ↓」按钮导出的 ZIP（或单个 .jsonl 日志）导入回本机。导入后按日志头部的 cwd 写回持久化目录，并自动挂到对应工作区；导入完成后请重启 DSH 服务以刷新会话列表（会话列表在启动时从持久化目录加载）。重复导入同一会话会被跳过。"
 				),
 				react.createElement("div", { style: theme.box },
 					react.createElement("div", { style: theme.row },
 						react.createElement("input", {
 							ref: fileRef, type: "file", accept: ".zip,.jsonl,.json,.txt",
-							disabled: busy, onChange: onPick
+							disabled: busy, onChange: onPick,
+							style: theme.fileInput
 						}),
 						react.createElement("button", {
 							type: "button", disabled: busy || fileName === "",
 							onClick: doImport,
-							style: { padding: "6px 16px", cursor: busy || fileName === "" ? "default" : "pointer" }
+							style: { ...theme.btn, cursor: busy || fileName === "" ? "default" : "pointer", opacity: busy || fileName === "" ? 0.5 : 1 }
 						}, busy ? "导入中…" : "开始导入")
 					),
 					fileName !== "" && react.createElement("p", { style: { ...theme.hint, marginTop: 8, marginBottom: 0 } }, "已选择: " + fileName)
 				),
 				error !== null && react.createElement("p", { style: theme.err }, error),
-				result !== null && react.createElement("div", { style: { ...theme.box, background: "var(--dsw-alias-state-success-secondary)", borderColor: "var(--dsw-alias-state-success-primary)" } },
-					react.createElement("p", { style: { margin: "0 0 6px 0", fontWeight: "bold", fontSize: 13, color: "var(--dsw-alias-label-primary)" } }, "导入结果"),
+				result !== null && react.createElement("div", { style: { ...theme.box, background: "var(--dsw-alias-bg-layer-2)", borderColor: "var(--dsw-alias-state-success-primary)", borderLeft: "3px solid var(--dsw-alias-state-success-primary)" } },
+					react.createElement("p", { style: { margin: "0 0 6px 0", fontWeight: "bold", fontSize: 13, color: "var(--dsw-alias-state-success-primary)" } }, "导入成功 ✅ 请重启 DSH 服务后查看"),
 					react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: "var(--dsw-alias-label-secondary)" } },
 						react.createElement("span", null, "会话: " + result.sessionId),
 						react.createElement("span", null, "格式: " + (result.compression === "none" ? "明文 JSONL" : "zstd 压缩 JSONL")),
@@ -200,7 +231,7 @@ window.__ModuleLoader__.load({
 
 			// 设置面板只保留导入区域 (导出已通过 hook 官方按钮实现)
 			ctx.slots.inject("settings.section", () => ctx.slots.register({
-				name: "settings.section", id: "session-transfer", order: 510, label: "会话传输"
+				name: "settings.section", id: "session-transfer", order: 510, label: "会话导入"
 			}, TransferSection));
 		}
 

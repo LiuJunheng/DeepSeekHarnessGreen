@@ -1,5 +1,5 @@
 // DeepSeek Harness 插件 (宿主端): dsh-session-transfer
-// 会话「传输」插件 = 导入 + 导出。
+// 会话导入插件 = 导入 + (hook 官方导出按钮做另存为)。
 //
 // 导入 (后端):
 //   POST /__dsh/session-transfer/upload  -> 接收 WebUI 上传的会话 ZIP / .jsonl,
@@ -265,7 +265,7 @@ async function importPayload(ctx, body, options = {}) {
 		ok: true, compression, sessionId: root.id, cwd: root.cwd ?? null,
 		imported: imported.map((s) => ({ id: s.id, label: s.label, events: s.events })),
 		skipped, media: { imported: mediaResults.imported, exists: mediaResults.exists, skipped: mediaResults.skipped },
-		workspaces, note: "导入完成。刷新 WebUI 会话列表即可看到。"
+		workspaces, note: "导入完成。请重启 DSH 服务以刷新会话列表（会话列表在启动时从持久化目录加载）。"
 	};
 }
 
