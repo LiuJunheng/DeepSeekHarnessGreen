@@ -1,8 +1,9 @@
----
+***
+
 name: dsh-deploy-maintain
 description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护、插件开发与避坑经验。覆盖便携 Node/dsh 安装、环境变量重定向、工作区 ACL 沙箱、更新备份、插件管理与 dsh 插件双端加载/路由注册等全套实操知识。"
 updated: "2026-09-02"
----
+---------------------
 
 # DeepSeek Harness 绿色整合版 · 部署维护与插件开发
 
@@ -185,6 +186,37 @@ updated: "2026-09-02"
 - **绿色 zip 顶层清单要维护两处（打包** **`GREEN_TOP_FILES`** **+ verify 期望** **`expect_top`）**：漏一处会导致新机对应文件缺失但本地不报错（曾漏 desktop-shell.py）。新增/同步顶层文件必须两处都改；**建议收敛 verify 从 GREEN\_TOP\_FILES/GREEN\_TOP\_DIRS 派生期望**，从根上消灭清单不一致。
 
 - **zip 打包命令传目录名**：打包 `plugins`/`skills` 要传**目录名**（zip 内保留前缀）；不能传子路径（会把插件目录打在 zip 根、覆盖时错位拷到程序根）。打包后 `tar -tf` 复核。更新侧 `_normalize_update_structure()` 解压后把错位的 `dsh-*` 归位 + 清理根目录残留。
+
+#### Online 绿色版打包清单（Gitee Release 附件）
+
+> **核心原则**：Online 版 = **启动器框架**（~17 MB），**不包含 runtime/**。用户首次运行时点「安装环境」由 launcher 自动下载便携 Python + Node + dsh。
+
+**必须包含**（根目录相对路径）：
+- `DSH_Launcher.exe` / `DSH_Update.exe`（PyInstaller onefile 产物）
+- `launcher.py` / `update_agent.py` / `desktop-shell.py`（Python 源码）
+- `DSH_Launcher.ico`（图标）
+- `config.json`（默认配置）
+- `start.bat` / `stop.bat`（便捷脚本）
+- `plugins/`（插件源码，不含 node_modules——首次启动自动装）
+- `pages/`（WebUI 辅助页面）
+- `skills/`（Skill 文档）
+- `README.md` / `README_EN.md` / `LICENSE` / `DEV_NOTES.md`
+
+**必须排除**：
+- 整个 `runtime/` 目录（用户首次启动自动下载 Python/Node/dsh）
+- `.git/` / `.trae/` / `workspace/` / `build/` / `dist/` / `__pycache__/`
+- `*.pyc` / `*.pdb` / `*.spec` / `Thumbs.db` / `Desktop.ini`
+- 打包辅助脚本（`release_upload.py` / `_pack_release.py` / `build_exe.bat` / `.gitignore`）
+
+**Gitee 100 MB 限制避坑**：`runtime/python`（~127 MB）和 `runtime/node`（~94 MB）是最大体积来源，但 Online 版**根本不需要打包进去**——砍掉后 zip 从 166 MB 直接降到 **17 MB**。Node.exe 单文件就 81 MB（压缩后 31 MB），别想着塞进去，让 launcher 下载。
+
+**命名规范**：`DSH_Launcher_GreenPortable_Online_{YYYYMMDD}_v{VERSION}.zip`（例：`DSH_Launcher_GreenPortable_Online_20260902_v1.0.27.zip`）
+
+**发布流程**：
+1. PyInstaller 重打包 exe（`build_exe.bat`）——改了 launcher.py 必须重打
+2. 用 Python zipfile 打 17 MB Online 版（排除 runtime）
+3. `curl.exe -X POST https://gitee.com/api/v5/repos/<owner>/<repo>/releases/<id>/attach_files?access_token=<token> -F "file=@<zip>"` 上传
+4. Release body 里加下载链接：`[绿色版下载](https://gitee.com/<owner>/<repo>/releases/download/v<ver>/DSH_Launcher_GreenPortable_Online_<date>_v<ver>.zip)`
 
 - **在线发布页（GitHub Pages）**：`pages/`（纯静态：`index.html` + `assets/app.js` + `assets/style.css`）+ `.github/workflows/pages.yml` 自动部署到 `https://<owner>.github.io/<repo>/`。机制：`push master (path: pages)` 上传 `upload-pages-artifact` 构建 → `deploy-pages` 发布，可 `workflow_dispatch` 手动触发。经验：发布页动画（如 Canvas 水纹背景）**纯本地渲染、遵循** **`prefers-reduced-motion`**，无 Canvas/被禁用时静默跳过，`pointer-events:none` + `z-index` 归位不拦截交互；读版本号用 `GREEN_VERSION` 正则从 `raw launcher.py` 提取（与 Gitee 整仓快照同源）。日期纪律：发布页/文档里的版本日期必须是制作当天，不预写未来日期。
 
@@ -378,26 +410,26 @@ const running = { color: "var(--dsw-alias-state-success-primary)" };  // 运行�
 
 #### 设计语义速查
 
-| 场景        | 正确颜色语义        | 别用             |
-| --------- | ------------- | -------------- |
-| 运行中/在线状态  | success（绿）    | warn（橙，那是警告）   |
-| 离线/错误     | error（红）      | success        |
-| 信息提示横幅    | business（蓝）   | warn（橙，信息不是警告） |
-| 真正危险/毒化提示 | warn（橙）       | 其他             |
-| 模型名 chip  | business 蓝字（无背景） | 蓝底蓝字（同色系糊片） |
+| 场景        | 正确颜色语义           | 别用             |
+| --------- | ---------------- | -------------- |
+| 运行中/在线状态  | success（绿）       | warn（橙，那是警告）   |
+| 离线/错误     | error（红）         | success        |
+| 信息提示横幅    | business（蓝）      | warn（橙，信息不是警告） |
+| 真正危险/毒化提示 | warn（橙）          | 其他             |
+| 模型名 chip  | business 蓝字（无背景） | 蓝底蓝字（同色系糊片）    |
 
 #### 颜色对比度铁律（同色系 text + bg 必糊）
 
-> 踩坑实录：先后在 dsh-market 橙色标签、dsh-usage-stats "运行中" 绿色 badge、dsh-memory "删除" 红按钮上翻了车——**任何 `state-xxx-primary`（文字）配 `state-xxx-secondary`（背景）都是同色系，深浅主题下都会糊成一片**，没有例外。
+> 踩坑实录：先后在 dsh-market 橙色标签、dsh-usage-stats "运行中" 绿色 badge、dsh-memory "删除" 红按钮上翻了车——**任何** **`state-xxx-primary`（文字）配** **`state-xxx-secondary`（背景）都是同色系，深浅主题下都会糊成一片**，没有例外。
 
 **绝对规则**：同一个状态色的 `primary`（主色）和 `secondary`（淡底色）**不能同时用**在同一个元素上——不管深浅主题，对比度都不够。
 
 **正确模式**分两类：
 
-| 元素类型 | 正确写法 | 原因 |
-|--------|--------|------|
-| Badge/Chip/标签（非交互） | **只用文字色**，不要 background | 轻量标注不需要背景块，彩色文字足够识别 |
-| 按钮（可点击） | **深彩底 + 白字** | 用 `state-xxx-primary` 做背景，`#fff` 做文字，保证点击区域的存在感 |
+| 元素类型               | 正确写法                    | 原因                                              |
+| ------------------ | ----------------------- | ----------------------------------------------- |
+| Badge/Chip/标签（非交互） | **只用文字色**，不要 background | 轻量标注不需要背景块，彩色文字足够识别                             |
+| 按钮（可点击）            | **深彩底 + 白字**            | 用 `state-xxx-primary` 做背景，`#fff` 做文字，保证点击区域的存在感 |
 
 ```js
 // ❌ 糊片 1: primary 文字 + secondary 背景 (同色系!)
