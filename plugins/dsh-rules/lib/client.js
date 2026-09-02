@@ -5,9 +5,9 @@
 //   - 规则内容预览 (只读, Markdown 源码);
 //   - 「编辑」按钮 → 切换到编辑模式 (textarea, 可直接修改保存);
 //   - 编辑模式: 保存 / 取消, autoReload 下下次对话自动生效;
-//   - 下载按钮 (纯文本 .md 文件, 作为本地编辑器备份方案);
+//   - 打开所在目录按钮 (调系统文件管理器, 直接去改 user-rules.md);
 //   - 保存开关后提示重启生效。
-// 数据走宿主端路由 /__dsh/rules/config + /__dsh/rules/content。
+// 数据走宿主端路由 /__dsh/rules/config + /__dsh/rules/content + /__dsh/rules/open-folder。
 // 加载器契约格式 (window.__ModuleLoader__.load), 与官方客户端插件一致。
 
 window.__ModuleLoader__.load({
@@ -22,6 +22,7 @@ window.__ModuleLoader__.load({
 
         const ROUTE_CONFIG = "/__dsh/rules/config";
         const ROUTE_CONTENT = "/__dsh/rules/content";
+        const ROUTE_OPEN_FOLDER = "/__dsh/rules/open-folder";
 
         // ---- 网络请求 ----
 
@@ -127,17 +128,21 @@ window.__ModuleLoader__.load({
                 }
             }, []);
 
-            // --- 保存 enabled 开关 ---
-            const saveEnabled = async () => {
+            // --- 实时保存 enabled 开关 (checkbox onChange 直接触发, 无需点按钮) ---
+            const saveEnabled = async (newValue) => {
                 setSavingEnabled(true);
                 setSavedTip(null);
                 setError(null);
+                // 立即更新 UI 状态 (乐观更新), 不等后端返回
+                setDraftEnabled(newValue);
                 try {
-                    const payload = await postConfig({ enabled: draftEnabled });
+                    const payload = await postConfig({ enabled: newValue });
                     const cfg = payload.config || {};
                     setConfig(config ? { ...config, ...cfg } : cfg);
                     setSavedTip(payload.note || "已保存");
                 } catch (err) {
+                    // 保存失败 → 回滚 UI 状态
+                    setDraftEnabled(!newValue);
                     setError("保存开关失败: " + String((err && err.message) || err));
                 } finally {
                     setSavingEnabled(false);
@@ -181,17 +186,20 @@ window.__ModuleLoader__.load({
                 }
             };
 
-            // --- 下载规则文件 (作为本地编辑器备份方案) ---
-            const downloadFile = () => {
-                const blob = new Blob([content || ""], { type: "text/markdown;charset=utf-8" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = "user-rules.md";
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
+            // --- 打开规则文件所在目录 (用系统文件管理器) ---
+            const openFolder = async () => {
+                try {
+                    const resp = await fetch(ROUTE_OPEN_FOLDER);
+                    const payload = await resp.json().catch(() => null);
+                    if (resp.ok && payload && payload.ok) {
+                        // 已开文件管理器, 不需要额外反馈, 但把路径记录一下
+                        console.log("dsh-rules: 已打开目录", payload.path);
+                    } else {
+                        setError((payload && payload.error) || "打开目录失败");
+                    }
+                } catch (err) {
+                    setError("打开目录失败: " + String((err && err.message) || err));
+                }
             };
 
             // --- 首次挂载: 同时拉 config 和 content ---
@@ -216,7 +224,7 @@ window.__ModuleLoader__.load({
                 ),
                 react.createElement("p", { key: "desc", style: { margin: 0, fontSize: 13, lineHeight: 1.6, color: "var(--dsw-alias-label-secondary)" } },
                     "把你的个人习惯/代码风格/表达要求写成 Markdown, 每次对话会自动注入到 system prompt 里。" +
-                    "开启后会占用少量 token, 建议按需开启。支持直接在 WebUI 内编辑, 或下载到本地编辑器修改后再粘贴回来。"
+                    "开启后会占用少量 token, 建议按需开启。支持 WebUI 内直接编辑, 或点「打开所在目录」用本地编辑器修改 user-rules.md (文件变化自动重载)。"
                 ),
 
                 error !== null && react.createElement("p", { key: "err", style: { color: "var(--dsw-alias-state-error-primary)", margin: 0, fontSize: 13 } }, error),
@@ -229,7 +237,7 @@ window.__ModuleLoader__.load({
                             type: "checkbox", id: "rules-enabled",
                             checked: draftEnabled,
                             disabled: savingEnabled,
-                            onChange: (e) => setDraftEnabled(e.target.checked),
+                            onChange: (e) => saveEnabled(e.target.checked),
                             style: { cursor: savingEnabled ? "default" : "pointer", margin: 0 },
                         }),
                         react.createElement("label", { htmlFor: "rules-enabled", style: { fontSize: 13, cursor: "pointer" } },
@@ -238,6 +246,7 @@ window.__ModuleLoader__.load({
                                 draftEnabled ? "(每次对话会注入规则到 system prompt)" : "(关闭后不占 token)"
                             )
                         ),
+                        savedTip !== null && react.createElement("span", { key: "tip", style: { fontSize: 11, color: "#2ecc71", marginLeft: 4 } }, savedTip),
                     ]),
                     // 文件状态行
                     config && react.createElement("div", { key: "file", style: {
@@ -256,15 +265,11 @@ window.__ModuleLoader__.load({
                             "自动重载: " + (config.autoReload ? "开启 (编辑后自动生效)" : "关闭")
                         ),
                     ]),
-                    // 开关操作按钮
+                    // 刷新按钮 (开关已改成勾选即实时保存, 不再需要"保存开关"按钮)
                     react.createElement("div", { key: "ops", style: { display: "flex", gap: 10, alignItems: "center", marginTop: 10 } }, [
-                        react.createElement("button", { key: "save", type: "button", disabled: savingEnabled, onClick: saveEnabled, style: btnPrimary },
-                            savingEnabled ? "保存中…" : "保存开关"
-                        ),
                         react.createElement("button", { key: "refresh", type: "button", disabled: loading, onClick: () => { loadConfig(); loadContent(); }, style: btnGhost },
                             loading ? "加载中…" : "刷新"
                         ),
-                        savedTip !== null && react.createElement("span", { key: "tip", style: { fontSize: 11, color: "#2ecc71" } }, savedTip),
                     ]),
                 ]),
 
@@ -287,15 +292,15 @@ window.__ModuleLoader__.load({
                                         key: "cancel", type: "button", onClick: cancelEdit, style: btnGhost,
                                     }, "取消"),
                                 ]
-                                // 预览模式: 编辑 + 下载
+                                // 预览模式: 编辑 + 打开所在目录
                                 : [
                                     react.createElement("button", {
                                         key: "edit", type: "button", onClick: enterEdit, style: btnPrimary,
                                     }, "编辑规则"),
                                     react.createElement("button", {
-                                        key: "dl", type: "button", onClick: downloadFile, style: btnGhost,
-                                        title: "下载到本地, 用编辑器修改后再粘贴回来",
-                                    }, "下载 .md"),
+                                        key: "folder", type: "button", onClick: openFolder, style: btnGhost,
+                                        title: "用系统文件管理器打开规则文件所在目录, 直接编辑 user-rules.md",
+                                    }, "打开所在目录"),
                                 ]
                         ),
                     ]),

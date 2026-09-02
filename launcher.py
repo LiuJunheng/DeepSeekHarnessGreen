@@ -4828,18 +4828,19 @@ class Launcher:
     def _cleanup_orphan_dsh(self, port):
         """启动前调用: 端口若被孤儿 dsh 进程占用 (非本启动器记录的进程), 确认后清理,
         避免新进程 EADDRINUSE 启动失败 (2026-08-18, 需求 #46)。
-        只清理明确的 dsh 服务进程 (node + bin.js + web + --port), 不误杀其它程序。
-        返回清理掉的进程数。"""
+        只清理明确的 dsh 服务进程: node 进程 + bin.js + web 子命令 (有/无 --port 都识别),
+        不误杀其它 node 程序。返回清理掉的进程数。"""
         if sys.platform != "win32":
             return 0
         if not self.port_open(port):
             return 0
         cleaned = 0
         for pid, name, command_line in self._find_port_owner(port):
+            # 识别条件放宽: 只要是 node + bin.js + web 就是 dsh 服务,
+            # --port 参数可选 (用默认端口启动时不带 --port 也能识别)
             is_dsh = ("node" in name.lower()
                       and "bin.js" in command_line
-                      and "web" in command_line
-                      and "--port" in command_line)
+                      and re.search(r"\bweb\b", command_line))
             if not is_dsh:
                 continue
             self.log("检测到残留 dsh 进程占用端口 %d (PID: %s), 正在清理 ..." % (port, pid))

@@ -86,10 +86,8 @@ function _dshHome() {
     return process.env.DSH_HOME || join(homedir(), '.dsh');
 }
 
-/** 精简版配置 (移除 roleplayEntryButton / mutual 等非核心)。 */
+/** 精简版配置 (v4: enabled 拆成 autoRemember + autoRecall 两个独立开关, 均默认 false)。 */
 export const Config = z.object({
-    /** v3: 总开关 —— 默认 false (记忆功能会消耗 token, 用户手动开启)。 */
-    enabled: z.boolean().default(false),
     serverName: z.string().default('zuzong'),
     python: z.string().default(''),          // 空字符串 = 自动探测绿色版便携 Python
     moduleArgs: z.array(String).default([]),  // 空数组 = 自动探测自研引擎
@@ -103,17 +101,21 @@ export const Config = z.object({
         z.array(String),
     ]).default(['remember', 'recall', 'search', 'timeline', 'service_info', 'list_all', 'delete']),
     memory: z.object({
+        /** v4: 自动记录开关 —— 是否把对话事件 (user/assistant/tool) 写入记忆库, 默认 false。 */
+        autoRemember: z.boolean().default(false),
+        /** v4: 自动召回开关 —— 是否把记忆注入 system prompt, 默认 false。 */
+        autoRecall: z.boolean().default(false),
         userMessage: z.boolean().default(true),
-        assistantMessage: z.boolean().default(true),   // v2: 默认开启 AI 回复记忆
+        assistantMessage: z.boolean().default(true),
         toolResult: z.boolean().default(false),
         importance: z.number().default(0.6),
-        autoRecall: z.boolean().default(true),
-        autoRecallLimit: z.number().default(6),        // v2: 提到 6 (按 type 分组后更紧凑)
+        autoRecallLimit: z.number().default(6),
         desensitize: z.boolean().default(true),
-        useSummarize: z.boolean().default(true),       // v2: 规则提炼开关 (精简 summary)
+        useSummarize: z.boolean().default(true),
     }).default({
+        autoRemember: false, autoRecall: false,
         userMessage: true, assistantMessage: true, toolResult: false,
-        importance: 0.6, autoRecall: true, autoRecallLimit: 6, desensitize: true,
+        importance: 0.6, autoRecallLimit: 6, desensitize: true,
         useSummarize: true,
     }),
     toolCallTimeoutMs: z.number().default(60_000),
@@ -225,18 +227,33 @@ function parseQuery(url) {
 }
 
 /**
- * 注册 6 个记忆管理 host 路由 (v3 新增 config GET/POST):
+ * 注册记忆管理 host 路由 (v3 新增 config GET+POST 合并, 无 method 参数):
  *   GET  /__dsh/memory/status    → 引擎状态 (service_info)
  *   GET  /__dsh/memory/list      → 列出全部记忆 (list_all, 支持 ?limit=&offset=)
  *   GET  /__dsh/memory/search    → 搜索 (search, ?q=&limit=)
  *   POST /__dsh/memory/delete    → 删除 (body: { id: number })
  *   POST /__dsh/memory/write     → 写入 (body: { content, tags?, importance? })
- *   GET  /__dsh/memory/config    → 读取当前生效配置 (含 enabled)
- *   POST /__dsh/memory/config    → 保存配置到持久化 json (下次启动生效)
+ *   GET+POST /__dsh/memory/config → 读配置 / 保存 enabled 持久化
+ *
+ * 注意: DSH webServer.register 不支持 method 参数区分路由,
+ *   同 path 必须单 handler 内部判断 req.method;
+ *   路由注册必须用 ctx.effect 包裹, 否则注册后会被立即清理 (HTTP 405)。
  */
 function registerMemoryRoutes(ctx, bridge, effectiveConfig) {
-    const routes = [
-        { path: `${MEMORY_ROUTE_PREFIX}/status`, method: 'GET', handler: async (req, res) => {
+    let webServer;
+    try { webServer = ctx.get('webServer'); } catch { webServer = null; }
+    if (!webServer) {
+        ctx.logger.warn(`${name}: webServer 不可用, 跳过记忆库管理路由注册`);
+        return;
+    }
+
+    const PREFIX = MEMORY_ROUTE_PREFIX;
+
+    // --- /status (GET-only) ---
+    ctx.effect(() => webServer.register({
+        kind: 'exact', path: `${PREFIX}/status`,
+        handler: async (req, res) => {
+            if (req.method !== 'GET') { sendJson(res, 405, { ok: false, error: 'use GET' }); return; }
             try {
                 const r = await bridge.callTool('service_info', {});
                 const text = (r.content || []).map((c) => c.text || '').join('\n');
@@ -246,8 +263,14 @@ function registerMemoryRoutes(ctx, bridge, effectiveConfig) {
             } catch (err) {
                 sendJson(res, 503, { ok: false, bridgeReady: bridge.isReady(), error: String(err.message || err) });
             }
-        }},
-        { path: `${MEMORY_ROUTE_PREFIX}/list`, method: 'GET', handler: async (req, res) => {
+        },
+    }, `${name}: GET /status`));
+
+    // --- /list (GET-only) ---
+    ctx.effect(() => webServer.register({
+        kind: 'exact', path: `${PREFIX}/list`,
+        handler: async (req, res) => {
+            if (req.method !== 'GET') { sendJson(res, 405, { ok: false, error: 'use GET' }); return; }
             const qs = parseQuery(req.url);
             const limit = parseInt(qs.get('limit') || '200', 10);
             const offset = parseInt(qs.get('offset') || '0', 10);
@@ -260,8 +283,14 @@ function registerMemoryRoutes(ctx, bridge, effectiveConfig) {
             } catch (err) {
                 sendJson(res, 503, { ok: false, error: String(err.message || err) });
             }
-        }},
-        { path: `${MEMORY_ROUTE_PREFIX}/search`, method: 'GET', handler: async (req, res) => {
+        },
+    }, `${name}: GET /list`));
+
+    // --- /search (GET-only) ---
+    ctx.effect(() => webServer.register({
+        kind: 'exact', path: `${PREFIX}/search`,
+        handler: async (req, res) => {
+            if (req.method !== 'GET') { sendJson(res, 405, { ok: false, error: 'use GET' }); return; }
             const qs = parseQuery(req.url);
             const q = (qs.get('q') || '').trim();
             const limit = parseInt(qs.get('limit') || '20', 10);
@@ -275,8 +304,14 @@ function registerMemoryRoutes(ctx, bridge, effectiveConfig) {
             } catch (err) {
                 sendJson(res, 503, { ok: false, error: String(err.message || err) });
             }
-        }},
-        { path: `${MEMORY_ROUTE_PREFIX}/delete`, method: 'POST', handler: async (req, res) => {
+        },
+    }, `${name}: GET /search`));
+
+    // --- /delete (POST-only) ---
+    ctx.effect(() => webServer.register({
+        kind: 'exact', path: `${PREFIX}/delete`,
+        handler: (req, res) => {
+            if (req.method !== 'POST') { sendJson(res, 405, { ok: false, error: 'use POST' }); return; }
             let body = '';
             req.on('data', (chunk) => { body += chunk; });
             req.on('end', async () => {
@@ -294,8 +329,14 @@ function registerMemoryRoutes(ctx, bridge, effectiveConfig) {
                     sendJson(res, 503, { ok: false, error: String(err.message || err) });
                 }
             });
-        }},
-        { path: `${MEMORY_ROUTE_PREFIX}/write`, method: 'POST', handler: async (req, res) => {
+        },
+    }, `${name}: POST /delete`));
+
+    // --- /write (POST-only) ---
+    ctx.effect(() => webServer.register({
+        kind: 'exact', path: `${PREFIX}/write`,
+        handler: (req, res) => {
+            if (req.method !== 'POST') { sendJson(res, 405, { ok: false, error: 'use POST' }); return; }
             let body = '';
             req.on('data', (chunk) => { body += chunk; });
             req.on('end', async () => {
@@ -316,78 +357,84 @@ function registerMemoryRoutes(ctx, bridge, effectiveConfig) {
                     sendJson(res, 503, { ok: false, error: String(err.message || err) });
                 }
             });
-        }},
-        // v3: 配置读写路由 (enabled 总开关持久化)
-        { path: `${MEMORY_ROUTE_PREFIX}/config`, method: 'GET', handler: (_req, res) => {
-            const persist = _loadPersist();
-            sendJson(res, 200, {
-                ok: true,
-                config: {
-                    enabled: Boolean(persist.enabled ?? effectiveConfig.enabled ?? false),
-                    persisted: persist,
-                    dbPath: effectiveConfig.dbPath,
-                },
-            });
-        }},
-        { path: `${MEMORY_ROUTE_PREFIX}/config`, method: 'POST', handler: (req, res) => {
-            let body = '';
-            req.on('data', (chunk) => { body += chunk; });
-            req.on('end', () => {
-                let parsed = {};
-                try { parsed = JSON.parse(body) || {}; } catch { /* 忽略 */ }
-                const patch = {};
-                if (typeof parsed.enabled === 'boolean') patch.enabled = parsed.enabled;
-                if (Object.keys(patch).length === 0) {
-                    sendJson(res, 400, { ok: false, error: '无可保存字段' });
-                    return;
-                }
-                const merged = _savePersist(patch);
+        },
+    }, `${name}: POST /write`));
+
+    // --- /config (GET=读配置, POST=保存 autoRemember / autoRecall) ---
+    ctx.effect(() => webServer.register({
+        kind: 'exact', path: `${PREFIX}/config`,
+        handler: (req, res) => {
+            if (req.method === 'POST') {
+                let body = '';
+                req.on('data', (chunk) => { body += chunk; });
+                req.on('end', () => {
+                    let parsed = {};
+                    try { parsed = JSON.parse(body) || {}; } catch { /* 忽略 */ }
+                    const patch = {};
+                    if (typeof parsed.autoRemember === 'boolean') patch.autoRemember = parsed.autoRemember;
+                    if (typeof parsed.autoRecall === 'boolean') patch.autoRecall = parsed.autoRecall;
+                    // 兼容旧字段 enabled: true → 两个都开, enabled: false → 两个都关
+                    if (typeof parsed.enabled === 'boolean' && patch.autoRemember === undefined && patch.autoRecall === undefined) {
+                        patch.autoRemember = parsed.enabled;
+                        patch.autoRecall = parsed.enabled;
+                    }
+                    if (Object.keys(patch).length === 0) {
+                        sendJson(res, 400, { ok: false, error: '无可保存字段' });
+                        return;
+                    }
+                    const merged = _savePersist(patch);
+                    ctx.logger.info(`${name}: WebUI 保存 ${JSON.stringify(patch)}`);
+                    sendJson(res, 200, {
+                        ok: true,
+                        config: {
+                            autoRemember: Boolean(merged.autoRemember ?? effectiveConfig.memory.autoRemember),
+                            autoRecall: Boolean(merged.autoRecall ?? effectiveConfig.memory.autoRecall),
+                            persisted: merged,
+                        },
+                        note: '配置已保存, 下次启动 DSH 后生效',
+                    });
+                });
+            } else {
+                // GET / 其他: 返回当前生效配置
+                const persist = _loadPersist();
                 sendJson(res, 200, {
                     ok: true,
                     config: {
-                        enabled: Boolean(merged.enabled ?? effectiveConfig.enabled),
-                        persisted: merged,
+                        autoRemember: Boolean(persist.autoRemember ?? effectiveConfig.memory.autoRemember ?? false),
+                        autoRecall: Boolean(persist.autoRecall ?? effectiveConfig.memory.autoRecall ?? false),
+                        persisted: persist,
+                        dbPath: effectiveConfig.dbPath,
                     },
-                    note: '配置已保存, 下次启动 DSH 后生效',
                 });
-            });
-        }},
-    ];
+            }
+        },
+    }, `${name}: config route (GET+POST)`));
 
-    const disposers = [];
-    for (const route of routes) {
-        try {
-            const dispose = ctx.webServer.register({
-                kind: 'exact',
-                path: route.path,
-                method: route.method,
-                handler: route.handler,
-            }, `${name}: ${route.method} ${route.path}`);
-            disposers.push(dispose);
-            ctx.logger.info(`${name}: 已注册路由 ${route.method} ${route.path}`);
-        } catch (err) {
-            ctx.logger.warn(`${name}: 路由注册失败 ${route.method} ${route.path} (webServer 不可用?): ${String(err)}`);
-        }
-    }
-    return () => { for (const d of disposers) d(); };
+    ctx.logger.info(`${name}: 记忆库管理路由已注册 (6 条, GET+POST 合并 config)`);
 }
 
 // ---------------------------------------------------------------------------
 // 插件激活入口
 // ---------------------------------------------------------------------------
 export async function apply(ctx, config) {
-    // v3: 合并持久化 json 覆盖 (WebUI 开关写进来的)
+    // v4: 合并持久化 json 覆盖 (WebUI 开关写进来的 autoRemember / autoRecall)
     const persist = _loadPersist();
     const mergedConfig = { ...config };
-    if (typeof persist.enabled === 'boolean') {
-        mergedConfig.enabled = persist.enabled;
+    if (mergedConfig.memory && typeof mergedConfig.memory === 'object') {
+        if (typeof persist.autoRemember === 'boolean') {
+            mergedConfig.memory.autoRemember = persist.autoRemember;
+        }
+        if (typeof persist.autoRecall === 'boolean') {
+            mergedConfig.memory.autoRecall = persist.autoRecall;
+        }
     }
     // 组装有效配置 (绿色版默认值 + 持久化覆盖)
     const effective = _resolveEffectiveConfig(mergedConfig);
 
     ctx.logger.info(
         `dsh-memory-lite: 祖宗记忆库记忆插件激活 · ` +
-        `enabled=${effective.enabled} python=${effective.python} db=${effective.dbPath}`
+        `autoRemember=${effective.memory.autoRemember} autoRecall=${effective.memory.autoRecall} ` +
+        `python=${effective.python} db=${effective.dbPath}`
     );
 
     // 创建 MCP stdio 桥 (始终创建, 用户可手动调用工具或 WebUI 管理卡片)
@@ -440,24 +487,22 @@ export async function apply(ctx, config) {
             disposers.push(() => { if (toolsPoll) clearInterval(toolsPoll); });
         }
 
-        // --- v3: 自动记忆钩子只在 enabled=true 时安装 ---
-        if (effective.enabled) {
+        // --- v4: 自动记忆 / 自动召回 钩子按需安装 ---
+        // autoRemember 管 session/event → 写入记忆库
+        // autoRecall   管 system-prompt → 注入 system prompt
+        // 两个任意开启一个就装 hooks (内部各自守卫)
+        const ar = effective.memory.autoRemember;
+        const ac = effective.memory.autoRecall;
+        if (ar || ac) {
             installMemoryHooks(ctx, bridge, effective.memory);
-            ctx.logger.info('dsh-memory: 自动记忆钩子已安装 (enabled=true)');
+            ctx.logger.info(`dsh-memory: hooks 已安装 (autoRemember=${ar}, autoRecall=${ac})`);
         } else {
-            ctx.logger.info('dsh-memory: 自动记忆已关闭 (enabled=false), 跳过 hooks 安装');
+            ctx.logger.info('dsh-memory: autoRemember 和 autoRecall 均关闭, 跳过 hooks 安装');
         }
 
         // --- 记忆库管理卡片 host 路由 (始终注册, 含 config 读写) ---
-        let webServer;
-        try { webServer = ctx.get('webServer'); } catch { webServer = null; }
-        if (webServer) {
-            const disposeRoutes = registerMemoryRoutes(ctx, bridge, effective);
-            disposers.push(disposeRoutes);
-            ctx.logger.info('dsh-memory: 记忆库管理路由已注册 (可通过 /__dsh/memory/* 访问)');
-        } else {
-            ctx.logger.warn('dsh-memory: webServer 不可用, 跳过记忆库管理路由注册');
-        }
+        // registerMemoryRoutes 内部自己用 ctx.effect 管理路由生命周期
+        registerMemoryRoutes(ctx, bridge, effective);
     } catch (err) {
         bridge.dispose();
         throw err;

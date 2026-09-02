@@ -52,7 +52,7 @@ window.__ModuleLoader__.load({
 
         // ---- React 组件 ----
 
-        /** 记忆库主面板 (卡片式, 顶部启用开关 + 【测试】标签)。 */
+        /** 记忆库主面板 (卡片式, 顶部双开关 + 实时保存)。 */
         function MemoryCard() {
             const [status, setStatus] = react.useState(null);
             const [items, setItems] = react.useState([]);
@@ -62,51 +62,65 @@ window.__ModuleLoader__.load({
             const [error, setError] = react.useState(null);
             const [searchText, setSearchText] = react.useState("");
             const [selectedItem, setSelectedItem] = react.useState(null);
-            // v3: 总开关状态 (从 /config 路由读)
-            const [enabled, setEnabled] = react.useState(null);   // null = 未加载
-            const [savingConfig, setSavingConfig] = react.useState(false);
+            // v4: 双开关状态 (自动记录 + 自动注入)
+            const [autoRemember, setAutoRemember] = react.useState(null);   // null = 未加载
+            const [autoRecall, setAutoRecall] = react.useState(null);
+            const [savingField, setSavingField] = react.useState(null);    // 正在保存哪个字段
             const [savedTip, setSavedTip] = react.useState(null);
 
             const PAGE_SIZE = 50;
 
-            /** 读取当前生效配置 (含 enabled)。 */
+            /** 读取当前生效配置 (双开关)。 */
             const loadConfig = react.useCallback(async () => {
                 try {
                     const resp = await fetch(ROUTE_CONFIG);
                     const payload = await resp.json().catch(() => null);
                     if (resp.ok && payload && payload.ok) {
-                        setEnabled(Boolean(payload.config.enabled));
+                        setAutoRemember(Boolean(payload.config.autoRemember));
+                        setAutoRecall(Boolean(payload.config.autoRecall));
                     } else {
-                        setEnabled(false); // 接口不可用时默认 false
+                        setAutoRemember(false); setAutoRecall(false);
                     }
                 } catch {
-                    setEnabled(false);
+                    setAutoRemember(false); setAutoRecall(false);
                 }
             }, []);
 
-            /** 保存 enabled 开关 (写持久化 json, 下次启动生效)。 */
-            const saveEnabled = react.useCallback(async (value) => {
-                setSavingConfig(true);
+            /** 实时保存单个字段 (autoRemember 或 autoRecall)。 */
+            const saveField = react.useCallback(async (fieldName, value) => {
+                // 乐观更新: 先改 UI, 后端失败再回滚
+                const prevRemember = autoRemember;
+                const prevRecall = autoRecall;
+                if (fieldName === "autoRemember") setAutoRemember(value);
+                if (fieldName === "autoRecall") setAutoRecall(value);
+                setSavingField(fieldName);
                 setSavedTip(null);
                 try {
                     const resp = await fetch(ROUTE_CONFIG, {
                         method: "POST",
                         headers: { "content-type": "application/json" },
-                        body: JSON.stringify({ enabled: value }),
+                        body: JSON.stringify({ [fieldName]: value }),
                     });
                     const payload = await resp.json().catch(() => null);
                     if (resp.ok && payload && payload.ok) {
-                        setEnabled(value);
-                        setSavedTip("已保存, 下次启动 DSH 后自动生效");
+                        setSavedTip(fieldName === "autoRemember"
+                            ? (value ? "自动记录已开启" : "自动记录已关闭")
+                            : (value ? "自动注入已开启" : "自动注入已关闭"));
                     } else {
+                        // 回滚
+                        setAutoRemember(prevRemember);
+                        setAutoRecall(prevRecall);
                         setError((payload && payload.error) || "保存失败");
                     }
                 } catch (err) {
-                    setError("保存开关失败: " + String((err && err.message) || err));
+                    // 回滚
+                    setAutoRemember(prevRemember);
+                    setAutoRecall(prevRecall);
+                    setError("保存失败: " + String((err && err.message) || err));
                 } finally {
-                    setSavingConfig(false);
+                    setSavingField(null);
                 }
-            }, []);
+            }, [autoRemember, autoRecall]);
 
             /** 组件挂载时先读配置, 再加载数据。 */
             react.useEffect(() => {
@@ -198,34 +212,43 @@ window.__ModuleLoader__.load({
                     minHeight: "400px",
                 },
             },
-                // --- 标题栏 (v3: 加【测试】标签 + 启用开关) ---
+                // --- 标题栏 (v4: 双开关 + 实时保存, 移除【测试】标签) ---
                 react.createElement("div", { style: {
                     display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap",
                     marginBottom: "16px", borderBottom: "1px solid #3a4068", paddingBottom: "12px",
                 }},
                     react.createElement("span", { style: { fontSize: "18px", fontWeight: 600, color: "#a78bfa" } }, "📜 祖宗记忆库"),
                     react.createElement("span", { style: {
-                        padding: "1px 8px", borderRadius: "8px", fontSize: "10px", fontWeight: 600,
-                        background: "rgba(245, 158, 11, 0.2)", color: "#f59e0b",
-                        border: "1px solid rgba(245, 158, 11, 0.4)",
-                    }}, "【测试】"),
-                    react.createElement("span", { style: {
                         padding: "2px 10px", borderRadius: "10px", fontSize: "12px",
                         background: bridgeReady ? "#10b981" : "#f59e0b", color: "#fff",
                     }}, bridgeReady ? "就绪" : "未就绪"),
-                    // v3: 启用开关 checkbox
-                    enabled !== null && react.createElement("label", { style: {
+                    // v4: 双 checkbox —— 自动记录
+                    autoRemember !== null && react.createElement("label", { style: {
                         display: "flex", alignItems: "center", gap: "6px", marginLeft: "12px",
                         fontSize: "13px", color: "#e0e0e0", cursor: "pointer",
                     }},
                         react.createElement("input", {
                             type: "checkbox",
-                            checked: enabled,
-                            disabled: savingConfig,
-                            onChange: (e) => saveEnabled(e.target.checked),
-                            style: { cursor: savingConfig ? "default" : "pointer", margin: 0 },
+                            checked: autoRemember,
+                            disabled: savingField === "autoRemember",
+                            onChange: (e) => saveField("autoRemember", e.target.checked),
+                            style: { cursor: savingField === "autoRemember" ? "default" : "pointer", margin: 0 },
                         }),
-                        react.createElement("span", null, enabled ? "已启用自动记忆" : "已关闭 (节省 token)"),
+                        react.createElement("span", null, "自动记录"),
+                    ),
+                    // v4: 双 checkbox —— 自动注入
+                    autoRecall !== null && react.createElement("label", { style: {
+                        display: "flex", alignItems: "center", gap: "6px", marginLeft: "4px",
+                        fontSize: "13px", color: "#e0e0e0", cursor: "pointer",
+                    }},
+                        react.createElement("input", {
+                            type: "checkbox",
+                            checked: autoRecall,
+                            disabled: savingField === "autoRecall",
+                            onChange: (e) => saveField("autoRecall", e.target.checked),
+                            style: { cursor: savingField === "autoRecall" ? "default" : "pointer", margin: 0 },
+                        }),
+                        react.createElement("span", null, "自动注入"),
                     ),
                     react.createElement("button", {
                         onClick: refreshAll,
@@ -236,7 +259,7 @@ window.__ModuleLoader__.load({
                         },
                     }, "刷新"),
                 ),
-                // 开关保存提示
+                // 保存提示
                 savedTip !== null && react.createElement("div", { style: {
                     padding: "6px 12px", background: "rgba(16, 185, 129, 0.15)",
                     borderLeft: "3px solid #10b981", color: "#6ee7b7", fontSize: "12px", marginBottom: "10px",

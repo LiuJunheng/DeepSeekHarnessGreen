@@ -161,15 +161,15 @@ export function desensitize(text) {
         return null;
     return out;
 }
-/** 安装自动记忆钩子（effect 作用域内，随插件卸载自动移除）。 */
+/** 安装自动记忆钩子 (effect 作用域内, 随插件卸载自动移除)。
+ *  v4: autoRemember 和 autoRecall 独立控制, 两个都关就不装任何钩子。 */
 export function installMemoryHooks(ctx, bridge, opts) {
     const memorize = (tool, args) => {
         void bridge
             .callTool(tool, args)
             .catch((err) => ctx.logger.warn(`dsh-memory: ${tool} 自动记忆失败: ${err.message}`));
     };
-    // P1 完善（GPT 审查·自动记忆脱敏）：写入前过滤敏感信息（默认开启）。
-    // 命中敏感模式 → 替换为 [已过滤:类别]；纯凭据消息 → 跳过写入（不落库）。
+    // v4: sanitize 恢复回来 (之前误删)
     const sanitize = (text) => {
         if (!opts.desensitize)
             return text;
@@ -224,7 +224,9 @@ export function installMemoryHooks(ctx, bridge, opts) {
             return next();
         });
     }
-    ctx.on('session/event', (_session, event) => {
+    // --- 自动记录: session/event → 写入记忆库 ---
+    if (opts.autoRemember) {
+        ctx.on('session/event', (_session, event) => {
         if (event.type === 'user/message' && opts.userMessage) {
             // 只记真实用户输入 (kind='user'), 跳过插件注入/系统上下文
             if (event.data.source?.kind !== 'user') {
@@ -245,7 +247,7 @@ export function installMemoryHooks(ctx, bridge, opts) {
                     return; // 纯日志, 不值得记
             }
             memorize('remember', {
-                content: safe,
+                content: (summary || safe),   // v3: content 也存精简版, 省空间
                 summary: summary,
                 type: 'user',
                 importance: opts.importance,
@@ -269,7 +271,7 @@ export function installMemoryHooks(ctx, bridge, opts) {
                     return;
             }
             memorize('remember', {
-                content: safe,
+                content: (summary || safe),   // v3: content 也存精简版, 省空间
                 summary: summary,
                 type: 'assistant',
                 importance: opts.importance * 0.8,
@@ -292,7 +294,7 @@ export function installMemoryHooks(ctx, bridge, opts) {
                 summary = (lines[lines.length - 1]?.slice(0, 80) || safe.slice(0, 80));
             }
             memorize('remember', {
-                content: safe,
+                content: (summary || safe),   // v3: content 也存精简版, 省空间
                 summary: summary,
                 type: 'raw',
                 importance: opts.importance * 0.6,
@@ -300,4 +302,5 @@ export function installMemoryHooks(ctx, bridge, opts) {
             });
         }
     });
+    } // autoRemember
 }
