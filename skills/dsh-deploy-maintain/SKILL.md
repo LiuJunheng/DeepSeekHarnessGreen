@@ -238,9 +238,75 @@ export async function apply(ctx, config) { ... }  // 必须叫 apply, 可用 asy
 
 ### 5.7 主题自适应（内置插件）
 
-- 用 harness 语义 CSS 变量 `--dsw-alias-*`（label-primary/secondary/tertiary、bg-layer-2、bg-base、border-l1/l2、interactive-bg-hover、button-primary-fill、state-error-primary、bg-mask-N），深浅主题由 `body[data-ds-dark-theme]` 自动换值，**不用写 JS 主题监听**。禁引 `--dsw-static-*` 当底色/文字/边框。
-- **无历史显式 `color`、靠父级继承的文字也要显式补 `var(--dsw-alias-label-*)`**（否则深色下落到默认黑字看不清）；**固定浅框内内容要整组固定**（浅框 + 固定深字 `#1f1f1f`），只让框外页面级文字随主题（白字落白底看不清）。改主题前先分清"页面底文字 vs 框内文字"。
-- 参考主题变量权威定义 `runtime/dsh/node_modules/@deepseek-ai/dsh-client-ui-theme/lib/client.js`。
+> **踩过 3 轮坑才搞对，直接抄这个方案**。
+>
+> 踩坑史：① 全 CSS 变量但变量选得不对（`label-secondary` 配白底 = 灰糊）→ ② 硬编码白底 + CSS 变量字（背景不随主题切，深主题像白补丁）→ ③ **全部走 CSS 变量 + 选对变量名**（背景和文字一起切）→ 正确。
+
+#### 核心原则
+
+**背景和文字必须一起走 CSS 变量**，DSH 会自动根据 `data-theme="dark|light"` 切换值。绝对不要"背景硬编码 + 文字走变量"或反过来。
+
+#### 变量速查表（抄 DSH 官方组件实际用的）
+
+| 元素类型 | 正确变量 | 说明 |
+|---|---|---|
+| 卡片/面板背景 | `var(--dsw-alias-bg-base)` | 主面板底色，深浅主题自动切 |
+| 输入框/TextInput 背景 | `var(--dsw-specific-input-major)` | **DSH 官方输入框专用**，深浅主题都做了对比度适配 |
+| 主文字（标题、label） | `var(--dsw-alias-label-primary)` | 深主题 = 亮，浅主题 = 深 |
+| 次文字（hint、说明） | `var(--dsw-alias-label-secondary)` | 比 primary 低一级，深主题下可读 |
+| 辅助文字（非常淡） | `var(--dsw-alias-label-tertiary)` | 用在"最近检测时间"这种 |
+| 边框 | `var(--dsw-alias-border-l2)` | 通用边框，深浅自动切换 |
+| 主按钮填充 | `var(--dsw-alias-button-info-fill)` | 品牌蓝，深浅不变 |
+| 幽灵按钮边框 | `var(--dsw-alias-border-l2)` | 配 transparent 背景 |
+| 状态点-成功 | `var(--dsw-alias-state-success-primary)` | 绿 |
+| 状态点-错误 | `var(--dsw-alias-state-error-primary)` | 红 |
+| 业务色（chip/badge） | `var(--dsw-alias-state-business-primary)` / `-secondary` | 蓝 |
+| 警告色（真警告） | `var(--dsw-alias-state-warn-primary)` | 橙，只在真正警告场景用，别乱用 |
+
+#### 唯一可接受的硬编码
+
+按钮上的白字 `color: "#ffffff"` —— 配合 `--dsw-alias-button-info-fill` 填充色，这是设计规范内的对比度保证。其他任何地方都**不要硬编码颜色**。
+
+#### 错误示范（千万别做）
+
+```js
+// ❌ 错误 1: 硬编码白底 + CSS 变量字（深主题下白底像补丁）
+const card = { background: "#ffffff", color: "var(--dsw-alias-label-primary)" };
+
+// ❌ 错误 2: 硬编码灰字（深浅主题都不变，深主题下糊）
+const hint = { color: "#8a8f98" };
+
+// ❌ 错误 3: 输入框背景用 bg-primary 而不是 specific-input-major（可能对比度不够）
+const input = { background: "var(--dsw-alias-bg-primary)" };
+
+// ❌ 错误 4: "运行中"状态用 warn 橙色（语义错误，运行中是正常不是警告）
+const running = { color: "var(--dsw-alias-state-warn-primary)" };
+
+// ✅ 正确: 背景 + 文字 + 边框全部变量
+const card = { background: "var(--dsw-alias-bg-base)", color: "var(--dsw-alias-label-primary)", border: "1px solid var(--dsw-alias-border-l2)" };
+const input = { background: "var(--dsw-specific-input-major)", color: "var(--dsw-alias-label-primary)", border: "1px solid var(--dsw-alias-border-l2)" };
+const running = { color: "var(--dsw-alias-state-success-primary)" };  // 运行中 = 绿
+```
+
+#### 设计语义速查
+
+| 场景 | 正确颜色语义 | 别用 |
+|---|---|---|
+| 运行中/在线状态 | success（绿） | warn（橙，那是警告） |
+| 离线/错误 | error（红） | success |
+| 信息提示横幅 | business（蓝） | warn（橙，信息不是警告） |
+| 真正危险/毒化提示 | warn（橙） | 其他 |
+| 模型名 chip | business 蓝底蓝字 | warn 橙 |
+
+#### 排查清单
+
+改完主题后，用这个命令检查硬编码残留（只剩按钮白字 `#ffffff` 是可接受的）：
+
+```powershell
+Select-String -Path "lib\client.js" -Pattern '#([0-9a-fA-F]{3,8})|rgb\(|rgba\(' -AllMatches
+```
+
+参考变量权威定义：`runtime/dsh/node_modules/@deepseek-ai/dsh-client-ui-theme/lib/client.js`。
 
 ### 5.8 改源码必须同步运行副本（最易"改了没生效"）
 

@@ -639,21 +639,21 @@ window.__ModuleLoader__.load({
       if (!loadedRef.current) { loadedRef.current = true; loadAll(); }
 
       return react.createElement("div", { style: { padding: "12px 8px", maxWidth: 640 } },
-        // 标题 + 说明
-        react.createElement("p", { style: { margin: 0, fontSize: 14, fontWeight: 600 } },
+        // 标题 + 说明 (全部用 CSS 变量, 深浅主题自动切换)
+        react.createElement("p", { style: { margin: 0, fontSize: 14, fontWeight: 600, color: "var(--dsw-alias-label-primary)" } },
           "插件名称设置"
         ),
-        react.createElement("p", { style: { margin: "4px 0 12px", fontSize: 12, color: "#888" } },
+        react.createElement("p", { style: { margin: "4px 0 12px", fontSize: 12, color: "var(--dsw-alias-label-secondary)" } },
           "开启后会占用少量 system prompt token, 建议按需开启。"
         ),
-        // 【测试】标签 (可选, 表示功能不完善)
+        // 【测试】标签 (可选, 表示功能不完善) —— warn 语义
         react.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
           react.createElement("span", { style: {
             padding: "1px 8px", borderRadius: 8, fontSize: 10, fontWeight: 600,
-            background: "rgba(245, 158, 11, 0.2)", color: "#f59e0b",
-            border: "1px solid rgba(245, 158, 11, 0.4)",
+            background: "var(--dsw-alias-state-warn-secondary)", color: "var(--dsw-alias-state-warn-primary)",
+            border: "1px solid var(--dsw-alias-state-warn-primary)",
           }}, "【测试】"),
-          react.createElement("label", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" } },
+          react.createElement("label", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer", color: "var(--dsw-alias-label-primary)" } },
             react.createElement("input", {
               type: "checkbox",
               checked: enabled,
@@ -667,10 +667,10 @@ window.__ModuleLoader__.load({
             ),
           ),
         ),
-        // 错误提示
-        error && react.createElement("p", { style: { margin: "8px 0 0", fontSize: 12, color: "#e74c3c" } }, error),
-        // 保存提示
-        savedTip && react.createElement("p", { style: { margin: "8px 0 0", fontSize: 12, color: "#27ae60" } }, savedTip),
+        // 错误提示 —— error 语义
+        error && react.createElement("p", { style: { margin: "8px 0 0", fontSize: 12, color: "var(--dsw-alias-state-error-primary)" } }, error),
+        // 保存提示 —— success 语义
+        savedTip && react.createElement("p", { style: { margin: "8px 0 0", fontSize: 12, color: "var(--dsw-alias-state-success-primary)" } }, savedTip),
       );
     }
 
