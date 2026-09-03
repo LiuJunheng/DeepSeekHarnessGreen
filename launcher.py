@@ -1934,17 +1934,53 @@ class Launcher:
         """判断当前是否以 exe 方式运行 (PyInstaller onefile)"""
         return getattr(sys, "frozen", False)
 
+    # pre-release 标签优先级: alpha < beta < pre < rc < 无标记(正式版)
+    # 值越大越新, 正式版统一用 3 (比所有 pre-release 都新)
+    _VERSION_PRECEDENCE = {
+        "alpha": 0, "a": 0,
+        "beta": 1, "b": 1,
+        "pre": 2, "preview": 2,
+        "rc": 2, "c": 2,
+    }
+
     def _green_version_tuple(self, version_text):
-        """把 'v1.2.3' 之类的版本号拆成可比较的整数元组 (忽略非数字段, 兼容长短版本)"""
-        parts = re.split(r"[^\d]+", (version_text or "").lstrip("v").strip())
-        numbers = []
-        for part in parts:
-            if part.isdigit():
-                numbers.append(int(part))
-        return tuple(numbers)
+        """把 'v1.2.3-alpha.5' 之类的 semver 拆成可比较的元组.
+
+        正确处理 pre-release 标签优先级: alpha < beta < rc < 无标记(正式版).
+        返回格式: (major, minor, patch, pre_rank, pre_number)
+        其中 pre_rank=3 表示正式版 (无 pre-release), 比所有 pre-release 都新.
+        """
+        text = (version_text or "").lstrip("v").strip()
+
+        # 分离 main (major.minor.patch) 和 pre-release (-alpha.5 / -rc.1)
+        if "-" in text:
+            main_text, pre_text = text.split("-", 1)
+        else:
+            main_text, pre_text = text, None
+
+        # main 部分: major.minor.patch, 补零到 3 段
+        main_parts = [int(x) for x in main_text.split(".") if x.isdigit()]
+        while len(main_parts) < 3:
+            main_parts.append(0)
+        major, minor, patch = main_parts[0], main_parts[1], main_parts[2]
+
+        if pre_text:
+            # pre-release 部分: alpha.5 / rc.1 / beta 等
+            match = re.match(r"([a-zA-Z]+)\.?(\d*)", pre_text)
+            if match:
+                pre_type = match.group(1).lower()
+                pre_num = int(match.group(2)) if match.group(2) else 0
+                pre_rank = self._VERSION_PRECEDENCE.get(pre_type, 0)
+            else:
+                pre_rank = 0
+                pre_num = 0
+            return (major, minor, patch, pre_rank, pre_num)
+        else:
+            # 正式版: pre_rank=3 表示比所有 pre-release 都新
+            return (major, minor, patch, 3, 0)
 
     def _green_version_greater(self, left, right):
-        """判断 left 版本是否大于 right 版本 (按数字分段比较, 不依赖字符串长度)"""
+        """判断 left 版本是否大于 right 版本 (正确处理 semver pre-release 优先级)"""
         return self._green_version_tuple(left) > self._green_version_tuple(right)
 
     def green_local_version(self):
@@ -6246,48 +6282,55 @@ def run_gui():
                     root.after(0, lambda: messagebox.showerror(
                         "检查更新", "无法获取最新版本信息, 请检查网络后重试。"))
                     return
+                # 设计原则: 不按"新旧"过滤候选, 让用户自己选
+                # - 用户可能想降级 / 切换通道 / 锁定某个已知稳定版本
+                # - npm dist-tag 的 latest / next 是两条独立通道, 不该混在一起比
                 candidates = []
                 seen = set()
-                def add_candidate(version, tag_label, installable,
+                def add_candidate(version, channel, tag_label, installable,
                                   published_at="", body="", tag_name=""):
                     if not version or version in seen:
                         return
-                    # 只保留比当前已装版本更新的候选
-                    # (否则已是 stable(latest) 却仍提示再次覆盖安装, 属误报)。
-                    if not app._green_version_greater(version, current_version):
-                        app.log("跳过与当前相同或更旧的候选 %s (当前: %s)"
-                                % (version, current_version))
-                        return
                     seen.add(version)
+                    is_current = (version == current_version)
                     candidates.append({
                         "version": version,
+                        "channel": channel,          # stable / prerelease / history
                         "tag_label": tag_label,
                         "installable": installable,
                         "published_at": published_at,
                         "tag_name": tag_name,
                         "body": body,
+                        "is_current": is_current,
                     })
-                # 1) npm dist-tags: 稳定版(latest) / 预发布(next), 一定可安装
+                # 1) npm dist-tags: 官方定义的两条独立通道
+                #    latest = 稳定正式版通道    next = 预发布/rc/alpha 通道
                 if tags:
-                    add_candidate(tags.get("latest"), "稳定版(latest)", True)
-                    add_candidate(tags.get("next"), "预发布(next)", True)
-                # 2) GitHub Releases 全部 tag: 是否可安装看 npm 是否已发布该版本
+                    add_candidate(tags.get("latest"), "stable",
+                                  "npm dist-tag: latest (稳定正式)", True)
+                    add_candidate(tags.get("next"), "prerelease",
+                                  "npm dist-tag: next (预发布通道)", True)
+                # 2) GitHub Releases 全部 tag: 历史版本, 是否可安装看 npm 有没有发
                 if github_releases:
                     for item in github_releases:
                         installable = (npm_versions is not None
                                        and item["version"] in npm_versions)
-                        source_label = "GitHub tag" + ("(预发布)" if item["prerelease"] else "")
-                        add_candidate(item["version"], source_label, installable,
-                                      item["published_at"], item["body"], item["tag_name"])
-                # 排序: 可安装的在前, 同一组内版本号从新到旧
+                        channel = "prerelease" if item["prerelease"] else "history"
+                        source_label = "GitHub release (预发布)" if item["prerelease"] else "GitHub release"
+                        add_candidate(item["version"], channel, source_label,
+                                      installable, item["published_at"],
+                                      item["body"], item["tag_name"])
+
+                # 排序: 先按通道 (stable → prerelease → history), 通道内按版本从新到旧
+                channel_order = {"stable": 0, "prerelease": 1, "history": 2}
                 candidates.sort(key=lambda c: (
-                    not c["installable"],
-                    tuple(-number for number in app._green_version_tuple(c["version"]))))
+                    channel_order.get(c["channel"], 99),
+                    tuple(-num for num in app._green_version_tuple(c["version"]))))
+
                 if not candidates:
                     root.after(0, lambda: messagebox.showinfo(
                         "检查更新",
-                        "已是最新版本: %s\n(当前没有比已安装版本更新的发布。)"
-                        % current_version))
+                        "无法获取版本信息, 请检查网络后重试。"))
                 else:
                     root.after(0, lambda: ask_update(current_version, candidates))
             finally:
@@ -6404,72 +6447,135 @@ def run_gui():
         detail_dialog.geometry("+%d+%d" % (pos_x, pos_y))
 
     def ask_update(current_version, candidates):
-        """发现新版本时弹出对话框: 用可滚动列表**动态**列出所有检测到的候选版本
-        (npm 稳定版/预发布 + GitHub 全部 tag), 用户选中后进入确认升级。
-        不写死 latest/next 两个标签 —— 所有 tag 都按真实来源动态列出来。
-        candidates: [{"version","tag_label","installable","published_at",
-                      "tag_name","body"}, ...],
-        已按 可安装优先、版本号从新到旧 排序。
-        未发布到 npm 的版本 (仅 GitHub 源码 tag) 只能查看/打开 GitHub 页面,
-        无法自动安装 (会给出明确提示, 避免安装失败)"""
+        """发现新版本时弹出对话框: 按 npm 通道分组展示所有可安装版本.
+
+        设计原则 (L6285):
+        - 不过滤新旧, 用户可能想降级 / 切换通道 / 锁定已知稳定版本
+        - npm dist-tag 的 latest / next 是两条独立通道, 分组展示
+        - 标记当前已安装版本, 让用户清楚自己在哪
+
+        candidates: [{"version","channel","tag_label","installable",
+                      "published_at","tag_name","body","is_current"}, ...],
+        已按 通道(stable→prerelease→history) + 通道内版本新到旧 排序."""
+        # 按通道分组, 收集通道内版本
+        channel_info = {
+            "stable":    ("① 稳定正式通道 (npm latest)", "官方稳定发布通道"),
+            "prerelease": ("② 预发布通道 (npm next / GitHub prerelease)", "alpha/beta/rc 等预发布版本"),
+            "history":   ("③ GitHub 历史版本 (npm 已发布)", "过往正式版, 可用于降级"),
+        }
+        groups = {}
+        for c in candidates:
+            groups.setdefault(c["channel"], []).append(c)
+
         dialog = tk.Toplevel(root)
-        dialog.title("发现新版本")
+        dialog.title("选择 DSH 版本")
         dialog.transient(root)
         dialog.grab_set()   # 模态: 关闭前主窗口不可操作
-        dialog.geometry("680x480")
+        dialog.geometry("720x520")
 
+        # Header: 当前版本 + 检测概况
         header = ttk.Frame(dialog, padding=12)
         header.pack(fill="x")
+        channel_count = len(groups)
+        version_count = len(candidates)
         ttk.Label(header, justify="left", text=(
-            "当前版本: %s\n\n检测到 %d 个可更新版本, 请选择要安装的版本:"
-            % (current_version, len(candidates)))).pack(anchor="w")
+            "当前已安装: %s\n\n"
+            "检测到 %d 个可用版本, 分布在 %d 个通道:\n"
+            "· stable 通道 = npm latest (官方稳定正式版)\n"
+            "· prerelease 通道 = npm next + GitHub 预发布 (alpha/beta/rc)\n"
+            "· history 通道 = GitHub 历史正式版 (可降级)"
+            % (current_version, version_count, channel_count))).pack(anchor="w")
 
-        # 列表区: 左 Treeview + 右垂直滚动条 (方便上下滑动)
+        # Treeview: 按通道分组的层级展示
         body = ttk.Frame(dialog)
         body.pack(fill="both", expand=True, padx=12, pady=(0, 6))
-        tree = ttk.Treeview(body, columns=("tag", "time", "installable"),
-                            show="tree headings", height=10)
+        tree = ttk.Treeview(body, columns=("source", "time", "installable"),
+                            show="tree headings", height=12)
         tree.heading("#0", text="版本")
-        tree.heading("tag", text="标签/来源")
+        tree.heading("source", text="来源 / 标签")
         tree.heading("time", text="发布时间")
-        tree.heading("installable", text="可安装")
-        # 列宽留足余量: 总和需明显小于面板宽度, 否则 pack 会把右侧滚动条压缩成 1x1
-        tree.column("#0", width=130, anchor="center")
-        tree.column("tag", width=170, anchor="w")
-        tree.column("time", width=130, anchor="center")
-        tree.column("installable", width=110, anchor="center")
+        tree.heading("installable", text="状态")
+        tree.column("#0", width=180, anchor="w")
+        tree.column("source", width=220, anchor="w")
+        tree.column("time", width=140, anchor="center")
+        tree.column("installable", width=120, anchor="center")
+
+        # tag 样式: 当前版本 + 不可安装
+        tree.tag_configure("current", foreground="#16a34a")   # 绿色 = 当前
+        tree.tag_configure("disabled", foreground="#999999")  # 灰色 = 不可安装
+
         tree_scrollbar = ttk.Scrollbar(body, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=tree_scrollbar.set)
         tree.pack(side="left", fill="both", expand=True)
         tree_scrollbar.pack(side="right", fill="y")
 
-        selected_items = {}
-        for index, item in enumerate(candidates):
-            installable_text = "是" if item["installable"] else "否(未发布到npm)"
-            tree.insert("", "end", iid=str(index), text=item["version"],
+        selected_items = {}   # iid -> candidate dict
+        iid_counter = [0]
+
+        def add_item(parent_iid, item, row_tags):
+            iid = str(iid_counter[0])
+            iid_counter[0] += 1
+            version_text = item["version"]
+            if item["is_current"]:
+                version_text += "  (当前)"
+            installable_text = "✓ 可安装" if item["installable"] else "✗ 未发布到npm"
+            tree.insert(parent_iid, "end", iid=iid, text=version_text,
                         values=(item["tag_label"], item["published_at"],
-                                installable_text))
-            selected_items[str(index)] = item
+                                installable_text),
+                        tags=row_tags)
+            selected_items[iid] = item
+            return iid
+
+        # 按通道顺序插入分组 + 子项
+        for channel_key in ("stable", "prerelease", "history"):
+            if channel_key not in groups:
+                continue
+            title, desc = channel_info[channel_key]
+            # 通道父节点 (不可选中)
+            parent_iid = str(iid_counter[0])
+            iid_counter[0] += 1
+            tree.insert("", "end", iid=parent_iid, text=title,
+                        values=(desc, "", ""), open=True)
+            # 每个版本子节点
+            for item in groups[channel_key]:
+                row_tags = []
+                if item["is_current"]:
+                    row_tags.append("current")
+                if not item["installable"]:
+                    row_tags.append("disabled")
+                add_item(parent_iid, item, tuple(row_tags))
 
         def get_selected():
             selection = tree.selection()
             if not selection:
-                messagebox.showwarning("发现新版本",
+                messagebox.showwarning("选择版本",
                                        "请先在上方列表中选择一个版本。", parent=dialog)
                 return None
-            return selected_items[selection[0]]
+            iid = selection[0]
+            # 如果选的是通道父节点, 提示选子项
+            if iid not in selected_items:
+                messagebox.showwarning("选择版本",
+                                       "请选择通道下的具体版本, 不要选通道标题。",
+                                       parent=dialog)
+                return None
+            return selected_items[iid]
 
         def on_confirm():
             item = get_selected()
             if item is None:
                 return
+            if item["is_current"]:
+                messagebox.showinfo("选择版本",
+                                    "版本 %s 已是当前已安装版本, 无需更新。"
+                                    % item["version"], parent=dialog)
+                return
             if not item["installable"]:
                 messagebox.showwarning(
-                    "发现新版本",
+                    "选择版本",
                     "版本 %s 尚未发布到 npm, 暂无法自动安装。\n\n"
                     "官方通常只把正式/稳定版本发布到 npm,\n"
-                    "而源码 tag 会提前出现在 GitHub Releases。\n"
-                    "可点下方「打开 GitHub 发布页」查看该版本的源码与发布说明。"
+                    "源码 tag 会提前出现在 GitHub Releases。\n"
+                    "可点「打开 GitHub 发布页」查看源码与发布说明。"
                     % item["version"], parent=dialog)
                 return
             dialog.destroy()
@@ -6493,15 +6599,15 @@ def run_gui():
         footer = ttk.Frame(dialog, padding=12)
         footer.pack(fill="x")
         ttk.Label(footer, justify="left", foreground="#888888", text=(
-            "提示: 「可安装」= 该版本已发布到 npm, 可自动下载安装;\n"
-            "未发布到 npm 的源码 tag 只能查看, 需等官方同步发布后才能安装。")).pack(anchor="w")
+            "提示: 绿色 = 当前版本; 灰色 = 未发布到 npm, 无法自动安装;\n"
+            "可以选择任何版本 (包括更旧的), 用于降级或切换通道。")).pack(anchor="w")
         button_row = ttk.Frame(footer)
         button_row.pack(side="right")
-        ttk.Button(button_row, text="暂不更新", command=lambda: (
-            dialog.destroy(), append_log("用户选择暂不更新"))).pack(side="right")
+        ttk.Button(button_row, text="关闭", command=lambda: (
+            dialog.destroy(), append_log("用户关闭版本选择"))).pack(side="right")
         ttk.Button(button_row, text="打开 GitHub 发布页",
                    command=on_open_github).pack(side="right", padx=6)
-        ttk.Button(button_row, text="确认升级",
+        ttk.Button(button_row, text="安装选中版本",
                    command=on_confirm).pack(side="right", padx=(6, 0))
 
         # 居中于主窗口
