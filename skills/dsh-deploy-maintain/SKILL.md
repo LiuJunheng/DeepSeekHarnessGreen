@@ -109,13 +109,14 @@ updated: "2026-09-02"
 
 - **"装了就永远最新"是错觉**：`prepare_dsh()` 只缺失时安装；同步更新的唯一途径是强制重装。
 
-- **官方 dsh「npm 与 GitHub 不同步」，只查 npm dist-tags 会漏更新**：官方每个版本发 GitHub（tag `dsh-v<ver>`）但不一定同步 npm；源码 tag 无法直接安装（`npm install` 报 ETARGET，release tarball 是 monorepo 源码包也装不成 dsh 包）。检测必须合并两来源：`dsh_github_releases()`（分页拉全部 tag，`_dsh_tag_to_version()` 兼容 `dsh-v`/`v`/裸版本号）+ `dsh_npm_versions()`（npm 全量版本判断某 tag 是否可安装）。合并候选**从新到旧、可安装优先**，GUI 用滚动 Treeview 列出，未同步 npm 的给"打开 GitHub 发布页"。
-
-- **只提示更新的版本**：`_green_version_greater()` 过滤仅比当前新，否则 stable 仍提示覆盖属误报。
-
-- **升级两段式确认 + 更新说明**：点版本先弹二级确认框（当前/目标 + 更新说明），确认才 `update_dsh(target_version)`。更新说明来源 = GitHub Releases（每版本带 changelog，tag `dsh-v<ver>`）；`dsh_version_notes_from_github()` 批量拉 releases?per\_page=30 匹配。**别用** **`npm view readme`——npm readme 是空的**。
-
-- **查询避坑**：`dist-tags --json` 必须拆成独立 argv（`_npm_view` 内 `query.split()`），整串当单参数会用法错误返回 None；npm view 的 registry 要与安装一致。
+- **候选收集与展示**（2026-09-03 v1.0.28 重构）：
+  - **数据源**：`dsh_github_releases()`（分页拉全部 tag，`_dsh_tag_to_version()` 兼容 `dsh-v`/`v`/裸版本号）+ `dsh_npm_versions()`（npm 全量版本判断某 tag 是否可安装）。npm dist-tags 的 latest/next 也作为候选来源。
+  - **不过滤新旧**：旧版有 `_green_version_greater()` 过滤"只保留比当前新的"——反模式，用户可能想降级/切通道/锁旧版，全部过滤会"没版本可选"。**正确做法**：不过滤新旧，只去重。
+  - **版本比较（semver 正确实现）**：`_green_version_tuple()` 返回五元组 `(major, minor, patch, pre_rank, pre_number)`，pre_rank 映射 alpha=0, beta=1, rc=2, 无标记(正式版)=3。**不能**用 `re.split(r"[^\d]+", ...)` 纯拆数字——`alpha.5→(0,1,2,5)` vs `rc.1→(0,1,2,1)` 会误判 rc.1 < alpha.5。详见 DEV\_NOTES 坑列表"版本比较的 semver 陷阱"。
+  - **npm dist-tag 两条独立通道**：latest（稳定正式版）和 next（预发布/rc/alpha）不应该混在一起比"谁更新"。GUI 按通道分组展示：① stable（npm latest）→ ② prerelease（npm next + GitHub prerelease）→ ③ history（GitHub 正式历史版）。每个通道内版本号从新到旧排序。
+  - **当前版本标记**：绿色 + "(当前)" 高亮，让用户清楚自己在哪。灰色标记"未发布到 npm，无法自动安装"。按钮文案「安装选中版本」（可能是降级或切通道），不是「确认升级」。
+  - **设计原则**：版本管理是用户的选择，不是启动器的过滤器。
+  - **查询避坑**：`dist-tags --json` 必须拆成独立 argv（`query.split()`），整串当单参数会用法错误返回 None；npm view 的 registry 要与安装一致。
 
 - `update_dsh(target)` 顺序 = 备份 → **备份成功后才**强制重装目标版本（否则"旧版被覆盖又没装上"丢数据）。备份目录不自动清理，用户手动管理。
 
@@ -165,7 +166,7 @@ updated: "2026-09-02"
 
 - **通道②绿色版外围**：更新根目录 launcher.py/exe/plugins/文档，从双平台 Release 获取（GUI「检查绿色版更新」）。
 
-- **版本追踪**：`GREEN_VERSION` 常量为**唯一来源**；`green_local_version()` 只在用户 `config.json` **显式写了** **`green_version`** **字段**时才覆盖（读原始配置文件，不走合并默认值）。版本号对比按**数字分段**（`_green_version_greater()`，`1.0.10>1.0.9`）。
+- **版本追踪**：`GREEN_VERSION` 常量为**唯一来源**；`green_local_version()` 只在用户 `config.json` **显式写了** **`green_version`** **字段**时才覆盖（读原始配置文件，不走合并默认值）。版本号对比用**正确的 semver 五元组**（`_green_version_tuple()`），见 3.1。
 
   > **坑**：版本默认值**绝不能**写进 `DEFAULT_CONFIG`（曾导致本地恒显示旧版、反复提示更新）。版本相关默认值单点放 GREEN\_VERSION。
 

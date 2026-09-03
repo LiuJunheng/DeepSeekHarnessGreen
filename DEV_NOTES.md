@@ -344,6 +344,36 @@
 
    * **token 安全**：`set GITHUB_TOKEN=xxx` / `set GITEE_TOKEN=xxx`（PowerShell 用 `$env:GITHUB_TOKEN='xxx'`），用完即弃，别写入任何文件或 .env。脚本运行时会自动读取环境变量，不设置 token 则跳过上传。
 
+1. **版本比较的 semver 陷阱 + 更新检查界面重构（2026-09-03，v1.0.28）**：
+
+   * **现象**：用户当前 alpha.5，npm next 通道已有 rc.1 发布，但更新检查日志显示"跳过 0.1.2-rc.1 (当前: 0.1.2-alpha.5)"——rc.1 被判为比 alpha.5 旧。
+
+   * **根因**：`_green_version_tuple()` 原实现用 `re.split(r"[^\d]+", ...)` 把所有非数字当分隔符丢掉语义：`0.1.2-alpha.5 → (0,1,2,5)`，`0.1.2-rc.1 → (0,1,2,1)`，只比数字大小 → rc.1 反而 < alpha.5。**semver 规范里 pre-release 标签有严格优先级：alpha < beta < rc < 无标记(正式版)**，不能纯拆数字。
+
+   * **修复**：重写 `_green_version_tuple()` 为正确的 semver 五元组 `(major, minor, patch, pre_rank, pre_number)`，pre_rank 映射：alpha=0, beta=1, rc=2, 无标记(正式版)=3。Python tuple 比较天然正确。新增 `_VERSION_PRECEDENCE` 常量（alpha/a, beta/b, pre/preview, rc/c）。同时升级 `_green_version_greater()` 调用新 tuple。
+
+   * **反模式：替用户做"跳过更旧版本"的决策**：旧代码在收集候选时只保留 `_green_version_greater(candidate, current)` 为真的版本。这本质是**替用户决策**——用户可能想降级、想从 stable 切到 next、想锁定某个已知稳定的旧版。全部过滤掉了就"没版本可选"。**正确做法**：不过滤新旧，只去重。
+
+   * **npm dist-tag 的两条独立通道**：npm 官方定义了两条独立的版本通道——`latest`（稳定正式版）和 `next`（预发布/rc/alpha）。不应该把两条通道的版本混在一起比"谁更新"。**独立通道、各自最新**才是用户期望：
+     - stable 通道用户看 latest，prerelease 通道用户看 next，互不干扰
+     - 同一大版本号下，rc.1 不一定比 alpha.5 更早发，但它属于不同通道
+
+   * **重构后的 ask_update 展示**：
+     - Treeview 按通道分组：① stable（npm latest）→ ② prerelease（npm next + GitHub prerelease）→ ③ history（GitHub 正式历史版）
+     - 每个通道内版本号从新到旧排序
+     - 标记当前已安装版本（绿色 + "(当前)"）
+     - 灰色标记"未发布到 npm，无法自动安装"
+     - 按钮文案从「确认升级」改为「安装选中版本」（可能是降级或切换通道）
+     - 底部说明："可以选择任何版本（包括更旧的），用于降级或切换通道"
+
+   * **新增字段**：candidate dict 加 `channel`（stable/prerelease/history）+ `is_current`（bool）。
+
+   * **教训**：
+     - 版本比较不能用"纯拆数字"——pre-release 标签有严格优先级，必须按 semver 规范实现
+     - 更新检查不要替用户过滤"旧版本"——降级/切通道/锁旧版都是合法需求
+     - npm dist-tag 的 latest 和 next 是两条独立通道，展示时应该分组、各自选最新
+     - 标记当前已安装版本，让用户清楚自己在哪
+
 ## 六、维护提醒
 
 * 跨机 / 整包覆盖会吞掉本地未提交改动（实测覆盖过）→ 发布前先 `git diff` / `git log` 核对，或先把改动 commit。
