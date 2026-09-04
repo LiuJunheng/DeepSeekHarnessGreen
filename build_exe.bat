@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 setlocal
 title DSH Launcher - Build EXE
 
@@ -27,12 +27,8 @@ echo [INFO] Using Python: %PYTHON_CMD%
 rem 2. Install PyInstaller locally (project-relative, China mirror first)
 set "PYINSTALLER_DIR=%~dp0runtime\pyinstaller"
 if not exist "%PYINSTALLER_DIR%" (
-    echo [INFO] Installing PyInstaller locally under runtime\pyinstaller (multi-mirror fallback) ...
-    echo [INFO] Trying multiple pip mirrors for robustness ...
-    "%PYTHON_CMD%" -m pip install --target "%PYINSTALLER_DIR%" pyinstaller || ^
-    "%PYTHON_CMD%" -m pip install --target "%PYINSTALLER_DIR%" -i https://mirrors.aliyun.com/pypi/simple/ pyinstaller || ^
-    "%PYTHON_CMD%" -m pip install --target "%PYINSTALLER_DIR%" -i https://pypi.tuna.tsinghua.edu.cn/simple pyinstaller || ^
-    "%PYTHON_CMD%" -m pip install --target "%PYINSTALLER_DIR%" -i https://pypi.org/simple/ pyinstaller
+    echo [INFO] Installing PyInstaller locally under runtime\pyinstaller ...
+    "%PYTHON_CMD%" -m pip install --target "%PYINSTALLER_DIR%" pyinstaller
     if errorlevel 1 (
         echo [ERROR] Failed to install PyInstaller. Check your network.
         pause
