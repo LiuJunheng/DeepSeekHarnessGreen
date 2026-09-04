@@ -449,7 +449,97 @@ window.__ModuleLoader__.load({
 				}
 			}
 
-			// ---- 官方 @ 引用插入 (衔接官方 @+文件 机制) ----
+			
+/**
+ * 把 reference mention 程序化插入当前会话输入框 (兼容层 v1).
+ *
+ * DSH 版本适配:
+ *   - 0.1.1-rc.x 旧版: sessions.provideInfo 返回 { hooks.input, props.inputActions },
+ *     手动读 draft/draftRev → setDraft → scope.bail('slash/input-insert-reference')
+ *   - 0.1.2-rc.1 重构版: provideInfo 结构变化或移除 hooks.input/inputActions,
+ *     旧 API 调用失败时降级到 DOM fallback (直接改 textarea.value + 触发 input 事件)。
+ *
+ * 优先级: 旧 DSH API > DOM fallback。
+ *
+ * @param {object} bridge - { provideInfo(id), scope(id) } 会话级通道 (可 null)
+ * @param {string} sessionId - 当前会话 id
+ * @param {string} mention - 如 "@src/main.py" 或 '@"path with spaces/file.txt"'
+ * @param {string} label - 显示用的文件/会话名 (chip 上显示)
+ * @param {string} appearance - "file" | "folder" | "session"
+ * @returns {{ok:boolean, err?:string, method?:string}} method: old-api | dom-fallback | none
+ */
+function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appearance) {
+    appearance = appearance || "file";
+
+    // ---- 路径 A: 旧 DSH API (0.1.1-rc.x) ----
+    if (bridge && typeof bridge.provideInfo === "function") {
+        try {
+            const info = bridge.provideInfo(sessionId);
+            const inputStore = info && info.hooks && info.hooks.input;
+            const actions = info && info.props && info.props.inputActions;
+
+            if (inputStore && typeof inputStore.getSnapshot === "function" && actions) {
+                const snap = inputStore.getSnapshot();
+                if (snap && typeof snap.draft === "string") {
+                    // 追加到草稿末尾, 非空且末尾无空白时补一个空格
+                    let draft = snap.draft;
+                    if (draft !== "" && !/\s$/.test(draft)) {
+                        actions.setDraft(draft + " ");
+                        const snap2 = inputStore.getSnapshot();
+                        draft = snap2.draft;
+                    }
+                    // 派发官方插入事件
+                    let actx = null;
+                    try { actx = typeof bridge.scope === "function" ? bridge.scope(sessionId) : null; } catch (e) { /* noop */ }
+                    if (actx && typeof actx.bail === "function") {
+                        const span = { start: draft.length, end: draft.length, draftRev: snap.draftRev };
+                        const reference = {
+                            source: "reference", ref: mention, label, appearance, clipboardText: mention,
+                        };
+                        const applied = actx.bail(actx, "slash/input-insert-reference", { reference, span });
+                        if (applied === true) {
+                            return { ok: true, method: "old-api" };
+                        }
+                    }
+                }
+            }
+        } catch (e) { /* fallthrough to DOM fallback */ }
+    }
+
+    // ---- 路径 B: DOM fallback (任何 DSH 版本) ----
+    // React 受控组件里必须同时设 value + dispatch('input') 才会触发 onChange handler。
+    try {
+        const ta = document.querySelector("textarea");
+        if (ta) {
+            const cur = ta.value || "";
+            const sep = cur !== "" && !/\s$/.test(cur) ? " " : "";
+            const next = cur + sep + mention;
+            const desc = Object.getOwnPropertyDescriptor(ta.constructor.prototype, "value");
+            if (desc && desc.set) {
+                desc.set.call(ta, next);
+            } else {
+                ta.value = next;
+            }
+            ta.dispatchEvent(new Event("input", { bubbles: true }));
+            ta.dispatchEvent(new Event("change", { bubbles: true }));
+            try { ta.selectionStart = ta.selectionEnd = next.length; } catch (e) { /* noop */ }
+            return { ok: true, method: "dom-fallback" };
+        }
+        const ce = document.querySelector("[contenteditable='true']");
+        if (ce) {
+            const cur = (ce.innerText || ce.textContent || "");
+            const sep = cur !== "" && !/\s$/.test(cur) ? " " : "";
+            ce.innerText = cur + sep + mention;
+            ce.dispatchEvent(new Event("input", { bubbles: true }));
+            return { ok: true, method: "dom-fallback-ce" };
+        }
+        return { ok: false, err: "无法找到输入框 (textarea/contenteditable)", method: "none" };
+    } catch (e) {
+        return { ok: false, err: "DOM fallback 异常: " + String((e && e.message) || e), method: "none" };
+    }
+}
+
+// ---- 官方 @ 引用插入 (衔接官方 @+文件 机制) ----
 			// 把所选文件以"官方引用"形式插入输入框: 1) 换算成相对会话工作目录 (header.cwd)
 			// 的 @"rel/path" mention; 2) 经 standard-kit 的 provideInfo 拿当前输入机状态
 			// (draft/draftRev) 与 inputActions; 3) 向当前会话作用域派发官方事件
@@ -458,79 +548,37 @@ window.__ModuleLoader__.load({
 			// chip, 提交时经 reference source 的 codec 序列化为 mention 文本发给模型。
 			// 仅支持文件 (目录的官方 pick 会留开引号续补全, 不适合一键插入)。
 			async function insertOfficialReference(menuEntry) {
-				const sessionId = typeof props.sessionId === "string" ? props.sessionId : "";
-				// 1) 会话工作目录根: 官方 @ 文件引用以会话 header.cwd 为根 (host /home 优先级第一)。
-				let root = "";
-				try {
-					const res = await fetch(BASE + "/home?sessionId=" + encodeURIComponent(sessionId), {
-						headers: { [GUARD_HEADER]: "1" },
-					});
-					const payload = await res.json().catch(() => null);
-					root = payload && typeof payload.root === "string" ? payload.root : "";
-				} catch (e) { /* 下面统一提示 */ }
-				if (!root) {
-					showNotice("无法获取会话工作目录，官方 @ 引用不可用");
-					return;
+					const sessionId = typeof props.sessionId === "string" ? props.sessionId : "";
+					// 1) 会话工作目录根
+					let root = "";
+					try {
+						const res = await fetch(BASE + "/home?sessionId=" + encodeURIComponent(sessionId), {
+							headers: { [GUARD_HEADER]: "1" },
+						});
+						const payload = await res.json().catch(() => null);
+						root = payload && typeof payload.root === "string" ? payload.root : "";
+					} catch (e) { /* 下面统一提示 */ }
+					if (!root) { showNotice("无法获取会话工作目录，官方 @ 引用不可用"); return; }
+					// 2) 相对路径 + mention
+					const rel = relativePosix(root, menuEntry.path);
+					if (rel === null || rel === "" || rel === ".." || rel.startsWith("../")) {
+						showNotice("文件不在当前会话工作目录内：官方 @ 引用只支持工作目录内的相对路径（仍可用「插入文件路径」插入绝对路径）");
+						return;
+					}
+					const label = rel.slice(rel.lastIndexOf("/") + 1) || rel;
+					const mention = formatMention(rel);
+					// 3) 调统一兼容层 (自动处理新旧 DSH API)
+					const bridge = props.bridge || {};
+					const result = insertReferenceIntoInputCompat(bridge, sessionId, mention, label, "file");
+					if (!result.ok) {
+						showNotice("无法插入输入框: " + (result.err || "未知错误"));
+						return;
+					}
+					if (result.method !== "old-api") {
+						console.info("[dsh-file-browser] 官方 API 不可用, 已降级为 DOM 文本插入 (无 chip): ", result.method);
+					}
+					setMenu(null);
 				}
-				// 2) 相对路径 + mention (官方语法)。
-				const rel = relativePosix(root, menuEntry.path);
-				if (rel === null || rel === "" || rel === ".." || rel.startsWith("../")) {
-					showNotice("文件不在当前会话工作目录内：官方 @ 引用只支持工作目录内的相对路径（仍可用「插入文件路径」插入绝对路径）");
-					return;
-				}
-				const label = rel.slice(rel.lastIndexOf("/") + 1) || rel;
-				const mention = formatMention(rel);
-				// 3) 输入框机器状态与动作通道 (standard-kit 提供: hooks.input = 状态 store,
-				//    props.inputActions; 经 sessions.provideInfo 按会话 id 读取)。
-				const bridge = props.bridge || {};
-				let info = null;
-				try {
-					info = bridge.provideInfo ? bridge.provideInfo(sessionId) : null;
-				} catch (e) { /* fallthrough */ }
-				const inputStore = info && info.hooks && info.hooks.input;
-				const actions = info && info.props && info.props.inputActions;
-				let snap = (inputStore && typeof inputStore.getSnapshot === "function") ? inputStore.getSnapshot() : null;
-				if (!snap || !actions || !inputStore) {
-					showNotice("无法获取输入框状态，官方引用插入不可用（请确认当前会话输入框已就绪）");
-					return;
-				}
-				// 4) 追加到草稿末尾: 非空且末尾无空白时先补一个空格, 避免 @label 与上文粘连
-				//    (官方 pick 替换的是已输入的 @token, 天然有前导分隔; 我们追加需要自己补)。
-				let draft = typeof snap.draft === "string" ? snap.draft : "";
-				if (draft !== "" && !/\s$/.test(draft)) {
-					actions.setDraft(draft + " ");
-					snap = inputStore.getSnapshot(); // setDraft 会推进 draftRev, 重新读取
-				}
-				// 5) 派发官方插入事件 (span 为草稿末尾零宽区间 + draftRev CAS)。
-				let actx = null;
-				try {
-					actx = bridge.scope ? bridge.scope(sessionId) : null;
-				} catch (e) { /* fallthrough */ }
-				if (!actx || typeof actx.bail !== "function") {
-					showNotice("当前会话作用域不可用，官方引用插入失败");
-					return;
-				}
-				const span = { start: snap.draft.length, end: snap.draft.length, draftRev: snap.draftRev };
-				const reference = {
-					source: "reference",
-					ref: mention,
-					label,
-					appearance: "file",
-					clipboardText: mention,
-				};
-				let applied = false;
-				try {
-					applied = actx.bail(actx, "slash/input-insert-reference", { reference, span }) === true;
-				} catch (e) {
-					showNotice("官方引用插入失败：" + String((e && e.message) || e));
-					return;
-				}
-				if (!applied) {
-					showNotice("插入失败：输入框忙碌或状态已变化，请重试");
-					return;
-				}
-				setMenu(null);
-			}
 
 			function buildMenuItems(menuEntry) {
 				const isDir = menuEntry.type === "directory";
