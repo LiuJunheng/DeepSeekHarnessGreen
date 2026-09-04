@@ -120,21 +120,21 @@ GITHUB_OWNER = "LiuJunheng"
 GITHUB_REPO = "DeepSeekHarnessGreen"
 
 # ============================================================
-# Release 描述 — 外部文件读取, 每次发布前必须写 release_notes_{tag}.md.format(tag=tag)
+# Release 描述 — 外部文件读取, 每次发布前必须写 release_notes.md
 # ============================================================
 
 def load_release_notes(root_dir, tag):
     """
-    从根目录 release_notes_{tag}.md.format(tag=tag) 读取发布描述。
+    从根目录 release_notes.md 读取发布描述。
     文件格式约定:
         第 1 行: Release 标题 (支持 {tag} 占位符)
         第 2 行起: Release body (Markdown, 直接用)
     缺失则 exit(1), 强制每次发布前写更新日志。
     """
-    notes_path = os.path.join(root_dir, "release_notes_{tag}.md.format(tag=tag)")
+    notes_path = os.path.join(root_dir, "release_notes_{tag}.md".format(tag=tag))
     if not os.path.isfile(notes_path):
-        print("[ERROR] 缺少 release_notes_{tag}.md.format(tag=tag)!")
-        print("  请在项目根目录创建 release_notes_{tag}.md.format(tag=tag), 格式:")
+        print("[ERROR] 缺少 release_notes_%s!" % tag)
+        print("  请在项目根目录创建 release_notes_%s.md, 格式:" % tag)
         print("    第 1 行: Release 标题 (可用 {tag} 占位)")
         print("    第 2 行起: Markdown 格式的更新说明")
         print("  写完再跑本脚本。")
@@ -146,7 +146,7 @@ def load_release_notes(root_dir, tag):
     title = lines[0].strip() if lines else ""
     body = "\n".join(lines[1:]).lstrip("\n")
     if not title:
-        print("[ERROR] release_notes_{tag}.md.format(tag=tag) 第一行是空的, 需要写 Release 标题")
+        print("[ERROR] release_notes_%s.md 第一行是空的, 需要写 Release 标题" % tag)
         sys.exit(1)
     return title, body
 
