@@ -141,13 +141,10 @@ def load_release_notes(root_dir):
         sys.exit(1)
     with open(notes_path, "r", encoding="utf-8") as f:
         raw = f.read()
-    lines = raw.split("
-")
+    lines = raw.split("\n")
     # 第一行是标题, 后面是 body
     title = lines[0].strip() if lines else ""
-    body = "
-".join(lines[1:]).lstrip("
-")
+    body = "\n".join(lines[1:]).lstrip("\n")
     if not title:
         print("[ERROR] release_notes.md 第一行是空的, 需要写 Release 标题")
         sys.exit(1)
