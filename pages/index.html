@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -16,7 +16,9 @@
     // Language auto-detection:
     // 1) localStorage override (dshe-lang-preference) wins if user previously chose
     // 2) otherwise, check navigator.language / navigator.languages
-    // 3) 'zh' / 'zh-CN' / 'zh-TW' / etc. => /zh/, anything else => /en/
+    // 3) 'zh' / 'zh-CN' / 'zh-TW' / etc. => zh/, anything else => en/
+    // 使用相对路径: file:// 本地打开时能正确跳 pages/zh/,
+    // 同时自动附加当前项目路径 (file:///.../DeepSeekHarnessLauncher/pages/index.html => ./zh/)
     (function() {
       var PREF_KEY = 'dshe-lang-preference';
       var saved = null;
@@ -24,11 +26,11 @@
 
       var target = null;
       if (saved === 'zh' || saved === 'en') {
-        target = '/' + saved + '/';
+        target = './' + saved + '/';
       } else {
         var langs = navigator.languages ? navigator.languages.slice() : [navigator.language || 'en'];
         var isZh = langs.some(function(l) { return l.toLowerCase().indexOf('zh') === 0; });
-        target = isZh ? '/zh/' : '/en/';
+        target = isZh ? './zh/' : './en/';
       }
       // Redirect via replace so this entry page doesn't pollute the history stack.
       window.location.replace(target);

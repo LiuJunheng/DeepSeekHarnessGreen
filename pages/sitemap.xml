@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+﻿<?xml version="1.0" encoding="UTF-8"?>
 <!--
   sitemap.xml: 多语言站点地图
   每个 <url> 条目都带 xhtml:link 互指所有语言变体 (zh / en / x-default),

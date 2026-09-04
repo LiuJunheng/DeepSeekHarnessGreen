@@ -1,4 +1,4 @@
-User-agent: *
+﻿User-agent: *
 Allow: /
 
 # Point crawlers at the multi-language sitemap so Google knows about hreflang relationships
