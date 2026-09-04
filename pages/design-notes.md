@@ -1,7 +1,7 @@
 # DeepSeek Harness Green Pages · 维护记录
 
 > 本文件是 `pages/`（GitHub Pages 发布页）的维护记录，只记对日后维护有复用价值的内容：架构、定稿参数、规范与避坑。不存档设计与开发过程、版本史与时间线。
-> 每次改页面后同步更新本文件，并给 `index.html` 的 `<link>`/`<script>` 加 `?v=x.y` 版本号防缓存。
+> 每次改页面后同步更新本文件，并给所有 HTML 里 `<link>`/`<script>` 加 `?v=x.y` 版本号防缓存（当前 v=3.0）。
 
 ---
 
@@ -33,6 +33,45 @@
 --border:     rgba(100, 180, 255, 0.18);
 --border-glow:rgba(80, 180, 255, 0.45);
 ```
+
+### 多语言架构（2026-09 引入）
+
+采用**目录式单语言页面**结构，每个页面天然单语言（AdSense 爬虫按内容主体决定广告语言）。
+
+```
+pages/
+├── index.html              ← 根入口 (语言检测 + JS 自动跳 /zh/ 或 /en/)
+├── robots.txt              ← 爬虫指引 (指 sitemap)
+├── sitemap.xml             ← 多语言站点地图 (xhtml:link 互指)
+├── assets/                 ← 共享资源 (根入口用 ./, 子页用 ../)
+│   ├── style.css           ← 深空蓝主题 + 玻璃拟态 + 动效 + 广告位 + 语言切换 + legal-page
+│   └── app.js              ← 交互 (导航 + 淡入 + 版本号 + 粒子 + 水纹)
+├── zh/                     ← 纯中文
+│   ├── index.html          ← 主页 (带 hreflang + canonical + 3 个广告位占位)
+│   ├── about.html          ← 关于 (Apache-2.0 + 非官方声明)
+│   └── privacy.html        ← 隐私政策 (不收集数据 + AdSense 预留说明)
+└── en/                     ← 纯英文
+    ├── index.html
+    ├── about.html
+    └── privacy.html
+```
+
+**hreflang 互指铁律（改页必查）：**
+每个页面 `<head>` 必须同时包含以下三条（双向），缺一条 Google 忽略整个 hreflang：
+```html
+<link rel="canonical" href="https://liujunheng.github.io/DeepSeekHarnessGreen/<path>/">
+<link rel="alternate" hreflang="zh" href=".../zh/<path>">
+<link rel="alternate" hreflang="en" href=".../en/<path>">
+<link rel="alternate" hreflang="x-default" href=".../（根入口）">
+```
+`lang` 属性精确：zh 版用 `zh-CN`，en 版用 `en`（不用 `en-US`，覆盖更广）。
+
+**路径修正铁律：**
+- 根入口 `index.html` 用 `./assets/xxx.css`
+- 子页 `zh/index.html` / `en/index.html` 用 `../assets/xxx.css`
+- href 锚点 `#quickstart` 不变；跨页锚点用 `index.html#quickstart`
+
+**语言记忆：** 用户从根入口或导航栏切换语言时，写入 `localStorage.setItem('dshe-lang-preference','zh'|'en')`；下次访问根入口先读这个值。
 
 ---
 
@@ -90,7 +129,7 @@
 - `requestAnimationFrame` 驱动；滚动淡入用 `IntersectionObserver`，显示后立即 `unobserve`
 
 ### 缓存防坑
-- 每次改版同步给 `index.html` 中 `<link>`/`<script>` 加 `?v=x.y` 版本号（当前 v=2.5），否则浏览器/Pages 会加载旧资源造成"改了没生效"的假象
+- 每次改版同步给所有 HTML 中 `<link>`/`<script>` 加 `?v=x.y` 版本号（当前 v=3.0），否则浏览器/Pages 会加载旧资源造成"改了没生效"的假象
 
 ---
 
@@ -105,6 +144,7 @@
 - **改文件必复核**：diff 显示成功 ≠ 真正落盘，出现过"改了没生效"先查磁盘实际值（Grep/Read 复核再交付）。
 - **渐变边框用 `mask + padding` 技巧**（`.terminal::before`），`border-image` 不支持圆角。
 - **移动端**：低端机动画掉帧，隐藏扫描光、粒子按面积降密度、reduced-motion 检查放最前直接跳过。
+- **PowerShell 正则替换 HTML 片段极易破坏标签**：脚本化批量改 HTML 结构风险极高，复杂改动优先用 Edit 工具逐段精确替换，简单批量改（如 `v=2.6→v=3.0`）才适合 PowerShell 字符串替换。
 
 ---
 
@@ -114,19 +154,54 @@
 - 标题与正文直白，不采用趣味包装；装饰性口号也以直接传达价值为先。
 - FAQ 问题口语化、答案保留技术术语。
 - **用户明确偏好优先于规则建议**（曾用三国军帐风格包装被要求完整回退）。
+- **所有翻译文案禁止机翻**：英文文案必须是自然人类写的，机翻痕迹是 AdSense 审核以"低价值内容"拒绝的典型原因。
 
 ---
 
-## 六、文件清单
+## 六、广告位预留（Google AdSense 接入准备）
 
+### Mediapartners-Google 爬虫限制（关键！）
+AdSense 比 Googlebot 基础得多，**看不到 JS 动态渲染/插入的内容**。所有关键 HTML（包括广告位容器）必须是**静态 HTML 源码的一部分**，不能靠 JS 动态注入。
+
+### 广告位位置（共 3 处，主页面）
+| ID | 位置 | 推荐尺寸 | 说明 |
+|----|------|---------|------|
+| `ad-slot-1` | Hero 下方、快速上手上方 | Responsive banner | 内容间横幅 |
+| `ad-slot-2` | Download 区块下方 | Medium rectangle (300×250) | 中等矩形 |
+| `ad-slot-3` | Footer 上方 | Responsive banner | 底部横幅 |
+
+### CSS 容器（已写在 style.css）
+```css
+.ad-slot       { width:100%; max-width:728px; margin:28px auto; min-height:90px; ... }
+.ad-slot-wide  { max-width:728px; }   /* leaderboard 类 */
+.ad-slot-rect  { max-width:336px; }   /* medium rectangle */
 ```
-pages/
-├── index.html              # 页面结构（原始文案 + 七层背景，含 ?v= 缓存参数）
-├── assets/
-│   ├── style.css           # 样式（深空蓝主题 + 玻璃拟态 + 动效）
-│   └── app.js              # 交互（导航 + 淡入 + 版本号 + 粒子 + 水纹）
-└── design-notes.md         # 本文件
+投放后**去掉虚线占位边框**（`.ad-slot` 里的 `border`/`background`）。
+
+### 投放替换流程（审核通过后）
+把 HTML 注释占位替换成 AdSense `<ins>` 代码，**保留外层 `.ad-slot` 容器 + `aria-label`**：
+```html
+<!-- 前: -->
+<div id="ad-slot-1" class="ad-slot ad-slot-wide" aria-label="advertisement">
+  <!-- ADS_PLACEHOLDER_1: Replace with <ins class="adsbygoogle"> code after AdSense approval -->
+</div>
+
+<!-- 后: -->
+<div id="ad-slot-1" class="ad-slot ad-slot-wide" aria-label="advertisement">
+  <ins class="adsbygoogle"
+       style="display:block"
+       data-ad-client="ca-pub-XXXXXXXXXXXXXXXX"
+       data-ad-slot="XXXXXXXXXX"
+       data-ad-format="auto"
+       data-full-width-responsive="true"></ins>
+  <script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
+</div>
 ```
+
+### AdSense 多语言注意点
+- AdSense 爬虫按**页面内容主体语言**决定广告，**不看** `<html lang>` — 每个页面必须真的单语言
+- 中/英文页面广告 RPM 差异大（中文 ≈ 英文的 30-60%），一个域名双语没问题
+- 合规页（About / Privacy Policy）是 AdSense 审核必查项
 
 ---
 
@@ -137,3 +212,5 @@ pages/
 - [ ] Hero 区增加产品截图/动图展示
 - [ ] 下载面板增加文件大小、更新日期等信息
 - [ ] 考虑增加顶部滚动进度条
+- [ ] AdSense 审核通过后替换 3 个广告位占位 + 接入 GA4/Universal Analytics（合规页已有说明）
+- [ ] 欧盟合规：接入 AdSense 后，未来考虑加 GDPR Cookie 同意横幅（当前暂不做，隐私政策已说明）

@@ -1,0 +1,264 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="DeepSeek Harness Desktop Green Portable Launcher — one-click setup, zero-install, self-updating local release and download hub.">
+  <title>DeepSeek Harness Desktop Green Portable Launcher</title>
+  <!-- AdSense multi-language SEO: canonical + full hreflang mutual pointing (self + all variants + x-default) -->
+  <link rel="canonical" href="https://liujunheng.github.io/DeepSeekHarnessGreen/en/">
+  <link rel="alternate" hreflang="zh" href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh/">
+  <link rel="alternate" hreflang="en" href="https://liujunheng.github.io/DeepSeekHarnessGreen/en/">
+  <link rel="alternate" hreflang="x-default" href="https://liujunheng.github.io/DeepSeekHarnessGreen/">
+  <link rel="stylesheet" href="../assets/style.css?v=3.0">
+</head>
+<body>
+
+  <!-- Background layers (bottom-up: deep space blue → aurora glow → grid → particles → water → scan light) -->
+  <div class="bg-gradient" aria-hidden="true"></div>
+  <div class="bg-aurora" aria-hidden="true"></div>
+  <div class="bg-grid" aria-hidden="true"></div>
+  <canvas id="particles-canvas" aria-hidden="true"></canvas>
+  <canvas id="water-background" aria-hidden="true"></canvas>
+  <div class="scan-light" aria-hidden="true"></div>
+
+  <!-- Top navigation -->
+  <header class="nav" id="top">
+    <a class="nav-brand" href="#top">
+      <span class="brand-glyph" aria-hidden="true">◆</span>
+      <span class="brand-text">DeepSeek Harness · Green Portable</span>
+    </a>
+    <nav class="nav-links" aria-label="Page navigation">
+      <a href="#quickstart">Quick Start</a>
+      <a href="#features">Features</a>
+      <a href="#download">Download</a>
+      <a href="#plugins">Plugins</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <div class="lang-switcher nav-lang-switcher" aria-label="Language switch">
+      <a href="../zh/" onclick="try{localStorage.setItem('dshe-lang-preference','zh');}catch(e){}">中文</a>
+      <a href="#" class="active" aria-current="page">English</a>
+    </div>
+  </header>
+
+  <main>
+    <!-- Hero -->
+    <section class="hero" id="top">
+      <div class="hero-badge">
+        <span class="badge-dot" aria-hidden="true"></span>
+        Dual platform release · Gitee / GitHub
+      </div>
+      <h1 class="hero-title">
+        Pack DeepSeek Harness<br>
+        into a <span class="gradient-text">green portable launcher</span>
+      </h1>
+      <p class="hero-sub">
+        Double-click to use — no commands needed. Ships a bundled portable Python / Node
+        environment that never pollutes your system.
+      </p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">
+          Download Windows Green Build</a>
+      </div>
+      <p class="hero-meta">
+        Latest version <span class="version-chip" id="hero-version">see Release</span>
+        · <a class="inline-link" href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">View Release page</a>
+      </p>
+    </section>
+
+    <!-- AdSense slot 1: Hero below / content-wide banner (leaderboard / responsive banner) -->
+    <!-- Replace this entire comment block with AdSense <ins class="adsbygoogle"> code after approval; keep outer .ad-slot container -->
+    <div id="ad-slot-1" class="ad-slot ad-slot-wide" aria-label="advertisement">
+      <!-- ADS_PLACEHOLDER_1 -->
+    </div>
+
+    <!-- Quick Start -->
+    <section class="section" id="quickstart">
+      <h2 class="section-title">Quick Start</h2>
+      <p class="section-sub">Four steps, no terminal, no manual setup</p>
+      <ol class="steps">
+        <li><strong>Extract</strong> the downloaded green zip to any directory.</li>
+        <li>Double-click <code>DSH_Launcher.exe</code> (or <code>start.bat</code>).</li>
+        <li>Click <strong>Install Environment</strong> — auto-downloads portable Node → installs dsh → boots bundled Python (one-time, requires internet).</li>
+        <li>Click <strong>Start Service</strong> → a standalone desktop window opens automatically (toggle back to a regular browser tab anytime).</li>
+      </ol>
+    </section>
+
+    <!-- Features -->
+    <section class="section" id="features">
+      <h2 class="section-title">Core Features</h2>
+      <p class="section-sub">What it does for you, one line each</p>
+      <div class="feature-grid">
+
+        <article class="card">
+          <div class="card-icon">⚡</div>
+          <h3>One-click ready</h3>
+          <p>Run DSH_Launcher.exe or start.bat once, click the install button, and it works every time after.</p>
+        </article>
+
+        <article class="card">
+          <div class="card-icon">🖥️</div>
+          <h3>Standalone desktop window</h3>
+          <p>Opens in a dedicated desktop window by default (embedded WebView2, native-app feel) — toggle back to a browser tab with one click.</p>
+        </article>
+
+        <article class="card">
+          <div class="card-icon">🌱</div>
+          <h3>Fully portable</h3>
+          <p>Node / dsh / cache / sessions all live under <code>runtime/</code> inside the project folder. No home-dir writes, no registry, no system installs.</p>
+        </article>
+
+        <article class="card">
+          <div class="card-icon">📦</div>
+          <h3>10 built-in plugins</h3>
+          <p>Memory library, custom rules, session rewind/import, usage stats, Ollama integration, file browser, and more.</p>
+        </article>
+
+        <article class="card">
+          <div class="card-icon">🔁</div>
+          <h3>Dual-channel self-update</h3>
+          <p>Official core and green-shell update independently. Auto-backup before update, manual download URL on failure.</p>
+        </article>
+
+        <article class="card">
+          <div class="card-icon">🏠</div>
+          <h3>LAN remote access</h3>
+          <p>One-click bind to 0.0.0.0 + auto firewall rule — access the WebUI from your phone or any device on the same network.</p>
+        </article>
+
+      </div>
+    </section>
+
+    <!-- Download -->
+    <section class="section" id="download">
+      <h2 class="section-title">Download</h2>
+      <p class="section-sub">The green zip ships without pre-bundled runtimes (smaller file); the launcher fetches them automatically on first run</p>
+
+      <div class="download-panel">
+        <div class="download-left">
+          <div class="dl-version">
+            <span class="version-chip" id="dl-version">see Release</span>
+          </div>
+          <p class="dl-desc">One green zip containing the launcher, all bundled plugins and docs. Extract, follow the Quick Start above — done.</p>
+          <ul class="dl-points">
+            <li>Fast for China mainland — prefer the Gitee mirror</li>
+            <li>Verify the file after download; some AVs may flag unsigned binaries</li>
+            <li>Extract to any folder — no system directory required</li>
+          </ul>
+        </div>
+        <div class="download-right">
+          <a class="btn btn-primary btn-lg" href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">
+            Download from GitHub</a>
+          <a class="btn btn-ghost btn-lg" href="https://gitee.com/liujunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">
+            From Gitee (CN mirror)</a>
+          <div class="dl-links">
+            <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen" target="_blank" rel="noopener">GitHub repo</a>
+            <a href="https://gitee.com/liujunheng/DeepSeekHarnessGreen" target="_blank" rel="noopener">Gitee repo</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- AdSense slot 2: Below download block (medium rectangle / sidebar ad) -->
+    <div id="ad-slot-2" class="ad-slot ad-slot-rect" aria-label="advertisement">
+      <!-- ADS_PLACEHOLDER_2 -->
+    </div>
+
+    <!-- Built-in Plugins -->
+    <section class="section" id="plugins">
+      <h2 class="section-title">Built-in Plugins</h2>
+      <p class="section-sub">All are pure plugins — no official files modified. Restart the service after installing to take effect</p>
+      <div class="plugin-grid">
+
+        <article class="plugin-card">
+          <h3>Session Rewind</h3>
+          <p>When a conversation gets corrupted by a crashed tool, rewind to a healthy turn and branch a clean continuation.</p>
+        </article>
+        <article class="plugin-card">
+          <h3>Session Import</h3>
+          <p>Import previously exported sessions (ZIP / JSONL) back into your local machine, the inverse of the official export.</p>
+        </article>
+        <article class="plugin-card">
+          <h3>Usage Stats</h3>
+          <p>Per-session usage dashboard + per-message token count and estimated cost.</p>
+        </article>
+        <article class="plugin-card">
+          <h3>File Browser</h3>
+          <p>Browse / preview files inside the WebUI. Right-click to drop an official @reference, a path, or file contents into the chat.</p>
+        </article>
+        <article class="plugin-card">
+          <h3>Archive Purge</h3>
+          <p>View your archived sessions in the WebUI and clean up read-only archive pages.</p>
+        </article>
+        <article class="plugin-card">
+          <h3>Sidebar</h3>
+          <p>Right-hand WebUI sidebar: file manager / preview / browser / terminal / tasks.</p>
+        </article>
+        <article class="plugin-card">
+          <h3>Media Background</h3>
+          <p>Play local-directory videos as the WebUI background (video + audio).</p>
+        </article>
+        <article class="plugin-card">
+          <h3>Ollama Integration</h3>
+          <p>Auto-detects a local Ollama service and wires it in — pick Ollama models directly from the model selector.</p>
+        </article>
+        <article class="plugin-card">
+          <h3>Memory Library</h3>
+          <p>Critical facts from conversations persist in SQLite, automatically recalled and injected into system prompts on future chats.</p>
+        </article>
+        <article class="plugin-card">
+          <h3>Custom Rules</h3>
+          <p>Write a markdown file describing your preferences / code style / communication habits. It is injected into every new conversation's system prompt.</p>
+        </article>
+
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section class="section" id="faq">
+      <h2 class="section-title">FAQ</h2>
+      <div class="faq">
+        <details>
+          <summary>Python not found after download?</summary>
+          <p>Usually the bundled portable Python failed to download (network issue). Manually install Python 3 from python.org and check "Add to PATH" as a fallback, then re-run start.bat.</p>
+        </details>
+        <details>
+          <summary>Node / dsh download is very slow?</summary>
+          <p>Go into Settings inside the launcher and switch the mirror source to "Domestic" or "Official" (Domestic is the default and fastest for China).</p>
+        </details>
+        <details>
+          <summary>Port 3080 is already in use?</summary>
+          <p>Pick a different port in Settings (e.g. 3090), save and restart the service.</p>
+        </details>
+        <details>
+          <summary>WebUI won't open?</summary>
+          <p>Check <code>runtime/server.log</code>. Also confirm your firewall isn't blocking localhost 127.0.0.1.</p>
+        </details>
+        <details>
+          <summary>Green-shell self-update failed?</summary>
+          <p>The updater shows a popup with a manual download URL (GitHub / Gitee release page + direct link). Extract the new zip over the launcher root — <strong>do not overwrite</strong> <code>config.json</code> or the <code>runtime/</code> folder.</p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+    <!-- AdSense slot 3: Footer-top banner (responsive banner) -->
+    <div id="ad-slot-3" class="ad-slot ad-slot-wide" aria-label="advertisement">
+      <!-- ADS_PLACEHOLDER_3 -->
+    </div>
+
+  <footer class="footer">
+    <p>DeepSeek Harness Desktop Green Portable Launcher · <span class="version-chip" id="footer-version">Latest version see Release</span></p>
+    <p>Apache License 2.0 · Copyright (c) 2026 LiuJunheng</p>
+    <p class="footer-note">
+      Independent community project. Not an official DeepSeek product, and not affiliated with, endorsed by, or supported by DeepSeek in any way.
+    </p>
+    <div class="footer-legal">
+      <a href="about.html">About</a> ·
+      <a href="privacy.html">Privacy Policy</a>
+    </div>
+  </footer>
+
+  <script src="../assets/app.js?v=3.0" defer></script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -37,7 +37,7 @@
     </nav>
     <div class="lang-switcher nav-lang-switcher" aria-label="语言切换">
       <a href="#" class="active" aria-current="page">中文</a>
-      <a href="../en/">English</a>
+      <a href="../en/" onclick="try{localStorage.setItem('dshe-lang-preference','en');}catch(e){}">English</a>
     </div>
   </header>
 
@@ -68,6 +68,12 @@
         · <a class="inline-link" href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">查看 Release 页</a>
       </p>
     </section>
+
+    <!-- AdSense 广告位 1: Hero 下方 / 内容间横幅 (leaderboard / responsive banner) -->
+    <!-- 审核通过后将下面整段注释替换为 AdSense <ins class="adsbygoogle"> 代码, 保留外层 .ad-slot 容器 -->
+    <div id="ad-slot-1" class="ad-slot ad-slot-wide" aria-label="advertisement">
+      <!-- ADS_PLACEHOLDER_1: Replace with <ins class="adsbygoogle"> code after AdSense approval -->
+    </div>
 
     <!-- 快速上手 -->
     <section class="section" id="quickstart">
@@ -156,6 +162,11 @@
       </div>
     </section>
 
+    <!-- AdSense 广告位 2: Download 区块下方 (medium rectangle / 侧边栏广告) -->
+    <div id="ad-slot-2" class="ad-slot ad-slot-rect" aria-label="advertisement">
+      <!-- ADS_PLACEHOLDER_2: Replace with <ins class="adsbygoogle"> code after AdSense approval -->
+    </div>
+
     <!-- 内置插件 -->
     <section class="section" id="plugins">
       <h2 class="section-title">内置插件</h2>
@@ -234,14 +245,23 @@
     </section>
   </main>
 
+    <!-- AdSense 广告位 3: Footer 上方横幅 (responsive banner) -->
+    <div id="ad-slot-3" class="ad-slot ad-slot-wide" aria-label="advertisement">
+      <!-- ADS_PLACEHOLDER_3: Replace with <ins class="adsbygoogle"> code after AdSense approval -->
+    </div>
+
   <footer class="footer">
     <p>DeepSeek Harness 桌面绿色整合版启动器 · <span class="version-chip" id="footer-version">最新版本见 Release</span></p>
     <p>Apache License 2.0 · Copyright (c) 2026 LiuJunheng</p>
     <p class="footer-note">
       独立社区项目，非 DeepSeek 官方产品，也不代表 DeepSeek 官方提供支持、认证或安全保证。
     </p>
+    <div class="footer-legal">
+      <a href="about.html">关于</a> ·
+      <a href="privacy.html">隐私政策</a>
+    </div>
   </footer>
 
-  <script src="./assets/app.js?v=2.6" defer></script>
+  <script src="../assets/app.js?v=3.0" defer></script>
 </body>
 </html>

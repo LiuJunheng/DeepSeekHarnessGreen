@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+
+# Point crawlers at the multi-language sitemap so Google knows about hreflang relationships
+# (sitemap.xml carries xhtml:link mutual alternate pointers for every language variant)
+Sitemap: https://liujunheng.github.io/DeepSeekHarnessGreen/sitemap.xml
