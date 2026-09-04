@@ -1,4 +1,4 @@
-// DeepSeek Harness 插件 (客户端): dsh-file-browser
+﻿// DeepSeek Harness 插件 (客户端): dsh-file-browser
 // 在输入框工具行注册「📁 文件」按钮 (conversation.input.left), 在 shell.overlay
 // 注册右侧浮层文件浏览器: 列目录、返回上级、路径跳转、文本/图片预览。
 // 右键文件/目录弹出菜单: 插入路径/内容到输入框、复制路径 (追加进草稿, 用户可编辑后发送)。
@@ -556,17 +556,36 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
                 });
                 const payload = await res.json().catch(() => null);
                 root = payload && typeof payload.root === "string" ? payload.root : "";
-            } catch (e) { /* 下面统一提示 */ }
-            if (!root) { showNotice("无法获取会话工作目录，官方 @ 引用不可用"); return; }
+            } catch (e) { /* below */ }
+            if (!root) { showNotice("Cannot get session cwd, official @ unavailable"); return; }
             const rel = relativePosix(root, menuEntry.path);
             if (rel === null || rel === "" || rel === ".." || rel.startsWith("../")) {
-                showNotice("文件不在当前会话工作目录内：官方 @ 引用只支持工作目录内的相对路径");
+                showNotice("File outside session cwd, official @ only supports relative path");
                 return;
             }
-            const mention = formatMention(rel);
-            // 走 slot useEffect: setPendingInsert → inputActions.setDraft
-            setPendingInsert(mention);
-            showNotice("已插入: " + mention + " (纯文本引用, 提交时与官方 @ 等价)");
+            // DSH 0.1.2-rc.1: sessions.scope(sessionId) -> actx,
+            // actx.bail(actx, "slash/input-insert-reference") -> official chip
+            let actx = null;
+            try { actx = sessions.scope(sessionId); } catch (e) { actx = null; }
+            if (!actx) { showNotice("Cannot get session scope"); return; }
+            const inputState = (typeof window !== "undefined") ? window.__dshInputState : null;
+            const draft = (inputState && typeof inputState.draft === "string") ? inputState.draft : "";
+            const draftRev = (inputState && typeof inputState.draftRev === "number") ? inputState.draftRev : 0;
+            const caret = draft.length;
+            const reference = {
+                kind: "file",
+                name: (menuEntry.path.split(/[\\/]/).pop()) || rel,
+                path: rel,
+            };
+            const span = { start: caret, end: caret, draftRev: draftRev };
+            let ok = false;
+            try { ok = actx.bail(actx, "slash/input-insert-reference", { reference, span }) === true; } catch (e) { ok = false; }
+            if (ok) {
+                showNotice("Inserted official chip: @" + rel);
+            } else {
+                setPendingInsert("@" + rel);
+                showNotice("Inserted as plain text fallback: @" + rel);
+            }
             setMenu(null);
         }
 
@@ -1046,3 +1065,4 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 		return module.exports;
 	},
 });
+

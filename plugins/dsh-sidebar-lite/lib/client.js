@@ -262,27 +262,31 @@ window.__ModuleLoader__.load({
 		 * @returns {Promise<string|null>} 错误信息 (null = 成功)。
 		 */
 		async function insertOfficialReference(bridge, sessionId, cwd, entryPath) {
-            if (!cwd) return "当前会话没有工作目录, 官方 @ 引用不可用";
+            if (!cwd) return "No session cwd, official @ unavailable";
             const rel = relativePosix(cwd, entryPath);
             if (rel === null || rel === "" || rel === ".." || rel.startsWith("../")) {
-                return "文件不在当前会话工作目录内: 官方 @ 引用只支持工作目录内的相对路径";
+                return "File outside session cwd";
             }
-            const mention = formatMention(rel);
-            // 优先读 window 上缓存的 inputActions (由 file-browser 的 input.left slot 写)
-            let applied = false;
-            try {
-                const actions = typeof window !== "undefined" && window.__dshInputActions;
-                const snapshot = typeof window !== "undefined" && window.__dshInputState;
-                if (actions && typeof actions.setDraft === "function") {
-                    const current = snapshot && typeof snapshot.draft === "string" ? snapshot.draft : "";
-                    const sep = current !== "" && !/\\s$/.test(current) ? " " : "";
-                    actions.setDraft(current + sep + mention);
-                    applied = true;
-                }
-            } catch (e) { /* fallthrough */ }
-            if (!applied) {
-                return "无法连接输入框 (未获取到 inputActions)";
-            }
+            // DSH 0.1.2-rc.1: read sessions from window (file-browser slot writes it)
+            let sessionsSvc = null;
+            try { sessionsSvc = (typeof window !== "undefined") ? window.__dshSessions : null; } catch (e) {}
+            let actx = null;
+            try { actx = sessionsSvc ? sessionsSvc.scope(sessionId) : null; } catch (e) { actx = null; }
+            if (!actx) return "Cannot get session scope (file-browser not running?)";
+            let inputState = null;
+            try { inputState = (typeof window !== "undefined") ? window.__dshInputState : null; } catch (e) {}
+            const draft = (inputState && typeof inputState.draft === "string") ? inputState.draft : "";
+            const draftRev = (inputState && typeof inputState.draftRev === "number") ? inputState.draftRev : 0;
+            const caret = draft.length;
+            const reference = {
+                kind: "file",
+                name: (entryPath.split(/[\\/]/).pop()) || rel,
+                path: rel,
+            };
+            const span = { start: caret, end: caret, draftRev: draftRev };
+            let ok = false;
+            try { ok = actx.bail(actx, "slash/input-insert-reference", { reference, span }) === true; } catch (e) { ok = false; }
+            if (!ok) return "Insert failed (draft may have changed)";
             return null;
         }
 
