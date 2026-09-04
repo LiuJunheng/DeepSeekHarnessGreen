@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="UTF-8"?>
 <!--
   sitemap.xml: 多语言站点地图
-  每个 <url> 条目都带 xhtml:link 互指所有语言变体 (zh / en / x-default),
+  每个 <url> 条目都带 xhtml:link 互指所有语言变体 (zh-Hans / zh-Hant / en / x-default),
   与各页面 <head> 里的 hreflang 标签形成双保险, 帮助 Google 正确识别多语言关系。
 -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
@@ -10,8 +10,10 @@
   <!-- Root entry (language picker + auto-redirect) -->
   <url>
     <loc>https://liujunheng.github.io/DeepSeekHarnessGreen/</loc>
-    <xhtml:link rel="alternate" hreflang="zh"
+    <xhtml:link rel="alternate" hreflang="zh-Hans"
                 href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh/"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/"/>
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://liujunheng.github.io/DeepSeekHarnessGreen/en/"/>
     <xhtml:link rel="alternate" hreflang="x-default"
@@ -19,11 +21,13 @@
     <changefreq>weekly</changefreq>
   </url>
 
-  <!-- Chinese (zh-CN) versions -->
+  <!-- Simplified Chinese (zh-Hans) versions -->
   <url>
     <loc>https://liujunheng.github.io/DeepSeekHarnessGreen/zh/</loc>
-    <xhtml:link rel="alternate" hreflang="zh"
+    <xhtml:link rel="alternate" hreflang="zh-Hans"
                 href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh/"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/"/>
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://liujunheng.github.io/DeepSeekHarnessGreen/en/"/>
     <xhtml:link rel="alternate" hreflang="x-default"
@@ -32,8 +36,10 @@
   </url>
   <url>
     <loc>https://liujunheng.github.io/DeepSeekHarnessGreen/zh/about.html</loc>
-    <xhtml:link rel="alternate" hreflang="zh"
+    <xhtml:link rel="alternate" hreflang="zh-Hans"
                 href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh/about.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/about.html"/>
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://liujunheng.github.io/DeepSeekHarnessGreen/en/about.html"/>
     <xhtml:link rel="alternate" hreflang="x-default"
@@ -42,8 +48,48 @@
   </url>
   <url>
     <loc>https://liujunheng.github.io/DeepSeekHarnessGreen/zh/privacy.html</loc>
-    <xhtml:link rel="alternate" hreflang="zh"
+    <xhtml:link rel="alternate" hreflang="zh-Hans"
                 href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="en"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/en/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/"/>
+    <changefreq>monthly</changefreq>
+  </url>
+
+  <!-- Traditional Chinese (zh-Hant) versions -->
+  <url>
+    <loc>https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/</loc>
+    <xhtml:link rel="alternate" hreflang="zh-Hans"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh/"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/"/>
+    <xhtml:link rel="alternate" hreflang="en"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/en/"/>
+    <xhtml:link rel="alternate" hreflang="x-default"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/"/>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/about.html</loc>
+    <xhtml:link rel="alternate" hreflang="zh-Hans"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh/about.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/about.html"/>
+    <xhtml:link rel="alternate" hreflang="en"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/en/about.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/"/>
+    <changefreq>monthly</changefreq>
+  </url>
+  <url>
+    <loc>https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/privacy.html</loc>
+    <xhtml:link rel="alternate" hreflang="zh-Hans"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/privacy.html"/>
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://liujunheng.github.io/DeepSeekHarnessGreen/en/privacy.html"/>
     <xhtml:link rel="alternate" hreflang="x-default"
@@ -54,8 +100,10 @@
   <!-- English versions -->
   <url>
     <loc>https://liujunheng.github.io/DeepSeekHarnessGreen/en/</loc>
-    <xhtml:link rel="alternate" hreflang="zh"
+    <xhtml:link rel="alternate" hreflang="zh-Hans"
                 href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh/"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/"/>
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://liujunheng.github.io/DeepSeekHarnessGreen/en/"/>
     <xhtml:link rel="alternate" hreflang="x-default"
@@ -64,8 +112,10 @@
   </url>
   <url>
     <loc>https://liujunheng.github.io/DeepSeekHarnessGreen/en/about.html</loc>
-    <xhtml:link rel="alternate" hreflang="zh"
+    <xhtml:link rel="alternate" hreflang="zh-Hans"
                 href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh/about.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/about.html"/>
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://liujunheng.github.io/DeepSeekHarnessGreen/en/about.html"/>
     <xhtml:link rel="alternate" hreflang="x-default"
@@ -74,8 +124,10 @@
   </url>
   <url>
     <loc>https://liujunheng.github.io/DeepSeekHarnessGreen/en/privacy.html</loc>
-    <xhtml:link rel="alternate" hreflang="zh"
+    <xhtml:link rel="alternate" hreflang="zh-Hans"
                 href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant"
+                href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/privacy.html"/>
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://liujunheng.github.io/DeepSeekHarnessGreen/en/privacy.html"/>
     <xhtml:link rel="alternate" hreflang="x-default"

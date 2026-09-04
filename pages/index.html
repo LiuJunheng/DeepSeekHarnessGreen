@@ -6,31 +6,56 @@
   <meta name="description" content="DeepSeek Harness 桌面绿色整合版启动器 - 请选择语言 / DeepSeek Harness Desktop Green Portable Launcher - Choose your language">
   <!-- AdSense multi-language SEO: root entry point, points to both zh/en variants + x-default self -->
   <link rel="canonical" href="https://liujunheng.github.io/DeepSeekHarnessGreen/">
-  <link rel="alternate" hreflang="zh" href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh/">
+  <link rel="alternate" hreflang="zh-Hans" href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh/">
+  <link rel="alternate" hreflang="zh-Hant" href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/">
   <link rel="alternate" hreflang="en" href="https://liujunheng.github.io/DeepSeekHarnessGreen/en/">
   <link rel="alternate" hreflang="x-default" href="https://liujunheng.github.io/DeepSeekHarnessGreen/">
   <title>DeepSeek Harness · 选择语言 / Choose Language</title>
   <link rel="stylesheet" href="./assets/style.css?v=3.0">
   <!-- Short TTL meta refresh as fallback before JS kicks in (user can still click buttons) -->
   <script>
-    // Language auto-detection:
-    // 1) localStorage override (dshe-lang-preference) wins if user previously chose
-    // 2) otherwise, check navigator.language / navigator.languages
-    // 3) 'zh' / 'zh-CN' / 'zh-TW' / etc. => zh/, anything else => en/
-    // 使用相对路径: file:// 本地打开时能正确跳 pages/zh/,
-    // 同时自动附加当前项目路径 (file:///.../DeepSeekHarnessLauncher/pages/index.html => ./zh/)
+    // Language auto-detection (三语: 简体 zh/ 繁体 zh-Hant/ 英文 en/):
+    // 1) localStorage override (dshe-lang-preference = zh / zh-Hant / en) 优先
+    //    兼容旧值 zh-Hans / zh-TW 等 —— 映射到三值
+    // 2) 否则检测 navigator.language / navigator.languages:
+    //    zh-TW / zh-HK / zh-MO / zh-hant* => 繁体 zh-Hant/
+    //    zh-CN / zh-SG / zh* => 简体 zh/
+    //    其他 => en/
+    // 使用相对路径 ./xx/ —— file:// 本地 / 线上 Pages 均正确
     (function() {
       var PREF_KEY = 'dshe-lang-preference';
       var saved = null;
       try { saved = localStorage.getItem(PREF_KEY); } catch (e) { /* no-op */ }
 
+      // 统一映射: 旧值 zh-Hans / zh / zh-CN 全部到 'zh' (简体)
+      var NORMALIZE = {
+        'zh-Hans': 'zh',   // 旧精确标签 → 简体目录
+        'zh-TW':   'zh-Hant',
+        'zh-HK':   'zh-Hant',
+        'zh-MO':   'zh-Hant',
+        'zh-Hant': 'zh-Hant',
+      };
+
       var target = null;
-      if (saved === 'zh' || saved === 'en') {
-        target = './' + saved + '/';
-      } else {
+      if (saved) {
+        var norm = NORMALIZE[saved] || saved;
+        if (norm === 'zh' || norm === 'zh-Hant' || norm === 'en') {
+          target = './' + norm + '/';
+        }
+      }
+      if (!target) {
         var langs = navigator.languages ? navigator.languages.slice() : [navigator.language || 'en'];
-        var isZh = langs.some(function(l) { return l.toLowerCase().indexOf('zh') === 0; });
-        target = isZh ? './zh/' : './en/';
+        var normLangs = langs.map(function(l) { return l.toLowerCase(); });
+        var isTraditional = normLangs.some(function(l) {
+          return l === 'zh-tw' || l === 'zh-hk' || l === 'zh-mo' || l.indexOf('zh-hant') === 0;
+        });
+        if (isTraditional) {
+          target = './zh-Hant/';
+        } else if (normLangs.some(function(l) { return l.indexOf('zh') === 0; })) {
+          target = './zh/';
+        } else {
+          target = './en/';
+        }
       }
       // Redirect via replace so this entry page doesn't pollute the history stack.
       window.location.replace(target);
@@ -59,6 +84,8 @@
     <div style="display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 24px;">
       <a href="./zh/" class="btn btn-primary" style="min-width: 160px; text-align: center;"
          onclick="try{localStorage.setItem('dshe-lang-preference','zh');}catch(e){}">中文（简体）</a>
+      <a href="./zh-Hant/" class="btn btn-primary" style="min-width: 160px; text-align: center;"
+         onclick="try{localStorage.setItem('dshe-lang-preference','zh-Hant');}catch(e){}">中文（繁體）</a>
       <a href="./en/"  class="btn btn-primary" style="min-width: 160px; text-align: center;"
          onclick="try{localStorage.setItem('dshe-lang-preference','en');}catch(e){}">English</a>
     </div>

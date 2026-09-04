@@ -1,0 +1,269 @@
+﻿<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="DeepSeek Harness 桌面綠色整合版啓動器——雙擊即用、綠色便攜、可持續更新的本地發佈與下載入口。">
+  <title>DeepSeek Harness 桌面綠色整合版啓動器</title>
+  <!-- AdSense 多语言 SEO: 每个页面必须有 canonical + 完整 hreflang 互指 (self + 所有变体 + x-default) -->
+  <link rel="canonical" href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/">
+  <link rel="alternate" hreflang="zh-Hans" href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh/">
+  <link rel="alternate" hreflang="zh-Hant" href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/">
+  <link rel="alternate" hreflang="en" href="https://liujunheng.github.io/DeepSeekHarnessGreen/en/">
+  <link rel="alternate" hreflang="x-default" href="https://liujunheng.github.io/DeepSeekHarnessGreen/">
+  <link rel="stylesheet" href="../assets/style.css?v=3.0">
+</head>
+<body>
+
+  <!-- 背景层（从下到上：深空蓝渐变 → 极光光晕 → 网格 → 粒子 → 水纹 → 扫描光） -->
+  <div class="bg-gradient" aria-hidden="true"></div>
+  <div class="bg-aurora" aria-hidden="true"></div>
+  <div class="bg-grid" aria-hidden="true"></div>
+  <canvas id="particles-canvas" aria-hidden="true"></canvas>
+  <canvas id="water-background" aria-hidden="true"></canvas>
+  <div class="scan-light" aria-hidden="true"></div>
+
+  <!-- 顶部导航 -->
+  <header class="nav" id="top">
+    <a class="nav-brand" href="#top">
+      <span class="brand-glyph" aria-hidden="true">◆</span>
+      <span class="brand-text">DeepSeek Harness · 綠色整合版</span>
+    </a>
+    <nav class="nav-links" aria-label="页面导航">
+      <a href="#quickstart">快速上手</a>
+      <a href="#features">特性</a>
+      <a href="#download">下載</a>
+      <a href="#plugins">內置插件</a>
+      <a href="#faq">常見問題</a>
+    </nav>
+    <div class="lang-switcher nav-lang-switcher" aria-label="語言切換">
+      <a href="../zh/" onclick="try{localStorage.setItem('dshe-lang-preference','zh');}catch(e){}">简体中文</a>
+      <a href="#" class="active" aria-current="page">繁體中文</a>
+      <a href="../en/" onclick="try{localStorage.setItem('dshe-lang-preference','en');}catch(e){}">English</a>
+    </div>
+  </header>
+
+  <main>
+    <!-- Hero -->
+    <section class="hero" id="top">
+      <div class="hero-badge">
+        <span class="badge-dot" aria-hidden="true"></span>
+        雙平臺發佈 · Gitee / GitHub
+      </div>
+      <h1 class="hero-title">
+        把 DeepSeek Harness<br>
+        裝進一個<span class="gradient-text">綠色便攜啓動器</span>
+      </h1>
+      <p class="hero-sub">
+        雙擊即用，無需命令，內置便攜 Python / Node 環境，不污染電腦。
+        整包拷走就能用，環境與會話數據全部收在本目錄，一鍵獲取官方 DSH 自動更新。
+      </p>
+
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="https://gitee.com/liujunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">
+          下載 Windows 綠色版（國內）</a>
+        <a class="btn btn-ghost" href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">
+          從 GitHub 下載</a>
+      </div>
+      <p class="hero-meta">
+        最新版本 <span class="version-chip" id="hero-version">見 Release</span>
+        · <a class="inline-link" href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">查看 Release 頁</a>
+      </p>
+    </section>
+
+    <!-- AdSense 广告位 1: Hero 下方 / 内容间横幅 (leaderboard / responsive banner) -->
+    <!-- 审核通过后将下面整段注释替换为 AdSense <ins class="adsbygoogle"> 代碼, 保留外層 .ad-slot 容器 -->
+    <div id="ad-slot-1" class="ad-slot ad-slot-wide" aria-label="advertisement">
+      <!-- ADS_PLACEHOLDER_1: Replace with <ins class="adsbygoogle"> code after AdSense approval -->
+    </div>
+
+    <!-- 快速上手 -->
+    <section class="section" id="quickstart">
+      <h2 class="section-title">快速上手</h2>
+      <ol class="steps">
+        <li><strong>解壓</strong>下載的綠色 zip 到任意目錄。</li>
+        <li>雙擊 <code>DSH_Launcher.exe</code>（或 <code>start.bat</code>）。</li>
+        <li>點【安裝環境】：自動下載便攜 Node → 安裝 dsh → 補齊內置 Python（首次需要聯網）。</li>
+        <li>點【啓動服務】→ 自動打開獨立桌面窗口（也可切到網頁窗口）。</li>
+        <li>在網頁裏設置 → 模型 → 填入 <strong>DeepSeek API Key</strong>，並選擇工作區，即可開始。</li>
+      </ol>
+    </section>
+
+    <!-- 特性 -->
+    <section class="section" id="features">
+      <h2 class="section-title">核心特性</h2>
+      <p class="section-sub">一句話看懂它能替你做什麼</p>
+      <div class="feature-grid">
+
+        <article class="card">
+          <div class="card-icon">⚡</div>
+          <h3>雙擊即用</h3>
+          <p>用 DSH_Launcher.exe 或 start.bat，首次點「安裝環境」即自動就緒，之後雙擊即啓動。</p>
+        </article>
+
+        <article class="card">
+          <div class="card-icon">🖥️</div>
+          <h3>獨立桌面窗口</h3>
+          <p>默認以獨立桌面窗口打開（內嵌 WebView2，像原生桌面 App），也可一鍵切回原始網頁。</p>
+        </article>
+
+        <article class="card">
+          <div class="card-icon">🌱</div>
+          <h3>綠色便攜</h3>
+          <p>Node / dsh / 緩存 / 會話全在本目錄 runtime/，不寫主目錄、不裝系統、不寫註冊表。</p>
+        </article>
+
+        <article class="card">
+          <div class="card-icon">📦</div>
+          <h3>內置多款實用插件</h3>
+          <p>祖宗記憶庫 / 用戶規則注入 / 會話回退導入 / 用量統計 / Ollama 接入 / 文件瀏覽 等 10 款。</p>
+        </article>
+
+        <article class="card">
+          <div class="card-icon">🔁</div>
+          <h3>雙通道獨立自更新</h3>
+          <p>官方核心與綠色版外圍各查各的、互不干擾；更新前自動備份，失敗給出手動地址。</p>
+        </article>
+
+        <article class="card">
+          <div class="card-icon">🏠</div>
+          <h3>局域網遠程訪問</h3>
+          <p>一鍵綁定 0.0.0.0 並自動放行防火牆，手機 / 其它電腦直接打開 WebUI。</p>
+        </article>
+
+      </div>
+    </section>
+
+    <!-- 下载 -->
+    <section class="section" id="download">
+      <h2 class="section-title">下載</h2>
+      <p class="section-sub">綠色 zip 不帶預裝環境，體積小；新機聯網後由啓動器自動補齊運行環境</p>
+
+      <div class="download-panel">
+        <div class="download-left">
+          <div class="dl-version">
+            <span class="version-chip" id="dl-version">見 Release</span>
+          </div>
+          <p class="dl-desc">僅一個綠色 zip，內含啓動器、內置插件與文檔；解壓即可按「快速上手」三步使用。</p>
+          <ul class="dl-points">
+            <li>國內訪問快，建議選 Gitee 通道</li>
+            <li>下載後請覈對文件、注意安全軟件提示</li>
+            <li>解壓到任意路徑即可，無需安裝到系統目錄</li>
+          </ul>
+        </div>
+        <div class="download-right">
+          <a class="btn btn-primary btn-lg" href="https://gitee.com/liujunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">
+            Gitee 下載（推薦）</a>
+          <a class="btn btn-ghost btn-lg" href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">
+            GitHub 下載</a>
+          <div class="dl-links">
+            <a href="https://gitee.com/liujunheng/DeepSeekHarnessGreen" target="_blank" rel="noopener">Gitee 倉庫</a>
+            <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen" target="_blank" rel="noopener">GitHub 倉庫</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- AdSense 广告位 2: Download 区块下方 (medium rectangle / 侧边栏广告) -->
+    <div id="ad-slot-2" class="ad-slot ad-slot-rect" aria-label="advertisement">
+      <!-- ADS_PLACEHOLDER_2: Replace with <ins class="adsbygoogle"> code after AdSense approval -->
+    </div>
+
+    <!-- 内置插件 -->
+    <section class="section" id="plugins">
+      <h2 class="section-title">內置插件</h2>
+      <p class="section-sub">全部爲純插件，不修改官方文件；安裝後重啓服務生效</p>
+      <div class="plugin-grid">
+
+        <article class="plugin-card">
+          <h3>會話回退</h3>
+          <p>會話被工具崩潰“毒化”時，一鍵回退到某可行回合，派生乾淨續聊。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>會話導入</h3>
+          <p>把導出的會話 ZIP / JSONL 導回本機，與官方導出互逆。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>用量統計</h3>
+          <p>用量統計 + 每條消息的「本次 token / 預估費用」。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>文件瀏覽</h3>
+          <p>WebUI 內文件瀏覽 / 預覽 / 右鍵把官方 @引用、路徑或內容塞進對話。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>清理歸檔</h3>
+          <p>WebUI 查看已歸檔會話，清理歸檔只讀頁。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>側邊欄</h3>
+          <p>WebUI 右側邊欄：文件管理 / 預覽 / 瀏覽器 / 終端 / 任務。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>背景影畫</h3>
+          <p>本地目錄視頻作爲 WebUI 背景播放（畫面 + 聲音）。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>Ollama 接入</h3>
+          <p>自動識別本機 Ollama 服務並接入，模型選擇器直接選 Ollama 模型對話。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>祖宗記憶庫</h3>
+          <p>對話關鍵信息沉澱到 SQLite，下次自動召回注入 system prompt，跨會話保持記憶。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>用戶規則注入</h3>
+          <p>編寫個人偏好 / 代碼風格 / 溝通要求的 markdown，每次對話自動注入 system prompt。</p>
+        </article>
+
+      </div>
+    </section>
+
+    <!-- 常见问题 -->
+    <section class="section" id="faq">
+      <h2 class="section-title">常見問題</h2>
+      <div class="faq">
+        <details>
+          <summary>提示找不到 Python？</summary>
+          <p>多爲內置便攜 Python 下載失敗（網絡問題）。按 start.bat 提示手動安裝 Python 3 並勾選 “Add to PATH” 兜底。</p>
+        </details>
+        <details>
+          <summary>下載 Node / 安裝 dsh 慢？</summary>
+          <p>在界面設置把鏡像源切到「國內」或「官方」再試（默認已是國內優先）。</p>
+        </details>
+        <details>
+          <summary>端口被佔用？</summary>
+          <p>設置裏改端口（如 3090）後保存重啓服務。</p>
+        </details>
+        <details>
+          <summary>網頁打不開？</summary>
+          <p>查看 runtime/server.log；確認防火牆沒攔 127.0.0.1。</p>
+        </details>
+        <details>
+          <summary>綠色版更新失敗？</summary>
+          <p>更新程序會彈窗給出手動下載地址（GitHub / Gitee 發佈頁 + 直鏈），解壓後覆蓋到程序根目錄—注意不要覆蓋 config.json 與 runtime/。</p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+    <!-- AdSense 广告位 3: Footer 上方横幅 (responsive banner) -->
+    <div id="ad-slot-3" class="ad-slot ad-slot-wide" aria-label="advertisement">
+      <!-- ADS_PLACEHOLDER_3: Replace with <ins class="adsbygoogle"> code after AdSense approval -->
+    </div>
+
+  <footer class="footer">
+    <p>DeepSeek Harness 桌面綠色整合版啓動器 · <span class="version-chip" id="footer-version">最新版本見 Release</span></p>
+    <p>Apache License 2.0 · Copyright (c) 2026 LiuJunheng</p>
+    <p class="footer-note">
+      獨立社區項目，非 DeepSeek 官方產品，也不代表 DeepSeek 官方提供支持、認證或安全保證。
+    </p>
+    <div class="footer-legal">
+      <a href="about.html">關於</a> ·
+      <a href="privacy.html">隱私政策</a>
+    </div>
+  </footer>
+
+  <script src="../assets/app.js?v=3.0" defer></script>
+</body>
+</html>
