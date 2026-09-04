@@ -120,25 +120,44 @@ GITHUB_OWNER = "LiuJunheng"
 GITHUB_REPO = "DeepSeekHarnessGreen"
 
 # Release 描述 (每次发布按需修改)
-RELEASE_TITLE = "{tag} — 插件 WebUI 主题适配 + 祖宗记忆库双开关"
+RELEASE_TITLE = "{tag} — DSH 0.1.2-rc.1 全量适配（会话标题 + 回合数据 + @引用 + inject 补全）"
 RELEASE_NOTES = """## 核心更新
 
-### 🎨 插件 WebUI 主题适配
-- **dsh-memory**: 全量替换硬编码紫色 → DSH CSS 变量, 深浅主题自动切换
-- **dsh-usage-stats**: 17 处硬编码颜色 → CSS 变量, 深浅主题自动切换
-- **同色系糊片修复**: badge/tags 仅保留文字色, 按钮用深彩底+白字
+DSH 升级到 **0.1.2-rc.1** 后，底层 session 存储结构、API 行为、ESM 约束都变了，本次是全量适配。
 
-### 🧠 dsh-memory — 祖宗记忆库双开关
-- **autoRemember** (自动记录) + **autoRecall** (自动注入), 各自独立关闭
-- 默认全部关闭, 省 token
+### 🐛 会话标题获取 — 三级 fallback
+- projcache 从单文件 `session_projcache.json` 改成按 session 分文件 `storages/session_projcache/sessions/session-{uuid}.json`
+- 新格式 `record.rows.title.val`，旧格式 `tables.sessions[id].rows.title.val`，都找不到时解压 `session.jsonl.zstd` 找 `session/title` 事件
+- 修复 `entry.id` 已带 `session-` 前缀导致文件名拼错变成 `session-session-xxx`
 
-### 📚 Skill 文档
-- dsh-deploy-maintain SKILL.md 新增 Online 绿色版打包清单 + 颜色对比度铁律
+### 💥 sessionQuery.readSurface 不再返回 turn 事件
+- usage-stats 之前用 `loadSessionFromDshApi()` 调 `sessionQuery.readSurface()` → 只返回 message 类事件，拿不到 turn/start、turn/end、step/start、tool/call 等回合结构
+- 修复：改用 `loadSession(file, "zstd")` 直接解析磁盘 JSONL.zstd，完整事件序列正常
+- `foldEvents()` 回合折叠后 turnCount/turns/messages/models 全部正确
+
+### ❌ ESM 插件里不能写 require()
+- dsh-session-rewind / dsh-usage-stats / dsh-archive-purge 里 `readSessionTitle` 都写了 `require("zlib")` → ESM 环境 `ReferenceError: require is not defined`
+- 被外层 try-catch 吞掉，永远返回 null，**没有任何报错**
+- 修复：删掉 inline require，用顶部 `import zlib from "node:zlib"`
+
+### 📦 inject 依赖声明补全
+- `dsh-session-rewind` / `dsh-archive-purge` 代码里用了 `ctx.sessions`，但 `inject` 数组没声明 `"sessions"` → 启动就报 `cannot get property "sessions" without inject`
+
+### ⌨️ @引用插入 resolveAgentScope fallback
+- dsh-file-browser / dsh-sidebar-lite 的 `sessions.scope()` 在新版 DSH 某些场景返回 undefined
+- 修复：改用 `sessions.resolveAgentScope()`（强制 materialize），再加 DOM `document.execCommand('insertText')` 兜底
+
+### 📚 Skill / DEV_NOTES 全面更新
+- data-directories.md: projcache 新格式 + 三级读取策略 + session- 前缀说明
+- plugin-dev-checklist.md: 排查速查表 +4 行新症状 + DSH 0.1.2-rc.1 会话数据获取约定
+- plugin-skeleton.md: 骨架加 normalizeSessionId + zstd 解压模板
+- DEV_NOTES.md: 新增 8.7-8.10 四节 + 附录「DSH 版本适配 Checklist」
+- SKILL.md / deployment-checklist.md / plugin-guide.md / README_EN.md / archive-purge/README.md: 旧 projcache 引用清理
 
 ## 升级说明
 - 绿色版用户: 启动器「检查绿色版更新」自动拉 Release 附件
 - 手动升级: 下载 zip 覆盖根目录 (跳过 config.json 和 runtime/)
-- 插件改了 package.json 后需重装"""
+- 插件不用重装，直接覆盖即可（纯代码变更，没改 package.json）"""
 
 
 # ============================================================
