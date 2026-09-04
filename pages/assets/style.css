@@ -603,6 +603,96 @@ main, .footer { position: relative; z-index: 5; }
 }
 .footer p { margin: 6px 0; }
 .footer-note { font-size: 13px; color: #6b7fa3; }
+.footer-legal { margin-top: 10px; font-size: 13px; }
+.footer-legal a { color: #8aa8d6; margin: 0 8px; text-decoration: none; }
+.footer-legal a:hover { color: #c5d7f2; text-decoration: underline; }
+
+/* ---- 广告位占位 (AdSense 预留, 静态 HTML 里注释标记后替换) ---- */
+.ad-slot {
+  width: 100%;
+  max-width: 728px;
+  margin: 28px auto;
+  text-align: center;
+  min-height: 90px;
+  /* 占位期边框: 实际投放时去掉, 或 AdSense <ins> 覆盖 */
+  border: 1px dashed rgba(102, 130, 180, 0.25);
+  border-radius: 8px;
+  background: rgba(10, 18, 40, 0.3);
+}
+.ad-slot-wide { max-width: 728px; }   /* leaderboard / responsive banner */
+.ad-slot-rect  { max-width: 336px; }   /* medium rectangle (右侧/侧栏) */
+
+/* ---- 语言切换器 (导航栏右侧或 footer 底部) ---- */
+.lang-switcher {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.lang-switcher a {
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #8aa8d6;
+  text-decoration: none;
+  border: 1px solid transparent;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+.lang-switcher a:hover { color: #c5d7f2; border-color: rgba(138, 168, 214, 0.4); }
+.lang-switcher a.active {
+  color: #e3ecff;
+  border-color: rgba(138, 168, 214, 0.6);
+  background: rgba(138, 168, 214, 0.12);
+}
+/* 导航栏内语言切换: 与 nav-links 视觉对齐 */
+.nav-lang-switcher { margin-left: auto; }
+
+/* ---- 法律/合规内容页 (About / Privacy) ---- */
+.legal-page {
+  max-width: 720px;
+  margin: 60px auto;
+  padding: 0 24px;
+}
+.legal-page h1 {
+  font-size: 30px;
+  font-weight: 700;
+  margin-bottom: 20px;
+  background: linear-gradient(90deg, #6cd5ff, #9a6bf2);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.legal-page h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-top: 32px;
+  margin-bottom: 12px;
+  color: #e3ecff;
+}
+.legal-page p {
+  font-size: 15px;
+  line-height: 1.75;
+  color: #b3c5e0;
+  margin-bottom: 12px;
+}
+.legal-page ul {
+  margin: 10px 0 14px 22px;
+  padding-left: 0;
+  list-style: disc;
+  color: #b3c5e0;
+}
+.legal-page li {
+  font-size: 15px;
+  line-height: 1.75;
+  margin-bottom: 6px;
+}
+.legal-page a { color: #8aa8d6; }
+.legal-page a:hover { color: #c5d7f2; text-decoration: underline; }
+.legal-page .back-link {
+  display: inline-block;
+  margin-top: 24px;
+  font-size: 14px;
+}
 
 /* ---- 淡入动效 ---- */
 .reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.6s ease, transform 0.6s ease; }
