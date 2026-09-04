@@ -262,21 +262,29 @@ window.__ModuleLoader__.load({
 		 * @returns {Promise<string|null>} 错误信息 (null = 成功)。
 		 */
 		async function insertOfficialReference(bridge, sessionId, cwd, entryPath) {
-			if (!bridge || !sessionId) return "当前没有激活会话，官方 @ 引用不可用";
-			if (!cwd) return "当前会话没有工作目录（header.cwd），官方 @ 引用不可用";
-			const rel = relativePosix(cwd, entryPath);
-			if (rel === null || rel === "" || rel === ".." || rel.startsWith("../")) {
-				return "文件不在当前会话工作目录内：官方 @ 引用只支持工作目录内的相对路径（仍可用「复制绝对路径」）";
-			}
-			const label = rel.slice(rel.lastIndexOf("/") + 1) || rel;
-			const mention = formatMention(rel);
-			const result = insertReferenceIntoInputCompat(bridge, sessionId, mention, label, "file");
-			if (!result.ok) return "无法插入输入框: " + (result.err || "未知错误");
-			if (result.method !== "old-api") {
-				console.info("[dsh-sidebar-lite] 官方 API 不可用, 已降级为 DOM 文本插入 (无 chip): ", result.method);
-			}
-			return null;
-		}
+            if (!cwd) return "当前会话没有工作目录, 官方 @ 引用不可用";
+            const rel = relativePosix(cwd, entryPath);
+            if (rel === null || rel === "" || rel === ".." || rel.startsWith("../")) {
+                return "文件不在当前会话工作目录内: 官方 @ 引用只支持工作目录内的相对路径";
+            }
+            const mention = formatMention(rel);
+            // 优先读 window 上缓存的 inputActions (由 file-browser 的 input.left slot 写)
+            let applied = false;
+            try {
+                const actions = typeof window !== "undefined" && window.__dshInputActions;
+                const snapshot = typeof window !== "undefined" && window.__dshInputState;
+                if (actions && typeof actions.setDraft === "function") {
+                    const current = snapshot && typeof snapshot.draft === "string" ? snapshot.draft : "";
+                    const sep = current !== "" && !/\\s$/.test(current) ? " " : "";
+                    actions.setDraft(current + sep + mention);
+                    applied = true;
+                }
+            } catch (e) { /* fallthrough */ }
+            if (!applied) {
+                return "无法连接输入框 (未获取到 inputActions)";
+            }
+            return null;
+        }
 
 		/** 写剪贴板 (优先 navigator.clipboard, 缺省回退到 execCommand 兼容旧内核)。 */
 		function writeClipboard(text) {

@@ -548,37 +548,27 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 			// chip, 提交时经 reference source 的 codec 序列化为 mention 文本发给模型。
 			// 仅支持文件 (目录的官方 pick 会留开引号续补全, 不适合一键插入)。
 			async function insertOfficialReference(menuEntry) {
-					const sessionId = typeof props.sessionId === "string" ? props.sessionId : "";
-					// 1) 会话工作目录根
-					let root = "";
-					try {
-						const res = await fetch(BASE + "/home?sessionId=" + encodeURIComponent(sessionId), {
-							headers: { [GUARD_HEADER]: "1" },
-						});
-						const payload = await res.json().catch(() => null);
-						root = payload && typeof payload.root === "string" ? payload.root : "";
-					} catch (e) { /* 下面统一提示 */ }
-					if (!root) { showNotice("无法获取会话工作目录，官方 @ 引用不可用"); return; }
-					// 2) 相对路径 + mention
-					const rel = relativePosix(root, menuEntry.path);
-					if (rel === null || rel === "" || rel === ".." || rel.startsWith("../")) {
-						showNotice("文件不在当前会话工作目录内：官方 @ 引用只支持工作目录内的相对路径（仍可用「插入文件路径」插入绝对路径）");
-						return;
-					}
-					const label = rel.slice(rel.lastIndexOf("/") + 1) || rel;
-					const mention = formatMention(rel);
-					// 3) 调统一兼容层 (自动处理新旧 DSH API)
-					const bridge = props.bridge || {};
-					const result = insertReferenceIntoInputCompat(bridge, sessionId, mention, label, "file");
-					if (!result.ok) {
-						showNotice("无法插入输入框: " + (result.err || "未知错误"));
-						return;
-					}
-					if (result.method !== "old-api") {
-						console.info("[dsh-file-browser] 官方 API 不可用, 已降级为 DOM 文本插入 (无 chip): ", result.method);
-					}
-					setMenu(null);
-				}
+            const sessionId = typeof props.sessionId === "string" ? props.sessionId : "";
+            let root = "";
+            try {
+                const res = await fetch(BASE + "/home?sessionId=" + encodeURIComponent(sessionId), {
+                    headers: { [GUARD_HEADER]: "1" },
+                });
+                const payload = await res.json().catch(() => null);
+                root = payload && typeof payload.root === "string" ? payload.root : "";
+            } catch (e) { /* 下面统一提示 */ }
+            if (!root) { showNotice("无法获取会话工作目录，官方 @ 引用不可用"); return; }
+            const rel = relativePosix(root, menuEntry.path);
+            if (rel === null || rel === "" || rel === ".." || rel.startsWith("../")) {
+                showNotice("文件不在当前会话工作目录内：官方 @ 引用只支持工作目录内的相对路径");
+                return;
+            }
+            const mention = formatMention(rel);
+            // 走 slot useEffect: setPendingInsert → inputActions.setDraft
+            setPendingInsert(mention);
+            showNotice("已插入: " + mention + " (纯文本引用, 提交时与官方 @ 等价)");
+            setMenu(null);
+        }
 
 			function buildMenuItems(menuEntry) {
 				const isDir = menuEntry.type === "directory";
@@ -975,6 +965,11 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 					// 身份/可用性在不同渲染间可能不稳定, 条件调用会触发
 					// "Rendered more/fewer hooks" 并被错误边界吞掉 (组件不渲染)。
 					const input = ownerProps && ownerProps.input;
+// 把 inputActions 暴露到 window, 给 sidebar-lite 等兄弟插件用 (DSH 0.1.2-rc.1 跨插件桥接)
+                                   if (typeof window !== undefined) {
+                                           window.__dshInputActions = inputActions || null;
+                                           window.__dshInputState = input || null;
+                                   }
 
 					// 消费面板右键菜单排队的插入 (追加到输入框草稿, 不直接发消息)
 					react.useEffect(() => {
