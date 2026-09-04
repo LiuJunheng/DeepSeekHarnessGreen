@@ -119,45 +119,39 @@ GITEE_REPO = "DeepSeekHarnessGreen"
 GITHUB_OWNER = "LiuJunheng"
 GITHUB_REPO = "DeepSeekHarnessGreen"
 
-# Release 描述 (每次发布按需修改)
-RELEASE_TITLE = "{tag} — DSH 0.1.2-rc.1 全量适配（会话标题 + 回合数据 + @引用 + inject 补全）"
-RELEASE_NOTES = """## 核心更新
+# ============================================================
+# Release 描述 — 外部文件读取, 每次发布前必须写 release_notes.md
+# ============================================================
 
-DSH 升级到 **0.1.2-rc.1** 后，底层 session 存储结构、API 行为、ESM 约束都变了，本次是全量适配。
-
-### 🐛 会话标题获取 — 三级 fallback
-- projcache 从单文件 `session_projcache.json` 改成按 session 分文件 `storages/session_projcache/sessions/session-{uuid}.json`
-- 新格式 `record.rows.title.val`，旧格式 `tables.sessions[id].rows.title.val`，都找不到时解压 `session.jsonl.zstd` 找 `session/title` 事件
-- 修复 `entry.id` 已带 `session-` 前缀导致文件名拼错变成 `session-session-xxx`
-
-### 💥 sessionQuery.readSurface 不再返回 turn 事件
-- usage-stats 之前用 `loadSessionFromDshApi()` 调 `sessionQuery.readSurface()` → 只返回 message 类事件，拿不到 turn/start、turn/end、step/start、tool/call 等回合结构
-- 修复：改用 `loadSession(file, "zstd")` 直接解析磁盘 JSONL.zstd，完整事件序列正常
-- `foldEvents()` 回合折叠后 turnCount/turns/messages/models 全部正确
-
-### ❌ ESM 插件里不能写 require()
-- dsh-session-rewind / dsh-usage-stats / dsh-archive-purge 里 `readSessionTitle` 都写了 `require("zlib")` → ESM 环境 `ReferenceError: require is not defined`
-- 被外层 try-catch 吞掉，永远返回 null，**没有任何报错**
-- 修复：删掉 inline require，用顶部 `import zlib from "node:zlib"`
-
-### 📦 inject 依赖声明补全
-- `dsh-session-rewind` / `dsh-archive-purge` 代码里用了 `ctx.sessions`，但 `inject` 数组没声明 `"sessions"` → 启动就报 `cannot get property "sessions" without inject`
-
-### ⌨️ @引用插入 resolveAgentScope fallback
-- dsh-file-browser / dsh-sidebar-lite 的 `sessions.scope()` 在新版 DSH 某些场景返回 undefined
-- 修复：改用 `sessions.resolveAgentScope()`（强制 materialize），再加 DOM `document.execCommand('insertText')` 兜底
-
-### 📚 Skill / DEV_NOTES 全面更新
-- data-directories.md: projcache 新格式 + 三级读取策略 + session- 前缀说明
-- plugin-dev-checklist.md: 排查速查表 +4 行新症状 + DSH 0.1.2-rc.1 会话数据获取约定
-- plugin-skeleton.md: 骨架加 normalizeSessionId + zstd 解压模板
-- DEV_NOTES.md: 新增 8.7-8.10 四节 + 附录「DSH 版本适配 Checklist」
-- SKILL.md / deployment-checklist.md / plugin-guide.md / README_EN.md / archive-purge/README.md: 旧 projcache 引用清理
-
-## 升级说明
-- 绿色版用户: 启动器「检查绿色版更新」自动拉 Release 附件
-- 手动升级: 下载 zip 覆盖根目录 (跳过 config.json 和 runtime/)
-- 插件不用重装，直接覆盖即可（纯代码变更，没改 package.json）"""
+def load_release_notes(root_dir):
+    """
+    从根目录 release_notes.md 读取发布描述。
+    文件格式约定:
+        第 1 行: Release 标题 (支持 {tag} 占位符)
+        第 2 行起: Release body (Markdown, 直接用)
+    缺失则 exit(1), 强制每次发布前写更新日志。
+    """
+    notes_path = os.path.join(root_dir, "release_notes.md")
+    if not os.path.isfile(notes_path):
+        print("[ERROR] 缺少 release_notes.md!")
+        print("  请在项目根目录创建 release_notes.md, 格式:")
+        print("    第 1 行: Release 标题 (可用 {tag} 占位)")
+        print("    第 2 行起: Markdown 格式的更新说明")
+        print("  写完再跑本脚本。")
+        sys.exit(1)
+    with open(notes_path, "r", encoding="utf-8") as f:
+        raw = f.read()
+    lines = raw.split("
+")
+    # 第一行是标题, 后面是 body
+    title = lines[0].strip() if lines else ""
+    body = "
+".join(lines[1:]).lstrip("
+")
+    if not title:
+        print("[ERROR] release_notes.md 第一行是空的, 需要写 Release 标题")
+        sys.exit(1)
+    return title, body
 
 
 # ============================================================
@@ -726,6 +720,10 @@ def main():
     date_str = datetime.datetime.now().strftime("%Y%m%d")
     sync_launcher_version_date(launcher_path, date_str)
 
+    # Step 1.6: 读取 Release 描述 (强制外部文件, 每次发布前必须写)
+    release_title_tmpl, release_notes = load_release_notes(ROOT)
+    release_title = release_title_tmpl.format(tag=tag)
+
     # Step 2: 打包 zip
     zip_path = pack_online_zip(version)
     print("[✓] ZIP 就绪: " + zip_path)
@@ -768,8 +766,8 @@ def main():
             rel = github_create_release(
                 github_token,
                 tag,
-                RELEASE_TITLE.format(tag=tag),
-                RELEASE_NOTES,
+                release_title,
+                release_notes,
             )
         else:
             print("  已有 Release: ID=%s" % rel["id"])
@@ -799,8 +797,8 @@ def main():
             rel = gitee_create_release(
                 gitee_token,
                 tag,
-                RELEASE_TITLE.format(tag=tag),
-                RELEASE_NOTES,
+                release_title,
+                release_notes,
             )
         else:
             print("  已有 Release: ID=%s" % rel["id"])
