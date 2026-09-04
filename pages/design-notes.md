@@ -34,49 +34,64 @@
 --border-glow:rgba(80, 180, 255, 0.45);
 ```
 
-### 多语言架构（2026-09 引入）
+### 多语言架构（2026-09 引入，2026-09-05 扩展为三语）
 
 采用**目录式单语言页面**结构，每个页面天然单语言（AdSense 爬虫按内容主体决定广告语言）。
 
 ```
 pages/
-├── index.html              ← 根入口 (语言检测 + JS 自动跳 /zh/ 或 /en/)
+├── index.html              ← 根入口 (语言检测 + JS 自动跳 /zh/ /zh-Hant/ /en/)
 ├── robots.txt              ← 爬虫指引 (指 sitemap)
-├── sitemap.xml             ← 多语言站点地图 (xhtml:link 互指)
+├── sitemap.xml             ← 多语言站点地图 (xhtml:link 互指所有变体)
 ├── assets/                 ← 共享资源 (根入口用 ./, 子页用 ../)
 │   ├── style.css           ← 深空蓝主题 + 玻璃拟态 + 动效 + 广告位 + 语言切换 + legal-page
 │   └── app.js              ← 交互 (导航 + 淡入 + 版本号 + 粒子 + 水纹)
-├── zh/                     ← 纯中文
+├── zh/                     ← 简体中文 (hreflang="zh-Hans", lang="zh-CN")
 │   ├── index.html          ← 主页 (带 hreflang + canonical + 3 个广告位占位)
 │   ├── about.html          ← 关于 (Apache-2.0 + 非官方声明)
 │   └── privacy.html        ← 隐私政策 (不收集数据 + AdSense 预留说明)
-└── en/                     ← 纯英文
+├── zh-Hant/                ← 繁体中文 (hreflang="zh-Hant", lang="zh-Hant")
+│   ├── index.html          ← 基于 opencc s2t 自动转换 + 人工微调
+│   ├── about.html
+│   └── privacy.html
+└── en/                     ← 英文 (hreflang="en", lang="en")
     ├── index.html
     ├── about.html
     └── privacy.html
 ```
 
 **hreflang 互指铁律（改页必查）：**
-每个页面 `<head>` 必须同时包含以下三条（双向），缺一条 Google 忽略整个 hreflang：
+每个页面 `<head>` 必须同时包含以下四条（双向），缺一条 Google 忽略整个 hreflang：
 
 ```html
-<link rel="canonical" href="https://liujunheng.github.io/DeepSeekHarnessGreen/<path>/">
-<link rel="alternate" hreflang="zh" href=".../zh/<path>">
+<link rel="canonical" href="https://liujunheng.github.io/DeepSeekHarnessGreen/<自己路径>">
+<link rel="alternate" hreflang="zh-Hans" href=".../zh/<path>">
+<link rel="alternate" hreflang="zh-Hant" href=".../zh-Hant/<path>">
 <link rel="alternate" hreflang="en" href=".../en/<path>">
 <link rel="alternate" hreflang="x-default" href=".../（根入口）">
 ```
 
-`lang` 属性精确：zh 版用 `zh-CN`，en 版用 `en`（不用 `en-US`，覆盖更广）。
+`lang` 属性精确：zh 版 `zh-CN`、zh-Hant 版 `zh-Hant`、en 版 `en`（不用 `en-US`，覆盖更广）。hreflang 标签值用精确的 `zh-Hans` / `zh-Hant` 但 URL 路径用短名 `zh/` / `zh-Hant/`，两者独立（Google 接受）。
+
+**浏览器语言检测逻辑：**
+- `zh-TW / zh-HK / zh-MO / zh-hant*` → 繁体 `./zh-Hant/`
+- `zh-CN / zh-SG / zh*` → 简体 `./zh/`
+- 其他 → `./en/`
+- localStorage 优先，兼容旧值映射 `zh-Hans→zh`, `zh-TW/HK/MO→zh-Hant`
+
+**繁体转换工具：** `opencc-python-reimplemented`（pip 装到 `runtime/python/python/lib/site-packages/`），调用 `OpenCC('s2t')`，配合正则保护 HTML tag / CSS / JS / URL 不被转换，只转换可见文本。
 
 **路径修正铁律：**
 
 - 根入口 `index.html` 用 `./assets/xxx.css`
 
-- 子页 `zh/index.html` / `en/index.html` 用 `../assets/xxx.css`
+- 子页 `zh/index.html` / `zh-Hant/index.html` / `en/index.html` 用 `../assets/xxx.css`
 
 - href 锚点 `#quickstart` 不变；跨页锚点用 `index.html#quickstart`
 
-**语言记忆：** 用户从根入口或导航栏切换语言时，写入 `localStorage.setItem('dshe-lang-preference','zh'|'en')`；下次访问根入口先读这个值。
+- **所有 JS 跳转路径必须是相对路径** `./zh/` `./zh-Hant/` —— 绝对路径 `/zh/` 在 `file://` 下跳到磁盘根、线上跳到错误子域
+
+**语言记忆：** 用户从根入口或导航栏切换语言时，写入 `localStorage.setItem('dshe-lang-preference','zh'|'zh-Hant'|'en')`；下次访问根入口先读这个值。
 
 ***
 
