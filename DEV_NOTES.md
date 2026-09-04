@@ -724,3 +724,129 @@ return next();  // 必须继续传下去
 #### 8.6 config.json dsh\_host 改 127.0.0.1
 
 之前 dsh\_host 一直是 �.0.0.0 (允许局域网访问), 这次会话里改成了 127.0.0.1 (仅本地). 原因: 官方新版 dsh 自带 PRIVILEGED\_METHODS 安全保护, 回环地址外的改配置请求 403。绿色版默认更安全。
+
+#### 8.7 会话标题 + 对话事件获取 (DSH 0.1.2-rc.1 适配)
+
+**根因**: DSH 0.1.2-rc.1 重构了会话投影缓存 (session_projcache) 的存储格式, 从单文件改成按 session 分文件, 路径和结构都变了。
+
+**旧格式** (已废弃):
+`
+storages/session_projcache.json
+  -> { tables: { sessions: { "{uuid}": { rows: { title: { val: "..." } } } } } }
+`
+
+**新格式** (DSH 0.1.2-rc.1):
+`
+storages/session_projcache/sessions/session-{uuid}.json
+  -> { version: 5, record: { rows: { title: { ver: 1, seq: N, val: "..." } } } }
+`
+
+**注意**: 文件名是 session-{uuid}.json, 不是 {uuid}.json! 少了 session- 前缀会导致 s.existsSync 返回 false。
+
+**readSessionTitle 三级 fallback 链路**:
+1. projcache 分文件 session-{uuid}.json -> 
+ecord.rows.title.val (新格式)
+2. 旧单文件 session_projcache.json -> 	ables.sessions[id].rows.title.val (兼容旧版)
+3. 从 session.jsonl.zstd 解压后找最后一个 session/title 事件的 data.title (终极 fallback, 最可靠)
+
+**对话事件获取 (已验证正常)**:
+- 事件源: DSH_HOME/sessions/{workspace}/session-{uuid}/session.jsonl.zstd
+- 解压: Node 22 内置 zlib.zstdDecompressSync, 多帧文件按 zstd magic  x28b52ffd 切分后逐帧解压再 concat
+- 解码: @deepseek-ai/dsh-session 的 decodeStorageRecord (返回事件数组)
+- 折叠: 遍历事件流, 按 	urn/start/	urn/end 分回合, 统计 ssistant/message 数量和模型
+
+**zstd 多帧切分原理**: session.jsonl.zstd 可能是多个 zstd 帧拼接, 每帧都有自己的 magic number。正确做法: 按  x28b52ffd (小端序 magic) 切分 Buffer, 每段单独 zstdDecompressSync, 再 Buffer.concat。
+
+**改了哪些文件**:
+- plugins/dsh-session-rewind/lib/index.js - readSessionTitle 重写 + session.jsonl fallback
+- plugins/dsh-usage-stats/lib/index.js - readSessionTitle 重写 + session.jsonl fallback
+- plugins/dsh-archive-purge/lib/index.js - readSessionTitle 重写 + session.jsonl fallback (archive-purge 之前就有 zlib 依赖, 直接复用)
+- plugins/dsh-file-browser/lib/client.js - @ 引用插入 fallback (resolveAgentScope + DOM execCommand)
+- plugins/dsh-sidebar-lite/lib/client.js - @ 引用插入 fallback (同上)
+
+**避坑清单**:
+1. projcache 文件名有 session- 前缀, 不要只拼 uuid
+2. zstd 压缩不是 Python zlib 的格式, 要用 Node 22 内置 zlib.zstdDecompressSync
+3. session.jsonl.zstd 是多帧拼接, 不能整文件一次性解压
+4. displayTitle 来自实时 sessions API, 进程重启后新会话可能还没来得及写 projcache, 需要文件 fallback
+5. 空会话 (还没对话的) 不会生成 title 事件, readSessionTitle 返回 null 是正常的
+
+**验证结果**:
+- 有对话的会话: 2/2 成功读到标题 (projection cache + session.jsonl 双验证)
+- 空会话: 正常返回 null (预期行为)
+- 事件解析: 3 个会话全部正确提取 turns/messages/models
+
+#### 8.8 插件 inject 依赖必须声明完整
+
+**错误**: `cannot get property "sessions" without inject`
+
+**原因**: 插件代码里用了 `ctx.sessions` (获取实时会话状态、displayTitle、live 标记), 但 `inject` 数组里没声明 `"sessions"`。DSH 的依赖注入框架严格按 inject 数组懒加载服务, 不声明就是 undefined。
+
+**修复**: 给 dsh-session-rewind 和 dsh-archive-purge 的 inject 补上 `"sessions"`。
+
+**踩坑记录**:
+- 改了代码逻辑加了新的 ctx.xxx 调用, 一定要同步更新 inject 数组
+- 容易漏的: liveSessions(ctx) 函数内部用 ctx.sessions 但看起来像普通函数
+- DSH 插件框架: inject 声明是契约, 不声明 = 运行时注入 undefined, 访问属性直接报错
+
+#### 8.9 ESM 插件里不能用 CommonJS require + sessionId 带前缀
+
+坑 1: 插件是 ESM 模块 (import zlib from "node:zlib"), 函数体内再写 require("zlib") 会抛 ReferenceError: require is not defined.
+外层 try { ... } catch { return null; } 把错误吞掉, readSessionTitle 直接返回 null.
+解决: 删掉所有 inline require, 用顶部已 import 的模块.
+
+坑 2: entry.id 从 DSH 磁盘扫描返回时已经带 session- 前缀:
+  - entry.id = "session-766ef65b-...." (带前缀)
+  - projcache 文件名 = "session-{uuid}.json" (uuid 不带前缀)
+  - session.jsonl.zstd 目录名 = "session-{uuid}"
+
+readSessionTitle 里拼路径时直接 "session-" + sessionId 就变成了 "session-session-xxx", 找不到文件!
+解决: 加 normalizeSessionId() 函数去掉可能存在的 "session-" 前缀.
+
+本次适配 DSH 0.1.2-rc.1 改动总结:
+1. readSessionTitle 三级 fallback: 新版 projcache 分文件 / 旧单文件 / session.jsonl.zstd 事件
+2. inject 数组补全 "sessions" 依赖 (session-rewind, archive-purge)
+3. 删掉所有 inline require("zlib") (ESM 不兼容)
+4. 加 normalizeSessionId() 处理 "session-" 前缀
+5. dsh-file-browser / dsh-sidebar-lite @ 引用插入: resolveAgentScope + DOM fallback
+
+#### 8.10 usage-stats 事件加载: sessionQuery.readSurface 不返回 turn 事件
+
+DSH 0.1.2-rc.1 的 sessionQuery.readSurface() 返回的 events 里不包含 turn/start, turn/end, step/start 等回合结构事件, 只有 message 类事件.
+导致 foldEvents() 里 turn/start case 永远不会触发, turns 数组为空, 前端显示不出回合.
+
+解决: usage-stats 和 session-rewind 一样, 直接用 loadSession() 从磁盘 JSONL.zstd 文件解析.
+文件解析能拿到完整事件序列 (包括 turn/start/end/step/tool/call 等).
+
+注意: loadSessionFromDshApi 函数保留在代码里但不再使用, 未来 DSH 升级可能恢复可用.
+
+## 附录：DSH 版本适配 Checklist（从本次踩坑提炼）
+
+当 DSH 升级后插件出现异常时，按这个顺序排查：
+
+### 第一步：启动即崩 / 报错
+- `invalid plugin, expect function or object with an "apply" method` → 检查导出函数名是不是 `apply`
+- `ERR_MODULE_NOT_FOUND: lib/index.js` → 纯客户端插件缺宿主端 index.js
+- `cannot get property "XXX" without inject` → `inject` 数组缺依赖（加 `"XXX"`）
+- `client-modules declares dsh.client but exports no "./client"` → 纯 hook 插件误写了 `dsh.client` 块
+
+### 第二步：标题 / sessionQuery / 文件读取类错误
+| 症状 | 可能原因 | 快速检查 |
+|------|---------|---------|
+| readSessionTitle 永远返回 null | ESM 里用了 CJS require 被 catch 吞 | Grep `require(` 看宿主端有没有非法 require |
+| 文件名拼错找不到 | sessionId 带 `session-` 前缀重复 | `entry.id` vs `normalizeSessionId(entry.id)` |
+| projcache 文件结构变了 | 单文件改分文件、tables 改 record | 看磁盘上实际 JSON 结构 |
+| session.jsonl.zstd 解压失败 | 多帧文件没切分就整文件解压 | 按 zstd magic 切分 |
+
+### 第三步：事件数据异常
+| 症状 | 可能原因 | 快速检查 |
+|------|---------|---------|
+| turnCount=0 / turns 数组空 | sessionQuery.readSurface 不返回 turn 事件 | 改用 `loadSession()` 直接解文件 |
+| message 数不对 | readSurface 可能丢事件 | 对比文件解析结果 |
+| 标题取最后一个才对 | projcache 还没写入、或写的是中间态 | session.jsonl 事件 fallback 兜底 |
+
+### 第四步：必改的基础设施代码
+1. **读 session 标题**：projcache 新格式 → 旧格式 → session.jsonl.zstd 事件（三级 fallback）
+2. **读完整事件**：直接 `loadSession(file, "zstd")` → `decodeLog(text)` → `decodeStorageRecord`
+3. **读实时 session 状态**：`ctx.sessions`（必须 inject 声明）
+4. **ESM 里绝对不能写 `require()`**：顶部 import 好所有依赖再用

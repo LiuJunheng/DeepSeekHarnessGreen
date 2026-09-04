@@ -17,7 +17,7 @@ DeepSeek Harness 插件：在 **WebUI 设置**里加一个「清理归档」页�
 
 已知取舍：
 - dsh 官方没有「取消归档/删除归档 id」接口，摘除后 `storages/workspace.json` 的 `archivedSessionIds` 里会残留一个不再指向任何会话的 id，纯属隐藏标记，不影响功能。
-- `storages/session_projcache.json`（标题/统计等缓存）的旧行会残留，无害，dsh 会自行覆盖。
+- projcache（标题/统计等缓存）DSH 0.1.2-rc.1+ 是分文件 `storages/session_projcache/sessions/session-{uuid}.json`，旧版是单文件 `session_projcache.json`。残留旧行无害，dsh 会自行覆盖。
 
 ## 安装
 

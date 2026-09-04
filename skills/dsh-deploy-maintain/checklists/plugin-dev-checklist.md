@@ -62,7 +62,7 @@ dsh-rules/
 ### Cordis 导出契约
 
 - [ ] 导出 `{ name, inject, Config?, apply }`（apply 必须）
-- [ ] `inject` 声明所需服务（`webServer` 路由必需；纯 hook 可空 `[]`）
+- [ ] `inject` 声明所需服务（`webServer` 路由必需；**用了 `ctx.sessions` 必须声明 `"sessions"`**；用了 `ctx.sessionQuery` 必须声明 `"sessionQuery"`；纯 hook 可空 `[]`）
 - [ ] `Config` 可选但常用——用 `@deepseek-ai/schemastery` 的 `z.object()` 定义配置 schema，全部字段给默认值
 - [ ] **`apply` 用 async**（纯路由插件也可以 sync；但 hook 插件几乎都要 async）
 
@@ -76,6 +76,14 @@ dsh-rules/
 - [ ] POST 有 `readJsonBody` 解析 + 异常捕获
 - [ ] 写回用 `sendJson(res, 200, { ok: true, ... })` 统一格式
 - [ ] 异常处理 `try/catch` → 返回 500 + 错误信息
+
+### DSH 0.1.2-rc.1 会话数据获取约定
+
+- [ ] **ESM 插件里绝对不能写 `require()`**——`require is not defined` 会被外层 try-catch 吞掉，返回 null/空数组等假正常结果
+- [ ] **`sessionQuery.readSurface()` / `traceSession()` 不返回 turn/step 事件**——只有 message 类事件，拿不到回合结构。需要完整事件序列（turn/start, turn/end, step/start, tool/call 等）时**必须直接解析磁盘 `session.jsonl.zstd` 文件**
+- [ ] **`entry.id` 已经带 `session-` 前缀**——来自 scanSessionFiles 的 `entry.id = "session-766ef65b-..."` 不是纯 UUID。读 projcache、zstd 目录等需要纯 UUID 的地方，先 `normalizeSessionId()` 去掉前缀
+- [ ] **readSessionTitle 三级 fallback**：新版 projcache 分文件 → 旧版单文件 → session.jsonl.zstd 的 `session/title` 事件（最可靠，覆盖所有版本）
+- [ ] **zstd 多帧文件**：`session.jsonl.zstd` 可能是多帧拼接，按 zstd magic `0x28b52ffd` 切分后逐帧解压再 Buffer.concat
 
 ### 持久化 config + enabled 开关（v3 通用模式，参考 dsh-memory / dsh-rules）
 
@@ -148,3 +156,7 @@ dsh-rules/
 | Config 路由报 404 | `inject` 没加 `"webServer"` | 在 exports 里加 `export const inject = ["webServer"]` |
 | `Duplicate (kind,path)` 注册错误 | 某些版本 register 不支持 method 字段，同 path 注册两次 | 同一个 handler 里按 `req.method` 分流 GET/POST |
 | 持久化 json 文件不生成 | `_savePersist` 没调 `mkdirSync(dir, { recursive: true })` | 自动建目录 |
+| `cannot get property "sessions" without inject` | 代码用了 `ctx.sessions` 但 inject 没声明 | inject 数组加 `"sessions"` |
+| readSessionTitle 永远返回 null | ESM 插件里写了 `require("zlib")` 抛 ReferenceError 被 catch 吞掉 | 删掉 inline require, 用顶部已 import 的 zlib |
+| turnCount=0 / turns 数组空 | `sessionQuery.readSurface()` 不返回 turn/start 事件 | 改用 `loadSession(file, compression)` 直接解析磁盘 JSONL.zstd |
+| 文件名拼错找不到 | `entry.id` 已带 `session-` 前缀, 再加一次变成 `session-session-xxx` | 加 `normalizeSessionId()` 去掉可能的前缀 |

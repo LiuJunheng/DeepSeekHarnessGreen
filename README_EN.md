@@ -388,7 +388,7 @@ under the **Apache License 2.0** (see Section 11).
 - **Delete** cleans three sources at once:
   1. Session log dir `runtime/dsh-home/sessions/<workspace-code>/<session-ID>/`
   2. The `sessionIds` / `archivedSessionIds` entries in `storages/workspace.json`
-  3. That session's title / stats cache line in `storages/session_projcache.json`
+  3. That session's title / stats cache line in `storages/session_projcache/sessions/session-{uuid}.json` (DSH 0.1.2-rc.1+) 或 `storages/session_projcache.json` (legacy)
 
 Notes:
 - **You must stop the service first** (the GUI pops a warning; the CLI validates and errors out if the service is running).

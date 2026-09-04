@@ -1,4 +1,4 @@
-// DeepSeek Harness 插件 (宿主端): dsh-usage-stats
+﻿// DeepSeek Harness 插件 (宿主端): dsh-usage-stats
 // 在 WebUI 设置页提供「用量统计」的数据后端:
 //   直接按磁盘扫描会话日志 (DSH_HOME/sessions/**/session.jsonl.zstd),
 //   解码出每条 assistant/message 事件携带的 usage 数据
@@ -17,7 +17,7 @@ import zlib from "node:zlib";
 import { decodeStorageRecord, SESSION_FORMAT_VERSION } from "@deepseek-ai/dsh-session";
 
 const name = "dsh-usage-stats";
-const inject = ["webServer", "workspaceRegistry"];
+const inject = ["webServer", "workspaceRegistry", "sessionQuery", "sessions"];
 
 const ROUTE_LIST = "/__dsh/usage-stats/list";
 const ROUTE_DETAIL = "/__dsh/usage-stats/detail";
@@ -160,19 +160,78 @@ async function scanSessionFiles(root) {
 }
 
 /** 尽力读取会话标题 (投影缓存 session_projcache.json), 读不到返回 null */
+/** 如果 sessionId 带 "session-" 前缀则去掉, 确保拿到纯 UUID */
+function normalizeSessionId(sessionId) {
+    return sessionId && sessionId.startsWith("session-") ? sessionId.slice("session-".length) : sessionId;
+}
+
 async function readSessionTitle(sessionId) {
-	try {
-		const raw = await readFile(join(dshHome(), "storages", "session_projcache.json"), "utf8");
-		const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
-		const data = JSON.parse(text);
-		const rows = data && data.tables && data.tables.sessions;
-		if (!rows || typeof rows !== "object") return null;
-		const row = rows[sessionId];
-		const title = row && row.rows && row.rows.title && row.rows.title.val;
-		return typeof title === "string" && title.length > 0 ? title : null;
-	} catch {
-		return null;
-	}
+  const id = normalizeSessionId(sessionId);
+  try {
+          // DSH 0.1.2-rc.1: projcache 改成按 session 分文件存储
+          // 路径: storages/session_projcache/sessions/session-{sessionId}.json
+          // ⚠️ 注意文件名前缀是 "session-" + uuid, 不是纯 uuid!
+          const projPath = join(dshHome(), "storages", "session_projcache", "sessions", "session-" + id + ".json");
+          let raw;
+          try {
+                  raw = await readFile(projPath, "utf8");
+          } catch (e) {
+                  // fallback: 旧版单文件
+                  try { raw = await readFile(join(dshHome(), "storages", "session_projcache.json"), "utf8"); } catch { raw = null; }
+          }
+          if (raw) {
+                  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+                  const data = JSON.parse(text);
+                  // 新版格式: { version: 5, record: { rows: { title: { val: "..." } } } }
+                  if (data && data.record && data.record.rows && data.record.rows.title && typeof data.record.rows.title.val === "string") {
+                          const t = data.record.rows.title.val.trim();
+                          if (t.length > 0) return t;
+                  }
+                  // 旧版格式 fallback
+                  const rows = data && data.tables && data.tables.sessions;
+                  if (rows && typeof rows === "object") {
+                          const row = rows[sessionId];
+                          const title = row && row.rows && row.rows.title && row.rows.title.val;
+                          if (typeof title === "string" && title.trim().length > 0) return title.trim();
+                  }
+          }
+          // 终极 fallback: 从 session.jsonl.zstd 里的 session/title 事件提取
+          try {
+                  const home = dshHome();
+                  const sessionsRoot = join(home, "sessions");
+                  // 遍历 sessionsRoot 下的所有 workspace 目录, 找 session-{uuid}/session.jsonl.zstd
+                  const workspaces = await readdir(sessionsRoot);
+                  for (const ws of workspaces) {
+                          const dirPath = join(sessionsRoot, ws, "session-" + sessionId);
+                          const zstdPath = join(dirPath, "session.jsonl.zstd");
+                          let buf;
+                          try { buf = await readFile(zstdPath); } catch { continue; }
+                          // 用 Node 内置 zlib 解压
+                          const frames = []; let i = 0;
+                          const MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
+                          while (i < buf.length) {
+                                  let j = buf.indexOf(MAGIC, i + 4);
+                                  if (j < 0) j = buf.length;
+                                  frames.push(buf.subarray(i, j));
+                                  i = j;
+                          }
+                          const text = Buffer.concat(frames.map(fr => zlib.zstdDecompressSync(fr))).toString("utf8");
+                          const lines = text.split("\n").filter(l => l.trim());
+                          for (let k = lines.length - 1; k >= 0; k--) {
+                                  try {
+                                          const obj = JSON.parse(lines[k]);
+                                          if (obj.type === "session/title" && obj.data && typeof obj.data.title === "string") {
+                                                  const t = obj.data.title.trim();
+                                                  if (t.length > 0) return t;
+                                          }
+                                  } catch { /* skip bad line */ }
+                          }
+                  }
+          } catch { /* ignore fallback errors */ }
+          return null;
+  } catch {
+          return null;
+  }
 }
 
 /** 在 workspaceRegistry 里找会话所属工作区 */
@@ -190,7 +249,7 @@ function workspaceOf(ctx, sessionId) {
 /** 动态获取 sessions 服务 (拿不到时返回空壳) */
 function liveSessions(ctx) {
 	try {
-		return ctx.get("sessions") || { get: () => void 0 };
+		return ctx.sessions || { get: () => void 0 };
 	} catch {
 		return { get: () => void 0 };
 	}
@@ -286,6 +345,28 @@ function foldEvents(events) {
 }
 
 /** 读取一个会话文件: 返回 { header, events } 或抛错 */
+
+/**
+ * 从 DSH 官方 sessionQuery API 拿事件 (DSH 0.1.2-rc.1 用 SQLite, JSONL 只有 header).
+ * 返回 { header, events } 或抛错.
+ */
+async function loadSessionFromDshApi(ctx, sessionId) {
+    const sessionQuery = ctx && ctx.sessionQuery || null;
+    if (!sessionQuery) throw new Error("sessionQuery service not available");
+    // 方法 1: readSurface → { session, events }
+    if (typeof sessionQuery.readSurface === "function") {
+        const surface = await sessionQuery.readSurface(sessionId);
+        const header = { id: sessionId, cwd: surface.session?.cwd, createdAt: surface.session?.createdAt, parentSession: surface.session?.parentSession, agentPreset: surface.session?.agentPreset };
+        return { header, events: surface.events || [] };
+    }
+    // 方法 2: traceSession → { events }
+    if (typeof sessionQuery.traceSession === "function") {
+        const traced = await sessionQuery.traceSession(sessionId);
+        return { header: { id: sessionId }, events: traced.events || [] };
+    }
+    throw new Error("sessionQuery has no usable method");
+}
+
 async function loadSession(file, compression) {
 	const raw = await readFile(file);
 	const text = compression === "zstd" ? decompressZstd(raw) : raw.toString("utf8");
@@ -323,7 +404,14 @@ function apply(ctx) {
 						error: null,
 					};
 					try {
-						const { header, events } = await loadSession(entry.file, entry.compression);
+						let header = null, events = [];
+						try {
+                                                    const loaded = await loadSession(entry.file, entry.compression);
+                                                    header = loaded.header;
+                                                    events = loaded.events;
+                                                } catch (eFile) {
+                                                    throw new Error("File: " + eFile.message);
+                                                }
 						meta.createdAt = header.createdAt ?? null;
 						meta.cwd = header.cwd ?? null;
 						const folded = foldEvents(events);
@@ -334,7 +422,14 @@ function apply(ctx) {
 						meta.error = String((error && error.message) || error);
 					}
 					meta.live = liveSessions(ctx).get(entry.id) !== void 0;
-					meta.title = await readSessionTitle(entry.id);
+					let liveDisplayTitle = null;
+					try {
+					    const liveSvc = ctx.sessions;
+					    const snap = liveSvc && liveSvc.list && typeof liveSvc.list.getSnapshot === "function" ? liveSvc.list.getSnapshot() : null;
+					    liveDisplayTitle = snap && snap.byId && snap.byId[entry.id] && snap.byId[entry.id].displayTitle || null;
+					} catch {}
+					meta.title = liveDisplayTitle || await readSessionTitle(entry.id);
+					meta.displayTitle = liveDisplayTitle || meta.title || (meta.cwd && meta.cwd.split("/").pop()) || entry.id;
 					meta.workspace = workspaceOf(ctx, entry.id);
 					sessions.push(meta);
 				}
@@ -369,7 +464,14 @@ function apply(ctx) {
 					sendJson(res, 404, { ok: false, error: "session not found: " + sessionId });
 					return;
 				}
-				const { header, events } = await loadSession(entry.file, entry.compression);
+				let header = null, events = [];
+				try {
+                                                    const loaded = await loadSession(entry.file, entry.compression);
+                                                    header = loaded.header;
+                                                    events = loaded.events;
+                                                } catch (eFile) {
+                                                    throw new Error("File: " + eFile.message);
+                                                }
 				const folded = foldEvents(events);
 				sendJson(res, 200, {
 					ok: true,
@@ -448,3 +550,5 @@ function apply(ctx) {
 }
 
 export { apply, inject, name };
+
+

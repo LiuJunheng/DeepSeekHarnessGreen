@@ -150,7 +150,7 @@ updated: "2026-09-02"
 
 - **dsh 没有"永久删除/取消归档"接口**：网页"归档"只是把会话隐藏（日志 + 注册表全保留）。
 
-- **彻底删除需服务停止后直接操作数据，三处一并清理**：① `sessions/<编码>/<ID>/` 日志目录（只按 id 遍历查找，**不拼接用户输入进路径，防路径穿越**）；② `workspace.json` 的 `sessionIds`/`archivedSessionIds`；③ `session_projcache.json` 缓存行。
+- **彻底删除需服务停止后直接操作数据，三处一并清理**：① `sessions/<编码>/<ID>/` 日志目录（只按 id 遍历查找，**不拼接用户输入进路径，防路径穿越**）；② `workspace.json` 的 `sessionIds`/`archivedSessionIds`；③ projcache 缓存（DSH 0.1.2-rc.1+ 分文件 `sessions/session-{uuid}.json`，旧版单文件 `session_projcache.json`）。
 
 - **复原（取消归档）= 只把 id 从 archivedSessionIds 移除并原子写回**——日志/归属/缓存 dsh 从没动过，天然无损。与 `purge_session` 完全相反。
 

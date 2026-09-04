@@ -63,6 +63,8 @@ import { homedir } from "node:os";
 
 export const name = "dsh-xxx-plugin";
 export const inject = ["webServer", "workspaceRegistry"]; // 按需声明
+// ⚠️ 用了 ctx.sessions 必须加 "sessions"；用了 ctx.sessionQuery 必须加 "sessionQuery"
+// ⚠️ 参考 plugin-dev-checklist.md 里的 DSH 0.1.2-rc.1 会话数据获取约定
 
 // 可选: Config schema (全部字段给默认值)
 // export const Config = z.object({
@@ -75,6 +77,26 @@ const GUARD_HEADER = "x-dsh-plugin-xxx";
 
 function dshHome() {
   return process.env.DSH_HOME || join(homedir(), ".dsh");
+}
+
+/** session 目录/文件名统一带 "session-" 前缀, 代码里需要纯 UUID 时先 normalize */
+function normalizeSessionId(sessionId) {
+  return sessionId && sessionId.startsWith("session-") ? sessionId.slice("session-".length) : sessionId;
+}
+
+/**
+ * DSH 0.1.2-rc.1: sessionQuery.readSurface() 不返回 turn/step 事件
+ * 需要完整事件序列时必须直接解析磁盘 JSONL.zstd 文件
+ */
+function splitZstdFrames(buf) {
+  const frames = []; let i = 0;
+  const MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
+  while (i < buf.length) { let j = buf.indexOf(MAGIC, i + 4); if (j < 0) j = buf.length; frames.push(buf.subarray(i, j)); i = j; }
+  return frames;
+}
+import zlib from "node:zlib";
+function decompressZstd(buf) {
+  return Buffer.concat(splitZstdFrames(buf).map(fr => zlib.zstdDecompressSync(fr))).toString("utf8");
 }
 
 function sendJson(res, status, payload) {
@@ -333,7 +355,7 @@ export async function apply(ctx, config) {
 | 有宿主路由              | ✅ 有（ctx.effect 注册）            | ❌ 无                          |
 | 有 system-prompt 注入 | 可选                            | ✅ 核心                         |
 | package.json 字段    | dsh.bundle.patch + dsh.client | 只有 dsh.bundle.patch          |
-| 宿主端 inject         | `["webServer"]` 必需            | `[]` 空数组或按需                  |
+| 宿主端 inject         | `["webServer"]` 必需；用了 `ctx.sessions` / `ctx.sessionQuery` 也要声明 | `[]` 空数组或按需  |
 | exports            | 需导出 `./client`                | 不需                           |
 | files              | `["lib", "cordis.patch.yml"]` | 同                            |
 | client.js          | 必需                            | 不存在                          |
@@ -375,7 +397,7 @@ export async function apply(ctx, config) {
 ```javascript
 // 原来: export const inject = [];  // 纯 hook 不依赖宿主服务
 // 现在: 需要 webServer 来注册 config GET/POST 路由
-export const inject = ["webServer"];
+export const inject = ["webServer"]; // 按需补 "sessions", "sessionQuery" 等
 
 export async function apply(ctx, config) {
   // ...原有 hook 安装逻辑...
@@ -457,7 +479,7 @@ import { homedir } from "node:os";
 import z from "@deepseek-ai/schemastery";
 
 export const name = "dsh-xxx";
-export const inject = ["webServer"];
+export const inject = ["webServer"]; // 按需补 "sessions", "sessionQuery" 等
 
 // Config schema — enabled 默认 false (省 token / 按需开启)
 export const Config = z.object({

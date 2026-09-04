@@ -427,8 +427,8 @@ window.__ModuleLoader__.load({
 			return react.createElement("div", { key: "card", style: cardStyle }, [
 				// 第一行: 标题(独占整行剩余宽度) + 徽标 + 明细按钮
 				react.createElement("div", { key: "h", style: { display: "flex", alignItems: "center", gap: 8 } }, [
-					react.createElement("span", { key: "t", style: titleStyle, title: s.title || s.id },
-						s.title || "(无标题)"
+					react.createElement("span", { key: "t", style: titleStyle, title: s.displayTitle || s.id },
+						s.displayTitle || "(无标题)"
 					),
 					s.live && react.createElement("span", { key: "live", style: { ...badgeStyle, color: "var(--dsw-alias-state-success-primary)" } }, "运行中"),
 					s.error && react.createElement("span", { key: "err", style: { ...badgeStyle, color: "var(--dsw-alias-state-error-primary)" } }, "解码失败"),

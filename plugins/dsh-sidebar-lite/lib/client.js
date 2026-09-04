@@ -203,6 +203,32 @@ window.__ModuleLoader__.load({
                         const reference = {
                             source: "reference", ref: mention, label, appearance, clipboardText: mention,
                         };
+                        // 获取最新 shell.rev 避免 CAS 失败
+                        try {
+                            let conversationService = null;
+        try { conversationService = actx && typeof actx.get === "function" ? actx.get("conversation") : null; } catch(e) {}
+                            const sessionIdentifier = (actx.session && actx.session.id) || sessionId || null;
+                            if (conversationService && sessionIdentifier && (conversationService.input && typeof conversationService.input.shell === "function")) {
+                                const shellInstance = conversationService && conversationService.input && conversationService.input.shell ? conversationService.input.shell(sessionIdentifier) : null;
+                                if (shellInstance) {
+                                    span.draftRev = shellInstance.rev;
+                                }
+                            } else {
+                                                            }
+                        } catch (debugError) { console.warn("[sidebar-lite] rev error:", debugError); }
+                        // 获取最新 shell.rev 避免 CAS 失败
+                        try {
+                            let conversationService = null;
+        try { conversationService = actx && typeof actx.get === "function" ? actx.get("conversation") : null; } catch(e) {}
+                            const sessionIdentifier = (actx.session && actx.session.id) || sessionId || null;
+                            if (conversationService && sessionIdentifier && (conversationService.input && typeof conversationService.input.shell === "function")) {
+                                const shellInstance = conversationService && conversationService.input && conversationService.input.shell ? conversationService.input.shell(sessionIdentifier) : null;
+                                if (shellInstance) {
+                                    span.draftRev = shellInstance.rev;
+                                }
+                            } else {
+                                                            }
+                        } catch (debugError) { console.warn("[sidebar-lite] rev error:", debugError); }
                         const applied = actx.bail(actx, "slash/input-insert-reference", { reference, span });
                         if (applied === true) {
                             return { ok: true, method: "old-api" };
@@ -262,32 +288,60 @@ window.__ModuleLoader__.load({
 		 * @returns {Promise<string|null>} 错误信息 (null = 成功)。
 		 */
 		async function insertOfficialReference(bridge, sessionId, cwd, entryPath) {
-            if (!cwd) return "No session cwd, official @ unavailable";
-            const rel = relativePosix(cwd, entryPath);
-            if (rel === null || rel === "" || rel === ".." || rel.startsWith("../")) {
-                return "File outside session cwd";
-            }
-            // DSH 0.1.2-rc.1: read sessions from window (file-browser slot writes it)
-            let sessionsSvc = null;
-            try { sessionsSvc = (typeof window !== "undefined") ? window.__dshSessions : null; } catch (e) {}
-            let actx = null;
-            try { actx = sessionsSvc ? sessionsSvc.scope(sessionId) : null; } catch (e) { actx = null; }
-            if (!actx) return "Cannot get session scope (file-browser not running?)";
-            let inputState = null;
-            try { inputState = (typeof window !== "undefined") ? window.__dshInputState : null; } catch (e) {}
-            const draft = (inputState && typeof inputState.draft === "string") ? inputState.draft : "";
-            const draftRev = (inputState && typeof inputState.draftRev === "number") ? inputState.draftRev : 0;
-            const caret = draft.length;
-            const reference = {
-                kind: "file",
-                name: (entryPath.split(/[\\/]/).pop()) || rel,
-                path: rel,
-            };
-            const span = { start: caret, end: caret, draftRev: draftRev };
-            let ok = false;
-            try { ok = actx.bail(actx, "slash/input-insert-reference", { reference, span }) === true; } catch (e) { ok = false; }
-            if (!ok) return "Insert failed (draft may have changed)";
-            return null;
+		    try {
+		                    if (!cwd) return "No session cwd, official @ unavailable";
+		                    const rel = relativePosix(cwd, entryPath);
+		                    if (rel === null || rel === "" || rel === ".." || rel.startsWith("../")) {
+		                        return "File outside session cwd";
+		                    }
+		                    // DSH 0.1.2-rc.1: bridge 参数已由调用方从 ctx.sessions 创建
+		                    let actx = null;
+		                    try { actx = bridge && typeof bridge.scope === "function" ? bridge.scope(sessionId) : null; } catch (e) { actx = null; }
+		                    if (!actx) return "Cannot get session scope";
+		                    let inputState = null;
+		                    try { inputState = (typeof window !== "undefined") ? window.__dshInputState : null; } catch (e) {}
+		                    const draft = (inputState && typeof inputState.draft === "string") ? inputState.draft : "";
+		                    const draftRev = (inputState && typeof inputState.draftRev === "number") ? inputState.draftRev : 0;
+		                    const caret = draft.length;
+		                    const reference = {
+		                        source: "reference",
+		                        ref: "@" + rel,
+		                        label: (entryPath.split(/[\\/]/).pop()) || rel,
+		                        appearance: "file",
+		                        clipboardText: "@" + rel,
+		                    };
+		                    const span = { start: caret, end: caret, draftRev: draftRev };
+		                    let ok = false;
+		                    // DEBUG: 动态拿 liveRev
+		                    try {
+		                        let conv = null;
+try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") : null; } catch(e) { conv = null; }
+		                        const sid = (actx.session && actx.session.id) || sessionId || null;
+		                        const shell = conv && conv.input && typeof conv.input.shell === "function" ? conv.input.shell(sid) : null;
+		                        const liveRev = shell && shell.rev !== undefined ? shell.rev : null;
+		                        if (liveRev !== null && liveRev !== undefined) { span.draftRev = liveRev; }
+		                    } catch (e) {}
+		                    try { ok = actx.bail(actx, "slash/input-insert-reference", { reference, span }) === true; } catch (e) { ok = false; }
+		                    // bail 失败, 尝试 DOM fallback
+		                    if (!ok) {
+		                        try {
+		                            const editor = (typeof document !== "undefined") ? document.querySelector('[contenteditable="true"]') : null;
+		                            if (editor) {
+		                                editor.focus();
+		                                const relText = reference && reference.ref ? reference.ref.replace(/^@/, "") : "";
+		                                const inserted = document.execCommand("insertText", false, "@" + relText + " ");
+		                                if (inserted) {
+		                                    return null; // 成功
+		                                }
+		                            }
+		                        } catch (domErr) {}
+		                        return "Insert failed: @" + reference && reference.ref ? reference.ref.replace(/^@/, "") : "";
+		                    }
+		                    return null;
+		    } catch (e) {
+		        console.error("[sidebar-lite] insertOfficialReference error:", e);
+		        return String(e && e.message || e);
+		    }
         }
 
 		/** 写剪贴板 (优先 navigator.clipboard, 缺省回退到 execCommand 兼容旧内核)。 */
@@ -681,6 +735,7 @@ window.__ModuleLoader__.load({
 				if (id === "insertref") {
 					if (menu.entry.isDir) return;
 					// 官方 @ 引用以会话工作目录 (header.cwd) 为根 —— 正是侧栏解析出的 cwd。
+					console.log("[sidebar-lite] insertref args:", { bridge, sessionId: scope.sessionId, cwd, entryPath: menu.entry.path });
 					insertOfficialReference(bridge, scope.sessionId, cwd, menu.entry.path).then((err) => {
 						if (err) showNotice(err);
 					});
@@ -1308,7 +1363,7 @@ window.__ModuleLoader__.load({
 				scope: (id) => {
 					try {
 						const sessions = ctx && ctx.sessions;
-						return sessions && typeof sessions.scope === "function" ? sessions.scope(id) : null;
+						return sessions && typeof sessions.resolveAgentScope === "function" ? sessions.resolveAgentScope(id) : (sessions && typeof sessions.scope === "function" ? sessions.scope(id) : null);
 					} catch (e) { return null; }
 				},
 			};

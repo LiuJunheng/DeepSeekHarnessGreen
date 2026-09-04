@@ -104,8 +104,8 @@ window.__ModuleLoader__.load({
 			return react.createElement("div", { style: cardStyle }, [
 				// 第一行: 标题(独占整行剩余宽度) + 运行中徽标 + 分析按钮
 				react.createElement("div", { key: "h", style: { display: "flex", alignItems: "center", gap: 8 } }, [
-					react.createElement("span", { key: "t", style: titleStyle, title: s.title || s.id },
-						s.title || "(无标题)"
+					react.createElement("span", { key: "t", style: titleStyle, title: s.displayTitle || s.id },
+						s.displayTitle || "(无标题)"
 					),
 					s.live && react.createElement("span", { key: "live", style: { flex: "none", fontSize: 11, color: "var(--dsw-alias-state-success-primary)", borderRadius: 999, padding: "1px 7px", whiteSpace: "nowrap" } }, "运行中"),
 					react.createElement("button", {
@@ -324,7 +324,7 @@ window.__ModuleLoader__.load({
 				react.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
 					react.createElement("button", { type: "button", onClick: backToList, style: btn }, "← 返回列表"),
 					react.createElement("p", { style: { ...titleStyle, margin: 0, minWidth: 0, flex: 1, wordBreak: "break-word" } },
-						s && (s.title || "(无标题)"),
+						s && (s.displayTitle || "(无标题)"),
 						react.createElement("span", { style: { ...monoStyle, marginLeft: 8 } }, s && s.id)
 					)
 				),

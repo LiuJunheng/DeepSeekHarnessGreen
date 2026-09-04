@@ -19,7 +19,7 @@
 import { Buffer } from "node:buffer";
 
 const name = "dsh-file-browser";
-const inject = ["webServer"];
+const inject = ["webServer", "sessions"];
 
 const BASE = "/__dsh/file-browser";
 const GUARD_HEADER = "x-dsh-file-browser";
@@ -155,6 +155,36 @@ function homeRootOf(ctx, sessionId) {
 function apply(ctx) {
 	const fs = ctx.get("fs");
 	if (fs === undefined) return; // fs 服务未挂载时不注册路由
+	// ---- DEBUG endpoints: 模拟两次 bail 插入 ----
+	const debugRegister = (path, handler) => ctx.effect(() => ctx.webServer.register({
+	    kind: "exact",
+	    path,
+	    handler,
+	}), "dsh-file-browser: debug " + path);
+	
+	debugRegister(BASE + "/debug-actx", (req, res) => {
+	    const sessionId = req.query.sessionId || "";
+	    const result = { sessionId, hasSessions: !!ctx.sessions };
+	    try {
+	        const actx = ctx.sessions.resolveAgentScope(sessionId);
+	        result.actxKeys = actx ? Object.keys(actx) : null;
+	        result.actxConversation = !!(actx && actx.conversation);
+	        let conv = actx && actx.conversation;
+	        if (!conv && actx && typeof actx.get === "function") {
+	            try { conv = actx.get("conversation"); } catch(e) {}
+	        }
+	        result.hasShell = !!(conv && typeof conv.shell === "function");
+	        if (conv && conv.shell) {
+	            const shell = conv.shell(sessionId);
+	            result.shellRev = shell ? shell.rev : null;
+	            result.shellRevType = typeof shell?.rev;
+	        }
+	    } catch (e) {
+	        result.error = String(e && e.message || e);
+	    }
+	    res.setHeader("Content-Type", "application/json");
+	    res.end(JSON.stringify(result, null, 2));
+	});
 
 	const errText = (e) => String((e && e.message) || e || "unknown error");
 

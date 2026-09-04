@@ -496,6 +496,23 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
                         const reference = {
                             source: "reference", ref: mention, label, appearance, clipboardText: mention,
                         };
+                        // 获取最新 shell.rev 避免 CAS 失败
+                        try {
+                            // 1. actx 本身继承 rootCtx, 应该有 conversation 服务
+                            let conversationService = null;
+        try { conversationService = actx && typeof actx.get === "function" ? actx.get("conversation") : null; } catch(e) {}
+                            const sessionIdentifier = (actx.session && actx.session.id) || (props && props.sessionId) || null;
+                            if (conversationService && sessionIdentifier && (conversationService.input && typeof conversationService.input.shell === "function")) {
+                                const shellInstance = conversationService && conversationService.input && conversationService.input.shell ? conversationService.input.shell(sessionIdentifier) : null;
+                                if (shellInstance) {
+                                    const currentRev = shellInstance.rev;
+                                    console.log("[file-browser] shell.rev =", currentRev, "old span.draftRev =", span.draftRev);
+                                    span.draftRev = currentRev;
+                                }
+                            } else {
+                                                                console.log("[file-browser] actx keys:", Object.keys(actx || {}));
+                            }
+                        } catch (debugError) { console.warn("[file-browser] rev 获取失败:", debugError); }
                         const applied = actx.bail(actx, "slash/input-insert-reference", { reference, span });
                         if (applied === true) {
                             return { ok: true, method: "old-api" };
@@ -525,7 +542,7 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
             try { ta.selectionStart = ta.selectionEnd = next.length; } catch (e) { /* noop */ }
             return { ok: true, method: "dom-fallback" };
         }
-        const ce = document.querySelector("[contenteditable='true']");
+        const editor = (typeof document !== "undefined") ? document.querySelector('[contenteditable="true"]') : null;
         if (ce) {
             const cur = (ce.innerText || ce.textContent || "");
             const sep = cur !== "" && !/\s$/.test(cur) ? " " : "";
@@ -548,45 +565,85 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 			// chip, 提交时经 reference source 的 codec 序列化为 mention 文本发给模型。
 			// 仅支持文件 (目录的官方 pick 会留开引号续补全, 不适合一键插入)。
 			async function insertOfficialReference(menuEntry) {
-            const sessionId = typeof props.sessionId === "string" ? props.sessionId : "";
-            let root = "";
-            try {
-                const res = await fetch(BASE + "/home?sessionId=" + encodeURIComponent(sessionId), {
-                    headers: { [GUARD_HEADER]: "1" },
-                });
-                const payload = await res.json().catch(() => null);
-                root = payload && typeof payload.root === "string" ? payload.root : "";
-            } catch (e) { /* below */ }
-            if (!root) { showNotice("Cannot get session cwd, official @ unavailable"); return; }
-            const rel = relativePosix(root, menuEntry.path);
-            if (rel === null || rel === "" || rel === ".." || rel.startsWith("../")) {
-                showNotice("File outside session cwd, official @ only supports relative path");
-                return;
-            }
-            // DSH 0.1.2-rc.1: sessions.scope(sessionId) -> actx,
-            // actx.bail(actx, "slash/input-insert-reference") -> official chip
-            let actx = null;
-            try { actx = sessions.scope(sessionId); } catch (e) { actx = null; }
-            if (!actx) { showNotice("Cannot get session scope"); return; }
-            const inputState = (typeof window !== "undefined") ? window.__dshInputState : null;
-            const draft = (inputState && typeof inputState.draft === "string") ? inputState.draft : "";
-            const draftRev = (inputState && typeof inputState.draftRev === "number") ? inputState.draftRev : 0;
-            const caret = draft.length;
-            const reference = {
-                kind: "file",
-                name: (menuEntry.path.split(/[\\/]/).pop()) || rel,
-                path: rel,
-            };
-            const span = { start: caret, end: caret, draftRev: draftRev };
-            let ok = false;
-            try { ok = actx.bail(actx, "slash/input-insert-reference", { reference, span }) === true; } catch (e) { ok = false; }
-            if (ok) {
-                showNotice("Inserted official chip: @" + rel);
-            } else {
-                setPendingInsert("@" + rel);
-                showNotice("Inserted as plain text fallback: @" + rel);
-            }
-            setMenu(null);
+			    try {
+			                    const sessionId = typeof props.sessionId === "string" ? props.sessionId : "";
+			                    let root = "";
+			                    try {
+			                        const res = await fetch(BASE + "/home?sessionId=" + encodeURIComponent(sessionId), {
+			                            headers: { [GUARD_HEADER]: "1" },
+			                        });
+			                        const payload = await res.json().catch(() => null);
+			                        root = payload && typeof payload.root === "string" ? payload.root : "";
+			                    } catch (e) { /* below */ }
+			                    if (!root) { showNotice("Cannot get session cwd, official @ unavailable"); return; }
+			                    const rel = relativePosix(root, menuEntry.path);
+			                    if (rel === null || rel === "" || rel === ".." || rel.startsWith("../")) {
+			                        showNotice("File outside session cwd, official @ only supports relative path");
+			                        return;
+			                    }
+			                    // DSH 0.1.2-rc.1: sessions.scope(sessionId) -> actx,
+			                    // actx.bail(actx, "slash/input-insert-reference") -> official chip
+			                    let actx = null;
+			                    try { actx = props && props.bridge && typeof props.bridge.scope === "function" ? props.bridge.scope(sessionId) : null; } catch (e) { actx = null; }
+			                    			                    if (!actx) { showNotice("Cannot get session scope"); return; }
+			                    const inputState = (typeof window !== "undefined") ? window.__dshInputState : null;
+			                    const draft = (inputState && typeof inputState.draft === "string") ? inputState.draft : "";
+			                    const draftRev = (inputState && typeof inputState.draftRev === "number") ? inputState.draftRev : 0;
+			                    const caret = draft.length;
+			                    const reference = {
+			                        source: "reference",
+			                        ref: "@" + rel,
+			                        label: (menuEntry.path.split(/[\\/]/).pop()) || rel,
+			                        appearance: "file",
+			                        clipboardText: "@" + rel,
+			                    };
+			                    // 从 DSH shell 拿最新 rev 避免 CAS 失败
+			                    let effectiveDraftRev = draftRev;
+			                    try {
+			                        let conversationService = null;
+        try { conversationService = actx && typeof actx.get === "function" ? actx.get("conversation") : null; } catch(e) {}
+			                        const sessionIdentifier = (actx.session && actx.session.id) || sessionId || null;
+			                        if (conversationService && sessionIdentifier && (conversationService.input && typeof conversationService.input.shell === "function")) {
+			                            const shellInstance = conversationService && conversationService.input && conversationService.input.shell ? conversationService.input.shell(sessionIdentifier) : null;
+			                            if (shellInstance) {
+			                                const liveRev = shellInstance.rev;
+			                                if (typeof liveRev === "number" && liveRev !== draftRev) {
+			                                    console.log("[file-browser path2] draftRev:", draftRev, "→ liveRev:", liveRev);
+			                                    effectiveDraftRev = liveRev;
+			                                }
+			                            }
+			                        }
+			                    } catch (revErr) { console.warn("[file-browser path2] rev error:", revErr); }
+			                    const span = { start: caret, end: caret, draftRev: effectiveDraftRev };
+			                    // 先尝试 DSH 官方 bail API (chip 插入)
+			                    let ok = false;
+			                    try { ok = actx.bail(actx, "slash/input-insert-reference", { reference, span }) === true; } catch (e) { ok = false; }
+			                    if (ok) {
+			                        showNotice("Inserted official chip: @" + rel);
+			                    } else {
+			                        // Fallback: 直接 DOM 操作往输入框插文本
+			                        try {
+			                            const editor = (typeof document !== "undefined") ? document.querySelector('[contenteditable="true"]') : null;
+			                            if (editor) {
+			                                editor.focus();
+			                                const inserted = document.execCommand("insertText", false, "@" + rel + " ");
+			                                if (inserted) {
+			                                    showNotice("已插入文本: @" + rel);
+			                                } else {
+			                                    showNotice("请手动输入: @" + rel);
+			                                }
+			                            } else {
+			                                showNotice("请手动输入: @" + rel);
+			                            }
+			                        } catch (domErr) {
+			                            showNotice("请手动输入: @" + rel);
+			                        }
+			                    }
+			                    setMenu(null);
+			    } catch (e) {
+			        console.error("[file-browser] insertOfficialReference error:", e);
+			        try { showNotice("插入报错: " + (e && e.message || e)); } catch (_) {}
+			    }
         }
 
 			function buildMenuItems(menuEntry) {
@@ -988,6 +1045,7 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
                                    if (typeof window !== undefined) {
                                            window.__dshInputActions = inputActions || null;
                                            window.__dshInputState = input || null;
+                                           window.__dshSessions = ctx && ctx.sessions || null;
                                    }
 
 					// 消费面板右键菜单排队的插入 (追加到输入框草稿, 不直接发消息)
@@ -1051,7 +1109,7 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 						scope: (id) => {
 							try {
 								const sessions = ctx && ctx.sessions;
-								return sessions && typeof sessions.scope === "function" ? sessions.scope(id) : null;
+								return sessions && typeof sessions.resolveAgentScope === "function" ? sessions.resolveAgentScope(id) : (sessions && typeof sessions.scope === "function" ? sessions.scope(id) : null);
 							} catch (e) { return null; }
 						},
 					};

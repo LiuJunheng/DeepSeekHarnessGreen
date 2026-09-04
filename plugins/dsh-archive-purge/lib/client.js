@@ -191,8 +191,8 @@ window.__ModuleLoader__.load({
 						}),
 						react.createElement(
 							"span",
-							{ style: labelStyle, title: s.id + (s.title ? " - " + s.title : "") },
-							s.title || "(无标题)",
+							{ style: labelStyle, title: s.id + (s.displayTitle ? " - " + s.displayTitle : "") },
+							s.displayTitle || "(无标题)",
 							react.createElement("span", { style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)", marginLeft: 4 } },
 								s.id.slice(0, 28) + "…")
 						),

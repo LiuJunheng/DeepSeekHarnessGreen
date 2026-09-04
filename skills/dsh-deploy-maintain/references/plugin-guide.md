@@ -224,7 +224,7 @@ URL.revokeObjectURL(objectUrl);
 
 ## 九、数据维护（官方无此能力）
 
-- **彻底删除**：服务停止后，三处一并清理——`sessions/<ID>/` 日志目录 + `workspace.json` + `session_projcache.json`
+- **彻底删除**：服务停止后，三处一并清理——`sessions/<ID>/` 日志目录 + `workspace.json` + projcache 缓存（DSH 0.1.2-rc.1+ 分文件 `storages/session_projcache/sessions/session-{uuid}.json`，旧版单文件）
 
 - **复原（取消归档）**：只从 `archivedSessionIds` 移除 ID，日志/归属/缓存 dsh 从没动过，天然无损
 

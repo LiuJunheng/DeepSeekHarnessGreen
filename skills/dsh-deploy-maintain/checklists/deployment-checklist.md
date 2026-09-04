@@ -59,7 +59,7 @@
 ## 数据维护
 
 - [ ] 永久删除会话前确认服务已停止
-- [ ] 三处数据一并清理：日志目录 + workspace.json 的 sessionIds/archivedSessionIds + session_projcache.json 缓存行
+- [ ] 三处数据一并清理：日志目录 + workspace.json 的 sessionIds/archivedSessionIds + projcache 缓存行（DSH 0.1.2-rc.1+ 分文件 sessions/session-{uuid}.json，旧版单文件 session_projcache.json）
 - [ ] 日志目录删除只按 id 遍历查找，不拼接用户输入（防路径穿越）
 - [ ] JSON 写回用原子写（同目录临时文件 + `os.replace`）
 - [ ] 运行中的会话自动跳过

@@ -1,4 +1,4 @@
-// DeepSeek Harness 插件 (宿主端): dsh-archive-purge
+﻿// DeepSeek Harness 插件 (宿主端): dsh-archive-purge
 // 在 WebUI 设置页里提供「清理归档会话」入口的后端处理。
 // 只注册本地 HTTP 路由, 不修改任何官方文件/包。
 //
@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 const name = "dsh-archive-purge";
-const inject = ["webServer", "workspaceRegistry"];
+const inject = ["webServer", "workspaceRegistry", "sessions"];
 
 const ROUTE_PATH = "/__dsh/archive-purge";
 // 自定义头: 跨域请求无法携带该头 (会触发 CORS 预检且本服务不返回 CORS 头),
@@ -61,27 +61,84 @@ function readJsonBody(req) {
 }
 
 /** 尽力读取会话标题 (来自投影缓存 session_projcache.json), 读不到返回 null。 */
+/** 如果 sessionId 带 "session-" 前缀则去掉, 确保拿到纯 UUID */
+function normalizeSessionId(sessionId) {
+    return sessionId && sessionId.startsWith("session-") ? sessionId.slice("session-".length) : sessionId;
+}
+
 async function readSessionTitle(sessionId) {
-	try {
-		const filePath = join(dshHome(), "storages", "session_projcache.json");
-		const raw = await readFile(filePath, "utf8");
-		// 去除可能的 UTF-8 BOM, 避免 JSON.parse 崩溃
-		const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
-		const data = JSON.parse(text);
-		const rows = data && data.tables && data.tables.sessions;
-		if (!rows || typeof rows !== "object") return null;
-		const row = rows[sessionId];
-		const title = row && row.rows && row.rows.title && row.rows.title.val;
-		return typeof title === "string" && title.length > 0 ? title : null;
-	} catch {
-		return null;
-	}
+  const id = normalizeSessionId(sessionId);
+  try {
+          // DSH 0.1.2-rc.1: projcache 改成按 session 分文件存储
+          // 路径: storages/session_projcache/sessions/session-{sessionId}.json
+          // ⚠️ 注意文件名前缀是 "session-" + uuid, 不是纯 uuid!
+          const projPath = join(dshHome(), "storages", "session_projcache", "sessions", "session-" + id + ".json");
+          let raw;
+          try {
+                  raw = await readFile(projPath, "utf8");
+          } catch (e) {
+                  // fallback: 旧版单文件
+                  try { raw = await readFile(join(dshHome(), "storages", "session_projcache.json"), "utf8"); } catch { raw = null; }
+          }
+          if (raw) {
+                  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+                  const data = JSON.parse(text);
+                  // 新版格式: { version: 5, record: { rows: { title: { val: "..." } } } }
+                  if (data && data.record && data.record.rows && data.record.rows.title && typeof data.record.rows.title.val === "string") {
+                          const t = data.record.rows.title.val.trim();
+                          if (t.length > 0) return t;
+                  }
+                  // 旧版格式 fallback
+                  const rows = data && data.tables && data.tables.sessions;
+                  if (rows && typeof rows === "object") {
+                          const row = rows[sessionId];
+                          const title = row && row.rows && row.rows.title && row.rows.title.val;
+                          if (typeof title === "string" && title.trim().length > 0) return title.trim();
+                  }
+          }
+          // 终极 fallback: 从 session.jsonl.zstd 里的 session/title 事件提取
+          try {
+                  const home = dshHome();
+                  const sessionsRoot = join(home, "sessions");
+                  // 遍历 sessionsRoot 下的所有 workspace 目录, 找 session-{uuid}/session.jsonl.zstd
+                  const workspaces = await readdir(sessionsRoot);
+                  for (const ws of workspaces) {
+                          const dirPath = join(sessionsRoot, ws, "session-" + sessionId);
+                          const zstdPath = join(dirPath, "session.jsonl.zstd");
+                          let buf;
+                          try { buf = await readFile(zstdPath); } catch { continue; }
+                          // 用 Node 内置 zlib 解压
+                          const frames = []; let i = 0;
+                          const MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
+                          while (i < buf.length) {
+                                  let j = buf.indexOf(MAGIC, i + 4);
+                                  if (j < 0) j = buf.length;
+                                  frames.push(buf.subarray(i, j));
+                                  i = j;
+                          }
+                          const text = Buffer.concat(frames.map(fr => zlib.zstdDecompressSync(fr))).toString("utf8");
+                          const lines = text.split("\n").filter(l => l.trim());
+                          for (let k = lines.length - 1; k >= 0; k--) {
+                                  try {
+                                          const obj = JSON.parse(lines[k]);
+                                          if (obj.type === "session/title" && obj.data && typeof obj.data.title === "string") {
+                                                  const t = obj.data.title.trim();
+                                                  if (t.length > 0) return t;
+                                          }
+                                  } catch { /* skip bad line */ }
+                          }
+                  }
+          } catch { /* ignore fallback errors */ }
+          return null;
+  } catch {
+          return null;
+  }
 }
 
 /** 列出全部已归档会话, 附带展示所需元数据。 */
 async function listArchived(ctx) {
 	const registry = ctx.workspaceRegistry;
-	const sessionsService = ctx.get("sessions");
+	const sessionsService = ctx.sessions;
 	const sessions = [];
 	for (const id of registry.archivedSessionIds) {
 		let workspaceTitle = null;
@@ -93,9 +150,15 @@ async function listArchived(ctx) {
 				break;
 			}
 		}
+		let liveDisplayTitle = null;
+		try {
+		    const sessionsSvc = ctx.sessions;
+		    const snap = sessionsSvc && sessionsSvc.list && typeof sessionsSvc.list.getSnapshot === "function" ? sessionsSvc.list.getSnapshot() : null;
+		    liveDisplayTitle = snap && snap.byId && snap.byId[id] && snap.byId[id].displayTitle || null;
+		} catch {}
 		sessions.push({
 			id,
-			title: await readSessionTitle(id),
+			title: liveDisplayTitle || await readSessionTitle(id), displayTitle: liveDisplayTitle || await readSessionTitle(id) || id,
 			workspaceTitle,
 			workspacePath,
 			running: sessionsService !== void 0 && sessionsService.get(id) !== void 0
@@ -144,7 +207,7 @@ async function purgeSessions(ctx, selectedIds) {
 	let detachedOnly = 0;
 	let skippedLive = 0;
 	let errors = 0;
-	const sessionsService = ctx.get("sessions");
+	const sessionsService = ctx.sessions;
 
 	for (const id of targets) {
 		// 跳过仍在运行的会话
@@ -240,3 +303,5 @@ function apply(ctx) {
 }
 
 export { apply, inject, name };
+
+

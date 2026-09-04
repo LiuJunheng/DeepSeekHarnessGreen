@@ -277,7 +277,7 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
 GREEN_VERSION = "1.0.29"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
-GREEN_VERSION_DATE = "2026年09月03日"               # 绿色版版本日期 (release_upload.py 会按构建当天回写)
+GREEN_VERSION_DATE = "2026年09月05日"               # 绿色版版本日期 (release_upload.py 会按构建当天回写)
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
 GREEN_RELEASE_MIRROR = ("https://mirror.nju.edu.cn/github-release/%s/latest"
