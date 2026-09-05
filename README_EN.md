@@ -1,12 +1,10 @@
 # DeepSeek Harness — Desktop Green Portable Launcher
 
+English | [中文](README.md)
+
 A one-click local launcher that wraps DeepSeek Harness (`dsh`) into a **double-click-to-run** experience: no CLI, no manual Python/Node installs, no browser setup — copy the folder, double-click, go.
 
-> **Download** (GitHub or Gitee — pick whichever is faster for you):
-> - **GitHub**: [Latest Release](https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest) ｜ [Repository](https://github.com/LiuJunheng/DeepSeekHarnessGreen)
-> - **Gitee** (faster in China): [Releases](https://gitee.com/liujunheng/DeepSeekHarnessGreen/releases) ｜ [Repository](https://gitee.com/liujunheng/DeepSeekHarnessGreen)
->
-> **Other language**: 中文 — [README.md](README.md) (translated once per release; Chinese is authoritative)
+**Download**: [GitHub Release](https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest) ｜ [Gitee Release](https://gitee.com/liujunheng/DeepSeekHarnessGreen/releases) (faster in China) ｜ [GitHub Repo](https://github.com/LiuJunheng/DeepSeekHarnessGreen) ｜ [Gitee Repo](https://gitee.com/liujunheng/DeepSeekHarnessGreen)
 
 ---
 

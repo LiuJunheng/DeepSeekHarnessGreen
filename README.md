@@ -1,12 +1,10 @@
 # DeepSeek Harness 桌面绿色整合版启动器
 
+[English](README_EN.md) | 中文
+
 把 DeepSeek Harness（`dsh`）封装成**双击即用**的本地启动器：不用敲命令、不用单独装 Python / Node、不用手动开浏览器，整包拷走就能用。如同三军帐中一纸调令，点一下即可出征。
 
-> **下载**（GitHub / Gitee 双平台任选，无需关心版本号）：
-> - **GitHub**：[Release 页面](https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest) ｜ [仓库](https://github.com/LiuJunheng/DeepSeekHarnessGreen)
-> - **Gitee**（国内访问更快）：[Release 页面](https://gitee.com/liujunheng/DeepSeekHarnessGreen/releases) ｜ [仓库](https://gitee.com/liujunheng/DeepSeekHarnessGreen)
->
-> **其他语言**：English — [README_EN.md](README_EN.md)（随版本发布翻译一次；以中文为准）
+**下载**：[GitHub Release](https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest) ｜ [Gitee Release](https://gitee.com/liujunheng/DeepSeekHarnessGreen/releases)（国内更快）｜ [GitHub 仓库](https://github.com/LiuJunheng/DeepSeekHarnessGreen) ｜ [Gitee 仓库](https://gitee.com/liujunheng/DeepSeekHarnessGreen)
 
 ---
 
