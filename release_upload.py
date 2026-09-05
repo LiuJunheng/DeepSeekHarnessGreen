@@ -48,9 +48,9 @@
 ### 打包后体积目标
   压缩前 ~18.5 MB  →  ZIP 压缩后 ~17 MB  (Gitee 限制 100MB, GitHub 限制 2GB)
 
-### ZIP 命名规范
-  DSH_Launcher_GreenPortable_Online_YYYYMMDD_v{GREEN_VERSION}.zip
-  例: DSH_Launcher_GreenPortable_Online_20260903_v1.0.27.zip
+### ZIP 命名规范 (v1.0.30 起简化)
+  DSH-GreenPortable-v{GREEN_VERSION}.zip
+  例: DSH-GreenPortable-v1.0.30.zip
   版本号从 launcher.py GREEN_VERSION 读取 (唯一来源, 禁止硬编码)
 
 --------------------------------------------------------------------
@@ -361,9 +361,8 @@ def should_exclude_path(rel_path, filename):
 
 
 def pack_online_zip(version):
-    """打包 Online 绿色版 zip — 核心函数"""
-    date_str = datetime.datetime.now().strftime("%Y%m%d")
-    zip_name = "DSH_Launcher_GreenPortable_Online_%s_v%s.zip" % (date_str, version)
+    """打包 Online 绿色版 zip — 核心函数 (v1.0.30 起命名简化为 DSH-GreenPortable-v{ver}.zip)"""
+    zip_name = "DSH-GreenPortable-v%s.zip" % version
     zip_path = os.path.join(ROOT, zip_name)
 
     print("\n=== 打包 Online 绿色版 ===")

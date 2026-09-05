@@ -273,16 +273,16 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # 绿色版外围更新通道 (本项目自己的 GitHub Release)
 # 与官方核心更新(update_dsh, 动 runtime/dsh)完全独立: 本通道只更新项目根目录的外围文件,
 # 绝不触碰 runtime/(用户数据与已装环境), 也不替换用户自定义的 config.json。
-# 发布流程: 打 tag v{GREEN_VERSION} + Release 资产 DSH_Launcher_GreenPortable_Online_<日期>_v<tag>.zip
+# 发布流程: 打 tag v{GREEN_VERSION} + Release 资产 DSH-GreenPortable-v{tag}.zip
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
-GREEN_VERSION = "1.0.29"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
-GREEN_VERSION_DATE = "2026年09月05日"               # 绿色版版本日期 (release_upload.py 会按构建当天回写)
+GREEN_VERSION = "1.0.30"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
+GREEN_VERSION_DATE = "2026年09月06日"               # 绿色版版本日期 (release_upload.py 会按构建当天回写)
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
 GREEN_RELEASE_MIRROR = ("https://mirror.nju.edu.cn/github-release/%s/latest"
                         % GITHUB_REPO)             # 国内镜像 (与其它下载源镜像一致)
-GREEN_ZIP_PREFIX = "DSH_Launcher_GreenPortable_Online_"   # Release 分发 zip 资产名前缀
+GREEN_ZIP_PREFIX = "DSH-GreenPortable-v"           # Release 分发 zip 资产名前缀 (新命名规范: DSH-GreenPortable-v{ver}.zip)
 
 # Gitee 镜像兜底通道 (GitHub Release / 国内镜像都连不通时, 自动转 Gitee), 两级策略:
 #   1. Gitee Release 优先: 查 GITEE_RELEASES_API 找"最新且带手动上传 zip 附件"的发布版,

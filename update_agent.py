@@ -44,7 +44,7 @@ PY_MODE_SLEEP_SECONDS = 2.5
 # 与 launcher.py 的 GREEN_VERSION 保持一致 —— release_upload.py 的 exe 新鲜度校验
 # 会同时对 DSH_Launcher.exe 和 DSH_Update.exe 跑 --print-green-version 对比源码版本,
 # 若版本号不同步会直接阻断打包, 因此这里硬编码是安全的 (不一致会被拦截).
-GREEN_VERSION = "1.0.29"
+GREEN_VERSION = "1.0.30"
 # 覆盖完成后、重启前的短暂停顿, 让界面把"更新完成"状态画出来
 RELAUNCH_DELAY_SECONDS = 0.8
 
