@@ -122,33 +122,73 @@ GITHUB_REPO = "DeepSeekHarnessGreen"
 # ============================================================
 # Release 描述 — 外部文件读取, 每次发布前必须写 release_notes.md
 # ============================================================
+# Release 描述加载 — 支持中英双语 (参考官方 dsh release 格式)
+# ============================================================
 
 def load_release_notes(root_dir, tag):
     """
-    从根目录 release_notes.md 读取发布描述。
-    文件格式约定:
+    读取 release_notes_{tag}.md (中文) + release_notes_{tag}_en.md (英文, 可选)。
+    最终合并成 GitHub/Gitee Release body, 格式参考官方 deepseek-ai release:
+      [中文](#cn-{tag}) | [English](#en-{tag})
+      (anchor 用 tag 去掉 v 前缀, 例如 cn-1.0.30 / en-1.0.30)
+
+    中文文件格式 (release_notes_{tag}.md):
         第 1 行: Release 标题 (支持 {tag} 占位符)
-        第 2 行起: Release body (Markdown, 直接用)
-    缺失则 exit(1), 强制每次发布前写更新日志。
+        第 2 行起: 中文 body (Markdown)
+
+    英文文件格式 (release_notes_{tag}_en.md, 可选):
+        第 1 行: Release 英文标题 (支持 {tag} 占位符, 也可直接写 EN)
+        第 2 行起: 英文 body (Markdown)
+        缺失则只用中文 (不报错, 只是没有英文段)
     """
-    notes_path = os.path.join(root_dir, "release_notes_{tag}.md".format(tag=tag))
-    if not os.path.isfile(notes_path):
-        print("[ERROR] 缺少 release_notes_%s!" % tag)
-        print("  请在项目根目录创建 release_notes_%s.md, 格式:" % tag)
-        print("    第 1 行: Release 标题 (可用 {tag} 占位)")
-        print("    第 2 行起: Markdown 格式的更新说明")
-        print("  写完再跑本脚本。")
+    # --- 中文 ---
+    cn_path = os.path.join(root_dir, "release_notes_%s.md" % tag)
+    if not os.path.isfile(cn_path):
+        print("[ERROR] 缺少 release_notes_%s.md!" % tag)
         sys.exit(1)
-    with open(notes_path, "r", encoding="utf-8") as f:
-        raw = f.read()
-    lines = raw.split("\n")
-    # 第一行是标题, 后面是 body
-    title = lines[0].strip() if lines else ""
-    body = "\n".join(lines[1:]).lstrip("\n")
-    if not title:
+    with open(cn_path, "r", encoding="utf-8") as f:
+        cn_raw = f.read()
+    cn_lines = cn_raw.split("\n")
+    title_tmpl = cn_lines[0].strip() if cn_lines else ""
+    cn_body = "\n".join(cn_lines[1:]).lstrip("\n")
+    if not title_tmpl:
         print("[ERROR] release_notes_%s.md 第一行是空的, 需要写 Release 标题" % tag)
         sys.exit(1)
-    return title, body
+
+    # --- 英文 (可选) ---
+    en_path = os.path.join(root_dir, "release_notes_%s_en.md" % tag)
+    en_title_tmpl = None
+    en_body = None
+    if os.path.isfile(en_path):
+        with open(en_path, "r", encoding="utf-8") as f:
+            en_raw = f.read()
+        en_lines = en_raw.split("\n")
+        en_title_tmpl = en_lines[0].strip() if en_lines else ""
+        en_body = "\n".join(en_lines[1:]).lstrip("\n")
+        if not en_body.strip():
+            en_body = None
+
+    # --- 合并成双语 body ---
+    # GitHub/Gitee anchor 规则: #cn-{tag}  #en-{tag} (tag 不带 v)
+    anchor_tag = tag[1:] if tag.startswith("v") else tag
+
+    parts = []
+    # 语言切换链接 (只有英文存在才加)
+    if en_body:
+        parts.append("[中文](#cn-%s) | [English](#en-%s)\n" % (anchor_tag, anchor_tag))
+
+    # 中文段
+    parts.append("<a id=\"cn-%s\"></a>\n\n" % anchor_tag)
+    parts.append(cn_body.strip())
+
+    # 英文段
+    if en_body:
+        parts.append("\n\n<a id=\"en-%s\"></a>\n\n" % anchor_tag)
+        parts.append(en_body.strip())
+
+    body = "\n".join(parts).strip() + "\n"
+
+    return title_tmpl, body
 
 
 # ============================================================
@@ -603,7 +643,7 @@ def github_upload_asset(token, release_id, file_path):
 def gitee_list_releases(token):
     url = (
         "https://gitee.com/api/v5/repos/%s/%s/releases"
-        "?access_token=%s&per_page=20"
+        "?access_token=%s&per_page=50"
         % (GITEE_OWNER, GITEE_REPO, token)
     )
     status, data = http_request(url)
@@ -611,6 +651,22 @@ def gitee_list_releases(token):
         print("  [Gitee] list releases HTTP %d: %s" % (status, str(data)[:200]))
         return []
     return data
+
+
+def gitee_find_release_by_tag(token, tag):
+    """用 GET /releases/tags/{tag} 精确查找 Gitee Release (比遍历列表可靠)"""
+    url = (
+        "https://gitee.com/api/v5/repos/%s/%s/releases/tags/%s"
+        "?access_token=%s"
+        % (GITEE_OWNER, GITEE_REPO, tag, token)
+    )
+    status, data = http_request(url)
+    if status == 200:
+        return data
+    if status == 404:
+        return None
+    print("  [Gitee] find release by tag HTTP %d: %s" % (status, str(data)[:200]))
+    return None
 
 
 def gitee_create_release(token, tag, name, body):
@@ -625,6 +681,26 @@ def gitee_create_release(token, tag, name, body):
     status, data = http_request(url, method="POST", data=payload)
     if status not in (200, 201):
         print("  [Gitee] create release HTTP %d: %s" % (status, str(data)[:300]))
+        return None
+    return data
+
+
+def gitee_edit_release(token, release_id, tag, name, body):
+    """更新已有 Gitee Release 的 name + body (PATCH /releases/{id})
+    Gitee 要求 PATCH 也带 access_token 和 tag_name。"""
+    url = (
+        "https://gitee.com/api/v5/repos/%s/%s/releases/%d"
+        % (GITEE_OWNER, GITEE_REPO, release_id)
+    )
+    payload = {
+        "access_token": token,
+        "tag_name": tag,
+        "name": name,
+        "body": body,
+    }
+    status, data = http_request(url, method="PATCH", data=payload)
+    if status != 200:
+        print("  [Gitee] edit release HTTP %d: %s" % (status, str(data)[:300]))
         return None
     return data
 
@@ -781,12 +857,8 @@ def main():
     print("=" * 64)
 
     if gitee_token:
-        releases = gitee_list_releases(gitee_token)
-        rel = None
-        for r in releases:
-            if r["tag_name"] == tag:
-                rel = r
-                break
+        # 精确查找 (比遍历列表可靠)
+        rel = gitee_find_release_by_tag(gitee_token, tag)
 
         if rel is None:
             print("  创建新 Release %s..." % tag)
@@ -798,6 +870,17 @@ def main():
             )
         else:
             print("  已有 Release: ID=%s" % rel["id"])
+            # 更新 body (双语描述 / 版本号变化)
+            edited = gitee_edit_release(
+                gitee_token,
+                rel["id"],
+                tag,
+                release_title,
+                release_notes,
+            )
+            if edited:
+                print("  [✓] 已更新 Release body")
+                rel = edited
 
         if rel:
             gitee_upload_asset(gitee_token, rel["id"], zip_path)
