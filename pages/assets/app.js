@@ -10,6 +10,112 @@
     return Array.prototype.slice.call(document.querySelectorAll(selector));
   }
 
+  /* 0. 自动检测最新 zip — 改下载按钮直链
+     GitHub API 有 CORS 可直接调; Gitee 无 CORS, 但 zip 文件名两端一致,
+     拿到 GitHub 文件名后拼 Gitee 直链. localStorage 缓存 24h. */
+  var GH_REPO = "LiuJunheng/DeepSeekHarnessGreen";
+  var GITEE_REPO = "liujunheng/DeepSeekHarnessGreen";
+  var CACHE_KEY = "dshe-latest-release";
+  var CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 小时
+
+  function readReleaseCache() {
+    try {
+      var raw = localStorage.getItem(CACHE_KEY);
+      if (!raw) return null;
+      var data = JSON.parse(raw);
+      if (Date.now() - data.fetchedAt < CACHE_TTL_MS) return data;
+    } catch (e) { /* no-op */ }
+    return null;
+  }
+
+  function writeReleaseCache(data) {
+    try {
+      data.fetchedAt = Date.now();
+      localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+    } catch (e) { /* no-op */ }
+  }
+
+  // 从文件名里提取 8 位日期用于排序 (格式: ..._20260905_v1.0.29.zip)
+  function extractDateFromName(filename) {
+    var m = filename.match(/_(\d{8})_v/);
+    if (m) return parseInt(m[1], 10);
+    return 0;
+  }
+
+  // 过滤 assets 里 GreenPortable zip, 按日期选最新
+  function pickLatestZipAsset(assets) {
+    var zips = [];
+    for (var i = 0; i < assets.length; i++) {
+      var name = assets[i].name;
+      if (/\.zip$/i.test(name) && name.indexOf("GreenPortable") !== -1) {
+        zips.push(assets[i]);
+      }
+    }
+    if (zips.length === 0) return null;
+    zips.sort(function (a, b) {
+      return extractDateFromName(b.name) - extractDateFromName(a.name);
+    });
+    return zips[0];
+  }
+
+  // 主函数: fetch GitHub API → 拼双平台直链 → 改按钮 href
+  function fetchLatestRelease() {
+    // 只在有 download-right 区块的首页运行
+    if (!document.querySelector(".download-right")) return;
+
+    // 先用缓存
+    var cached = readReleaseCache();
+    if (cached) {
+      applyReleaseToButtons(cached);
+      return;
+    }
+
+    // fetch GitHub latest release API (有 CORS Access-Control-Allow-Origin: *)
+    var url = "https://api.github.com/repos/" + GH_REPO + "/releases/latest";
+    fetch(url, { headers: { Accept: "application/vnd.github+json" } })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return resp.json();
+      })
+      .then(function (data) {
+        var zip = pickLatestZipAsset(data.assets || []);
+        if (!zip) return; // 没找到 zip 就保持原 releases/latest 跳转
+        var result = {
+          tag: data.tag_name,
+          filename: zip.name,
+          size: zip.size,
+          publishedAt: data.published_at
+        };
+        writeReleaseCache(result);
+        applyReleaseToButtons(result);
+      })
+      .catch(function () { /* 静默保留原 releases/latest 跳转 */ });
+  }
+
+  // 把 release 信息应用到按钮 href
+  function applyReleaseToButtons(info) {
+    var ghUrl = "https://github.com/" + GH_REPO + "/releases/download/" + info.tag + "/" + info.filename;
+    var giteeUrl = "https://gitee.com/" + GITEE_REPO + "/releases/download/" + info.tag + "/" + info.filename;
+
+    var ghBtns = document.querySelectorAll('[data-dl="github"]');
+    for (var i = 0; i < ghBtns.length; i++) {
+      ghBtns[i].href = ghUrl;
+      ghBtns[i].removeAttribute("target");
+    }
+    var giteeBtns = document.querySelectorAll('[data-dl="gitee"]');
+    for (var j = 0; j < giteeBtns.length; j++) {
+      giteeBtns[j].href = giteeUrl;
+      giteeBtns[j].removeAttribute("target");
+    }
+  }
+
+  // DOM ready 后启动
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", fetchLatestRelease);
+  } else {
+    fetchLatestRelease();
+  }
+
   /* 1. 吸顶导航：滚动时高亮当前所在区块对应的链接 */
   var navLinks = queryAll(".nav-links a");
   var sections = navLinks
