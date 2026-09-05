@@ -24,9 +24,11 @@
  */
 import z from '@deepseek-ai/schemastery';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import zlib from 'node:zlib';
 import { ZuzongBridge } from './bridge.js';
 import { registerZuzongTools } from './tools.js';
 import { installMemoryHooks } from './hooks.js';
@@ -226,6 +228,126 @@ function parseQuery(url) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 会话标题读取 (从用量统计插件移植, 三层 fallback)
+// ---------------------------------------------------------------------------
+function normalizeSessionId(sessionId) {
+    return sessionId && sessionId.startsWith('session-') ? sessionId.slice('session-'.length) : sessionId;
+}
+
+/**
+ * 尽力读取会话标题 (三层 fallback):
+ *   1. DSH 0.1.2-rc.1: storages/session_projcache/sessions/session-{uuid}.json
+ *   2. 旧版: storages/session_projcache.json (单文件)
+ *   3. 终极: sessions/{ws}/session-{uuid}/session.jsonl.zstd 里的 session/title 事件
+ * 拿不到返回 null。
+ */
+async function readSessionTitle(sessionId) {
+    const id = normalizeSessionId(sessionId);
+    try {
+        // Layer 1: 新版按 session 分文件的 projcache
+        const projPath = join(_dshHome(), 'storages', 'session_projcache', 'sessions', 'session-' + id + '.json');
+        let raw;
+        try { raw = readFileSync(projPath, 'utf8'); } catch {
+            // Layer 2: 旧版单文件 projcache
+            try { raw = readFileSync(join(_dshHome(), 'storages', 'session_projcache.json'), 'utf8'); } catch { raw = null; }
+        }
+        if (raw) {
+            const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+            const data = JSON.parse(text);
+            if (data && data.record && data.record.rows && data.record.rows.title && typeof data.record.rows.title.val === 'string') {
+                const t = data.record.rows.title.val.trim();
+                if (t.length > 0) return t;
+            }
+            const rows = data && data.tables && data.tables.sessions;
+            if (rows && typeof rows === 'object') {
+                const row = rows[sessionId];
+                const title = row && row.rows && row.rows.title && row.rows.title.val;
+                if (typeof title === 'string' && title.trim().length > 0) return title.trim();
+            }
+        }
+        // Layer 3: 终极 fallback — 从 session.jsonl.zstd 里的 session/title 事件提取
+        try {
+            const sessionsRoot = join(_dshHome(), 'sessions');
+            const workspaces = await readdir(sessionsRoot);
+            for (const ws of workspaces) {
+                const zstdPath = join(sessionsRoot, ws, 'session-' + sessionId, 'session.jsonl.zstd');
+                let buf;
+                try { buf = readFileSync(zstdPath); } catch { continue; }
+                // zstd 可能有多个 frame, 逐个解压拼接
+                const frames = [];
+                let i = 0;
+                const MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
+                while (i < buf.length) {
+                    let j = buf.indexOf(MAGIC, i + 4);
+                    if (j < 0) j = buf.length;
+                    frames.push(buf.subarray(i, j));
+                    i = j;
+                }
+                const text = Buffer.concat(frames.map(fr => zlib.zstdDecompressSync(fr))).toString('utf8');
+                const lines = text.split('\n').filter(l => l.trim());
+                // 倒序找最后一个 session/title 事件 (最准)
+                for (let k = lines.length - 1; k >= 0; k--) {
+                    try {
+                        const obj = JSON.parse(lines[k]);
+                        if (obj.type === 'session/title' && obj.data && typeof obj.data.title === 'string') {
+                            const t = obj.data.title.trim();
+                            if (t.length > 0) return t;
+                        }
+                    } catch { /* skip bad line */ }
+                }
+            }
+        } catch { /* 忽略 fallback 错误 */ }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 批量给会话分组附加 display_title (带缓存)。
+ *   - 实时标题优先 (ctx.sessions.list.getSnapshot) —— 运行中的会话
+ *   - 磁盘 projcache / session.jsonl —— 历史会话
+ *   - 都拿不到 → 用 session_id 缩写 (session-766ef...eb150)
+ */
+async function attachSessionTitles(ctx, groups) {
+    if (!Array.isArray(groups)) return groups;
+    const titleCache = new Map();  // session_id → title
+
+    // 批量先拿实时标题 (最快)
+    let liveSnap = null;
+    try {
+        const liveSvc = ctx.sessions;
+        if (liveSvc && liveSvc.list && typeof liveSvc.list.getSnapshot === 'function') {
+            liveSnap = liveSvc.list.getSnapshot();
+        }
+    } catch { liveSnap = null; }
+
+    for (const g of groups) {
+        const sid = g.session_id;
+        if (!sid || sid === '__global__') {
+            g.display_title = '全局 (无会话)';
+            continue;
+        }
+        // 实时标题优先
+        let title = null;
+        if (liveSnap && liveSnap.byId && liveSnap.byId[sid]) {
+            title = liveSnap.byId[sid].displayTitle || null;
+        }
+        // 缓存/磁盘查
+        if (!title) {
+            if (titleCache.has(sid)) {
+                title = titleCache.get(sid);
+            } else {
+                title = await readSessionTitle(sid);
+                titleCache.set(sid, title);
+            }
+        }
+        g.display_title = title || sid.slice(0, 18) + (sid.length > 18 ? '...' : '');
+    }
+    return groups;
+}
+
 /**
  * 注册记忆管理 host 路由 (v3 新增 config GET+POST 合并, 无 method 参数):
  *   GET  /__dsh/memory/status    → 引擎状态 (service_info)
@@ -415,7 +537,7 @@ function registerMemoryRoutes(ctx, bridge, effectiveConfig) {
         },
     }, `${name}: config route (GET+POST)`));
 
-    // --- v3 新增: /sessions (GET) 列出所有会话分组 ---
+    // --- v3 新增: /sessions (GET) 列出所有会话分组 + display_title ---
     ctx.effect(() => webServer.register({
         kind: 'exact', path: `${PREFIX}/sessions`,
         handler: async (req, res) => {
@@ -425,6 +547,10 @@ function registerMemoryRoutes(ctx, bridge, effectiveConfig) {
                 const text = (r.content || []).map((c) => c.text || '').join('\n');
                 let data;
                 try { data = JSON.parse(text); } catch { data = { raw: text }; }
+                // v3.1: 批量附加 display_title (从 projcache / 实时快照 / session.jsonl 读取)
+                if (Array.isArray(data?.sessions)) {
+                    data.sessions = await attachSessionTitles(ctx, data.sessions);
+                }
                 sendJson(res, 200, { ok: true, data });
             } catch (err) {
                 sendJson(res, 503, { ok: false, error: String(err.message || err) });

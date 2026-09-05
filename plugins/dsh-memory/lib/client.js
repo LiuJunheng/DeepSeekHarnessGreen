@@ -478,7 +478,9 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                                         fontSize: "12px", marginBottom: "4px",
                                     },
                                 },
-                                    react.createElement("div", { style: { fontWeight: 500 } }, sg.session_label || "全局"),
+                                    react.createElement("div", { style: { fontWeight: 500 } },
+                                        sg.display_title || sg.session_label || (sg.session_id ? String(sg.session_id).slice(0, 18) + "..." : "全局")
+                                    ),
                                     react.createElement("div", { style: { fontSize: "11px", opacity: 0.7 } },
                                         `${sg.count} 条 · ${fmtTime(sg.latest)}`
                                     ),
