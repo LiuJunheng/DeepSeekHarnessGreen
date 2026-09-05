@@ -266,7 +266,7 @@ function registerMemoryRoutes(ctx, bridge, effectiveConfig) {
         },
     }, `${name}: GET /status`));
 
-    // --- /list (GET-only) ---
+    // --- /list (GET-only, v3: 支持 session_id / before_ts 过滤) ---
     ctx.effect(() => webServer.register({
         kind: 'exact', path: `${PREFIX}/list`,
         handler: async (req, res) => {
@@ -274,8 +274,13 @@ function registerMemoryRoutes(ctx, bridge, effectiveConfig) {
             const qs = parseQuery(req.url);
             const limit = parseInt(qs.get('limit') || '200', 10);
             const offset = parseInt(qs.get('offset') || '0', 10);
+            // v3 新增过滤参数
+            const args = { limit, offset };
+            if (qs.get('session_id')) args.session_id = qs.get('session_id');
+            if (qs.get('cwd')) args.cwd = qs.get('cwd');
+            if (qs.get('before_ts')) args.before_ts = parseInt(qs.get('before_ts'), 10);
             try {
-                const r = await bridge.callTool('list_all', { limit, offset });
+                const r = await bridge.callTool('list_all', args);
                 const text = (r.content || []).map((c) => c.text || '').join('\n');
                 let data;
                 try { data = JSON.parse(text); } catch { data = { raw: text }; }
@@ -410,7 +415,80 @@ function registerMemoryRoutes(ctx, bridge, effectiveConfig) {
         },
     }, `${name}: config route (GET+POST)`));
 
-    ctx.logger.info(`${name}: 记忆库管理路由已注册 (6 条, GET+POST 合并 config)`);
+    // --- v3 新增: /sessions (GET) 列出所有会话分组 ---
+    ctx.effect(() => webServer.register({
+        kind: 'exact', path: `${PREFIX}/sessions`,
+        handler: async (req, res) => {
+            if (req.method !== 'GET') { sendJson(res, 405, { ok: false, error: 'use GET' }); return; }
+            try {
+                const r = await bridge.callTool('list_sessions', {});
+                const text = (r.content || []).map((c) => c.text || '').join('\n');
+                let data;
+                try { data = JSON.parse(text); } catch { data = { raw: text }; }
+                sendJson(res, 200, { ok: true, data });
+            } catch (err) {
+                sendJson(res, 503, { ok: false, error: String(err.message || err) });
+            }
+        },
+    }, `${name}: GET /sessions`));
+
+    // --- v3 新增: /batch_before (POST) 按时间戳批量清理 ---
+    ctx.effect(() => webServer.register({
+        kind: 'exact', path: `${PREFIX}/batch_before`,
+        handler: (req, res) => {
+            if (req.method !== 'POST') { sendJson(res, 405, { ok: false, error: 'use POST' }); return; }
+            let body = '';
+            req.on('data', (chunk) => { body += chunk; });
+            req.on('end', async () => {
+                let parsed = {};
+                try { parsed = JSON.parse(body) || {}; } catch { /* 忽略 */ }
+                const beforeTs = parseInt(parsed.before_ts, 10);
+                if (!beforeTs || beforeTs <= 0) {
+                    sendJson(res, 400, { ok: false, error: '缺少 before_ts (Unix 时间戳, 秒)' });
+                    return;
+                }
+                try {
+                    const r = await bridge.callTool('batch_delete_before', { before_ts: beforeTs });
+                    const text = (r.content || []).map((c) => c.text || '').join('\n');
+                    let data;
+                    try { data = JSON.parse(text); } catch { data = { raw: text }; }
+                    sendJson(res, 200, { ok: true, data });
+                } catch (err) {
+                    sendJson(res, 503, { ok: false, error: String(err.message || err) });
+                }
+            });
+        },
+    }, `${name}: POST /batch_before`));
+
+    // --- v3 新增: /batch_session (POST) 按 session_id 批量清理 ---
+    ctx.effect(() => webServer.register({
+        kind: 'exact', path: `${PREFIX}/batch_session`,
+        handler: (req, res) => {
+            if (req.method !== 'POST') { sendJson(res, 405, { ok: false, error: 'use POST' }); return; }
+            let body = '';
+            req.on('data', (chunk) => { body += chunk; });
+            req.on('end', async () => {
+                let parsed = {};
+                try { parsed = JSON.parse(body) || {}; } catch { /* 忽略 */ }
+                const sessionId = (parsed.session_id || '').trim();
+                if (!sessionId) {
+                    sendJson(res, 400, { ok: false, error: '缺少 session_id' });
+                    return;
+                }
+                try {
+                    const r = await bridge.callTool('batch_delete_session', { session_id: sessionId });
+                    const text = (r.content || []).map((c) => c.text || '').join('\n');
+                    let data;
+                    try { data = JSON.parse(text); } catch { data = { raw: text }; }
+                    sendJson(res, 200, { ok: true, data });
+                } catch (err) {
+                    sendJson(res, 503, { ok: false, error: String(err.message || err) });
+                }
+            });
+        },
+    }, `${name}: POST /batch_session`));
+
+    ctx.logger.info(`${name}: 记忆库管理路由已注册 (9 条, GET+POST 合并 config + v3 会话隔离 3 条)`);
 }
 
 // ---------------------------------------------------------------------------
