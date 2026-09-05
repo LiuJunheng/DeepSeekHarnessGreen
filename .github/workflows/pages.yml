@@ -1,5 +1,6 @@
-# 将 pages/ 目录部署到 GitHub Pages
+# 将 docs/ 目录部署到 GitHub Pages (仅做 301 跳转)
 # 访问地址: https://liujunheng.github.io/DeepSeekHarnessGreen/
+# 真实站点已迁移到 Cloudflare Pages: https://dsh-green.website/
 name: Deploy GitHub Pages
 
 on:
@@ -25,7 +26,7 @@ jobs:
       - name: Upload pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: pages
+          path: docs
 
   deploy:
     environment:
