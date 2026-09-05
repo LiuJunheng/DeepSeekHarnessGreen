@@ -2,13 +2,27 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="0;url=https://dsh-green.website/">
   <meta name="robots" content="noindex,follow">
   <link rel="canonical" href="https://dsh-green.website/">
   <title>Redirecting to dsh-green.website...</title>
   <script>
-    // 404 兜底: 任何未知路径都跳新域名根
-    window.location.replace('https://dsh-green.website/');
+    // 智能路径跳转: 任何 404 路径都尝试保留已知三语前缀
+    // 例: /DeepSeekHarnessGreen/zh/... -> https://dsh-green.website/zh/
+    var NEW_BASE = 'https://dsh-green.website';
+    var path = location.pathname;
+    path = path.replace(/^\/DeepSeekHarnessGreen/, '');
+    var known = /^\/(zh|zh-Hant|en)(\/|$)/;
+    var target;
+    if (path === '/' || path === '') {
+      target = NEW_BASE + '/';
+    } else if (known.test(path)) {
+      target = NEW_BASE + path;
+    } else {
+      target = NEW_BASE + '/';
+    }
+    // 动态注入 meta refresh (已在 head, 直接改)
+    document.title = 'Redirecting...';
+    window.location.replace(target);
   </script>
 </head>
 <body style="font-family:-apple-system,'Segoe UI',sans-serif;text-align:center;padding:60px 20px;background:#030617;color:#e8f0ff;">
