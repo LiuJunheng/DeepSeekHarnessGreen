@@ -1,4 +1,4 @@
-/* =========================================================
+﻿/* =========================================================
    DeepSeek Harness 绿色版发布页 · 蓝色未来科技感主题 v2
    深空蓝底 + 青蓝霓虹渐变 + 玻璃拟态 + 多层动效（水波/粒子/扫描光）
    ========================================================= */
@@ -624,21 +624,6 @@ main, .footer { position: relative; z-index: 5; }
 }
 .footer-links a { color: #8aa8d6; text-decoration: none; }
 .footer-links a:hover { color: #c5d7f2; text-decoration: underline; }
-
-/* Ad slots — invisible placeholder while not serving ads.
-   Keep width/margin/align so the container reserves layout space and
-   Mediapartners-Google crawler can see it (never use display:none!).
-   After AdSense approval, replace border/background with whatever
-   matches the approved ad <ins> tag's natural styling. */
-.ad-slot {
-  width: 100%;
-  max-width: 728px;
-  margin: 28px auto;
-  text-align: center;
-  min-height: 90px;
-}
-.ad-slot-wide { max-width: 728px; } 
-.ad-slot-rect  { max-width: 336px; } 
 
 /* ---- 语言切换器 (导航栏右侧或 footer 底部) ---- */
 .lang-switcher {
