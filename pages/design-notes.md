@@ -1,4 +1,4 @@
-﻿# DeepSeek Harness Green Pages · 维护记录
+# DeepSeek Harness Green Pages · 维护记录
 
 > 本文件是 `pages/`（GitHub Pages 发布页）的维护记录，只记对日后维护有复用价值的内容：架构、定稿参数、规范与避坑。不存档设计与开发过程、版本史与时间线。
 > 每次改页面后同步更新本文件，并给所有 HTML 里 `<link>`/`<script>` 加 `?v=x.y` 版本号防缓存（当前 v=3.0）。
@@ -74,9 +74,13 @@ pages/
 `lang` 属性精确：zh 版 `zh-CN`、zh-Hant 版 `zh-Hant`、en 版 `en`（不用 `en-US`，覆盖更广）。hreflang 标签值用精确的 `zh-Hans` / `zh-Hant` 但 URL 路径用短名 `zh/` / `zh-Hant/`，两者独立（Google 接受）。
 
 **浏览器语言检测逻辑：**
+
 - `zh-TW / zh-HK / zh-MO / zh-hant*` → 繁体 `./zh-Hant/`
+
 - `zh-CN / zh-SG / zh*` → 简体 `./zh/`
+
 - 其他 → `./en/`
+
 - localStorage 优先，兼容旧值映射 `zh-Hans→zh`, `zh-TW/HK/MO→zh-Hant`
 
 **繁体转换工具：** `opencc-python-reimplemented`（pip 装到 `runtime/python/python/lib/site-packages/`），调用 `OpenCC('s2t')`，配合正则保护 HTML tag / CSS / JS / URL 不被转换，只转换可见文本。

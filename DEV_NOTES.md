@@ -344,35 +344,47 @@
 
    * **token 安全**：`set GITHUB_TOKEN=xxx` / `set GITEE_TOKEN=xxx`（PowerShell 用 `$env:GITHUB_TOKEN='xxx'`），用完即弃，别写入任何文件或 .env。脚本运行时会自动读取环境变量，不设置 token 则跳过上传。
 
-1. **版本比较的 semver 陷阱 + 更新检查界面重构（2026-09-03，v1.0.28）**：
+4. **版本比较的 semver 陷阱 + 更新检查界面重构（2026-09-03，v1.0.28）**：
 
    * **现象**：用户当前 alpha.5，npm next 通道已有 rc.1 发布，但更新检查日志显示"跳过 0.1.2-rc.1 (当前: 0.1.2-alpha.5)"——rc.1 被判为比 alpha.5 旧。
 
    * **根因**：`_green_version_tuple()` 原实现用 `re.split(r"[^\d]+", ...)` 把所有非数字当分隔符丢掉语义：`0.1.2-alpha.5 → (0,1,2,5)`，`0.1.2-rc.1 → (0,1,2,1)`，只比数字大小 → rc.1 反而 < alpha.5。**semver 规范里 pre-release 标签有严格优先级：alpha < beta < rc < 无标记(正式版)**，不能纯拆数字。
 
-   * **修复**：重写 `_green_version_tuple()` 为正确的 semver 五元组 `(major, minor, patch, pre_rank, pre_number)`，pre_rank 映射：alpha=0, beta=1, rc=2, 无标记(正式版)=3。Python tuple 比较天然正确。新增 `_VERSION_PRECEDENCE` 常量（alpha/a, beta/b, pre/preview, rc/c）。同时升级 `_green_version_greater()` 调用新 tuple。
+   * **修复**：重写 `_green_version_tuple()` 为正确的 semver 五元组 `(major, minor, patch, pre_rank, pre_number)`，pre\_rank 映射：alpha=0, beta=1, rc=2, 无标记(正式版)=3。Python tuple 比较天然正确。新增 `_VERSION_PRECEDENCE` 常量（alpha/a, beta/b, pre/preview, rc/c）。同时升级 `_green_version_greater()` 调用新 tuple。
 
    * **反模式：替用户做"跳过更旧版本"的决策**：旧代码在收集候选时只保留 `_green_version_greater(candidate, current)` 为真的版本。这本质是**替用户决策**——用户可能想降级、想从 stable 切到 next、想锁定某个已知稳定的旧版。全部过滤掉了就"没版本可选"。**正确做法**：不过滤新旧，只去重。
 
    * **npm dist-tag 的两条独立通道**：npm 官方定义了两条独立的版本通道——`latest`（稳定正式版）和 `next`（预发布/rc/alpha）。不应该把两条通道的版本混在一起比"谁更新"。**独立通道、各自最新**才是用户期望：
-     - stable 通道用户看 latest，prerelease 通道用户看 next，互不干扰
-     - 同一大版本号下，rc.1 不一定比 alpha.5 更早发，但它属于不同通道
 
-   * **重构后的 ask_update 展示**：
-     - Treeview 按通道分组：① stable（npm latest）→ ② prerelease（npm next + GitHub prerelease）→ ③ history（GitHub 正式历史版）
-     - 每个通道内版本号从新到旧排序
-     - 标记当前已安装版本（绿色 + "(当前)"）
-     - 灰色标记"未发布到 npm，无法自动安装"
-     - 按钮文案从「确认升级」改为「安装选中版本」（可能是降级或切换通道）
-     - 底部说明："可以选择任何版本（包括更旧的），用于降级或切换通道"
+     * stable 通道用户看 latest，prerelease 通道用户看 next，互不干扰
+
+     * 同一大版本号下，rc.1 不一定比 alpha.5 更早发，但它属于不同通道
+
+   * **重构后的 ask\_update 展示**：
+
+     * Treeview 按通道分组：① stable（npm latest）→ ② prerelease（npm next + GitHub prerelease）→ ③ history（GitHub 正式历史版）
+
+     * 每个通道内版本号从新到旧排序
+
+     * 标记当前已安装版本（绿色 + "(当前)"）
+
+     * 灰色标记"未发布到 npm，无法自动安装"
+
+     * 按钮文案从「确认升级」改为「安装选中版本」（可能是降级或切换通道）
+
+     * 底部说明："可以选择任何版本（包括更旧的），用于降级或切换通道"
 
    * **新增字段**：candidate dict 加 `channel`（stable/prerelease/history）+ `is_current`（bool）。
 
    * **教训**：
-     - 版本比较不能用"纯拆数字"——pre-release 标签有严格优先级，必须按 semver 规范实现
-     - 更新检查不要替用户过滤"旧版本"——降级/切通道/锁旧版都是合法需求
-     - npm dist-tag 的 latest 和 next 是两条独立通道，展示时应该分组、各自选最新
-     - 标记当前已安装版本，让用户清楚自己在哪
+
+     * 版本比较不能用"纯拆数字"——pre-release 标签有严格优先级，必须按 semver 规范实现
+
+     * 更新检查不要替用户过滤"旧版本"——降级/切通道/锁旧版都是合法需求
+
+     * npm dist-tag 的 latest 和 next 是两条独立通道，展示时应该分组、各自选最新
+
+     * 标记当前已安装版本，让用户清楚自己在哪
 
 ## 六、维护提醒
 
@@ -727,44 +739,51 @@ return next();  // 必须继续传下去
 
 #### 8.7 会话标题 + 对话事件获取 (DSH 0.1.2-rc.1 适配)
 
-**根因**: DSH 0.1.2-rc.1 重构了会话投影缓存 (session_projcache) 的存储格式, 从单文件改成按 session 分文件, 路径和结构都变了。
+**根因**: DSH 0.1.2-rc.1 重构了会话投影缓存 (session\_projcache) 的存储格式, 从单文件改成按 session 分文件, 路径和结构都变了。
 
 **旧格式** (已废弃):
-`
-storages/session_projcache.json
-  -> { tables: { sessions: { "{uuid}": { rows: { title: { val: "..." } } } } } }
-`
+`storages/session_projcache.json
+  -> { tables: { sessions: { "{uuid}": { rows: { title: { val: "..." } } } } } }`
 
 **新格式** (DSH 0.1.2-rc.1):
-`
-storages/session_projcache/sessions/session-{uuid}.json
-  -> { version: 5, record: { rows: { title: { ver: 1, seq: N, val: "..." } } } }
-`
+`storages/session_projcache/sessions/session-{uuid}.json
+  -> { version: 5, record: { rows: { title: { ver: 1, seq: N, val: "..." } } } }`
 
 **注意**: 文件名是 session-{uuid}.json, 不是 {uuid}.json! 少了 session- 前缀会导致 s.existsSync 返回 false。
 
 **readSessionTitle 三级 fallback 链路**:
-1. projcache 分文件 session-{uuid}.json -> 
-ecord.rows.title.val (新格式)
-2. 旧单文件 session_projcache.json -> 	ables.sessions[id].rows.title.val (兼容旧版)
+
+1. projcache 分文件 session-{uuid}.json ->
+   ecord.rows.title.val (新格式)
+2. 旧单文件 session\_projcache.json -> 	ables.sessions\[id].rows.title.val (兼容旧版)
 3. 从 session.jsonl.zstd 解压后找最后一个 session/title 事件的 data.title (终极 fallback, 最可靠)
 
 **对话事件获取 (已验证正常)**:
-- 事件源: DSH_HOME/sessions/{workspace}/session-{uuid}/session.jsonl.zstd
-- 解压: Node 22 内置 zlib.zstdDecompressSync, 多帧文件按 zstd magic  x28b52ffd 切分后逐帧解压再 concat
-- 解码: @deepseek-ai/dsh-session 的 decodeStorageRecord (返回事件数组)
-- 折叠: 遍历事件流, 按 	urn/start/	urn/end 分回合, 统计 ssistant/message 数量和模型
 
-**zstd 多帧切分原理**: session.jsonl.zstd 可能是多个 zstd 帧拼接, 每帧都有自己的 magic number。正确做法: 按  x28b52ffd (小端序 magic) 切分 Buffer, 每段单独 zstdDecompressSync, 再 Buffer.concat。
+* 事件源: DSH\_HOME/sessions/{workspace}/session-{uuid}/session.jsonl.zstd
+
+* 解压: Node 22 内置 zlib.zstdDecompressSync, 多帧文件按 zstd magic �x28b52ffd 切分后逐帧解压再 concat
+
+* 解码: @deepseek-ai/dsh-session 的 decodeStorageRecord (返回事件数组)
+
+* 折叠: 遍历事件流, 按 	urn/start/	urn/end 分回合, 统计 ssistant/message 数量和模型
+
+**zstd 多帧切分原理**: session.jsonl.zstd 可能是多个 zstd 帧拼接, 每帧都有自己的 magic number。正确做法: 按 �x28b52ffd (小端序 magic) 切分 Buffer, 每段单独 zstdDecompressSync, 再 Buffer.concat。
 
 **改了哪些文件**:
-- plugins/dsh-session-rewind/lib/index.js - readSessionTitle 重写 + session.jsonl fallback
-- plugins/dsh-usage-stats/lib/index.js - readSessionTitle 重写 + session.jsonl fallback
-- plugins/dsh-archive-purge/lib/index.js - readSessionTitle 重写 + session.jsonl fallback (archive-purge 之前就有 zlib 依赖, 直接复用)
-- plugins/dsh-file-browser/lib/client.js - @ 引用插入 fallback (resolveAgentScope + DOM execCommand)
-- plugins/dsh-sidebar-lite/lib/client.js - @ 引用插入 fallback (同上)
+
+* plugins/dsh-session-rewind/lib/index.js - readSessionTitle 重写 + session.jsonl fallback
+
+* plugins/dsh-usage-stats/lib/index.js - readSessionTitle 重写 + session.jsonl fallback
+
+* plugins/dsh-archive-purge/lib/index.js - readSessionTitle 重写 + session.jsonl fallback (archive-purge 之前就有 zlib 依赖, 直接复用)
+
+* plugins/dsh-file-browser/lib/client.js - @ 引用插入 fallback (resolveAgentScope + DOM execCommand)
+
+* plugins/dsh-sidebar-lite/lib/client.js - @ 引用插入 fallback (同上)
 
 **避坑清单**:
+
 1. projcache 文件名有 session- 前缀, 不要只拼 uuid
 2. zstd 压缩不是 Python zlib 的格式, 要用 Node 22 内置 zlib.zstdDecompressSync
 3. session.jsonl.zstd 是多帧拼接, 不能整文件一次性解压
@@ -772,9 +791,12 @@ ecord.rows.title.val (新格式)
 5. 空会话 (还没对话的) 不会生成 title 事件, readSessionTitle 返回 null 是正常的
 
 **验证结果**:
-- 有对话的会话: 2/2 成功读到标题 (projection cache + session.jsonl 双验证)
-- 空会话: 正常返回 null (预期行为)
-- 事件解析: 3 个会话全部正确提取 turns/messages/models
+
+* 有对话的会话: 2/2 成功读到标题 (projection cache + session.jsonl 双验证)
+
+* 空会话: 正常返回 null (预期行为)
+
+* 事件解析: 3 个会话全部正确提取 turns/messages/models
 
 #### 8.8 插件 inject 依赖必须声明完整
 
@@ -785,9 +807,12 @@ ecord.rows.title.val (新格式)
 **修复**: 给 dsh-session-rewind 和 dsh-archive-purge 的 inject 补上 `"sessions"`。
 
 **踩坑记录**:
-- 改了代码逻辑加了新的 ctx.xxx 调用, 一定要同步更新 inject 数组
-- 容易漏的: liveSessions(ctx) 函数内部用 ctx.sessions 但看起来像普通函数
-- DSH 插件框架: inject 声明是契约, 不声明 = 运行时注入 undefined, 访问属性直接报错
+
+* 改了代码逻辑加了新的 ctx.xxx 调用, 一定要同步更新 inject 数组
+
+* 容易漏的: liveSessions(ctx) 函数内部用 ctx.sessions 但看起来像普通函数
+
+* DSH 插件框架: inject 声明是契约, 不声明 = 运行时注入 undefined, 访问属性直接报错
 
 #### 8.9 ESM 插件里不能用 CommonJS require + sessionId 带前缀
 
@@ -796,14 +821,18 @@ ecord.rows.title.val (新格式)
 解决: 删掉所有 inline require, 用顶部已 import 的模块.
 
 坑 2: entry.id 从 DSH 磁盘扫描返回时已经带 session- 前缀:
-  - entry.id = "session-766ef65b-...." (带前缀)
-  - projcache 文件名 = "session-{uuid}.json" (uuid 不带前缀)
-  - session.jsonl.zstd 目录名 = "session-{uuid}"
+
+* entry.id = "session-766ef65b-...." (带前缀)
+
+* projcache 文件名 = "session-{uuid}.json" (uuid 不带前缀)
+
+* session.jsonl.zstd 目录名 = "session-{uuid}"
 
 readSessionTitle 里拼路径时直接 "session-" + sessionId 就变成了 "session-session-xxx", 找不到文件!
 解决: 加 normalizeSessionId() 函数去掉可能存在的 "session-" 前缀.
 
 本次适配 DSH 0.1.2-rc.1 改动总结:
+
 1. readSessionTitle 三级 fallback: 新版 projcache 分文件 / 旧单文件 / session.jsonl.zstd 事件
 2. inject 数组补全 "sessions" 依赖 (session-rewind, archive-purge)
 3. 删掉所有 inline require("zlib") (ESM 不兼容)
@@ -825,28 +854,36 @@ DSH 0.1.2-rc.1 的 sessionQuery.readSurface() 返回的 events 里不包含 turn
 当 DSH 升级后插件出现异常时，按这个顺序排查：
 
 ### 第一步：启动即崩 / 报错
-- `invalid plugin, expect function or object with an "apply" method` → 检查导出函数名是不是 `apply`
-- `ERR_MODULE_NOT_FOUND: lib/index.js` → 纯客户端插件缺宿主端 index.js
-- `cannot get property "XXX" without inject` → `inject` 数组缺依赖（加 `"XXX"`）
-- `client-modules declares dsh.client but exports no "./client"` → 纯 hook 插件误写了 `dsh.client` 块
+
+* `invalid plugin, expect function or object with an "apply" method` → 检查导出函数名是不是 `apply`
+
+* `ERR_MODULE_NOT_FOUND: lib/index.js` → 纯客户端插件缺宿主端 index.js
+
+* `cannot get property "XXX" without inject` → `inject` 数组缺依赖（加 `"XXX"`）
+
+* `client-modules declares dsh.client but exports no "./client"` → 纯 hook 插件误写了 `dsh.client` 块
 
 ### 第二步：标题 / sessionQuery / 文件读取类错误
-| 症状 | 可能原因 | 快速检查 |
-|------|---------|---------|
-| readSessionTitle 永远返回 null | ESM 里用了 CJS require 被 catch 吞 | Grep `require(` 看宿主端有没有非法 require |
-| 文件名拼错找不到 | sessionId 带 `session-` 前缀重复 | `entry.id` vs `normalizeSessionId(entry.id)` |
-| projcache 文件结构变了 | 单文件改分文件、tables 改 record | 看磁盘上实际 JSON 结构 |
-| session.jsonl.zstd 解压失败 | 多帧文件没切分就整文件解压 | 按 zstd magic 切分 |
+
+| 症状                         | 可能原因                          | 快速检查                                         |
+| -------------------------- | ----------------------------- | -------------------------------------------- |
+| readSessionTitle 永远返回 null | ESM 里用了 CJS require 被 catch 吞 | Grep `require(` 看宿主端有没有非法 require            |
+| 文件名拼错找不到                   | sessionId 带 `session-` 前缀重复   | `entry.id` vs `normalizeSessionId(entry.id)` |
+| projcache 文件结构变了           | 单文件改分文件、tables 改 record       | 看磁盘上实际 JSON 结构                               |
+| session.jsonl.zstd 解压失败    | 多帧文件没切分就整文件解压                 | 按 zstd magic 切分                              |
 
 ### 第三步：事件数据异常
-| 症状 | 可能原因 | 快速检查 |
-|------|---------|---------|
-| turnCount=0 / turns 数组空 | sessionQuery.readSurface 不返回 turn 事件 | 改用 `loadSession()` 直接解文件 |
-| message 数不对 | readSurface 可能丢事件 | 对比文件解析结果 |
-| 标题取最后一个才对 | projcache 还没写入、或写的是中间态 | session.jsonl 事件 fallback 兜底 |
+
+| 症状                      | 可能原因                                 | 快速检查                         |
+| ----------------------- | ------------------------------------ | ---------------------------- |
+| turnCount=0 / turns 数组空 | sessionQuery.readSurface 不返回 turn 事件 | 改用 `loadSession()` 直接解文件     |
+| message 数不对             | readSurface 可能丢事件                    | 对比文件解析结果                     |
+| 标题取最后一个才对               | projcache 还没写入、或写的是中间态               | session.jsonl 事件 fallback 兜底 |
 
 ### 第四步：必改的基础设施代码
+
 1. **读 session 标题**：projcache 新格式 → 旧格式 → session.jsonl.zstd 事件（三级 fallback）
 2. **读完整事件**：直接 `loadSession(file, "zstd")` → `decodeLog(text)` → `decodeStorageRecord`
 3. **读实时 session 状态**：`ctx.sessions`（必须 inject 声明）
-4. **ESM 里绝对不能写 `require()`**：顶部 import 好所有依赖再用
+4. **ESM 里绝对不能写** **`require()`**：顶部 import 好所有依赖再用
+
