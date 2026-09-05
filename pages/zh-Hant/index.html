@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="DeepSeek Harness 桌面綠色整合版啓動器——雙擊即用、綠色便攜、可持續更新的本地發佈與下載入口。">
   <title>DeepSeek Harness 桌面綠色整合版啓動器</title>
-  <!-- AdSense 多语言 SEO: 每个页面必须有 canonical + 完整 hreflang 互指 (self + 所有变体 + x-default) -->
   <link rel="canonical" href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/">
   <link rel="alternate" hreflang="zh-Hans" href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh/">
   <link rel="alternate" hreflang="zh-Hant" href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/">
@@ -14,16 +13,14 @@
   <link rel="stylesheet" href="../assets/style.css?v=3.0">
 </head>
 <body>
-
-  <!-- 背景层（从下到上：深空蓝渐变 → 极光光晕 → 网格 → 粒子 → 水纹 → 扫描光） -->
+  <!-- 背景層 -->
   <div class="bg-gradient" aria-hidden="true"></div>
   <div class="bg-aurora" aria-hidden="true"></div>
   <div class="bg-grid" aria-hidden="true"></div>
   <canvas id="particles-canvas" aria-hidden="true"></canvas>
   <canvas id="water-background" aria-hidden="true"></canvas>
   <div class="scan-light" aria-hidden="true"></div>
-
-  <!-- 顶部导航 -->
+  <!-- 導覽 -->
   <header class="nav" id="top">
     <a class="nav-brand" href="#top">
       <span class="brand-glyph" aria-hidden="true">◆</span>
@@ -42,7 +39,6 @@
       <a href="../en/" onclick="try{localStorage.setItem('dshe-lang-preference','en');}catch(e){}">English</a>
     </div>
   </header>
-
   <main>
     <!-- Hero -->
     <section class="hero" id="top">
@@ -58,7 +54,6 @@
         雙擊即用，無需命令，內置便攜 Python / Node 環境，不污染電腦。
         整包拷走就能用，環境與會話數據全部收在本目錄，一鍵獲取官方 DSH 自動更新。
       </p>
-
       <div class="hero-cta">
         <a class="btn btn-primary" href="https://gitee.com/liujunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">
           下載 Windows 綠色版（國內）</a>
@@ -70,13 +65,10 @@
         · <a class="inline-link" href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">查看 Release 頁</a>
       </p>
     </section>
-
-    <!-- AdSense 广告位 1: Hero 下方 / 内容间横幅 (leaderboard / responsive banner) -->
-    <!-- 审核通过后将下面整段注释替换为 AdSense <ins class="adsbygoogle"> 代碼, 保留外層 .ad-slot 容器 -->
+    <!-- AdSense 廣告位 1 -->
     <div id="ad-slot-1" class="ad-slot ad-slot-wide" aria-label="advertisement">
-      <!-- ADS_PLACEHOLDER_1: Replace with <ins class="adsbygoogle"> code after AdSense approval -->
+      <!-- ADS_PLACEHOLDER_1 -->
     </div>
-
     <!-- 快速上手 -->
     <section class="section" id="quickstart">
       <h2 class="section-title">快速上手</h2>
@@ -88,57 +80,47 @@
         <li>在網頁裏設置 → 模型 → 填入 <strong>DeepSeek API Key</strong>，並選擇工作區，即可開始。</li>
       </ol>
     </section>
-
     <!-- 特性 -->
     <section class="section" id="features">
       <h2 class="section-title">核心特性</h2>
       <p class="section-sub">一句話看懂它能替你做什麼</p>
       <div class="feature-grid">
-
         <article class="card">
           <div class="card-icon">⚡</div>
           <h3>雙擊即用</h3>
           <p>用 DSH_Launcher.exe 或 start.bat，首次點「安裝環境」即自動就緒，之後雙擊即啓動。</p>
         </article>
-
         <article class="card">
           <div class="card-icon">🖥️</div>
           <h3>獨立桌面窗口</h3>
           <p>默認以獨立桌面窗口打開（內嵌 WebView2，像原生桌面 App），也可一鍵切回原始網頁。</p>
         </article>
-
         <article class="card">
           <div class="card-icon">🌱</div>
           <h3>綠色便攜</h3>
           <p>Node / dsh / 緩存 / 會話全在本目錄 runtime/，不寫主目錄、不裝系統、不寫註冊表。</p>
         </article>
-
         <article class="card">
           <div class="card-icon">📦</div>
           <h3>內置多款實用插件</h3>
           <p>祖宗記憶庫 / 用戶規則注入 / 會話回退導入 / 用量統計 / Ollama 接入 / 文件瀏覽 等 10 款。</p>
         </article>
-
         <article class="card">
           <div class="card-icon">🔁</div>
           <h3>雙通道獨立自更新</h3>
           <p>官方核心與綠色版外圍各查各的、互不干擾；更新前自動備份，失敗給出手動地址。</p>
         </article>
-
         <article class="card">
           <div class="card-icon">🏠</div>
           <h3>局域網遠程訪問</h3>
           <p>一鍵綁定 0.0.0.0 並自動放行防火牆，手機 / 其它電腦直接打開 WebUI。</p>
         </article>
-
       </div>
     </section>
-
-    <!-- 下载 -->
+    <!-- 下載 -->
     <section class="section" id="download">
       <h2 class="section-title">下載</h2>
       <p class="section-sub">綠色 zip 不帶預裝環境，體積小；新機聯網後由啓動器自動補齊運行環境</p>
-
       <div class="download-panel">
         <div class="download-left">
           <div class="dl-version">
@@ -163,18 +145,15 @@
         </div>
       </div>
     </section>
-
-    <!-- AdSense 广告位 2: Download 区块下方 (medium rectangle / 侧边栏广告) -->
+    <!-- AdSense 廣告位 2 -->
     <div id="ad-slot-2" class="ad-slot ad-slot-rect" aria-label="advertisement">
-      <!-- ADS_PLACEHOLDER_2: Replace with <ins class="adsbygoogle"> code after AdSense approval -->
+      <!-- ADS_PLACEHOLDER_2 -->
     </div>
-
-    <!-- 内置插件 -->
+    <!-- 內置插件 -->
     <section class="section" id="plugins">
       <h2 class="section-title">內置插件</h2>
       <p class="section-sub">全部爲純插件，不修改官方文件；安裝後重啓服務生效</p>
       <div class="plugin-grid">
-
         <article class="plugin-card">
           <h3>會話回退</h3>
           <p>會話被工具崩潰“毒化”時，一鍵回退到某可行回合，派生乾淨續聊。</p>
@@ -215,11 +194,9 @@
           <h3>用戶規則注入</h3>
           <p>編寫個人偏好 / 代碼風格 / 溝通要求的 markdown，每次對話自動注入 system prompt。</p>
         </article>
-
       </div>
     </section>
-
-    <!-- 常见问题 -->
+    <!-- 常見問題 -->
     <section class="section" id="faq">
       <h2 class="section-title">常見問題</h2>
       <div class="faq">
@@ -246,12 +223,10 @@
       </div>
     </section>
   </main>
-
-    <!-- AdSense 广告位 3: Footer 上方横幅 (responsive banner) -->
+    <!-- AdSense 廣告位 3 -->
     <div id="ad-slot-3" class="ad-slot ad-slot-wide" aria-label="advertisement">
-      <!-- ADS_PLACEHOLDER_3: Replace with <ins class="adsbygoogle"> code after AdSense approval -->
+      <!-- ADS_PLACEHOLDER_3 -->
     </div>
-
   <footer class="footer">
     <p>DeepSeek Harness 桌面綠色整合版啓動器 · <span class="version-chip" id="footer-version">最新版本見 Release</span></p>
     <p>Apache License 2.0 · Copyright (c) 2026 LiuJunheng</p>
@@ -263,7 +238,6 @@
       <a href="privacy.html">隱私政策</a>
     </div>
   </footer>
-
   <script src="../assets/app.js?v=3.0" defer></script>
 </body>
 </html>

@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="DeepSeek Harness 桌面绿色整合版启动器——双击即用、绿色便携、可持续更新的本地发布与下载入口。">
   <title>DeepSeek Harness 桌面绿色整合版启动器</title>
-  <!-- AdSense 多语言 SEO: 每个页面必须有 canonical + 完整 hreflang 互指 (self + 所有变体 + x-default) -->
   <link rel="canonical" href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh/">
   <link rel="alternate" hreflang="zh-Hans" href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh/">
   <link rel="alternate" hreflang="zh-Hant" href="https://liujunheng.github.io/DeepSeekHarnessGreen/zh-Hant/">
@@ -14,16 +13,14 @@
   <link rel="stylesheet" href="../assets/style.css?v=3.0">
 </head>
 <body>
-
-  <!-- 背景层（从下到上：深空蓝渐变 → 极光光晕 → 网格 → 粒子 → 水纹 → 扫描光） -->
+  <!-- Background layers -->
   <div class="bg-gradient" aria-hidden="true"></div>
   <div class="bg-aurora" aria-hidden="true"></div>
   <div class="bg-grid" aria-hidden="true"></div>
   <canvas id="particles-canvas" aria-hidden="true"></canvas>
   <canvas id="water-background" aria-hidden="true"></canvas>
   <div class="scan-light" aria-hidden="true"></div>
-
-  <!-- 顶部导航 -->
+  <!-- Navigation -->
   <header class="nav" id="top">
     <a class="nav-brand" href="#top">
       <span class="brand-glyph" aria-hidden="true">◆</span>
@@ -42,7 +39,6 @@
       <a href="../en/" onclick="try{localStorage.setItem('dshe-lang-preference','en');}catch(e){}">English</a>
     </div>
   </header>
-
   <main>
     <!-- Hero -->
     <section class="hero" id="top">
@@ -58,7 +54,6 @@
         双击即用，无需命令，内置便携 Python / Node 环境，不污染电脑。
         整包拷走就能用，环境与会话数据全部收在本目录，一键获取官方 DSH 自动更新。
       </p>
-
       <div class="hero-cta">
         <a class="btn btn-primary" href="https://gitee.com/liujunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">
           下载 Windows 绿色版（国内）</a>
@@ -70,13 +65,10 @@
         · <a class="inline-link" href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest" target="_blank" rel="noopener">查看 Release 页</a>
       </p>
     </section>
-
-    <!-- AdSense 广告位 1: Hero 下方 / 内容间横幅 (leaderboard / responsive banner) -->
-    <!-- 审核通过后将下面整段注释替换为 AdSense <ins class="adsbygoogle"> 代码, 保留外层 .ad-slot 容器 -->
+    <!-- AdSense 广告位 1 -->
     <div id="ad-slot-1" class="ad-slot ad-slot-wide" aria-label="advertisement">
-      <!-- ADS_PLACEHOLDER_1: Replace with <ins class="adsbygoogle"> code after AdSense approval -->
+      <!-- ADS_PLACEHOLDER_1 -->
     </div>
-
     <!-- 快速上手 -->
     <section class="section" id="quickstart">
       <h2 class="section-title">快速上手</h2>
@@ -88,57 +80,47 @@
         <li>在网页里设置 → 模型 → 填入 <strong>DeepSeek API Key</strong>，并选择工作区，即可开始。</li>
       </ol>
     </section>
-
     <!-- 特性 -->
     <section class="section" id="features">
       <h2 class="section-title">核心特性</h2>
       <p class="section-sub">一句话看懂它能替你做什么</p>
       <div class="feature-grid">
-
         <article class="card">
           <div class="card-icon">⚡</div>
           <h3>双击即用</h3>
           <p>用 DSH_Launcher.exe 或 start.bat，首次点「安装环境」即自动就绪，之后双击即启动。</p>
         </article>
-
         <article class="card">
           <div class="card-icon">🖥️</div>
           <h3>独立桌面窗口</h3>
           <p>默认以独立桌面窗口打开（内嵌 WebView2，像原生桌面 App），也可一键切回原始网页。</p>
         </article>
-
         <article class="card">
           <div class="card-icon">🌱</div>
           <h3>绿色便携</h3>
           <p>Node / dsh / 缓存 / 会话全在本目录 runtime/，不写主目录、不装系统、不写注册表。</p>
         </article>
-
         <article class="card">
           <div class="card-icon">📦</div>
           <h3>内置多款实用插件</h3>
           <p>祖宗记忆库 / 用户规则注入 / 会话回退导入 / 用量统计 / Ollama 接入 / 文件浏览 等 10 款。</p>
         </article>
-
         <article class="card">
           <div class="card-icon">🔁</div>
           <h3>双通道独立自更新</h3>
           <p>官方核心与绿色版外围各查各的、互不干扰；更新前自动备份，失败给出手动地址。</p>
         </article>
-
         <article class="card">
           <div class="card-icon">🏠</div>
           <h3>局域网远程访问</h3>
           <p>一键绑定 0.0.0.0 并自动放行防火墙，手机 / 其它电脑直接打开 WebUI。</p>
         </article>
-
       </div>
     </section>
-
     <!-- 下载 -->
     <section class="section" id="download">
       <h2 class="section-title">下载</h2>
       <p class="section-sub">绿色 zip 不带预装环境，体积小；新机联网后由启动器自动补齐运行环境</p>
-
       <div class="download-panel">
         <div class="download-left">
           <div class="dl-version">
@@ -163,18 +145,15 @@
         </div>
       </div>
     </section>
-
-    <!-- AdSense 广告位 2: Download 区块下方 (medium rectangle / 侧边栏广告) -->
+    <!-- AdSense 广告位 2 -->
     <div id="ad-slot-2" class="ad-slot ad-slot-rect" aria-label="advertisement">
-      <!-- ADS_PLACEHOLDER_2: Replace with <ins class="adsbygoogle"> code after AdSense approval -->
+      <!-- ADS_PLACEHOLDER_2 -->
     </div>
-
     <!-- 内置插件 -->
     <section class="section" id="plugins">
       <h2 class="section-title">内置插件</h2>
       <p class="section-sub">全部为纯插件，不修改官方文件；安装后重启服务生效</p>
       <div class="plugin-grid">
-
         <article class="plugin-card">
           <h3>会话回退</h3>
           <p>会话被工具崩溃“毒化”时，一键回退到某可行回合，派生干净续聊。</p>
@@ -215,10 +194,8 @@
           <h3>用户规则注入</h3>
           <p>编写个人偏好 / 代码风格 / 沟通要求的 markdown，每次对话自动注入 system prompt。</p>
         </article>
-
       </div>
     </section>
-
     <!-- 常见问题 -->
     <section class="section" id="faq">
       <h2 class="section-title">常见问题</h2>
@@ -246,12 +223,10 @@
       </div>
     </section>
   </main>
-
-    <!-- AdSense 广告位 3: Footer 上方横幅 (responsive banner) -->
+    <!-- AdSense 广告位 3 -->
     <div id="ad-slot-3" class="ad-slot ad-slot-wide" aria-label="advertisement">
-      <!-- ADS_PLACEHOLDER_3: Replace with <ins class="adsbygoogle"> code after AdSense approval -->
+      <!-- ADS_PLACEHOLDER_3 -->
     </div>
-
   <footer class="footer">
     <p>DeepSeek Harness 桌面绿色整合版启动器 · <span class="version-chip" id="footer-version">最新版本见 Release</span></p>
     <p>Apache License 2.0 · Copyright (c) 2026 LiuJunheng</p>
@@ -263,7 +238,6 @@
       <a href="privacy.html">隐私政策</a>
     </div>
   </footer>
-
   <script src="../assets/app.js?v=3.0" defer></script>
 </body>
 </html>
