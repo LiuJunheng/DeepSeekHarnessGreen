@@ -164,7 +164,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                 setError(null);
                 try {
                     // list 查询字符串: session_id 过滤
-                    const listQs = `limit=${PAGE_SIZE}&offset=${offset}`;
+                    let listQs = `limit=${PAGE_SIZE}&offset=${offset}`;
                     if (opts.session_id) {
                         listQs += `&session_id=${encodeURIComponent(opts.session_id)}`;
                     }
