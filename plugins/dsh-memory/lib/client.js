@@ -424,7 +424,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                             borderBottom: activeTab === "session" ? "2px solid var(--dsw-alias-button-info-fill)" : "2px solid transparent",
                             fontSize: "13px", fontWeight: activeTab === "session" ? 600 : 400,
                         },
-                    }, f"会话分组 ({sessionGroups.length})"),
+                    }, `会话分组 (${sessionGroups.length})`),
                     // v3: 批量清理按时间 (只在全部记忆 Tab 显示)
                     activeTab === "all" && react.createElement("div", { style: {
                         marginLeft: "auto", display: "flex", gap: "6px", alignItems: "center",
@@ -491,7 +491,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                             ? react.createElement("div", null, "请选择左侧一个会话查看其记忆")
                             : react.createElement("div", null,
                                 react.createElement("div", { style: { marginBottom: "6px" } },
-                                    f"当前会话: {activeSessionId === null ? '全局' : activeSessionId}"
+                                    `当前会话: ${activeSessionId === null ? '全局' : activeSessionId}`
                                 ),
                                 react.createElement("button", {
                                     onClick: () => {
