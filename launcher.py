@@ -7058,61 +7058,99 @@ def run_gui():
             except Exception as error:
                 root.after(0, lambda: plugin_status.set("内置插件同步失败: %s" % error))
 
+        def _collect_selected_package_names():
+            """从已安装 Treeview 取所有选中条目的包名, 过滤掉 category 分组行 (以 "(" 开头的 text).
+            返回合法包名列表; 无选中时返回空列表。"""
+            selection = installed_tree.selection()
+            package_names = []
+            for row_id in selection:
+                text = installed_tree.item(row_id, "text")
+                if text and not text.startswith("("):
+                    package_names.append(text)
+            return package_names
+
         def on_remove():
-            """移除左侧选中的已安装插件"""
+            """批量移除左侧选中的已安装插件 (支持多选, Ctrl/Shift 点击 Treeview 多行)"""
             if plugin_busy[0]:
                 return
-            selection = installed_tree.selection()
-            if not selection:
-                messagebox.showinfo("插件管理", "请先在左侧选中要移除的插件。", parent=top)
+            package_names = _collect_selected_package_names()
+            if not package_names:
+                messagebox.showinfo("插件管理", "请先在左侧选中要移除的插件 (可 Ctrl/Shift 多选)。", parent=top)
                 return
-            package_name = installed_tree.item(selection[0], "text")
-            if package_name.startswith("("):
-                return
-            if not messagebox.askyesno("移除插件", "确定要移除插件「%s」吗?" % package_name, parent=top):
+            if len(package_names) == 1:
+                confirm_msg = "确定要移除插件「%s」吗?" % package_names[0]
+            else:
+                confirm_msg = "确定要移除以下 %d 个插件吗?\n\n%s" % (
+                    len(package_names), "\n".join("· " + name for name in package_names))
+            if not messagebox.askyesno("移除插件", confirm_msg, parent=top):
                 return
             set_plugin_busy(True)
-            plugin_status.set("正在移除: %s ..." % package_name)
+            plugin_status.set("正在移除 %d 个插件 ..." % len(package_names))
             def worker():
-                try:
-                    app.remove_plugin(package_name, profile)
-                    root.after(0, lambda: (refresh_installed(),
-                                           plugin_status.set("已移除: %s" % package_name)))
-                except Exception as error:
-                    root.after(0, lambda: (messagebox.showerror("移除失败", str(error), parent=top),
-                                           plugin_status.set("移除失败")))
-                finally:
-                    root.after(0, lambda: set_plugin_busy(False))
+                removed_ok = []
+                removed_fail = []
+                for package_name in package_names:
+                    try:
+                        app.remove_plugin(package_name, profile)
+                        removed_ok.append(package_name)
+                    except Exception as error:
+                        removed_fail.append((package_name, str(error)))
+                summary_parts = []
+                if removed_ok:
+                    summary_parts.append("已移除 %d 个: %s" % (len(removed_ok), ", ".join(removed_ok)))
+                if removed_fail:
+                    summary_parts.append("失败 %d 个: %s" % (
+                        len(removed_fail),
+                        "; ".join("%s(%s)" % (name, reason) for name, reason in removed_fail)))
+                summary_text = "\n".join(summary_parts) if summary_parts else "(没有需要移除的插件)"
+                root.after(0, lambda: (refresh_installed(),
+                                       messagebox.showinfo("移除插件", summary_text, parent=top),
+                                       plugin_status.set("移除完成: %s" % summary_text.split("\n")[0])))
             threading.Thread(target=worker, daemon=True).start()
 
         def on_toggle(enable):
-            """启用/停用左侧选中的插件 (改 dsh.profile.bundles + disabled 列表)"""
+            """批量启用/停用左侧选中的插件 (支持多选, Ctrl/Shift 点击 Treeview 多行)"""
             if plugin_busy[0]:
                 return
-            selection = installed_tree.selection()
-            if not selection:
-                messagebox.showinfo("插件管理", "请先在左侧选中要启停的插件。", parent=top)
-                return
-            package_name = installed_tree.item(selection[0], "text")
-            if package_name.startswith("("):
+            package_names = _collect_selected_package_names()
+            if not package_names:
+                messagebox.showinfo("插件管理", "请先在左侧选中要启停的插件 (可 Ctrl/Shift 多选)。", parent=top)
                 return
             action = "启用" if enable else "停用"
-            if not messagebox.askyesno(action + "插件",
-                                       "确定要%s插件「%s」吗?\n\n%s后需重启服务才生效。" % (action, package_name, action),
-                                       parent=top):
+            if len(package_names) == 1:
+                confirm_msg = "确定要%s插件「%s」吗?\n\n%s后需重启服务才生效。" % (action, package_names[0], action)
+            else:
+                confirm_msg = "确定要对以下 %d 个插件执行「%s」吗?\n\n%s\n\n完成后需重启服务才生效。" % (
+                    len(package_names), action,
+                    "\n".join("· " + name for name in package_names))
+            if not messagebox.askyesno(action + "插件", confirm_msg, parent=top):
                 return
-            try:
-                ok = app.set_plugin_enabled(package_name, profile, enabled=enable)
-            except Exception as error:
-                messagebox.showerror(action + "失败", str(error), parent=top)
-                return
-            if not ok:
-                messagebox.showinfo("插件管理",
-                                    "「%s」不是可启停的 bundle 插件 (未声明 dsh.bundle), 无需启停。" % package_name,
-                                    parent=top)
-                return
+            bundle_ok = []      # 成功启停 (声明了 dsh.bundle)
+            bundle_skip = []    # 跳过 (未声明 dsh.bundle, 非 bundle 插件)
+            bundle_fail = []    # 异常
+            for package_name in package_names:
+                try:
+                    ok = app.set_plugin_enabled(package_name, profile, enabled=enable)
+                    if ok:
+                        bundle_ok.append(package_name)
+                    else:
+                        bundle_skip.append(package_name)
+                except Exception as error:
+                    bundle_fail.append((package_name, str(error)))
+            summary_parts = []
+            if bundle_ok:
+                summary_parts.append("已%s %d 个: %s" % (action, len(bundle_ok), ", ".join(bundle_ok)))
+            if bundle_skip:
+                summary_parts.append("跳过 %d 个 (非 bundle 插件, 无需启停): %s" % (
+                    len(bundle_skip), ", ".join(bundle_skip)))
+            if bundle_fail:
+                summary_parts.append("失败 %d 个: %s" % (
+                    len(bundle_fail),
+                    "; ".join("%s(%s)" % (name, reason) for name, reason in bundle_fail)))
+            summary_text = "\n".join(summary_parts) if summary_parts else "(没有需要启停的插件)"
             refresh_installed()
-            plugin_status.set("已%s: %s (重启服务后生效)" % (action, package_name))
+            messagebox.showinfo(action + "插件", summary_text, parent=top)
+            plugin_status.set("%s完成: %s (重启服务后生效)" % (action, summary_text.split("\n")[0]))
 
         # ---------- 顶部工具栏 ----------
         toolbar = ttk.Frame(top)
@@ -7144,7 +7182,9 @@ def run_gui():
         # 列表区: 左 Treeview + 右垂直滚动条 (方便上下滑动)
         installed_body = ttk.Frame(installed_frame)
         installed_body.pack(fill="both", expand=True, padx=6, pady=6)
-        installed_tree = ttk.Treeview(installed_body, columns=("version", "state"), show="tree headings")
+        # selectmode="extended": 允许多选 (Ctrl+点击 逐个选, Shift+点击 连选)
+        installed_tree = ttk.Treeview(installed_body, columns=("version", "state"),
+                                      show="tree headings", selectmode="extended")
         installed_tree.heading("#0", text="插件名")
         installed_tree.heading("version", text="版本")
         installed_tree.heading("state", text="状态")
@@ -7159,14 +7199,14 @@ def run_gui():
 
         installed_buttons = ttk.Frame(installed_frame)
         installed_buttons.pack(fill="x", padx=6, pady=(0, 6))
-        remove_btn = ttk.Button(installed_buttons, text="移除选中插件", command=on_remove)
+        remove_btn = ttk.Button(installed_buttons, text="批量移除", command=on_remove)
         remove_btn.pack(side="left")
-        enable_btn = ttk.Button(installed_buttons, text="启用选中", command=lambda: on_toggle(True))
+        enable_btn = ttk.Button(installed_buttons, text="批量启用", command=lambda: on_toggle(True))
         enable_btn.pack(side="left", padx=(6, 0))
-        disable_btn = ttk.Button(installed_buttons, text="停用选中", command=lambda: on_toggle(False))
+        disable_btn = ttk.Button(installed_buttons, text="批量停用", command=lambda: on_toggle(False))
         disable_btn.pack(side="left", padx=(6, 0))
         ttk.Button(installed_buttons, text="刷新", command=on_refresh_installed).pack(side="left", padx=(6, 0))
-        ttk.Label(installed_buttons, text="(启停后需重启服务生效)",
+        ttk.Label(installed_buttons, text="(Ctrl/Shift 多选 · 启停需重启服务生效)",
                   foreground="#666666").pack(side="left", padx=(8, 0))
 
         # 右侧: 搜索结果
