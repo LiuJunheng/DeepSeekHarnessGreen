@@ -35,3 +35,7 @@ workspace/
 
 # 内部文档 / 草稿（不进仓库，放个人记录、踩坑笔记、方案草稿）
 doc/
+
+# Release notes (本地发版临时文件, 不提交 git)
+release_notes*.md
+release_notes/**/*.md

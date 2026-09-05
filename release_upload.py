@@ -125,9 +125,23 @@ GITHUB_REPO = "DeepSeekHarnessGreen"
 # Release 描述加载 — 支持中英双语 (参考官方 dsh release 格式)
 # ============================================================
 
+def _find_notes_file(root_dir, filename):
+    """查找 release notes 文件 — 优先 doc/release_notes/, fallback 根目录
+    release notes 发版临时文件不进 git, 统一放 doc/release_notes/ 目录。"""
+    candidates = [
+        os.path.join(root_dir, "doc", "release_notes", filename),
+        os.path.join(root_dir, filename),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return None
+
+
 def load_release_notes(root_dir, tag):
     """
     读取 release_notes_{tag}.md (中文) + release_notes_{tag}_en.md (英文, 可选)。
+    优先从 doc/release_notes/ 目录查找, 兼容旧版根目录位置。
     最终合并成 GitHub/Gitee Release body, 格式参考官方 deepseek-ai release:
       [中文](#cn-{tag}) | [English](#en-{tag})
       (anchor 用 tag 去掉 v 前缀, 例如 cn-1.0.30 / en-1.0.30)
@@ -142,9 +156,12 @@ def load_release_notes(root_dir, tag):
         缺失则只用中文 (不报错, 只是没有英文段)
     """
     # --- 中文 ---
-    cn_path = os.path.join(root_dir, "release_notes_%s.md" % tag)
-    if not os.path.isfile(cn_path):
-        print("[ERROR] 缺少 release_notes_%s.md!" % tag)
+    cn_filename = "release_notes_%s.md" % tag
+    cn_path = _find_notes_file(root_dir, cn_filename)
+    if cn_path is None:
+        print("[ERROR] 缺少 %s!" % cn_filename)
+        print("  请在 doc/release_notes/ 或根目录创建 %s" % cn_filename)
+        print("  格式: 第 1 行 Release 标题 (可用 {tag} 占位), 第 2 行起 Markdown 更新说明")
         sys.exit(1)
     with open(cn_path, "r", encoding="utf-8") as f:
         cn_raw = f.read()
@@ -152,14 +169,15 @@ def load_release_notes(root_dir, tag):
     title_tmpl = cn_lines[0].strip() if cn_lines else ""
     cn_body = "\n".join(cn_lines[1:]).lstrip("\n")
     if not title_tmpl:
-        print("[ERROR] release_notes_%s.md 第一行是空的, 需要写 Release 标题" % tag)
+        print("[ERROR] %s 第一行是空的, 需要写 Release 标题" % cn_filename)
         sys.exit(1)
 
     # --- 英文 (可选) ---
-    en_path = os.path.join(root_dir, "release_notes_%s_en.md" % tag)
+    en_filename = "release_notes_%s_en.md" % tag
+    en_path = _find_notes_file(root_dir, en_filename)
     en_title_tmpl = None
     en_body = None
-    if os.path.isfile(en_path):
+    if en_path is not None:
         with open(en_path, "r", encoding="utf-8") as f:
             en_raw = f.read()
         en_lines = en_raw.split("\n")
