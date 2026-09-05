@@ -256,10 +256,12 @@ def _tool_search(args):
 
 
 def _tool_timeline(args):
-    """时间线 (v3: 支持 session_id 优先, 再用全局重要性补够 limit)。"""
+    """时间线 (v3: 支持 session_id 优先; cross_session=False 时只返回当前会话自己的记忆, 不拉全局补)。"""
     limit = int(args.get("limit", 10))
     limit = max(1, min(200, limit))
     session_id = args.get("session_id")
+    # v3.1: cross_session=False (默认) = 只返回当前会话自己的记忆; True = 用全局重要性补够 limit
+    cross_session = bool(args.get("cross_session", False))
     if session_id:
         cur = _conn.execute(
             "SELECT * FROM memories "
@@ -270,7 +272,8 @@ def _tool_timeline(args):
             (session_id, limit),
         )
         rows = cur.fetchall()
-        if len(rows) < limit:
+        # v3.1: 只有 cross_session=True 才用全局补 (用户主动勾选跨会话)
+        if cross_session and len(rows) < limit:
             global_cur = _conn.execute(
                 "SELECT * FROM memories "
                 "WHERE session_id IS NULL OR session_id != ? "
@@ -504,12 +507,13 @@ TOOLS = [
     },
     {
         "name": "timeline",
-        "description": "获取记忆时间线 (v3: 支持 session_id 优先)。",
+        "description": "获取记忆时间线 (v3: session_id 优先; cross_session=false 时只返回当前会话记忆, true 时全局补)。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "limit": {"type": "integer", "description": "返回条数 (默认 10, 上限 200)"},
                 "session_id": {"type": "string", "description": "当前 session UUID (可选)"},
+                "cross_session": {"type": "boolean", "description": "v3.1: 是否把全局记忆也加载进来 (默认 false = 只当前会话)"},
             },
         },
     },

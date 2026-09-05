@@ -207,12 +207,15 @@ export function installMemoryHooks(ctx, bridge, opts) {
             }
             // v3: 优先用 timeline 传当前 session_id, recall 作为 fallback
             // 注意: 这里读的是 session/event 钩子维护的闭包变量 currentSessionId
+            // v3.1: 懒读 crossSessionRecall —— WebUI 改开关后下次请求立即生效
+            const crossSession = !!(opts.isCrossSessionRecall ? opts.isCrossSessionRecall() : opts.crossSessionRecall);
             let r;
             if (currentSessionId) {
                 try {
                     r = await bridge.callTool('timeline', {
                         limit: recallLimit,
                         session_id: currentSessionId,  // v3: 当前会话优先
+                        cross_session: crossSession,    // v3.1: 是否跨会话加载全局记忆
                     });
                 }
                 catch { /* timeline 不存在 (旧引擎), fallback 到 recall */ }

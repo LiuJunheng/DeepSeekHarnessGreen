@@ -107,6 +107,8 @@ export const Config = z.object({
         autoRemember: z.boolean().default(false),
         /** v4: 自动召回开关 —— 是否把记忆注入 system prompt, 默认 false。 */
         autoRecall: z.boolean().default(false),
+        /** v3.1: 跨会话加载开关 —— false=只读当前会话记忆, true=全局记忆也加载, 默认 false。 */
+        crossSessionRecall: z.boolean().default(false),
         userMessage: z.boolean().default(true),
         assistantMessage: z.boolean().default(true),
         toolResult: z.boolean().default(false),
@@ -115,7 +117,7 @@ export const Config = z.object({
         desensitize: z.boolean().default(true),
         useSummarize: z.boolean().default(true),
     }).default({
-        autoRemember: false, autoRecall: false,
+        autoRemember: false, autoRecall: false, crossSessionRecall: false,
         userMessage: true, assistantMessage: true, toolResult: false,
         importance: 0.6, autoRecallLimit: 6, desensitize: true,
         useSummarize: true,
@@ -500,6 +502,7 @@ function registerMemoryRoutes(ctx, bridge, effectiveConfig) {
                     const patch = {};
                     if (typeof parsed.autoRemember === 'boolean') patch.autoRemember = parsed.autoRemember;
                     if (typeof parsed.autoRecall === 'boolean') patch.autoRecall = parsed.autoRecall;
+                    if (typeof parsed.crossSessionRecall === 'boolean') patch.crossSessionRecall = parsed.crossSessionRecall;
                     // 兼容旧字段 enabled: true → 两个都开, enabled: false → 两个都关
                     if (typeof parsed.enabled === 'boolean' && patch.autoRemember === undefined && patch.autoRecall === undefined) {
                         patch.autoRemember = parsed.enabled;
@@ -516,6 +519,7 @@ function registerMemoryRoutes(ctx, bridge, effectiveConfig) {
                         config: {
                             autoRemember: Boolean(merged.autoRemember ?? effectiveConfig.memory.autoRemember),
                             autoRecall: Boolean(merged.autoRecall ?? effectiveConfig.memory.autoRecall),
+                            crossSessionRecall: Boolean(merged.crossSessionRecall ?? effectiveConfig.memory.crossSessionRecall),
                             persisted: merged,
                         },
                         note: '配置已保存, 下次启动 DSH 后生效',
@@ -529,6 +533,7 @@ function registerMemoryRoutes(ctx, bridge, effectiveConfig) {
                     config: {
                         autoRemember: Boolean(persist.autoRemember ?? effectiveConfig.memory.autoRemember ?? false),
                         autoRecall: Boolean(persist.autoRecall ?? effectiveConfig.memory.autoRecall ?? false),
+                        crossSessionRecall: Boolean(persist.crossSessionRecall ?? effectiveConfig.memory.crossSessionRecall ?? false),
                         persisted: persist,
                         dbPath: effectiveConfig.dbPath,
                     },
@@ -706,10 +711,16 @@ export async function apply(ctx, config) {
                 const fresh = _loadPersist();
                 return Boolean(fresh.autoRecall ?? effective.memory.autoRecall);
             },
+            // v3.1: 跨会话加载开关 —— false=只读当前会话, true=全局记忆也加载
+            isCrossSessionRecall: () => {
+                const fresh = _loadPersist();
+                return Boolean(fresh.crossSessionRecall ?? effective.memory.crossSessionRecall);
+            },
         });
         ctx.logger.info(
             `dsh-memory: hooks 已安装 (autoRemember=${effective.memory.autoRemember}, ` +
-            `autoRecall=${effective.memory.autoRecall}, 可实时切换)`
+            `autoRecall=${effective.memory.autoRecall}, ` +
+            `crossSessionRecall=${effective.memory.crossSessionRecall}, 可实时切换)`
         );
 
         // --- 记忆库管理卡片 host 路由 (始终注册, 含 config 读写) ---

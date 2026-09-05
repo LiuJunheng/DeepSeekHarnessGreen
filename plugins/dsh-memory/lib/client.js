@@ -90,6 +90,8 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
             // v4: 双开关状态 (自动记录 + 自动注入)
             const [autoRemember, setAutoRemember] = react.useState(null);   // null = 未加载
             const [autoRecall, setAutoRecall] = react.useState(null);
+            // v3.1: 跨会话加载开关 —— false=只读当前会话记忆, true=全局也加载
+            const [crossSessionRecall, setCrossSessionRecall] = react.useState(null);
             const [savingField, setSavingField] = react.useState(null);    // 正在保存哪个字段
             const [savedTip, setSavedTip] = react.useState(null);
             // v3: Tab 切换 + 会话分组 + 过滤
@@ -100,7 +102,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
 
             const PAGE_SIZE = 50;
 
-            /** 读取当前生效配置 (双开关)。 */
+            /** 读取当前生效配置 (双开关 + 跨会话)。 */
             const loadConfig = react.useCallback(async () => {
                 try {
                     const resp = await fetch(ROUTE_CONFIG);
@@ -108,21 +110,26 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                     if (resp.ok && payload && payload.ok) {
                         setAutoRemember(Boolean(payload.config.autoRemember));
                         setAutoRecall(Boolean(payload.config.autoRecall));
+                        setCrossSessionRecall(Boolean(payload.config.crossSessionRecall));
                     } else {
                         setAutoRemember(false); setAutoRecall(false);
+                        setCrossSessionRecall(false);
                     }
                 } catch {
                     setAutoRemember(false); setAutoRecall(false);
+                    setCrossSessionRecall(false);
                 }
             }, []);
 
-            /** 实时保存单个字段 (autoRemember 或 autoRecall)。 */
+            /** 实时保存单个字段 (autoRemember / autoRecall / crossSessionRecall)。 */
             const saveField = react.useCallback(async (fieldName, value) => {
                 // 乐观更新: 先改 UI, 后端失败再回滚
                 const prevRemember = autoRemember;
                 const prevRecall = autoRecall;
+                const prevCross = crossSessionRecall;
                 if (fieldName === "autoRemember") setAutoRemember(value);
                 if (fieldName === "autoRecall") setAutoRecall(value);
+                if (fieldName === "crossSessionRecall") setCrossSessionRecall(value);
                 setSavingField(fieldName);
                 setSavedTip(null);
                 try {
@@ -133,24 +140,30 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                     });
                     const payload = await resp.json().catch(() => null);
                     if (resp.ok && payload && payload.ok) {
-                        setSavedTip(fieldName === "autoRemember"
-                            ? (value ? "自动记录已开启" : "自动记录已关闭")
-                            : (value ? "自动注入已开启" : "自动注入已关闭"));
+                        // 提示文案: 根据字段名动态生成
+                        const tipMap = {
+                            "autoRemember": value ? "自动记录已开启" : "自动记录已关闭",
+                            "autoRecall": value ? "自动注入已开启" : "自动注入已关闭",
+                            "crossSessionRecall": value ? "跨会话加载已开启 (会注入全局记忆)" : "跨会话加载已关闭 (只加载当前会话记忆)",
+                        };
+                        setSavedTip(tipMap[fieldName] || (value ? "已开启" : "已关闭"));
                     } else {
                         // 回滚
                         setAutoRemember(prevRemember);
                         setAutoRecall(prevRecall);
+                        setCrossSessionRecall(prevCross);
                         setError((payload && payload.error) || "保存失败");
                     }
                 } catch (err) {
                     // 回滚
                     setAutoRemember(prevRemember);
                     setAutoRecall(prevRecall);
+                    setCrossSessionRecall(prevCross);
                     setError("保存失败: " + String((err && err.message) || err));
                 } finally {
                     setSavingField(null);
                 }
-            }, [autoRemember, autoRecall]);
+            }, [autoRemember, autoRecall, crossSessionRecall]);
 
             /** 组件挂载时先读配置, 再加载数据。 */
             react.useEffect(() => {
@@ -327,6 +340,21 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                             style: { cursor: savingField === "autoRecall" ? "default" : "pointer", margin: 0 },
                         }),
                         react.createElement("span", null, "自动注入"),
+                    ),
+                    // v3.1: 跨会话加载 —— 只有 autoRecall 开了才有意义
+                    crossSessionRecall !== null && autoRecall && react.createElement("label", { style: {
+                        display: "flex", alignItems: "center", gap: "6px", marginLeft: "4px",
+                        fontSize: "13px", color: TEXT, cursor: "pointer",
+                        opacity: autoRecall ? 1 : 0.5,
+                    }, title: "关闭时只读当前会话自己的记忆; 开启后会把所有会话的全局记忆也加载到 system prompt" },
+                        react.createElement("input", {
+                            type: "checkbox",
+                            checked: crossSessionRecall,
+                            disabled: savingField === "crossSessionRecall" || !autoRecall,
+                            onChange: (e) => saveField("crossSessionRecall", e.target.checked),
+                            style: { cursor: (savingField === "crossSessionRecall" || !autoRecall) ? "default" : "pointer", margin: 0 },
+                        }),
+                        react.createElement("span", null, "跨会话加载"),
                     ),
                     react.createElement("button", {
                         onClick: refreshAll,
