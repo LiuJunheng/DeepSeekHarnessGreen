@@ -193,6 +193,11 @@ export function installMemoryHooks(ctx, bridge, opts) {
     };
     const recallLimit = Math.max(1, Math.min(10, opts.autoRecallLimit || 6));
 
+    // v3: 闭包维护当前 session 的 id / cwd —— session/event 钩子更新, system-prompt/assemble 读取
+    // 这样避免了 system-prompt/assemble 的 _ctx 不是 session 对象的问题
+    let currentSessionId = null;
+    let currentSessionCwd = null;
+
     // --- 自动召回: system-prompt/assemble (总是注册, 内部懒读 autoRecall) ---
     ctx.on('system-prompt/assemble', async (assembly, _ctx, next) => {
         try {
@@ -201,7 +206,7 @@ export function installMemoryHooks(ctx, bridge, opts) {
                 return next();
             }
             // v3: 优先用 timeline 传当前 session_id, recall 作为 fallback
-            const currentSessionId = _ctx?.session?.id || null;
+            // 注意: 这里读的是 session/event 钩子维护的闭包变量 currentSessionId
             let r;
             if (currentSessionId) {
                 try {
@@ -256,10 +261,15 @@ export function installMemoryHooks(ctx, bridge, opts) {
             }
         }
         catch { /* 静默: 召回失败不影响请求 */ }
-            return next();
-        });
+        return next();
+    });
     // --- 自动记录: session/event → 写入记忆库 (总是注册, 内部懒读 autoRemember) ---
     ctx.on('session/event', (_session, event) => {
+        // v3: 更新当前 session 上下文 (供 system-prompt/assemble 钩子读取)
+        if (_session) {
+            currentSessionId = _session.id || null;
+            currentSessionCwd = _session.header?.cwd || null;
+        }
         // v5: 懒读 autoRemember —— WebUI 改开关后下次事件立即生效
         if (!opts.isAutoRemember || !opts.isAutoRemember()) {
             return;

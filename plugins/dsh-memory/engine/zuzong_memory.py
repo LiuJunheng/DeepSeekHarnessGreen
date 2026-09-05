@@ -504,11 +504,12 @@ TOOLS = [
     },
     {
         "name": "timeline",
-        "description": "获取记忆时间线 (最近 N 条, 按创建时间倒序)。",
+        "description": "获取记忆时间线 (v3: 支持 session_id 优先)。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "limit": {"type": "integer", "description": "返回条数 (默认 10, 上限 200)"},
+                "session_id": {"type": "string", "description": "当前 session UUID (可选)"},
             },
         },
     },
@@ -522,12 +523,15 @@ TOOLS = [
     },
     {
         "name": "list_all",
-        "description": "列出记忆库全部条目 (调试 / 管理卡片用, 支持分页)。",
+        "description": "列出记忆 (v3: 支持 session_id / cwd / before_ts 过滤)。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "limit": {"type": "integer", "description": "每页条数 (默认 500, 上限 5000)"},
                 "offset": {"type": "integer", "description": "偏移量 (默认 0)"},
+                "session_id": {"type": "string", "description": "按 session_id 过滤 (可选, v3)"},
+                "cwd": {"type": "string", "description": "按 cwd 过滤 (可选, v3)"},
+                "before_ts": {"type": "integer", "description": "created_at < 此时间戳 (可选, v3)"},
             },
         },
     },
@@ -540,6 +544,36 @@ TOOLS = [
                 "id": {"type": "integer", "description": "记忆 ID"},
             },
             "required": ["id"],
+        },
+    },
+    {
+        "name": "batch_delete_before",
+        "description": "v3 批量清理: 删除指定时间戳之前的所有记忆。返回 {deleted: N}。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "before_ts": {"type": "integer", "description": "Unix 时间戳 (秒), 删除 created_at < 此值的记忆"},
+            },
+            "required": ["before_ts"],
+        },
+    },
+    {
+        "name": "batch_delete_session",
+        "description": "v3 批量清理: 删除指定 session_id 的全部记忆。返回 {deleted: N}。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "DSH session UUID"},
+            },
+            "required": ["session_id"],
+        },
+    },
+    {
+        "name": "list_sessions",
+        "description": "v3: 列出所有不同 session_id 分组, 供 WebUI 会话分组视图用。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
         },
     },
 ]
