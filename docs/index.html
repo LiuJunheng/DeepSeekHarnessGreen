@@ -1,0 +1,37 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="refresh" content="0;url=https://dsh-green.website/">
+  <meta name="robots" content="noindex,follow">
+  <link rel="canonical" href="https://dsh-green.website/">
+  <title>Redirecting to dsh-green.website...</title>
+  <script>
+    // 智能路径跳转: GitHub Pages 旧路径 → Cloudflare Pages 新域名对应路径
+    // 例: /DeepSeekHarnessGreen/zh/ -> https://dsh-green.website/zh/
+    var NEW_BASE = 'https://dsh-green.website';
+    var path = location.pathname;
+    // 去掉 GitHub Pages 项目前缀 /DeepSeekHarnessGreen
+    path = path.replace(/^\/DeepSeekHarnessGreen/, '');
+    // 只保留已知的三语路径: /zh/ /zh-Hant/ /en/ / (空根)
+    var known = /^\/(zh|zh-Hant|en)(\/|$)/;
+    var target;
+    if (path === '/' || path === '') {
+      target = NEW_BASE + '/';
+    } else if (known.test(path)) {
+      target = NEW_BASE + path;
+    } else {
+      target = NEW_BASE + '/';
+    }
+    // meta refresh 兜底, JS 替换避免历史污染
+    window.location.replace(target);
+  </script>
+</head>
+<body style="font-family:-apple-system,'Segoe UI',sans-serif;text-align:center;padding:60px 20px;background:#030617;color:#e8f0ff;">
+  <h1 style="font-size:24px;margin-bottom:16px;">站点已迁移</h1>
+  <p style="margin-bottom:24px;color:#8fa4c8;">本网站已从 GitHub Pages 迁移到新域名 dsh-green.website</p>
+  <p style="font-size:16px;">
+    <a href="https://dsh-green.website/" style="color:#39d3ff;">点击这里访问新站点</a>
+  </p>
+</body>
+</html>
