@@ -193,6 +193,11 @@ export function installMemoryHooks(ctx, bridge, opts) {
     };
     const recallLimit = Math.max(1, Math.min(10, opts.autoRecallLimit || 6));
 
+    // v3: 闭包维护当前 session 的 id / cwd —— session/event 钩子更新, system-prompt/assemble 读取
+    // 这样避免了 system-prompt/assemble 的 _ctx 不是 session 对象的问题
+    let currentSessionId = null;
+    let currentSessionCwd = null;
+
     // --- 自动召回: system-prompt/assemble (总是注册, 内部懒读 autoRecall) ---
     ctx.on('system-prompt/assemble', async (assembly, _ctx, next) => {
         try {
@@ -200,49 +205,71 @@ export function installMemoryHooks(ctx, bridge, opts) {
             if (!opts.isAutoRecall || !opts.isAutoRecall()) {
                 return next();
             }
-                const r = await bridge.callTool('recall', {
+            // v3: 优先用 timeline 传当前 session_id, recall 作为 fallback
+            // 注意: 这里读的是 session/event 钩子维护的闭包变量 currentSessionId
+            let r;
+            if (currentSessionId) {
+                try {
+                    r = await bridge.callTool('timeline', {
+                        limit: recallLimit,
+                        session_id: currentSessionId,  // v3: 当前会话优先
+                    });
+                }
+                catch { /* timeline 不存在 (旧引擎), fallback 到 recall */ }
+            }
+            if (!r) {
+                r = await bridge.callTool('recall', {
                     query: '',
                     limit: recallLimit,
                 });
-                // recall 返回的是 JSON {query, results: [{display, type, ...}]}
-                let payload = '';
-                try {
-                    const parsed = JSON.parse(extractText(r.content));
-                    const results = parsed.results || [];
-                    if (results.length > 0) {
-                        // v2: 按 type 分组, 只用 display (优先 summary)
-                        const byType = { user: [], assistant: [], other: [] };
-                        for (const item of results) {
-                            const key = (item.type === 'user' || item.type === 'assistant')
-                                ? item.type
-                                : 'other';
-                            const text = item.display || item.summary || (item.content || '').slice(0, 80);
-                            if (text)
-                                byType[key].push(text);
+            }
+            // recall / timeline 返回的都是 JSON, 统一按 "有 results 数组" 处理
+            let payload = '';
+            try {
+                const parsed = JSON.parse(extractText(r.content));
+                const results = parsed.results || [];
+                if (results.length > 0) {
+                    // v3: 区分 [当前会话] / [全局] 来源标注
+                    const sessionLabel = '【当前会话】';
+                    const globalLabel = '【全局记忆】';
+                    const sessionItems = [];
+                    const globalItems = [];
+                    for (const item of results) {
+                        const text = item.display || item.summary || (item.content || '').slice(0, 80);
+                        if (!text) continue;
+                        const itemSid = item.session_id || null;
+                        if (currentSessionId && itemSid === currentSessionId) {
+                            sessionItems.push(text);
+                        } else {
+                            globalItems.push(text);
                         }
-                        const sections = [];
-                        if (byType.user.length > 0)
-                            sections.push(`【用户提问】\n${byType.user.map(t => `· ${t}`).join('\n')}`);
-                        if (byType.assistant.length > 0)
-                            sections.push(`【AI 回答】\n${byType.assistant.map(t => `· ${t}`).join('\n')}`);
-                        if (byType.other.length > 0)
-                            sections.push(`【其他记忆】\n${byType.other.map(t => `· ${t}`).join('\n')}`);
-                        payload = sections.join('\n\n');
                     }
-                }
-                catch { /* JSON 解析失败 → 旧 fallback */ }
-                if (payload) {
-                    assembly.contexts.push({
-                        name: 'zuzong:auto-recall',
-                        text: `【祖宗记忆库 · 跨会话沉淀】\n${payload}`,
-                    });
+                    const sections = [];
+                    if (sessionItems.length > 0)
+                        sections.push(`${sessionLabel}\n${sessionItems.map(t => `· ${t}`).join('\n')}`);
+                    if (globalItems.length > 0)
+                        sections.push(`${globalLabel}\n${globalItems.map(t => `· ${t}`).join('\n')}`);
+                    payload = sections.join('\n\n');
                 }
             }
-            catch { /* 静默: 召回失败不影响请求 */ }
-            return next();
-        });
+            catch { /* JSON 解析失败 → 静默 */ }
+            if (payload) {
+                assembly.contexts.push({
+                    name: 'zuzong:auto-recall',
+                    text: `【祖宗记忆库 · 跨会话沉淀】\n${payload}`,
+                });
+            }
+        }
+        catch { /* 静默: 召回失败不影响请求 */ }
+        return next();
+    });
     // --- 自动记录: session/event → 写入记忆库 (总是注册, 内部懒读 autoRemember) ---
     ctx.on('session/event', (_session, event) => {
+        // v3: 更新当前 session 上下文 (供 system-prompt/assemble 钩子读取)
+        if (_session) {
+            currentSessionId = _session.id || null;
+            currentSessionCwd = _session.header?.cwd || null;
+        }
         // v5: 懒读 autoRemember —— WebUI 改开关后下次事件立即生效
         if (!opts.isAutoRemember || !opts.isAutoRemember()) {
             return;
@@ -272,6 +299,9 @@ export function installMemoryHooks(ctx, bridge, opts) {
                 type: 'user',
                 importance: opts.importance,
                 tags: ['dsh', 'user'],
+                // v3: 会话隔离 — 从当前 Session 对象取 id 和 cwd
+                session_id: _session?.id || null,
+                cwd: _session?.header?.cwd || null,
             });
             // 语义召回预热
             memorize('recall', { query: (summary || safe).slice(0, 60), limit: 3 });
@@ -296,6 +326,9 @@ export function installMemoryHooks(ctx, bridge, opts) {
                 type: 'assistant',
                 importance: opts.importance * 0.8,
                 tags: ['dsh', 'assistant'],
+                // v3: 会话隔离 — 从当前 Session 对象取 id 和 cwd
+                session_id: _session?.id || null,
+                cwd: _session?.header?.cwd || null,
             });
         }
         else if (event.type === 'tool/result' && opts.toolResult) {

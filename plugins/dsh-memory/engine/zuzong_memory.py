@@ -65,6 +65,8 @@ def _init_db():
             tags         TEXT    DEFAULT '[]',      -- JSON 数组
             importance   REAL    DEFAULT 0.6,       -- 0.0 ~ 1.0
             note_count   INTEGER DEFAULT 0,         -- 被 recall 次数
+            session_id   TEXT    DEFAULT NULL,      -- v3: DSH session UUID
+            cwd          TEXT    DEFAULT NULL,      -- v3: 工作目录
             created_at   INTEGER NOT NULL,          -- Unix 时间戳 (秒)
             updated_at   INTEGER NOT NULL
         )
@@ -75,6 +77,11 @@ def _init_db():
         _conn.execute("ALTER TABLE memories ADD COLUMN summary TEXT")
     if "type" not in existing_cols:
         _conn.execute("ALTER TABLE memories ADD COLUMN type TEXT DEFAULT 'raw'")
+    # --- v2 → v3 增量迁移 (加 session_id / cwd 实现会话隔离) ---
+    if "session_id" not in existing_cols:
+        _conn.execute("ALTER TABLE memories ADD COLUMN session_id TEXT DEFAULT NULL")
+    if "cwd" not in existing_cols:
+        _conn.execute("ALTER TABLE memories ADD COLUMN cwd TEXT DEFAULT NULL")
     # 建索引
     _conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_memories_created
@@ -87,6 +94,15 @@ def _init_db():
     _conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_memories_type
         ON memories(type)
+    """)
+    # v3: 会话隔离相关索引
+    _conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_memories_session
+        ON memories(session_id, created_at DESC)
+    """)
+    _conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_memories_cwd
+        ON memories(cwd, created_at DESC)
     """)
     _conn.commit()
 
@@ -131,11 +147,14 @@ def _tool_remember(args):
     allowed_types = {"raw", "user", "assistant", "decision", "preference", "fact"}
     if memory_type not in allowed_types:
         memory_type = "raw"
+    # --- v3: 会话隔离字段 (可选, 不传则 NULL) ---
+    session_id = (args.get("session_id") or None) or None
+    cwd_value = (args.get("cwd") or None) or None
     now = int(time.time())
     cursor = _conn.execute(
-        "INSERT INTO memories(content, summary, type, tags, importance, created_at, updated_at) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?)",
-        (content, summary, memory_type, json.dumps(tags, ensure_ascii=False), importance, now, now),
+        "INSERT INTO memories(content, summary, type, tags, importance, session_id, cwd, created_at, updated_at) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (content, summary, memory_type, json.dumps(tags, ensure_ascii=False), importance, session_id, cwd_value, now, now),
     )
     _conn.commit()
     result = {
@@ -143,6 +162,8 @@ def _tool_remember(args):
         "content": content[:200] + ("..." if len(content) > 200 else ""),
         "summary": summary,
         "type": memory_type,
+        "session_id": session_id,
+        "cwd": cwd_value,
         "tags": tags,
         "importance": importance,
         "created_at": now,
@@ -235,17 +256,38 @@ def _tool_search(args):
 
 
 def _tool_timeline(args):
-    """时间线 (v2: 优先返回有 summary 的精简条目, 按 created_at 倒序)。"""
+    """时间线 (v3: 支持 session_id 优先, 再用全局重要性补够 limit)。"""
     limit = int(args.get("limit", 10))
     limit = max(1, min(200, limit))
-    cur = _conn.execute(
-        "SELECT * FROM memories "
-        "ORDER BY (CASE WHEN summary IS NOT NULL AND summary != '' THEN 1 ELSE 0 END) DESC, "
-        "created_at DESC "
-        "LIMIT ?",
-        (limit,),
-    )
-    rows = cur.fetchall()
+    session_id = args.get("session_id")
+    if session_id:
+        cur = _conn.execute(
+            "SELECT * FROM memories "
+            "WHERE session_id = ? "
+            "ORDER BY (CASE WHEN summary IS NOT NULL AND summary != '' THEN 1 ELSE 0 END) DESC, "
+            "importance DESC, created_at DESC "
+            "LIMIT ?",
+            (session_id, limit),
+        )
+        rows = cur.fetchall()
+        if len(rows) < limit:
+            global_cur = _conn.execute(
+                "SELECT * FROM memories "
+                "WHERE session_id IS NULL OR session_id != ? "
+                "ORDER BY importance DESC, created_at DESC "
+                "LIMIT ?",
+                (session_id, limit - len(rows)),
+            )
+            rows += global_cur.fetchall()
+    else:
+        cur = _conn.execute(
+            "SELECT * FROM memories "
+            "ORDER BY (CASE WHEN summary IS NOT NULL AND summary != '' THEN 1 ELSE 0 END) DESC, "
+            "importance DESC, created_at DESC "
+            "LIMIT ?",
+            (limit,),
+        )
+        rows = cur.fetchall()
     results = []
     for row in rows:
         results.append({
@@ -253,12 +295,12 @@ def _tool_timeline(args):
             "content": row["content"][:200],
             "summary": row["summary"],
             "type": row["type"],
+            "session_id": row["session_id"],
             "tags": json.loads(row["tags"] or "[]"),
             "importance": row["importance"],
             "created_at": row["created_at"],
         })
     return _tool_result(json.dumps({"total": len(results), "results": results}, ensure_ascii=False))
-
 
 def _tool_service_info(args):
     """服务状态 (v2: 版本号 + summary 统计)。"""
@@ -284,21 +326,37 @@ def _tool_service_info(args):
         "avg_importance": round(avg_importance, 3),
         "latest_memory_ts": latest_ts,
         "engine": "zuzong-memory-lite",
-        "version": "2.0.0",
+        "version": "3.0.0",
     }, ensure_ascii=False))
 
 
 def _tool_list_all(args):
-    """列出全部记忆 (调试 / 管理卡片用, v2: 返回 summary/type)。"""
+    """列出记忆 (v3: 支持 session_id / cwd / before_ts 过滤, 返回会话隔离字段)。"""
     limit = int(args.get("limit", 500))
     limit = max(1, min(5000, limit))
     offset = int(args.get("offset", 0))
+    session_id = args.get("session_id")
+    cwd_filter = args.get("cwd")
+    before_ts = args.get("before_ts")
+    where_parts = []
+    params = []
+    if session_id is not None:
+        where_parts.append("session_id = ?")
+        params.append(session_id)
+    if cwd_filter is not None:
+        where_parts.append("cwd = ?")
+        params.append(cwd_filter)
+    if before_ts is not None:
+        where_parts.append("created_at < ?")
+        params.append(int(before_ts))
+    where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
     cur = _conn.execute(
-        "SELECT * FROM memories ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        (limit, offset),
+        f"SELECT * FROM memories {where_sql} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        params + [limit, offset],
     )
     rows = cur.fetchall()
-    total = _conn.execute("SELECT COUNT(*) as cnt FROM memories").fetchone()["cnt"]
+    cur_total = _conn.execute(f"SELECT COUNT(*) as cnt FROM memories {where_sql}", params)
+    total = cur_total.fetchone()["cnt"]
     results = []
     for row in rows:
         results.append({
@@ -306,6 +364,8 @@ def _tool_list_all(args):
             "content": row["content"],
             "summary": row["summary"],
             "type": row["type"],
+            "session_id": row["session_id"],
+            "cwd": row["cwd"],
             "tags": json.loads(row["tags"] or "[]"),
             "importance": row["importance"],
             "created_at": row["created_at"],
@@ -314,7 +374,6 @@ def _tool_list_all(args):
         })
     return _tool_result(json.dumps({"total": total, "offset": offset, "items": results},
                                     ensure_ascii=False))
-
 
 def _tool_delete(args):
     """按 ID 删除一条记忆。"""
@@ -328,6 +387,77 @@ def _tool_delete(args):
     cur = _conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
     _conn.commit()
     return _tool_result(json.dumps({"ok": True, "deleted": cur.rowcount}, ensure_ascii=False))
+
+
+def _tool_batch_delete_before(args):
+    """v3 批量清理: 删除指定时间戳 (秒) 之前的所有记忆。先 COUNT 再 DELETE。"""
+    before_ts = args.get("before_ts")
+    if before_ts is None:
+        return _tool_result("缺少 before_ts 参数 (Unix 时间戳, 秒)", is_error=True)
+    try:
+        before_ts = int(before_ts)
+    except (TypeError, ValueError):
+        return _tool_result("before_ts 必须是整数", is_error=True)
+    if before_ts <= 0:
+        return _tool_result("before_ts 必须 > 0", is_error=True)
+    cnt_row = _conn.execute(
+        "SELECT COUNT(*) as cnt FROM memories WHERE created_at < ?", (before_ts,)
+    ).fetchone()
+    delete_count = cnt_row["cnt"]
+    _conn.execute("DELETE FROM memories WHERE created_at < ?", (before_ts,))
+    _conn.commit()
+    return _tool_result(json.dumps({
+        "ok": True, "before_ts": before_ts,
+        "deleted": delete_count, "note": "此操作不可恢复",
+    }, ensure_ascii=False))
+
+
+def _tool_batch_delete_session(args):
+    """v3 批量清理: 删除指定 session_id 的全部记忆。"""
+    session_id = (args.get("session_id") or "").strip()
+    if not session_id:
+        return _tool_result("缺少 session_id 参数", is_error=True)
+    cnt_row = _conn.execute(
+        "SELECT COUNT(*) as cnt FROM memories WHERE session_id = ?", (session_id,)
+    ).fetchone()
+    delete_count = cnt_row["cnt"]
+    _conn.execute("DELETE FROM memories WHERE session_id = ?", (session_id,))
+    _conn.commit()
+    return _tool_result(json.dumps({
+        "ok": True, "session_id": session_id,
+        "deleted": delete_count, "note": "此操作不可恢复",
+    }, ensure_ascii=False))
+
+
+def _tool_list_sessions(args):
+    """v3 新增: 列出所有不同 session_id 分组, 供 WebUI 会话分组视图用。"""
+    rows = _conn.execute("""
+        SELECT
+            session_id, cwd,
+            COUNT(*) as cnt,
+            MAX(created_at) as latest,
+            MIN(created_at) as earliest
+        FROM memories
+        GROUP BY session_id
+        ORDER BY latest DESC
+    """).fetchall()
+    results = []
+    for row in rows:
+        session_label = "全局 (未关联会话)" if row["session_id"] is None else row["session_id"]
+        results.append({
+            "session_id": row["session_id"],
+            "session_label": session_label,
+            "cwd": row["cwd"],
+            "count": row["cnt"],
+            "latest": row["latest"],
+            "earliest": row["earliest"],
+        })
+    total = _conn.execute("SELECT COUNT(*) as cnt FROM memories").fetchone()["cnt"]
+    return _tool_result(json.dumps({
+        "total_memories": total,
+        "session_count": len(results),
+        "sessions": results,
+    }, ensure_ascii=False))
 
 
 # ---------------------------------------------------------------------------
@@ -374,11 +504,12 @@ TOOLS = [
     },
     {
         "name": "timeline",
-        "description": "获取记忆时间线 (最近 N 条, 按创建时间倒序)。",
+        "description": "获取记忆时间线 (v3: 支持 session_id 优先)。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "limit": {"type": "integer", "description": "返回条数 (默认 10, 上限 200)"},
+                "session_id": {"type": "string", "description": "当前 session UUID (可选)"},
             },
         },
     },
@@ -392,12 +523,15 @@ TOOLS = [
     },
     {
         "name": "list_all",
-        "description": "列出记忆库全部条目 (调试 / 管理卡片用, 支持分页)。",
+        "description": "列出记忆 (v3: 支持 session_id / cwd / before_ts 过滤)。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "limit": {"type": "integer", "description": "每页条数 (默认 500, 上限 5000)"},
                 "offset": {"type": "integer", "description": "偏移量 (默认 0)"},
+                "session_id": {"type": "string", "description": "按 session_id 过滤 (可选, v3)"},
+                "cwd": {"type": "string", "description": "按 cwd 过滤 (可选, v3)"},
+                "before_ts": {"type": "integer", "description": "created_at < 此时间戳 (可选, v3)"},
             },
         },
     },
@@ -412,6 +546,36 @@ TOOLS = [
             "required": ["id"],
         },
     },
+    {
+        "name": "batch_delete_before",
+        "description": "v3 批量清理: 删除指定时间戳之前的所有记忆。返回 {deleted: N}。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "before_ts": {"type": "integer", "description": "Unix 时间戳 (秒), 删除 created_at < 此值的记忆"},
+            },
+            "required": ["before_ts"],
+        },
+    },
+    {
+        "name": "batch_delete_session",
+        "description": "v3 批量清理: 删除指定 session_id 的全部记忆。返回 {deleted: N}。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "DSH session UUID"},
+            },
+            "required": ["session_id"],
+        },
+    },
+    {
+        "name": "list_sessions",
+        "description": "v3: 列出所有不同 session_id 分组, 供 WebUI 会话分组视图用。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
 ]
 
 TOOL_HANDLERS = {
@@ -421,6 +585,9 @@ TOOL_HANDLERS = {
     "timeline": _tool_timeline,
     "service_info": _tool_service_info,
     "list_all": _tool_list_all,
+    "batch_delete_before": _tool_batch_delete_before,
+    "batch_delete_session": _tool_batch_delete_session,
+    "list_sessions": _tool_list_sessions,
     "delete": _tool_delete,
 }
 
@@ -452,7 +619,7 @@ def main():
                 "id": rid,
                 "result": {
                     "protocolVersion": "2024-11-05",
-                    "serverInfo": {"name": "zuzong-memory-lite", "version": "2.0.0"},
+                    "serverInfo": {"name": "zuzong-memory-lite", "version": "3.0.0"},
                     "capabilities": {"tools": {"listChanged": False}},
                 },
             })

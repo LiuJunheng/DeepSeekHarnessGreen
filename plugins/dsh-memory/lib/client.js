@@ -31,6 +31,9 @@ window.__ModuleLoader__.load({
         const ROUTE_DELETE = "/__dsh/memory/delete";
         const ROUTE_WRITE = "/__dsh/memory/write";
         const ROUTE_CONFIG = "/__dsh/memory/config";
+const ROUTE_SESSIONS = "/__dsh/memory/sessions";
+const ROUTE_BATCH_BEFORE = "/__dsh/memory/batch_before";
+const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
         const GUARD_HEADER = "x-dsh-memory";
 
         // ---- 主题样式常量 (统一引用, 便于维护) ----
@@ -89,6 +92,11 @@ window.__ModuleLoader__.load({
             const [autoRecall, setAutoRecall] = react.useState(null);
             const [savingField, setSavingField] = react.useState(null);    // 正在保存哪个字段
             const [savedTip, setSavedTip] = react.useState(null);
+            // v3: Tab 切换 + 会话分组 + 过滤
+            const [activeTab, setActiveTab] = react.useState("all");         // "all" | "session"
+            const [sessionGroups, setSessionGroups] = react.useState([]);     // list_sessions 返回
+            const [activeSessionId, setActiveSessionId] = react.useState(null);// 当前选中的 session 过滤
+            const [beforeDate, setBeforeDate] = react.useState("");           // YYYY-MM-DD, 批量清理日期
 
             const PAGE_SIZE = 50;
 
@@ -149,20 +157,31 @@ window.__ModuleLoader__.load({
                 loadConfig();
             }, [loadConfig]);
 
-            /** 刷新全部数据。 */
-            const refreshAll = react.useCallback(async () => {
+            /** 刷新全部数据 (v3: 支持按 session_id 过滤 + 刷新会话分组列表)。 */
+            const refreshAll = react.useCallback(async (opts) => {
+                opts = opts || {};
                 setLoading(true);
                 setError(null);
                 try {
-                    const [sRes, lRes] = await Promise.all([
+                    // list 查询字符串: session_id 过滤
+                    const listQs = `limit=${PAGE_SIZE}&offset=${offset}`;
+                    if (opts.session_id) {
+                        listQs += `&session_id=${encodeURIComponent(opts.session_id)}`;
+                    }
+                    const [sRes, lRes, sessRes] = await Promise.all([
                         fetchJson(ROUTE_STATUS),
-                        fetchJson(`${ROUTE_LIST}?limit=${PAGE_SIZE}&offset=${offset}`),
+                        fetchJson(`${ROUTE_LIST}?${listQs}`),
+                        fetchJson(ROUTE_SESSIONS).catch(() => ({ ok: false })),
                     ]);
                     if (sRes.ok) setStatus(sRes.data);
                     else setError(sRes.error || "状态获取失败");
                     if (lRes.ok) {
                         setItems(lRes.data.items || []);
                         setTotal(lRes.data.total || 0);
+                    }
+                    // v3: 刷新会话分组列表
+                    if (sessRes.ok && sessRes.data) {
+                        setSessionGroups(sessRes.data.sessions || []);
                     }
                 } catch (err) {
                     setError(String(err.message || err));
@@ -171,7 +190,7 @@ window.__ModuleLoader__.load({
                 }
             }, [offset]);
 
-            react.useEffect(() => { refreshAll(); }, [refreshAll]);
+            react.useEffect(() => { refreshAll({ session_id: activeTab === "session" ? activeSessionId : undefined }); }, [refreshAll, activeTab, activeSessionId]);
 
             /** 搜索。 */
             const doSearch = react.useCallback(async () => {
@@ -219,6 +238,50 @@ window.__ModuleLoader__.load({
                     setError(String(err.message || err));
                 }
             }, [refreshAll]);
+
+            /** v3: 批量清理某个 session 的全部记忆。 */
+            const batchDeleteSession = react.useCallback(async (sessionId, count) => {
+                if (!sessionId) return;
+                const label = sessionId === null ? "全局 (未关联会话)" : sessionId;
+                if (!confirm(`确定要清理会话「${label}」的 ${count} 条记忆吗?\n此操作不可恢复!`)) return;
+                try {
+                    const res = await fetchJson(ROUTE_BATCH_SESSION, {
+                        method: "POST",
+                        body: JSON.stringify({ session_id: sessionId }),
+                    });
+                    if (res.ok) {
+                        const deleted = res.data?.deleted ?? count;
+                        alert(`已清理 ${deleted} 条记忆`);
+                        refreshAll({ session_id: activeTab === "session" ? activeSessionId : undefined });
+                    } else {
+                        setError(res.error || "清理失败");
+                    }
+                } catch (err) {
+                    setError(String(err.message || err));
+                }
+            }, [refreshAll, activeTab, activeSessionId]);
+
+            /** v3: 按时间戳批量清理 (before_ts)。 */
+            const batchDeleteBefore = react.useCallback(async (beforeTs) => {
+                if (!beforeTs || beforeTs <= 0) return;
+                const dateStr = new Date(beforeTs * 1000).toLocaleDateString("zh-CN");
+                if (!confirm(`确定要清理 ${dateStr} (含) 之前的全部记忆吗?\n此操作不可恢复!`)) return;
+                try {
+                    const res = await fetchJson(ROUTE_BATCH_BEFORE, {
+                        method: "POST",
+                        body: JSON.stringify({ before_ts: beforeTs }),
+                    });
+                    if (res.ok) {
+                        const deleted = res.data?.deleted ?? 0;
+                        alert(`已清理 ${deleted} 条记忆`);
+                        refreshAll({ session_id: activeTab === "session" ? activeSessionId : undefined });
+                    } else {
+                        setError(res.error || "清理失败");
+                    }
+                } catch (err) {
+                    setError(String(err.message || err));
+                }
+            }, [refreshAll, activeTab, activeSessionId]);
 
             // ---- 渲染 ----
             const bridgeReady = status ? true : false;
@@ -313,7 +376,8 @@ window.__ModuleLoader__.load({
                     borderLeft: "3px solid var(--dsw-alias-state-error-primary)",
                 }}, error),
 
-                // --- 搜索 + 写入 ---
+// --- 搜索 + 写入 ---
+// (保持原样)
                 react.createElement("div", { style: { display: "flex", gap: "8px", marginBottom: "12px" }},
                     react.createElement("input", {
                         value: searchText,
@@ -335,6 +399,114 @@ window.__ModuleLoader__.load({
 
                 // --- 手动写入 ---
                 react.createElement(QuickWrite, { onWrite: doWrite }),
+
+                // --- v3: Tab 切换 (全部记忆 / 会话分组) ---
+                react.createElement("div", { style: {
+                    display: "flex", gap: "0", marginBottom: "0",
+                    borderBottom: "1px solid var(--dsw-alias-border-l2)",
+                }},
+                    react.createElement("button", {
+                        onClick: () => { setActiveTab("all"); setActiveSessionId(null); },
+                        style: {
+                            padding: "8px 20px", border: "none", cursor: "pointer",
+                            background: activeTab === "all" ? "var(--dsw-alias-button-info-fill)" : "transparent",
+                            color: activeTab === "all" ? "#fff" : LABEL,
+                            borderBottom: activeTab === "all" ? "2px solid var(--dsw-alias-button-info-fill)" : "2px solid transparent",
+                            fontSize: "13px", fontWeight: activeTab === "all" ? 600 : 400,
+                        },
+                    }, "全部记忆"),
+                    react.createElement("button", {
+                        onClick: () => { setActiveTab("session"); },
+                        style: {
+                            padding: "8px 20px", border: "none", cursor: "pointer",
+                            background: activeTab === "session" ? "var(--dsw-alias-button-info-fill)" : "transparent",
+                            color: activeTab === "session" ? "#fff" : LABEL,
+                            borderBottom: activeTab === "session" ? "2px solid var(--dsw-alias-button-info-fill)" : "2px solid transparent",
+                            fontSize: "13px", fontWeight: activeTab === "session" ? 600 : 400,
+                        },
+                    }, `会话分组 (${sessionGroups.length})`),
+                    // v3: 批量清理按时间 (只在全部记忆 Tab 显示)
+                    activeTab === "all" && react.createElement("div", { style: {
+                        marginLeft: "auto", display: "flex", gap: "6px", alignItems: "center",
+                    }},
+                        react.createElement("input", {
+                            type: "date",
+                            value: beforeDate,
+                            onChange: (e) => setBeforeDate(e.target.value),
+                            style: {
+                                padding: "4px 8px", borderRadius: "4px", fontSize: "12px", outline: "none",
+                                background: "var(--dsw-specific-input-major)", color: TEXT,
+                                border: "1px solid var(--dsw-alias-border-l2)",
+                            },
+                        }),
+                        react.createElement("button", {
+                            onClick: () => {
+                                if (!beforeDate) { alert("请先选日期"); return; }
+                                const ts = Math.floor(new Date(beforeDate + "T00:00:00").getTime() / 1000);
+                                batchDeleteBefore(ts);
+                            },
+                            style: {
+                                padding: "4px 10px", borderRadius: "4px", border: "none", cursor: "pointer",
+                                background: "var(--dsw-alias-state-error-fill, #e74c3c)", color: "#fff",
+                                fontSize: "12px",
+                            },
+                        }, "清理此日期之前"),
+                    ),
+                ),
+
+                // --- v3: 会话分组 Tab 左侧会话列表 ---
+                activeTab === "session" && react.createElement("div", { style: {
+                    display: "flex", gap: "12px", marginBottom: "12px",
+                }},
+                    // 左侧: 会话列表
+                    react.createElement("div", { style: {
+                        width: "260px", maxHeight: "200px", overflowY: "auto",
+                        borderRight: "1px solid var(--dsw-alias-border-l2)", paddingRight: "8px",
+                    }},
+                        sessionGroups.length === 0
+                            ? react.createElement("div", { style: { padding: "10px", color: HINT, fontSize: "12px" } }, "暂无会话数据")
+                            : sessionGroups.map((sg) =>
+                                react.createElement("div", {
+                                    key: String(sg.session_id),
+                                    onClick: () => setActiveSessionId(sg.session_id),
+                                    style: {
+                                        padding: "6px 10px", borderRadius: "4px", cursor: "pointer",
+                                        background: activeSessionId === sg.session_id
+                                            ? "var(--dsw-alias-button-info-fill)"
+                                            : "transparent",
+                                        color: activeSessionId === sg.session_id ? "#fff" : TEXT,
+                                        fontSize: "12px", marginBottom: "4px",
+                                    },
+                                },
+                                    react.createElement("div", { style: { fontWeight: 500 } }, sg.session_label || "全局"),
+                                    react.createElement("div", { style: { fontSize: "11px", opacity: 0.7 } },
+                                        `${sg.count} 条 · ${fmtTime(sg.latest)}`
+                                    ),
+                                )
+                            ),
+                    ),
+                    // 右侧: 当前选中会话的工具栏
+                    react.createElement("div", { style: { flex: 1, paddingLeft: "8px", fontSize: "12px", color: LABEL } },
+                        activeSessionId === null
+                            ? react.createElement("div", null, "请选择左侧一个会话查看其记忆")
+                            : react.createElement("div", null,
+                                react.createElement("div", { style: { marginBottom: "6px" } },
+                                    `当前会话: ${activeSessionId === null ? '全局' : activeSessionId}`
+                                ),
+                                react.createElement("button", {
+                                    onClick: () => {
+                                        const sg = sessionGroups.find(s => s.session_id === activeSessionId);
+                                        batchDeleteSession(activeSessionId, sg?.count || 0);
+                                    },
+                                    style: {
+                                        padding: "4px 12px", borderRadius: "4px", border: "none", cursor: "pointer",
+                                        background: "var(--dsw-alias-state-error-fill, #e74c3c)", color: "#fff",
+                                        fontSize: "12px",
+                                    },
+                                }, "清理此会话全部记忆"),
+                            ),
+                    ),
+                ),
 
                 // --- 列表 ---
                 react.createElement("div", { style: {
