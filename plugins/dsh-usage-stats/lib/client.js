@@ -14,6 +14,17 @@
 // 这是加载器契约格式 (window.__ModuleLoader__.load), 与官方客户端插件一致。
 // 注意: 不修改任何官方文件/包; 样式用内联对象。
 
+function _dsht(key, fallback) {
+    try {
+        const bridge = window.__DSH_I18N__;
+        if (bridge && bridge.current && bridge[bridge.current]) {
+            const val = bridge[bridge.current][key];
+            if (val !== undefined && val !== null && val !== "") return val;
+        }
+    } catch (_e) { }
+    return fallback || key;
+}
+
 window.__ModuleLoader__.load({
 	id: "dsh-usage-stats",
 	factory: (require) => {
@@ -171,9 +182,9 @@ window.__ModuleLoader__.load({
 			// 全程兜底: 非 DeepSeek 绑定 / 后端不可达 / 网络异常都不允许往外抛, 保证消息行 effect 不产生 unhandled rejection
 			try {
 				const response = await fetch(ROUTE_BALANCE, { headers: { [GUARD_HEADER]: "1" } });
-				return await response.json().catch(() => ({ ok: false, error: "余额接口响应解析失败" }));
+				return await response.json().catch(() => ({ ok: false, error: _dsht("plugin.usage_stats.err_balance_parse", "余额接口响应解析失败") }));
 			} catch (err) {
-				return { ok: false, configured: false, error: "余额接口请求失败: " + String((err && err.message) || err) };
+				return { ok: false, configured: false, error: _dsht("plugin.usage_stats.err_balance_req", "余额接口请求失败: ") + String((err && err.message) || err) };
 			}
 		}
 
@@ -196,7 +207,7 @@ window.__ModuleLoader__.load({
 				if (balanceCacheValue !== null && now - balanceCacheAt < BALANCE_CACHE_MS) {
 					return balanceCacheValue;
 				}
-				return { ok: false, configured: false, error: "余额查询失败: " + String((err && err.message) || err) };
+				return { ok: false, configured: false, error: _dsht("plugin.usage_stats.err_balance_query", "余额查询失败: ") + String((err && err.message) || err) };
 			}
 		}
 
@@ -220,6 +231,12 @@ window.__ModuleLoader__.load({
 		// ---- 价格表编辑 ----
 
 		function PriceEditor({ prices, setPrices, onChange }) {
+		const [i18nTick, setI18nTick] = react.useState(0);
+		react.useEffect(() => {
+			const handler = () => setI18nTick(t => t + 1);
+			document.addEventListener('dsh-i18n-change', handler);
+			return () => document.removeEventListener('dsh-i18n-change', handler);
+		}, []);
 			const [draft, setDraft] = react.useState(prices);
 			const [newName, setNewName] = react.useState("");
 			const [newMiss, setNewMiss] = react.useState("");
@@ -295,10 +312,10 @@ window.__ModuleLoader__.load({
 				react.createElement("table", { key: "tbl", style: { borderCollapse: "collapse", width: "100%", maxWidth: 560 } }, [
 					react.createElement("thead", { key: "h" },
 						react.createElement("tr", { key: "r" },
-							react.createElement("th", { style: th }, "模型"),
-							react.createElement("th", { style: { ...th, textAlign: "right" } }, "输入(未命中) ¥/M"),
-							react.createElement("th", { style: { ...th, textAlign: "right" } }, "输入(命中缓存) ¥/M"),
-							react.createElement("th", { style: { ...th, textAlign: "right" } }, "输出 ¥/M"),
+							react.createElement("th", { style: th }, _dsht("plugin.usage_stats.price_model", "模型")),
+							react.createElement("th", { style: { ...th, textAlign: "right" } }, _dsht("plugin.usage_stats.price_input_miss", "输入(未命中) ¥/M")),
+							react.createElement("th", { style: { ...th, textAlign: "right" } }, _dsht("plugin.usage_stats.price_input_hit", "输入(命中缓存) ¥/M")),
+							react.createElement("th", { style: { ...th, textAlign: "right" } }, _dsht("plugin.usage_stats.price_output", "输出 ¥/M")),
 							react.createElement("th", { style: { ...th, width: 40 } }, "")
 						)
 					),
@@ -316,12 +333,12 @@ window.__ModuleLoader__.load({
 									react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: draft.models[model].out, onChange: (e) => setRow(model, "out", e.target.value) })
 								),
 								react.createElement("td", { style: td },
-									react.createElement("button", { type: "button", style: { fontSize: 11, cursor: "pointer", color: "var(--dsw-alias-state-error-primary)", border: "none", background: "transparent" }, onClick: () => removeModel(model) }, "删")
+									react.createElement("button", { type: "button", style: { fontSize: 11, cursor: "pointer", color: "var(--dsw-alias-state-error-primary)", border: "none", background: "transparent" }, onClick: () => removeModel(model) }, _dsht("plugin.usage_stats.price_btn_del", "删"))
 								)
 							)
 						),
 						react.createElement("tr", { key: "__fallback__" },
-							react.createElement("td", { style: { ...td, fontWeight: 600 } }, "其他模型（兜底）"),
+							react.createElement("td", { style: { ...td, fontWeight: 600 } }, _dsht("plugin.usage_stats.price_fallback", "其他模型（兜底）")),
 							react.createElement("td", { style: td },
 								react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: draft.fallback.miss, onChange: (e) => setFallback("miss", e.target.value) })
 							),
@@ -335,22 +352,22 @@ window.__ModuleLoader__.load({
 						),
 						react.createElement("tr", { key: "__add__" },
 							react.createElement("td", { style: td },
-								react.createElement("input", { type: "text", placeholder: "新模型名", style: { ...inputStyle, width: 140, textAlign: "left" }, value: newName, onChange: (e) => setNewName(e.target.value) })
+								react.createElement("input", { type: "text", placeholder: _dsht("plugin.usage_stats.price_placeholder_model", "新模型名"), style: { ...inputStyle, width: 140, textAlign: "left" }, value: newName, onChange: (e) => setNewName(e.target.value) })
 							),
-							react.createElement("td", { style: td }, react.createElement("input", { type: "number", min: 0, step: "0.01", placeholder: "未命中", style: inputStyle, value: newMiss, onChange: (e) => setNewMiss(e.target.value) })),
-							react.createElement("td", { style: td }, react.createElement("input", { type: "number", min: 0, step: "0.01", placeholder: "命中", style: inputStyle, value: newHit, onChange: (e) => setNewHit(e.target.value) })),
-							react.createElement("td", { style: td }, react.createElement("input", { type: "number", min: 0, step: "0.01", placeholder: "输出", style: inputStyle, value: newOut, onChange: (e) => setNewOut(e.target.value) })),
+							react.createElement("td", { style: td }, react.createElement("input", { type: "number", min: 0, step: "0.01", placeholder: _dsht("plugin.usage_stats.price_placeholder_miss", "未命中"), style: inputStyle, value: newMiss, onChange: (e) => setNewMiss(e.target.value) })),
+							react.createElement("td", { style: td }, react.createElement("input", { type: "number", min: 0, step: "0.01", placeholder: _dsht("plugin.usage_stats.price_placeholder_hit", "命中"), style: inputStyle, value: newHit, onChange: (e) => setNewHit(e.target.value) })),
+							react.createElement("td", { style: td }, react.createElement("input", { type: "number", min: 0, step: "0.01", placeholder: _dsht("plugin.usage_stats.label_output_short", "输出"), style: inputStyle, value: newOut, onChange: (e) => setNewOut(e.target.value) })),
 							react.createElement("td", { style: td },
-								react.createElement("button", { type: "button", style: { fontSize: 11, cursor: "pointer" }, onClick: addModel }, "添加")
+								react.createElement("button", { type: "button", style: { fontSize: 11, cursor: "pointer" }, onClick: addModel }, _dsht("plugin.usage_stats.price_btn_add", "添加"))
 							)
 						),
 					]),
 				]),
 				react.createElement("div", { key: "btns", style: { display: "flex", gap: 8, flexWrap: "wrap" } }, [
-					react.createElement("button", { key: "save", type: "button", style: { padding: "4px 14px", cursor: "pointer", fontSize: 12 }, onClick: save }, "保存价格"),
-					react.createElement("button", { key: "reset", type: "button", style: { padding: "4px 14px", cursor: "pointer", fontSize: 12 }, onClick: reset }, "恢复默认"),
+					react.createElement("button", { key: "save", type: "button", style: { padding: "4px 14px", cursor: "pointer", fontSize: 12 }, onClick: save }, _dsht("plugin.usage_stats.price_btn_save", "保存价格")),
+					react.createElement("button", { key: "reset", type: "button", style: { padding: "4px 14px", cursor: "pointer", fontSize: 12 }, onClick: reset }, _dsht("plugin.usage_stats.price_btn_reset", "恢复默认")),
 					react.createElement("span", { key: "tip", style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)", alignSelf: "center" } },
-						"单价 = 元 / 每百万 tokens；费用 = 输入(未命中)×单价 + 输入(命中)×单价 + 输出×单价，思考 token 已计入输出不重复计费；默认按 DeepSeek 官方高峰时段价（北京 9:00-12:00 / 14:00-18:00，高峰为低谷 2 倍），请按实际价格/时段修改"
+						_dsht("plugin.usage_stats.price_hint", "单价 = 元 / 每百万 tokens；费用 = 输入(未命中)×单价 + 输入(命中)×单价 + 输出×单价，思考 token 已计入输出不重复计费；默认按 DeepSeek 官方高峰时段价（北京 9:00-12:00 / 14:00-18:00，高峰为低谷 2 倍），请按实际价格/时段修改")
 					),
 				]),
 			]);
@@ -428,10 +445,10 @@ window.__ModuleLoader__.load({
 				// 第一行: 标题(独占整行剩余宽度) + 徽标 + 明细按钮
 				react.createElement("div", { key: "h", style: { display: "flex", alignItems: "center", gap: 8 } }, [
 					react.createElement("span", { key: "t", style: titleStyle, title: s.displayTitle || s.id },
-						s.displayTitle || "(无标题)"
+						s.displayTitle || _dsht("plugin.usage_stats.no_title", "(无标题)")
 					),
-					s.live && react.createElement("span", { key: "live", style: { ...badgeStyle, color: "var(--dsw-alias-state-success-primary)" } }, "运行中"),
-					s.error && react.createElement("span", { key: "err", style: { ...badgeStyle, color: "var(--dsw-alias-state-error-primary)" } }, "解码失败"),
+					s.live && react.createElement("span", { key: "live", style: { ...badgeStyle, color: "var(--dsw-alias-state-success-primary)" } }, _dsht("plugin.usage_stats.btn_running", "运行中")),
+					s.error && react.createElement("span", { key: "err", style: { ...badgeStyle, color: "var(--dsw-alias-state-error-primary)" } }, _dsht("plugin.usage_stats.btn_decode_fail", "解码失败")),
 					react.createElement("button", {
 						key: "btn",
 						type: "button",
@@ -444,18 +461,18 @@ window.__ModuleLoader__.load({
 							borderRadius: 4,
 						},
 						onClick: () => onToggleDetail(s.id),
-					}, expanded ? "收起" : (detailBusy ? "加载中…" : "明细")),
+					}, expanded ? _dsht("plugin.usage_stats.btn_collapse", "收起") : (detailBusy ? _dsht("plugin.usage_stats.btn_loading", "加载中…") : _dsht("plugin.usage_stats.btn_detail", "明细"))),
 				]),
 				// 第二行: 会话 ID (整行, 超长省略, 悬停可见完整)
 				react.createElement("div", { key: "id", style: idStyle, title: s.id }, s.id),
 				// 第三行: 元信息 chips (自动换行)
 				react.createElement("div", { key: "m", style: chipRowStyle }, [
-					react.createElement(MetaChip, { key: "ws", label: "工作区", value: (s.workspace && s.workspace.title) || "—" }),
-					react.createElement(MetaChip, { key: "tc", label: "回合", value: fmtInt(s.turnCount) }),
-					react.createElement(MetaChip, { key: "in", label: "输入", value: fmtInt(sum.total.inputTokens) }),
-					react.createElement(MetaChip, { key: "out", label: "输出", value: fmtInt(sum.total.outputTokens) }),
-					react.createElement(MetaChip, { key: "cache", label: "缓存", value: fmtInt(sum.total.cacheReadTokens + sum.total.cacheWriteTokens) }),
-					react.createElement(MetaChip, { key: "cost", label: "估算费用", value: fmtCost(sum.cost), valueStyle: { fontWeight: 700 } }),
+					react.createElement(MetaChip, { key: "ws", label: _dsht("plugin.usage_stats.label_workspace", "工作区"), value: (s.workspace && s.workspace.title) || "—" }),
+					react.createElement(MetaChip, { key: "tc", label: _dsht("plugin.usage_stats.label_turns", "回合"), value: fmtInt(s.turnCount) }),
+					react.createElement(MetaChip, { key: "in", label: _dsht("plugin.usage_stats.label_input", "输入"), value: fmtInt(sum.total.inputTokens) }),
+					react.createElement(MetaChip, { key: "out", label: _dsht("plugin.usage_stats.label_output_short", "输出"), value: fmtInt(sum.total.outputTokens) }),
+					react.createElement(MetaChip, { key: "cache", label: _dsht("plugin.usage_stats.label_cache", "缓存"), value: fmtInt(sum.total.cacheReadTokens + sum.total.cacheWriteTokens) }),
+					react.createElement(MetaChip, { key: "cost", label: _dsht("plugin.usage_stats.label_cost", "估算费用"), value: fmtCost(sum.cost), valueStyle: { fontWeight: 700 } }),
 				]),
 				// 明细展开区
 				expanded && react.createElement(DetailBody, {
@@ -477,10 +494,10 @@ window.__ModuleLoader__.load({
 			};
 
 			if (d === null) {
-				return react.createElement("div", { style: { ...bodyStyle, color: "var(--dsw-alias-label-tertiary)", fontSize: 12 } }, "加载中…");
+				return react.createElement("div", { style: { ...bodyStyle, color: "var(--dsw-alias-label-tertiary)", fontSize: 12 } }, _dsht("plugin.usage_stats.btn_loading", "加载中…"));
 			}
 			if (d.error) {
-				return react.createElement("div", { style: { ...bodyStyle, color: "var(--dsw-alias-state-error-primary)", fontSize: 12 } }, "明细加载失败: " + d.error);
+				return react.createElement("div", { style: { ...bodyStyle, color: "var(--dsw-alias-state-error-primary)", fontSize: 12 } }, _dsht("plugin.usage_stats.detail_err_load", "明细加载失败: ") + d.error);
 			}
 
 			const dSum = sumModels(d.totals && d.totals.models, prices);
@@ -489,13 +506,13 @@ window.__ModuleLoader__.load({
 
 			// 汇总 chips
 			const metaChips = [
-				react.createElement(MetaChip, { key: "tc", label: "回合", value: fmtInt(d.turnCount) }),
-				react.createElement(MetaChip, { key: "mc", label: "助手消息", value: fmtInt(d.messageCount) }),
-				react.createElement(MetaChip, { key: "out", label: "输出 tokens", value: fmtInt(dSum.total.outputTokens) }),
-				react.createElement(MetaChip, { key: "cost", label: "估算费用", value: fmtCost(dSum.cost), valueStyle: { fontWeight: 700 } }),
+				react.createElement(MetaChip, { key: "tc", label: _dsht("plugin.usage_stats.label_turns", "回合"), value: fmtInt(d.turnCount) }),
+				react.createElement(MetaChip, { key: "mc", label: _dsht("plugin.usage_stats.label_assistant_msg", "助手消息"), value: fmtInt(d.messageCount) }),
+				react.createElement(MetaChip, { key: "out", label: _dsht("plugin.usage_stats.label_output_tokens", "输出 tokens"), value: fmtInt(dSum.total.outputTokens) }),
+				react.createElement(MetaChip, { key: "cost", label: _dsht("plugin.usage_stats.label_cost", "估算费用"), value: fmtCost(dSum.cost), valueStyle: { fontWeight: 700 } }),
 			];
 			if (d.session && d.session.createdAt) {
-				metaChips.push(react.createElement(MetaChip, { key: "ct", label: "创建于", value: fmtTime(d.session.createdAt) }));
+				metaChips.push(react.createElement(MetaChip, { key: "ct", label: _dsht("plugin.usage_stats.label_created_at", "创建于"), value: fmtTime(d.session.createdAt) }));
 			}
 
 			// 逐回合卡片
@@ -524,7 +541,7 @@ window.__ModuleLoader__.load({
 								wordBreak: "break-word",
 								overflowWrap: "break-word",
 							},
-						}, t.userText || "（无文本 / 命令）"),
+						}, t.userText || _dsht("plugin.usage_stats.empty_no_text", "（无文本 / 命令）")),
 						// 下方: 回合信息 (自动换行)
 						react.createElement("div", {
 							key: "info",
@@ -537,16 +554,16 @@ window.__ModuleLoader__.load({
 								color: "var(--dsw-alias-label-secondary)",
 							},
 						}, [
-							react.createElement("span", { key: "turn", style: { fontWeight: 600, color: "var(--dsw-alias-label-secondary)" } }, "回合 #" + t.turn),
-							react.createElement("span", { key: "steps" }, "步骤 " + fmtInt(t.steps)),
-							react.createElement("span", { key: "tools" }, "工具调用 " + fmtInt(t.toolCalls)),
-							react.createElement("span", { key: "out" }, "输出 tk " + fmtInt(tSum.total.outputTokens)),
-							react.createElement("span", { key: "cost", style: { fontWeight: 600, color: "var(--dsw-alias-label-secondary)" } }, "估算 " + fmtCost(tSum.cost)),
+							react.createElement("span", { key: "turn", style: { fontWeight: 600, color: "var(--dsw-alias-label-secondary)" } }, _dsht("plugin.usage_stats.label_turn_hash", "回合 #") + t.turn),
+							react.createElement("span", { key: "steps" }, _dsht("plugin.usage_stats.label_steps", "步骤") + " " + fmtInt(t.steps)),
+							react.createElement("span", { key: "tools" }, _dsht("plugin.usage_stats.label_tool_calls", "工具调用") + " " + fmtInt(t.toolCalls)),
+							react.createElement("span", { key: "out" }, _dsht("plugin.usage_stats.label_output_tk", "输出 tk") + " " + fmtInt(tSum.total.outputTokens)),
+							react.createElement("span", { key: "cost", style: { fontWeight: 600, color: "var(--dsw-alias-label-secondary)" } }, _dsht("plugin.usage_stats.label_cost", "估算费用").replace("费用", "") + fmtCost(tSum.cost)),
 							react.createElement("span", { key: "model", style: { fontFamily: "Consolas, Menlo, monospace", color: "var(--dsw-alias-label-tertiary)" } }, turnModels),
 							react.createElement("span", {
 								key: "status",
 								style: { color: t.complete ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-state-warn-primary)", fontWeight: 600 },
-							}, t.complete ? "完成" : "未完"),
+							}, t.complete ? _dsht("plugin.usage_stats.label_done", "完成") : _dsht("plugin.usage_stats.label_undone", "未完")),
 						]),
 					])
 				);
@@ -561,16 +578,22 @@ window.__ModuleLoader__.load({
 					react.createElement(MetaChip, {
 						key: model,
 						label: model,
-						value: "入 " + fmtInt(models[model].inputTokens) + " · 出 " + fmtInt(models[model].outputTokens) + " · 缓存 " + fmtInt(models[model].cacheReadTokens + models[model].cacheWriteTokens) + " · 估 " + fmtCost(costOf(models[model], prices, model)),
+						value: _dsht("plugin.usage_stats.label_input", "输入") + " " + fmtInt(models[model].inputTokens) + " · " + _dsht("plugin.usage_stats.label_output_short", "输出") + " " + fmtInt(models[model].outputTokens) + " · " + _dsht("plugin.usage_stats.label_cache", "缓存") + " " + fmtInt(models[model].cacheReadTokens + models[model].cacheWriteTokens) + " · " + _dsht("plugin.usage_stats.label_cost", "估算费用").replace("费用","") + fmtCost(costOf(models[model], prices, model)),
 						valueStyle: { fontFamily: "Consolas, Menlo, monospace", fontSize: 11 },
 					})
 				)),
-				turnBlocks.length === 0 && react.createElement("div", { key: "empty", style: { color: "var(--dsw-alias-label-tertiary)", fontSize: 12, padding: "4px 0" } }, "没有回合数据。"),
+				turnBlocks.length === 0 && react.createElement("div", { key: "empty", style: { color: "var(--dsw-alias-label-tertiary)", fontSize: 12, padding: "4px 0" } }, _dsht("plugin.usage_stats.empty_no_turns", "没有回合数据。")),
 				turnBlocks,
 			]);
 		}
 
 		function UsageStatsSection() {
+		const [i18nTick, setI18nTick] = react.useState(0);
+		react.useEffect(() => {
+			const handler = () => setI18nTick(t => t + 1);
+			document.addEventListener('dsh-i18n-change', handler);
+			return () => document.removeEventListener('dsh-i18n-change', handler);
+		}, []);
 			const [sessions, setSessions] = react.useState(null);
 			const [error, setError] = react.useState(null);
 			const [busy, setBusy] = react.useState(false);
@@ -593,7 +616,7 @@ window.__ModuleLoader__.load({
 					setSessions(Array.isArray(payload.sessions) ? payload.sessions : []);
 					setDetail(null);
 				} catch (err) {
-					setError("加载失败: " + String((err && err.message) || err));
+					setError(_dsht("plugin.usage_stats.err_load", "加载失败: ") + String((err && err.message) || err));
 				} finally {
 					setBusy(false);
 				}
@@ -706,42 +729,39 @@ window.__ModuleLoader__.load({
 				let body;
 				if (balance.configured === false) {
 					body = react.createElement("div", { key: "nb", style: { fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } },
-						balance.error || "当前非 DeepSeek 账户，或未在设置面板配置 API Key，无法读取余额（余额查询仅对 DeepSeek 生效，其余功能不受影响）");
+						balance.error || _dsht("plugin.usage_stats.hint_no_deepseek", "当前非 DeepSeek 账户，或未在设置面板配置 API Key，无法读取余额（余额查询仅对 DeepSeek 生效，其余功能不受影响）"));
 				} else if (balance.ok !== true) {
 					body = react.createElement("div", { key: "fb", style: { fontSize: 12, color: "var(--dsw-alias-state-error-primary)" } },
-						balance.error || "余额查询失败");
+						balance.error || _dsht("plugin.usage_stats.hint_balance_fail", "余额查询失败"));
 				} else {
 					const info = pickBalanceInfo(balance);
 					if (!info) {
-						body = react.createElement("div", { key: "nb", style: { fontSize: 12, color: "var(--dsw-alias-label-secondary)" } }, "DeepSeek 未返回余额明细");
+						body = react.createElement("div", { key: "nb", style: { fontSize: 12, color: "var(--dsw-alias-label-secondary)" } }, _dsht("plugin.usage_stats.hint_no_balance_detail", "DeepSeek 未返回余额明细"));
 					} else {
 						const symbol = currencySymbol();
-						const available = (balance.balance && balance.balance.is_available === true) ? "可用" : "不可用";
+						const available = (balance.balance && balance.balance.is_available === true) ? _dsht("plugin.usage_stats.label_yes", "可用") : _dsht("plugin.usage_stats.label_no", "不可用");
 						body = react.createElement("div", { key: "bb", style: { display: "flex", gap: 24, flexWrap: "wrap", fontSize: 12 } }, [
-							balanceStat("总余额", symbol + fmtBalance(info.total_balance)),
-							balanceStat("充值余额", symbol + fmtBalance(info.topped_up_balance)),
-							balanceStat("赠金余额", symbol + fmtBalance(info.granted_balance)),
-							balanceStat("API 可用", available),
+							balanceStat(_dsht("plugin.usage_stats.label_total_balance", "总余额"), symbol + fmtBalance(info.total_balance)),
+							balanceStat(_dsht("plugin.usage_stats.label_recharge_balance", "充值余额"), symbol + fmtBalance(info.topped_up_balance)),
+							balanceStat(_dsht("plugin.usage_stats.label_promo_balance", "赠金余额"), symbol + fmtBalance(info.granted_balance)),
+							balanceStat(_dsht("plugin.usage_stats.label_api_available", "API 可用"), available),
 						]);
 					}
 				}
 				return react.createElement("div", { key: "balcard", style: cardStyle }, [
 					react.createElement("div", { key: "h", style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 } }, [
-						react.createElement("span", { key: "t", style: { fontSize: 13, fontWeight: 600, color: "var(--dsw-alias-label-primary)" } }, "余额（DeepSeek 实时）"),
+						react.createElement("span", { key: "t", style: { fontSize: 13, fontWeight: 600, color: "var(--dsw-alias-label-primary)" } }, _dsht("plugin.usage_stats.label_balance", "余额（DeepSeek 实时）")),
 						react.createElement("button", { key: "r", type: "button", disabled: balanceBusy, onClick: () => loadBalance(true), style: { ...btn, fontSize: 11, padding: "2px 8px" } },
-							balanceBusy ? "查询中…" : "刷新余额"),
+							balanceBusy ? _dsht("plugin.usage_stats.btn_querying", "查询中…") : _dsht("plugin.usage_stats.btn_refresh_balance", "刷新余额")),
 					]),
 					body,
 				]);
 			})();
 
 			return react.createElement("div", { style: rootStyle }, [
-				react.createElement("p", { key: "title", style: titleStyle }, "用量统计"),
+				react.createElement("p", { key: "title", style: titleStyle }, _dsht("plugin.usage_stats.title", "用量统计")),
 				react.createElement("p", { key: "desc", style: descStyle },
-					"扫描本机全部会话日志，按模型汇总每次模型调用的 token 用量（输入 / 输出 / 缓存读取 / 缓存写入 / 思考推理）。" +
-					"费用按 DeepSeek 官方计费口径估算：输入（未命中缓存）+ 输入（命中缓存）+ 输出，各自 ÷1e6 × 单价；思考 token 已计入输出、不重复计费。" +
-					"价格表可在下方编辑并保存（仅存于本浏览器，默认按官方高峰时段价，请按实际价格/时段修改）。" +
-					"当前服务运行中的会话可能仍在写入，统计为截至刷新时的数据。"
+					_dsht("plugin.usage_stats.desc", "扫描本机全部会话日志，按模型汇总每次模型调用的 token 用量（输入 / 输出 / 缓存读取 / 缓存写入 / 思考推理）。费用按 DeepSeek 官方计费口径估算：输入（未命中缓存）+ 输入（命中缓存）+ 输出，各自 ÷1e6 × 单价；思考 token 已计入输出、不重复计费。价格表可在下方编辑并保存（仅存于本浏览器，默认按官方高峰时段价，请按实际价格/时段修改）。当前服务运行中的会话可能仍在写入，统计为截至刷新时的数据。")
 				),
 
 				error !== null && react.createElement("p", { key: "err", style: { color: "var(--dsw-alias-state-error-primary)", margin: 0, fontSize: 13 } }, error),
@@ -752,22 +772,22 @@ window.__ModuleLoader__.load({
 				// 总览
 				overview !== null && react.createElement("div", { key: "ov", style: cardStyle }, [
 					react.createElement("div", { key: "row1", style: { display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 8 } }, [
-						statCell("会话数", fmtInt(sessions.length)),
-						statCell("回合总数", fmtInt(overview.turnCount)),
-						statCell("输入 tokens", fmtInt(overview.total.inputTokens)),
-						statCell("输出 tokens", fmtInt(overview.total.outputTokens)),
-						statCell("缓存读取", fmtInt(overview.total.cacheReadTokens)),
-						statCell("缓存写入", fmtInt(overview.total.cacheWriteTokens)),
-						statCell("思考推理", fmtInt(overview.total.reasoningTokens)),
-						statCell("估算费用", fmtCost(overview.cost)),
+						statCell(_dsht("plugin.usage_stats.label_session_count", "会话数"), fmtInt(sessions.length)),
+						statCell(_dsht("plugin.usage_stats.label_turn_count", "回合总数"), fmtInt(overview.turnCount)),
+						statCell(_dsht("plugin.usage_stats.label_input_tokens", "输入 tokens"), fmtInt(overview.total.inputTokens)),
+						statCell(_dsht("plugin.usage_stats.label_output_tokens", "输出 tokens"), fmtInt(overview.total.outputTokens)),
+						statCell(_dsht("plugin.usage_stats.label_cache_read", "缓存读取"), fmtInt(overview.total.cacheReadTokens)),
+						statCell(_dsht("plugin.usage_stats.label_cache_write", "缓存写入"), fmtInt(overview.total.cacheWriteTokens)),
+						statCell(_dsht("plugin.usage_stats.label_reasoning", "思考推理"), fmtInt(overview.total.reasoningTokens)),
+						statCell(_dsht("plugin.usage_stats.label_cost", "估算费用"), fmtCost(overview.cost)),
 					]),
 					react.createElement("div", { key: "row2", style: { display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, color: "var(--dsw-alias-label-secondary)" } },
 						Object.keys(overview.perModel).map((model) =>
 							react.createElement("span", { key: model, style: { fontFamily: "Consolas, Menlo, monospace" } },
-								model + ": 入 " + fmtInt(overview.perModel[model].inputTokens) +
-								" / 出 " + fmtInt(overview.perModel[model].outputTokens) +
-								" / 缓存 " + fmtInt(overview.perModel[model].cacheReadTokens + overview.perModel[model].cacheWriteTokens) +
-								" / 估 " + fmtCost(costOf(overview.perModel[model], prices, model))
+								model + ": " + _dsht("plugin.usage_stats.label_input", "输入") + " " + fmtInt(overview.perModel[model].inputTokens) +
+								_dsht("plugin.usage_stats.label_output_short", "输出") + " " + fmtInt(overview.perModel[model].outputTokens) +
+								_dsht("plugin.usage_stats.label_cache", "缓存") + " " + fmtInt(overview.perModel[model].cacheReadTokens + overview.perModel[model].cacheWriteTokens) +
+								_dsht("plugin.usage_stats.label_cost", "估算费用").replace("费用","") + fmtCost(costOf(overview.perModel[model], prices, model))
 							)
 						)
 					),
@@ -775,7 +795,7 @@ window.__ModuleLoader__.load({
 
 				// 价格表 (可折叠)
 				react.createElement("details", { key: "prices", style: cardStyle }, [
-					react.createElement("summary", { key: "s", style: { cursor: "pointer", fontWeight: 600, fontSize: 13, color: "var(--dsw-alias-label-primary)" } }, "价格表（费用估算用）"),
+					react.createElement("summary", { key: "s", style: { cursor: "pointer", fontWeight: 600, fontSize: 13, color: "var(--dsw-alias-label-primary)" } }, _dsht("plugin.usage_stats.label_price_table", "价格表（费用估算用）")),
 					react.createElement("div", { key: "b", style: { marginTop: 8 } },
 						prices !== null && react.createElement(PriceEditor, { prices, setPrices, onChange: (next) => setPrices(next) })
 					),
@@ -783,17 +803,17 @@ window.__ModuleLoader__.load({
 
 				// 会话列表 (卡片式, 标题独占一行)
 				react.createElement("div", { key: "list" }, [
-					sessions === null && !error && react.createElement("div", { key: "loading", style: { padding: 12, color: "var(--dsw-alias-label-tertiary)" } }, "加载中…"),
-					Array.isArray(sessions) && sessions.length === 0 && !error && react.createElement("div", { key: "empty", style: { padding: 12, color: "var(--dsw-alias-label-tertiary)" } }, "没有找到任何会话。"),
+					sessions === null && !error && react.createElement("div", { key: "loading", style: { padding: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.usage_stats.btn_loading", "加载中…")),
+					Array.isArray(sessions) && sessions.length === 0 && !error && react.createElement("div", { key: "empty", style: { padding: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.usage_stats.empty_no_sessions", "没有找到任何会话。")),
 					sessionCards,
 				]),
 
 				// 操作行
 				react.createElement("div", { key: "ops", style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } }, [
 					react.createElement("button", { key: "refresh", type: "button", disabled: busy, onClick: loadList, style: { ...btn, padding: "6px 16px" } },
-						busy ? "扫描中…" : "刷新统计"
+						busy ? _dsht("plugin.usage_stats.btn_scanning", "扫描中…") : _dsht("plugin.usage_stats.btn_refresh_stats", "刷新统计")
 					),
-					react.createElement("span", { key: "tip", style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)" } }, "日志较大时会话多时扫描可能需要几秒"),
+					react.createElement("span", { key: "tip", style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.usage_stats.hint_logs_large", "日志较大时会话多时扫描可能需要几秒")),
 				]),
 			]);
 		}
@@ -874,6 +894,12 @@ window.__ModuleLoader__.load({
 
 		/** 回合 token 用量显示 (带「本次token：」前缀, 右对齐, 无数据时静默不渲染)。 */
 		function TurnTokens(props) {
+		const [i18nTick, setI18nTick] = react.useState(0);
+		react.useEffect(() => {
+			const handler = () => setI18nTick(t => t + 1);
+			document.addEventListener('dsh-i18n-change', handler);
+			return () => document.removeEventListener('dsh-i18n-change', handler);
+		}, []);
 			const useSession = props.useSession;
 			const useChat = props.useChat;
 			const matched = props.matched;
@@ -923,25 +949,25 @@ window.__ModuleLoader__.load({
 			const hitStr = fmtTokens(usage.cacheReadTokens);
 			const outStr = fmtTokens(usage.outputTokens);
 			const reasonStr = fmtTokens(usage.reasoningTokens);
-			if (missStr && missTotal > 0) parts.push("输入(未命中) " + missStr);
-			if (hitStr && usage.cacheReadTokens > 0) parts.push("输入(命中缓存) " + hitStr);
-			if (outStr) parts.push("输出 " + outStr);
-			if (reasonStr && usage.reasoningTokens > 0) parts.push("思考 " + reasonStr);
-			if (cost > 0) parts.push("费用约 " + fmtCost(cost));
+			if (missStr && missTotal > 0) parts.push(_dsht("plugin.usage_stats.turn_input_miss", "输入(未命中) ") + missStr);
+			if (hitStr && usage.cacheReadTokens > 0) parts.push(_dsht("plugin.usage_stats.turn_input_hit", "输入(命中缓存) ") + hitStr);
+			if (outStr) parts.push(_dsht("plugin.usage_stats.turn_output", "输出 ") + outStr);
+			if (reasonStr && usage.reasoningTokens > 0) parts.push(_dsht("plugin.usage_stats.turn_reasoning", "思考 ") + reasonStr);
+			if (cost > 0) parts.push(_dsht("plugin.usage_stats.turn_cost", "费用约 ") + fmtCost(cost));
 
 			// 追加真实余额 (账户扣款后的实时余额), 与预估消耗一起展示; 无有效余额/未配置时不显示该项
 			if (balance && balance.ok === true) {
 				const info = pickBalanceInfo(balance);
 				if (info) {
 					const symbol = info.currency === "USD" ? "$" : "¥";
-					parts.push("余额 " + symbol + fmtBalance(info.total_balance));
+					parts.push(_dsht("plugin.usage_stats.turn_balance", "余额 ") + symbol + fmtBalance(info.total_balance));
 				}
 			}
 
 			if (parts.length === 0) return null;
 
 			return react.createElement("div", {
-				title: "该回合实际消耗的 token 与预估费用（token 按 DeepSeek 官方计费口径分类：输入分未命中/命中缓存，思考(reasoning) 已计入输出不重复计费；费用按价格表估算，可在 设置 → 用量统计 调整价格；余额为 DeepSeek 账户实时余额）",
+				title: _dsht("plugin.usage_stats.turn_title_hint", "该回合实际消耗的 token 与预估费用（token 按 DeepSeek 官方计费口径分类：输入分未命中/命中缓存，思考(reasoning) 已计入输出不重复计费；费用按价格表估算，可在 设置 → 用量统计 调整价格；余额为 DeepSeek 账户实时余额）"),
 				style: {
 					display: "flex",
 					justifyContent: "flex-end",
@@ -951,7 +977,7 @@ window.__ModuleLoader__.load({
 					color: "var(--dsw-alias-label-secondary, #8a8f98)",
 				},
 			}, [
-				react.createElement("span", { key: "prefix", style: { flex: "none" } }, "本次token："),
+				react.createElement("span", { key: "prefix", style: { flex: "none" } }, _dsht("plugin.usage_stats.label_this_turn", "本次token：")),
 				react.createElement("span", { key: "vals" }, parts.join(" · ")),
 			]);
 		}
@@ -961,7 +987,7 @@ window.__ModuleLoader__.load({
 				name: "settings.section",
 				id: "usage-stats",
 				order: 510,
-				label: "用量统计",
+				label: _dsht("plugin.usage_stats.title", "用量统计"),
 			}, UsageStatsSection));
 
 			ctx.slots.inject("conversation.chat.turnTail", () => ctx.slots.register(

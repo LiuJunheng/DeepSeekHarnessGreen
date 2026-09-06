@@ -15,6 +15,17 @@
 // createRoot 渲染, 不依赖官方任何内部布局插槽, 也不修改任何官方文件。
 // 这是加载器契约格式 (window.__ModuleLoader__.load), 与官方客户端插件一致。
 
+function _dsht(key, fallback) {
+    try {
+        const bridge = window.__DSH_I18N__;
+        if (bridge && bridge.current && bridge[bridge.current]) {
+            const val = bridge[bridge.current][key];
+            if (val !== undefined && val !== null && val !== "") return val;
+        }
+    } catch (_e) { }
+    return fallback || key;
+}
+
 window.__ModuleLoader__.load({
 	id: "dsh-sidebar-lite",
 	factory: (require) => {
@@ -266,9 +277,9 @@ window.__ModuleLoader__.load({
             ce.dispatchEvent(new Event("input", { bubbles: true }));
             return { ok: true, method: "dom-fallback-ce" };
         }
-        return { ok: false, err: "无法找到输入框 (textarea/contenteditable)", method: "none" };
+        return { ok: false, err: _dsht("plugin.sidebar.err_no_input", "无法找到输入框 (textarea/contenteditable)"), method: "none" };
     } catch (e) {
-        return { ok: false, err: "DOM fallback 异常: " + String((e && e.message) || e), method: "none" };
+        return { ok: false, err: _dsht("plugin.sidebar.err_dom_fallback", "DOM fallback 异常: ") + String((e && e.message) || e), method: "none" };
     }
 }
 
@@ -370,8 +381,8 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 			}
 		}
 
-		/** 通过宿主 file 媒体路由"另存为"文件。 因路由要求防御头, 无法用 <a href> 直接跳转,
-		 *  需先 fetch(带防御头)→blob 拿到字节。 因为是本地机器, "另存为"语义更贴合:
+		/** 通过宿主 file 媒体路由_dsht("plugin.sidebar.btn_save_as", "另存为")文件。 因路由要求防御头, 无法用 <a href> 直接跳转,
+		 *  需先 fetch(带防御头)→blob 拿到字节。 因为是本地机器, _dsht("plugin.sidebar.btn_save_as", "另存为")语义更贴合:
 		 *  优先用原生「另存为」对话框 (File System Access API, showSaveFilePicker) 让用户
 		 *  自由选择保存位置; 该 API 不可用时回退为浏览器自动下载 (同名文件)。
 		 *  注意: 需在用户手势内先弹出对话框, 避免 fetch 异步丢失去焦点后对话框被浏览器拦截。 */
@@ -442,7 +453,7 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 						signal: controller.signal,
 					});
 					if (!response.ok || !response.body) {
-						onError("终端流连接失败: HTTP " + response.status);
+						onError(_dsht("plugin.sidebar.terminal_stream_fail", "终端流连接失败: HTTP ") + response.status);
 						return;
 					}
 					const reader = response.body.getReader();
@@ -547,19 +558,25 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 		// ---- 右键上下文菜单 (与 better-sidebar 一致: 下载[仅文件] / 复制相对 / 复制绝对) ----
 
 		function ContextMenu({ x, y, entry, onSelect }) {
+		const [i18nTick, setI18nTick] = react.useState(0);
+		react.useEffect(() => {
+			const handler = () => setI18nTick(t => t + 1);
+			document.addEventListener('dsh-i18n-change', handler);
+			return () => document.removeEventListener('dsh-i18n-change', handler);
+		}, []);
 			const itemStyle = { padding: "6px 10px", cursor: "pointer", fontSize: 12.5, whiteSpace: "nowrap" };
 			const sepStyle = { height: 1, background: "var(--dsw-alias-border-l1,#eee)", margin: "3px 4px" };
 			// 文件行: 以官方 @ 引用插入 (衔接官方 @+文件 机制) + 另存为; 目录行只提供复制相对/绝对。
 			const items = [];
 			if (!entry.isDir) {
-				items.push(react.createElement("div", { key: "insertref", style: itemStyle, onClick: () => onSelect("insertref") }, "以官方 @ 引用插入"));
-				items.push(react.createElement("div", { key: "saveas", style: itemStyle, onClick: () => onSelect("saveas") }, "另存为"));
+				items.push(react.createElement("div", { key: "insertref", style: itemStyle, onClick: () => onSelect("insertref") }, _dsht("plugin.sidebar.btn_insert_ref", "以官方 @ 引用插入")));
+				items.push(react.createElement("div", { key: "saveas", style: itemStyle, onClick: () => onSelect("saveas") }, _dsht("plugin.sidebar.btn_save_as", "另存为")));
 			}
 			if (items.length > 0) {
 				items.push(react.createElement("div", { key: "sep0", style: sepStyle }));
 			}
-			items.push(react.createElement("div", { key: "relative", style: itemStyle, onClick: () => onSelect("relative") }, "复制相对路径"));
-			items.push(react.createElement("div", { key: "absolute", style: itemStyle, onClick: () => onSelect("absolute") }, "复制绝对路径"));
+			items.push(react.createElement("div", { key: "relative", style: itemStyle, onClick: () => onSelect("relative") }, _dsht("plugin.sidebar.btn_copy_rel", "复制相对路径")));
+			items.push(react.createElement("div", { key: "absolute", style: itemStyle, onClick: () => onSelect("absolute") }, _dsht("plugin.sidebar.btn_copy_abs", "复制绝对路径")));
 			return react.createElement("div", {
 				style: {
 					position: "fixed", left: Math.min(x, window.innerWidth - 190), top: Math.min(y, window.innerHeight - 240),
@@ -575,6 +592,12 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 		// ---- 资源管理器节点 (递归目录) ----
 
 		function TreeNode({ entry, depth, scope, onOpenFile, onMenu }) {
+		const [i18nTick, setI18nTick] = react.useState(0);
+		react.useEffect(() => {
+			const handler = () => setI18nTick(t => t + 1);
+			document.addEventListener('dsh-i18n-change', handler);
+			return () => document.removeEventListener('dsh-i18n-change', handler);
+		}, []);
 			const [expanded, setExpanded] = react.useState(false);
 			const [children, setChildren] = react.useState(null); // null=未加载
 			const [busy, setBusy] = react.useState(false);
@@ -619,9 +642,9 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 					react.createElement("span", { key: "n", style: { color: entry.hidden ? "var(--dsw-alias-label-tertiary)" : "inherit", textDecoration: entry.isDir ? "none" : undefined } }, entry.name),
 				]),
 				entry.isDir && expanded && react.createElement("div", { key: "children" }, [
-					busy && children === null && react.createElement("div", { key: "busy", style: { paddingLeft: 6 + (depth + 1) * 22, fontSize: 11, color: "var(--dsw-alias-label-tertiary)" } }, "加载中…"),
-					children !== null && error && react.createElement("div", { key: "err", style: { paddingLeft: 6 + (depth + 1) * 22, fontSize: 11, color: "var(--dsw-alias-state-error-primary)" } }, "读取失败"),
-					children !== null && children.length === 0 && !error && react.createElement("div", { key: "empty", style: { paddingLeft: 6 + (depth + 1) * 22, fontSize: 11, color: "var(--dsw-alias-label-tertiary)" } }, "(空目录)"),
+					busy && children === null && react.createElement("div", { key: "busy", style: { paddingLeft: 6 + (depth + 1) * 22, fontSize: 11, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.sidebar.explorer_scanning", "扫描目录…")),
+					children !== null && error && react.createElement("div", { key: "err", style: { paddingLeft: 6 + (depth + 1) * 22, fontSize: 11, color: "var(--dsw-alias-state-error-primary)" } }, _dsht("plugin.sidebar.explorer_load_failed", "读取失败")),
+					children !== null && children.length === 0 && !error && react.createElement("div", { key: "empty", style: { paddingLeft: 6 + (depth + 1) * 22, fontSize: 11, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.sidebar.explorer_hint_empty", "(空目录)")),
 					children !== null ? children.map((child) => react.createElement(TreeNode, { key: child.path, entry: child, depth: depth + 1, scope, onOpenFile, onMenu })) : null,
 				]),
 			]);
@@ -630,6 +653,12 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 		// ---- 资源管理器面板 ----
 
 		function ExplorerView({ scope, cwd, workspaceRoot, rootName, onOpenFile, bridge }) {
+		const [i18nTick, setI18nTick] = react.useState(0);
+		react.useEffect(() => {
+			const handler = () => setI18nTick(t => t + 1);
+			document.addEventListener('dsh-i18n-change', handler);
+			return () => document.removeEventListener('dsh-i18n-change', handler);
+		}, []);
 			// 当前正在浏览的目录 (默认优先用会话工作目录 cwd——即"这个会话锁指定的目录"
 			// session.header.cwd, 如 D:\DeepSeekHarnessLauncher；无会话/无 cwd 时回退到
 			// 工作区根 workspaceRoot)。
@@ -641,7 +670,7 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 			const [error, setError] = react.useState(null);
 			const [rootEntries, setRootEntries] = react.useState(null);
 			const [refreshTick, setRefreshTick] = react.useState(0);
-			// 单个共享右键菜单 (与原版一致): 记录触发行 + 光标位置; 复制成功短暂显示"已复制"。
+			// 单个共享右键菜单 (与原版一致): 记录触发行 + 光标位置; 复制成功短暂显示_dsht("plugin.sidebar.explorer_hint_copied", "已复制")。
 			const [rowMenu, setRowMenu] = react.useState(null);
 			const [copiedPath, setCopiedPath] = react.useState(null);
 			// 临时提示条 (如官方 @ 引用不可用原因), 数秒后自动消失。
@@ -716,7 +745,7 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 				setRowMenu({ entry, x, y });
 			};
 
-			// 复制文本; 成功后把该行标记为"已复制"并短暂显示。
+			// 复制文本; 成功后把该行标记为_dsht("plugin.sidebar.explorer_hint_copied", "已复制")并短暂显示。
 			const copyPath = (text, path) => {
 				writeClipboard(text).then((ok) => {
 					if (!ok) return;
@@ -751,18 +780,18 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 				copyPath(text, menu.entry.path);
 			};
 
-			const currentLabel = (currentPath || rootName || "工作目录").replace(/[\\/]+$/, "").split(/[\\/]/).pop();
+			const currentLabel = (currentPath || rootName || _dsht("plugin.sidebar.tab_file", "资源管理")).replace(/[\\/]+$/, "").split(/[\\/]/).pop();
 
 			return react.createElement("div", { style: { display: "flex", flexDirection: "column", minHeight: 0, flex: 1, position: "relative" } }, [
 				// 资源管理头: 返回上级 + 根目录名 + 路径框 + 回到工作目录 + 刷新按钮。
 				react.createElement("div", { key: "head", style: { display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)" } }, [
-					react.createElement("button", { key: "up", type: "button", disabled: !canGoUp, style: { cursor: canGoUp ? "pointer" : "default", fontSize: 12, padding: "2px 6px", opacity: canGoUp ? 1 : 0.4 }, title: "返回上级 (" + parentPath + ")", onClick: goUp }, "⬆"),
+					react.createElement("button", { key: "up", type: "button", disabled: !canGoUp, style: { cursor: canGoUp ? "pointer" : "default", fontSize: 12, padding: "2px 6px", opacity: canGoUp ? 1 : 0.4 }, title: _dsht("plugin.sidebar.explorer_title_parent", "返回上级 ({{parentPath}})").replace("{{parentPath}}", parentPath), onClick: goUp }, "⬆"),
 					react.createElement("input", {
 						key: "path",
 						type: "text",
 						value: pathBox,
 						spellCheck: false,
-						placeholder: "完整路径, 回车跳转",
+						placeholder: _dsht("plugin.sidebar.explorer_placeholder", "完整路径, 回车跳转"),
 						style: { flex: 1, minWidth: 0, padding: "3px 6px", fontSize: 11, border: "1px solid var(--dsw-alias-border-l2,#ccc)", borderRadius: 4, outline: "none" },
 						onChange: (event) => setPathBox(event.target.value),
 						onKeyDown: (event) => { if (event.key === "Enter") goToPath(); },
@@ -778,18 +807,18 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 						key: "home",
 						type: "button",
 						style: { cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 3, height: 26, padding: "0 8px", whiteSpace: "nowrap", border: "1px solid #4a7bff", borderRadius: 4, background: "transparent", color: "#4a7bff", fontSize: 12 },
-						title: "回到工作目录: " + (cwd || workspaceRoot || "(未连接会话)"),
+						title: _dsht("plugin.sidebar.explorer_title_workdir", "回到工作目录: {{path}} (未连接会话)").replace("{{path}}", cwd || workspaceRoot || ""),
 						onClick: () => {
 							const target = (cwd || workspaceRoot || "");
 							if (target !== "") { setCurrentPath(target); setPathBox(target); }
 						},
 					}, [
 						react.createElement("svg", { key: "ic", width: 15, height: 15, viewBox: "0 0 24 24", fill: "currentColor", style: { display: "block" } }, react.createElement("path", { d: "M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" })),
-						react.createElement("span", { key: "lb", style: { lineHeight: "16px" } }, "目录"),
+						react.createElement("span", { key: "lb", style: { lineHeight: "16px" } }, _dsht("plugin.sidebar.explorer_btn_dir", "目录")),
 					]),
-					react.createElement("button", { key: "refresh", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 5px", border: "none", background: "transparent", color: "var(--dsw-alias-label-tertiary)" }, title: "刷新", onClick: () => setRefreshTick((tick) => tick + 1) }, "⟳"),
+					react.createElement("button", { key: "refresh", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 5px", border: "none", background: "transparent", color: "var(--dsw-alias-label-tertiary)" }, title: _dsht("plugin.sidebar.explorer_title_refresh", "刷新"), onClick: () => setRefreshTick((tick) => tick + 1) }, "⟳"),
 				]),
-				error !== null && react.createElement("div", { key: "err", style: { padding: 8, fontSize: 12, color: "var(--dsw-alias-state-error-primary)" } }, "加载失败: " + error),
+				error !== null && react.createElement("div", { key: "err", style: { padding: 8, fontSize: 12, color: "var(--dsw-alias-state-error-primary)" } }, _dsht("plugin.sidebar.explorer_err_load", "加载失败: ") + error),
 				notice !== null && react.createElement("div", { key: "ntc", style: { padding: 6, fontSize: 11, color: "var(--dsw-alias-state-error-primary)" } }, notice),
 				react.createElement("div", { key: "body", style: { flex: 1, overflow: "auto", padding: "2px 0" } }, [
 					// 根行: 当前目录自身也可右键 (与原版一致, 复制相对/绝对路径)。
@@ -801,11 +830,11 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 						onContextMenu: (event) => { event.preventDefault(); event.stopPropagation(); if (currentPath) openMenu({ isDir: true, name: currentLabel, path: currentPath }, event.clientX, event.clientY); },
 					}, [
 						IconLayer("f"),
-						react.createElement("span", { key: "n", style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis" } }, currentLabel + (busy ? " · 加载中…" : "")),
-						copiedPath === currentPath && react.createElement("span", { key: "copied", style: { fontSize: 11, color: "#4a7bff", whiteSpace: "nowrap" } }, "已复制"),
+						react.createElement("span", { key: "n", style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis" } }, currentLabel + (busy ? _dsht("plugin.sidebar.explorer_hint_loading", " · 加载中…") : "")),
+						copiedPath === currentPath && react.createElement("span", { key: "copied", style: { fontSize: 11, color: "#4a7bff", whiteSpace: "nowrap" } }, _dsht("plugin.sidebar.explorer_hint_copied", "已复制")),
 					]),
-					rootEntries === null && !error && react.createElement("div", { key: "loading", style: { padding: 8, fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, "扫描目录…"),
-					rootEntries !== null && rootEntries.length === 0 && react.createElement("div", { key: "empty", style: { padding: 8, fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, "(空目录)"),
+					rootEntries === null && !error && react.createElement("div", { key: "loading", style: { padding: 8, fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.sidebar.explorer_scanning", "扫描目录…")),
+					rootEntries !== null && rootEntries.length === 0 && react.createElement("div", { key: "empty", style: { padding: 8, fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.sidebar.explorer_hint_empty", "(空目录)")),
 					rootEntries !== null ? rootEntries.map((child) => react.createElement(TreeNode, { key: child.path, entry: child, depth: 0, scope: { sessionId: scope.sessionId, cwd: currentPath }, onOpenFile: openFile, onMenu: openMenu })) : null,
 					// 菜单关闭: 点击空白处或关闭菜单后复位。
 					rowMenu !== null && react.createElement("div", {
@@ -828,6 +857,12 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 		// ---- 文件预览/编辑 ----
 
 		function FileViewer({ entry, scope, onClose }) {
+		const [i18nTick, setI18nTick] = react.useState(0);
+		react.useEffect(() => {
+			const handler = () => setI18nTick(t => t + 1);
+			document.addEventListener('dsh-i18n-change', handler);
+			return () => document.removeEventListener('dsh-i18n-change', handler);
+		}, []);
 			const [kind, setKind] = react.useState(null);   // 'text' | 'binary' | 'loading' | 'error'
 			const [text, setText] = react.useState("");
 			const [editDirty, setEditDirty] = react.useState(false);
@@ -913,12 +948,12 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 			const headerStyle = { display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)", fontSize: 12.5 };
 
 			let bodyElem;
-			if (kind === "loading") bodyElem = react.createElement("div", { key: "loading", style: { padding: 12, fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, "读取文件…");
-			else if (kind === "error") bodyElem = react.createElement("div", { key: "err", style: { padding: 12, fontSize: 12, color: "var(--dsw-alias-state-error-primary)" } }, "无法读取: " + error);
+			if (kind === "loading") bodyElem = react.createElement("div", { key: "loading", style: { padding: 12, fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.sidebar.fileviewer_reading", "读取文件…"));
+			else if (kind === "error") bodyElem = react.createElement("div", { key: "err", style: { padding: 12, fontSize: 12, color: "var(--dsw-alias-state-error-primary)" } }, _dsht("plugin.sidebar.fileviewer_err_read", "无法读取: ") + error);
 			else if (kind === "binary" && isImage) bodyElem = react.createElement("div", { key: "img", style: { overflow: "auto", padding: 6 } }, react.createElement("img", { src: mediaUrl || undefined, alt: entry.name, style: { maxWidth: "100%", display: "block" } }));
 			else if (kind === "binary" && isPdf) bodyElem = react.createElement("iframe", { key: "pdf", src: mediaUrl || undefined, style: { flex: 1, border: "none", width: "100%", height: "100%", background: "var(--dsw-alias-bg-base,#fff)" } });
 			else if (kind === "binary" && isHtml) bodyElem = react.createElement("iframe", { key: "html", src: mediaUrl || undefined, sandbox: "allow-scripts allow-same-origin", style: { flex: 1, border: "none", width: "100%", height: "100%", background: "var(--dsw-alias-bg-base,#fff)" } });
-			else if (kind === "binary") bodyElem = react.createElement("div", { key: "bin", style: { padding: 12, fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, "二进制文件, 不支持文本预览扩展名。");
+			else if (kind === "binary") bodyElem = react.createElement("div", { key: "bin", style: { padding: 12, fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.sidebar.fileviewer_binary", "二进制文件, 不支持文本预览扩展名。"));
 			else {
 				bodyElem = react.createElement("div", { key: "txt", style: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 } }, [
 					react.createElement("textarea", {
@@ -929,17 +964,17 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 						style: { flex: 1, width: "100%", boxSizing: "border-box", border: "none", outline: "none", resize: "none", font: "12px/1.5 ui-monospace,Consolas,Menlo,monospace", padding: 8, color: "inherit", background: "transparent" },
 						onChange: (e) => { setText(e.target.value); setEditDirty(true); },
 					}),
-					truncated && react.createElement("div", { key: "trunc", style: { padding: "2px 8px", fontSize: 11, color: "var(--dsw-alias-state-warn-label)" } }, "文件超过 1MB, 仅载入前部 (只读保护)。"),
+					truncated && react.createElement("div", { key: "trunc", style: { padding: "2px 8px", fontSize: 11, color: "var(--dsw-alias-state-warn-label)" } }, _dsht("plugin.sidebar.fileviewer_hint_large", "文件超过 1MB, 仅载入前部 (只读保护)。")),
 				]);
 			}
 
 			return react.createElement("div", { key: "fv", style: { borderTop: "1px solid var(--dsw-alias-border-l1,#eee)", display: "flex", flexDirection: "column", flex: 1, minHeight: 0 } }, [
 				react.createElement("div", { key: "h", style: headerStyle }, [
-					react.createElement("button", { key: "back", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 6px" }, onClick: onClose }, "‹ 返回"),
+					react.createElement("button", { key: "back", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 6px" }, onClick: onClose }, _dsht("plugin.sidebar.fileviewer_btn_back", "‹ 返回")),
 					react.createElement("span", { key: "t", title: entry.path, style: { flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, "📄 " + entry.name),
-					kind === "text" && editable && react.createElement("button", { key: "edit", type: "button", disabled: !editDirty, style: { cursor: editDirty ? "pointer" : "default", fontSize: 12, padding: "2px 8px", opacity: editDirty ? 1 : 0.5 }, onClick: () => { if (!editDirty) { setEditDirty(true); } else { save(); } } }, saved ? "已保存 ✓" : (editDirty ? "保存" : "编辑")),
-					isMd && kind === "text" && react.createElement("button", { key: "md", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 8px", opacity: 0.85 }, onClick: () => window.open("/__dsh/sidebar-lite/file?" + new URLSearchParams({ sessionId: scope.sessionId, ...(scope.cwd ? { cwd: scope.cwd } : {}), path: entry.path }), "_blank") }, "在新窗口查看"),
-					isHtml && react.createElement("button", { key: "toggle-html-view", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 6px", opacity: 0.85 }, onClick: () => setViewMode((v) => v === "preview" ? "source" : "preview"), title: viewMode === "preview" ? "View source" : "Render page" }, viewMode === "preview" ? "📄 源码" : "🌐 预览"),
+					kind === "text" && editable && react.createElement("button", { key: "edit", type: "button", disabled: !editDirty, style: { cursor: editDirty ? "pointer" : "default", fontSize: 12, padding: "2px 8px", opacity: editDirty ? 1 : 0.5 }, onClick: () => { if (!editDirty) { setEditDirty(true); } else { save(); } } }, saved ? _dsht("plugin.sidebar.fileviewer_btn_saved", "已保存 ✓") : (editDirty ? _dsht("plugin.sidebar.fileviewer_btn_save", "保存") : _dsht("plugin.sidebar.fileviewer_btn_edit", "编辑"))),
+					isMd && kind === "text" && react.createElement("button", { key: "md", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 8px", opacity: 0.85 }, onClick: () => window.open("/__dsh/sidebar-lite/file?" + new URLSearchParams({ sessionId: scope.sessionId, ...(scope.cwd ? { cwd: scope.cwd } : {}), path: entry.path }), "_blank") }, _dsht("plugin.sidebar.fileviewer_btn_new_win", "在新窗口查看")),
+					isHtml && react.createElement("button", { key: "toggle-html-view", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 6px", opacity: 0.85 }, onClick: () => setViewMode((v) => v === "preview" ? "source" : "preview"), title: viewMode === "preview" ? "View source" : "Render page" }, viewMode === "preview" ? _dsht("plugin.sidebar.fileviewer_btn_source", "📄 源码") : _dsht("plugin.sidebar.fileviewer_btn_preview", "🌐 预览")),
 				]),
 				error !== null && kind !== "error" && react.createElement("div", { key: "err2", style: { padding: 6, fontSize: 12, color: "var(--dsw-alias-state-error-primary)" } }, error),
 				bodyElem,
@@ -962,7 +997,7 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 				react.createElement("div", {
 					key: "pvres",
 					style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 5, zIndex: 2147483001, cursor: "ew-resize", background: "transparent" },
-					title: "拖动调节预览宽度",
+					title: _dsht("plugin.sidebar.explorer_title_resize", "拖动调节预览宽度"),
 					onMouseDown: onResizeStart,
 				}),
 				react.createElement(FileViewer, { key: "pvfile", entry, scope, onClose }),
@@ -972,6 +1007,12 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 		// ---- 内嵌浏览器 ----
 
 		function BrowserView({ scope }) {
+		const [i18nTick, setI18nTick] = react.useState(0);
+		react.useEffect(() => {
+			const handler = () => setI18nTick(t => t + 1);
+			document.addEventListener('dsh-i18n-change', handler);
+			return () => document.removeEventListener('dsh-i18n-change', handler);
+		}, []);
 			const [address, setAddress] = react.useState("");
 			const [src, setSrc] = react.useState(null);
 			const [error, setError] = react.useState(null);
@@ -988,12 +1029,12 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 
 			return react.createElement("div", { style: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 } }, [
 				react.createElement("div", { key: "bar", style: { display: "flex", gap: 4, padding: 4, borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)" } }, [
-					react.createElement("input", { key: "in", type: "text", value: address, placeholder: "输入网址 (如 example.com) 回车访问", spellCheck: false, style: { flex: 1, minWidth: 0, padding: "3px 6px", fontSize: 12, border: "1px solid var(--dsw-alias-border-l2,#ccc)", borderRadius: 4, outline: "none" }, onChange: (e) => setAddress(e.target.value), onKeyDown: (e) => { if (e.key === "Enter") go(); } }),
-					react.createElement("button", { key: "go", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "3px 10px" }, onClick: go }, "前往"),
+					react.createElement("input", { key: "in", type: "text", value: address, placeholder: _dsht("plugin.sidebar.browser_placeholder", "输入网址 (如 example.com) 回车访问"), spellCheck: false, style: { flex: 1, minWidth: 0, padding: "3px 6px", fontSize: 12, border: "1px solid var(--dsw-alias-border-l2,#ccc)", borderRadius: 4, outline: "none" }, onChange: (e) => setAddress(e.target.value), onKeyDown: (e) => { if (e.key === "Enter") go(); } }),
+					react.createElement("button", { key: "go", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "3px 10px" }, onClick: go }, _dsht("plugin.sidebar.browser_btn_go", "前往")),
 				]),
 				error !== null && react.createElement("div", { key: "err", style: { padding: 6, fontSize: 12, color: "var(--dsw-alias-state-error-primary)" } }, error),
 				react.createElement("div", { key: "frame", style: { flex: 1, minHeight: 0, position: "relative", background: "var(--dsw-alias-bg-base,#fff)" } }, [
-					src === null && react.createElement("div", { key: "hint", style: { position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, "在上方输入网址开始浏览"),
+					src === null && react.createElement("div", { key: "hint", style: { position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.sidebar.browser_hint_start", "在上方输入网址开始浏览")),
 					src !== null && react.createElement("iframe", {
 						key: "if",
 						src,
@@ -1001,7 +1042,7 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 						referrerPolicy: "no-referrer",
 						style: { position: "absolute", inset: 0, width: "100%", height: "100%", border: "none" },
 						onLoad: () => setError(null),
-						onError: () => setError("无法载入该页面 (可能拒绝 iframe 嵌入)。"),
+						onError: () => setError(_dsht("plugin.sidebar.browser_err_load", "无法载入该页面 (可能拒绝 iframe 嵌入)。")),
 					}),
 				]),
 			]);
@@ -1010,6 +1051,12 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 		// ---- CMD 终端 ----
 
 		function TerminalView({ scope, tab }) {
+		const [i18nTick, setI18nTick] = react.useState(0);
+		react.useEffect(() => {
+			const handler = () => setI18nTick(t => t + 1);
+			document.addEventListener('dsh-i18n-change', handler);
+			return () => document.removeEventListener('dsh-i18n-change', handler);
+		}, []);
 			// 输出日志 (合并回放 + 实时输出), 用一个 <pre> 整体渲染, 追加时自动滚动到底。
 			const [lines, setLines] = react.useState([]);
 			const [input, setInput] = react.useState("");
@@ -1068,7 +1115,7 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 					// 先断开 SSE 读取再停进程, 避免进程退出事件写到一个断开的响应上。
 					if (streamRef.current) streamRef.current.stop();
 					await postMethod("terminal.kill", { sessionId: scope.sessionId, tab });
-					setLines((previous) => previous.concat(["\r\n[终端已停止]\r\n"]));
+					setLines((previous) => previous.concat(["\r\n" + _dsht("plugin.sidebar.terminal_stopped", "[终端已停止]") + "\r\n"]));
 				} catch (e) {
 					setError(errMessage(e));
 				} finally {
@@ -1078,13 +1125,13 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 
 			return react.createElement("div", { style: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 } }, [
 				react.createElement("div", { key: "bar", style: { display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)" } }, [
-					react.createElement("span", { key: "hint", style: { flex: 1, fontSize: 11, color: "var(--dsw-alias-label-tertiary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, "CMD 终端 (逐行执行命令)"),
-					react.createElement("button", { key: "kill", type: "button", disabled: busy, style: { cursor: busy ? "default" : "pointer", fontSize: 12, padding: "2px 8px", color: "var(--dsw-alias-state-error-primary)" }, onClick: killTerminal }, "停止"),
+					react.createElement("span", { key: "hint", style: { flex: 1, fontSize: 11, color: "var(--dsw-alias-label-tertiary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, _dsht("plugin.sidebar.terminal_title", "CMD 终端 (逐行执行命令)")),
+					react.createElement("button", { key: "kill", type: "button", disabled: busy, style: { cursor: busy ? "default" : "pointer", fontSize: 12, padding: "2px 8px", color: "var(--dsw-alias-state-error-primary)" }, onClick: killTerminal }, _dsht("plugin.sidebar.terminal_btn_stop", "停止")),
 				]),
 				error !== null && react.createElement("div", { key: "err", style: { padding: 6, fontSize: 11, color: "var(--dsw-alias-state-error-primary)" } }, error),
 				react.createElement("div", { key: "out", style: { flex: 1, minHeight: 0, overflow: "auto", padding: "6px 8px" } }, [
 					react.createElement("pre", { key: "pre", style: { margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-all", font: "12px/1.5 ui-monospace,Consolas,Menlo,monospace", color: "inherit" } },
-						(lines.length === 0 ? "输入命令后回车执行 (如 dir / cd / python --version)。\n" : lines.join(""))),
+						(lines.length === 0 ? _dsht("plugin.sidebar.terminal_hint", "输入命令后回车执行 (如 dir / cd / python --version)。") + "\n" : lines.join(""))),
 					react.createElement("div", { key: "bottom", ref: bottomRef }),
 				]),
 				react.createElement("div", { key: "cmd", style: { display: "flex", gap: 4, padding: "4px 8px", borderTop: "1px solid var(--dsw-alias-border-l1,#eee)" } }, [
@@ -1092,13 +1139,13 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 						key: "i",
 						type: "text",
 						value: input,
-						placeholder: "输入命令, 回车执行",
+						placeholder: _dsht("plugin.sidebar.terminal_placeholder", "输入命令, 回车执行"),
 						spellCheck: false,
 						style: { flex: 1, minWidth: 0, padding: "3px 6px", fontSize: 12, border: "1px solid var(--dsw-alias-border-l2,#ccc)", borderRadius: 4, outline: "none" },
 						onChange: (event) => setInput(event.target.value),
 						onKeyDown: (event) => { if (event.key === "Enter") sendLine(); },
 					}),
-					react.createElement("button", { key: "send", type: "button", disabled: busy || input === "", style: { cursor: (busy || input === "") ? "default" : "pointer", fontSize: 12, padding: "3px 10px" }, onClick: sendLine }, "执行"),
+					react.createElement("button", { key: "send", type: "button", disabled: busy || input === "", style: { cursor: (busy || input === "") ? "default" : "pointer", fontSize: 12, padding: "3px 10px" }, onClick: sendLine }, _dsht("plugin.sidebar.terminal_btn_exec", "执行")),
 				]),
 			]);
 		}
@@ -1106,6 +1153,12 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 		// ---- 任务管理 (后台任务) ----
 
 		function TasksView({ scope, jobs, active }) {
+		const [i18nTick, setI18nTick] = react.useState(0);
+		react.useEffect(() => {
+			const handler = () => setI18nTick(t => t + 1);
+			document.addEventListener('dsh-i18n-change', handler);
+			return () => document.removeEventListener('dsh-i18n-change', handler);
+		}, []);
 			// 展开查看输出时用 objectMap 缓存每个任务的输出文本与错误。
 			const [outputText, setOutputText] = react.useState({});
 			const [busyId, setBusyId] = react.useState(null);
@@ -1114,7 +1167,7 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 				setBusyId(job.id);
 				try {
 					const data = await postMethod("jobs.output", { sessionId: scope.sessionId, id: job.id });
-					setOutputText((previous) => ({ ...previous, [job.id]: { text: data.text || "(无输出)", error: null } }));
+					setOutputText((previous) => ({ ...previous, [job.id]: { text: data.text || _dsht("plugin.sidebar.tasks_no_output", "(无输出)"), error: null } }));
 				} catch (e) {
 					setOutputText((previous) => ({ ...previous, [job.id]: { text: "", error: errMessage(e) } }));
 				} finally {
@@ -1126,7 +1179,7 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 				setBusyId(job.id);
 				try {
 					await postMethod("jobs.kill", { sessionId: scope.sessionId, id: job.id, reason: "user requested via sidebar" });
-					setOutputText((previous) => ({ ...previous, [job.id]: { text: "已请求停止该任务。", error: null } }));
+					setOutputText((previous) => ({ ...previous, [job.id]: { text: _dsht("plugin.sidebar.tasks_stop_requested", "已请求停止该任务。"), error: null } }));
 				} catch (e) {
 					setOutputText((previous) => ({ ...previous, [job.id]: { text: "", error: errMessage(e) } }));
 				} finally {
@@ -1140,36 +1193,36 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 			// 数据来源是官方会话列表 store 的 SessionSummary: displayTitle=当前任务目标,
 			// running=是否在执行中, completed=是否已完成, cwd=会话工作目录。
 			const hasSession = !!active;
-			const goalTitle = (active && active.displayTitle && active.displayTitle !== "") ? active.displayTitle : "（未命名）";
+			const goalTitle = (active && active.displayTitle && active.displayTitle !== "") ? active.displayTitle : _dsht("plugin.sidebar.tasks_unnamed", "（未命名）");
 			const isRunning = !!(active && active.running);
 			const isCompleted = !!(active && active.completed);
 
 			// 状态徽标: 执行中蓝点闪烁提示「正在推进」, 空闲灰点, 已完成绿点。
-			let status = { text: "未选择会话", color: "var(--dsw-alias-label-tertiary)", dot: "#c9c9c9", pulse: false };
+			let status = { text: _dsht("plugin.sidebar.tasks_no_session", "未选择会话"), color: "var(--dsw-alias-label-tertiary)", dot: "#c9c9c9", pulse: false };
 			if (hasSession) {
-				if (isRunning) status = { text: "AI 正在执行当前任务…", color: "#1a56db", dot: "#1a56db", pulse: true };
-				else if (isCompleted) status = { text: "已完成", color: "var(--dsw-alias-state-success-primary)", dot: "#16a34a", pulse: false };
-				else status = { text: "空闲 · 等待新的指令", color: "var(--dsw-alias-label-secondary)", dot: "#8a8f98", pulse: false };
+				if (isRunning) status = { text: _dsht("plugin.sidebar.tasks_running", "AI 正在执行当前任务…"), color: "#1a56db", dot: "#1a56db", pulse: true };
+				else if (isCompleted) status = { text: _dsht("plugin.sidebar.tasks_done", "已完成"), color: "var(--dsw-alias-state-success-primary)", dot: "#16a34a", pulse: false };
+				else status = { text: _dsht("plugin.sidebar.tasks_idle", "空闲 · 等待新的指令"), color: "var(--dsw-alias-label-secondary)", dot: "#8a8f98", pulse: false };
 			}
 
 			return react.createElement("div", { key: "tasks", style: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "auto" } }, [
 				// 状态卡: 明确 AI 当前任务与进度。
 				react.createElement("div", { key: "status", style: { margin: "8px 8px 4px", padding: 10, border: "1px solid var(--dsw-alias-border-l1,#e5e5e5)", borderRadius: 8, background: "var(--dsw-alias-bg-layer-2,#ffffff)" } }, [
-					react.createElement("div", { key: "goal", style: { fontSize: 12.5, fontWeight: 600, color: "var(--dsw-alias-label-primary,#1f2329)", wordBreak: "break-all", lineHeight: 1.4 } }, "目标 / 当前任务: " + goalTitle),
+					react.createElement("div", { key: "goal", style: { fontSize: 12.5, fontWeight: 600, color: "var(--dsw-alias-label-primary,#1f2329)", wordBreak: "break-all", lineHeight: 1.4 } }, _dsht("plugin.sidebar.tasks_target", "目标 / 当前任务: ") + goalTitle),
 					react.createElement("div", { key: "st", style: { display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 12, color: status.color } }, [
 						react.createElement("span", { key: "dot", style: { width: 8, height: 8, borderRadius: "50%", background: status.dot, flex: "none", animation: status.pulse ? "dsl-pulse 1.2s ease-in-out infinite" : undefined } }),
 						react.createElement("span", { key: "t", style: { fontWeight: 600 } }, status.text),
 					]),
-					(hasSession && active && active.cwd) ? react.createElement("div", { key: "cwd", style: { marginTop: 6, fontSize: 11, color: "var(--dsw-alias-label-tertiary)", wordBreak: "break-all" }, title: active.cwd }, "工作目录: " + active.cwd) : null,
+					(hasSession && active && active.cwd) ? react.createElement("div", { key: "cwd", style: { marginTop: 6, fontSize: 11, color: "var(--dsw-alias-label-tertiary)", wordBreak: "break-all" }, title: active.cwd }, _dsht("plugin.sidebar.tasks_workdir", "工作目录: ") + active.cwd) : null,
 				]),
 
 				// 后台任务标题行。
-				react.createElement("div", { key: "jobshead", style: { display: "flex", alignItems: "center", gap: 6, padding: "8px 10px 4px", fontSize: 12, fontWeight: 600, color: "var(--dsw-alias-label-primary,#1f2329)" } }, "后台任务" + (list.length > 0 ? " (" + list.length + ")" : "")),
+				react.createElement("div", { key: "jobshead", style: { display: "flex", alignItems: "center", gap: 6, padding: "8px 10px 4px", fontSize: 12, fontWeight: 600, color: "var(--dsw-alias-label-primary,#1f2329)" } }, _dsht("plugin.sidebar.tasks_bg_fmt", "后台任务 ({{count}})").replace("{{count}}", list.length)),
 
 				// 无会话 / 无后台任务 的提示 (避免看起来像"没绑定到东西")。
 				react.createElement("div", { key: "jobsbody", style: { padding: "4px 10px 10px", display: "flex", flexDirection: "column", gap: 4 } }, [
-					(!hasSession) && react.createElement("div", { key: "nosess", style: { fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, "未选择会话, 无法显示 AI 的当前任务状态。"),
-					(hasSession && list.length === 0) && react.createElement("div", { key: "empty", style: { fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, "当前没有后台任务运行。"),
+					(!hasSession) && react.createElement("div", { key: "nosess", style: { fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.sidebar.tasks_no_session_hint", "未选择会话, 无法显示 AI 的当前任务状态。")),
+					(hasSession && list.length === 0) && react.createElement("div", { key: "empty", style: { fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.sidebar.tasks_no_bg", "当前没有后台任务运行。")),
 				]),
 
 				// 后台任务列表 (仅 AI 调 job_* 类工具时才有; 恒空属正常)。
@@ -1180,12 +1233,12 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 						react.createElement("div", { key: "row", style: { display: "flex", alignItems: "center", gap: 6 } }, [
 							react.createElement("span", { key: "st", style: { fontSize: 11, padding: "1px 6px", borderRadius: 3, background: statusLabel === "running" ? "var(--dsw-alias-interactive-bg-hover-accent)" : "var(--dsw-alias-bg-module-platform)", color: statusLabel === "running" ? "#1a56db" : "var(--dsw-alias-label-secondary)" } }, statusLabel),
 							react.createElement("span", { key: "id", style: { flex: 1, minWidth: 0, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", userSelect: "none" }, title: job.title || job.id }, (job.title || job.id)),
-							react.createElement("button", { key: "out", type: "button", disabled: busyId === job.id, style: { cursor: busyId === job.id ? "default" : "pointer", fontSize: 11, padding: "2px 6px", flex: "none" }, onClick: () => loadOutput(job), title: "查看 AI 读取到的输出" }, "输出"),
-							react.createElement("button", { key: "kill", type: "button", disabled: busyId === job.id, style: { cursor: busyId === job.id ? "default" : "pointer", fontSize: 11, padding: "2px 6px", flex: "none" }, onClick: () => killJob(job), title: "停止该任务" }, "停止"),
+							react.createElement("button", { key: "out", type: "button", disabled: busyId === job.id, style: { cursor: busyId === job.id ? "default" : "pointer", fontSize: 11, padding: "2px 6px", flex: "none" }, onClick: () => loadOutput(job), title: _dsht("plugin.sidebar.tasks_title_view_output", "查看 AI 读取到的输出") }, _dsht("plugin.sidebar.tasks_btn_output", "输出")),
+							react.createElement("button", { key: "kill", type: "button", disabled: busyId === job.id, style: { cursor: busyId === job.id ? "default" : "pointer", fontSize: 11, padding: "2px 6px", flex: "none" }, onClick: () => killJob(job), title: _dsht("plugin.sidebar.tasks_title_stop", "停止该任务") }, _dsht("plugin.sidebar.terminal_btn_stop", "停止")),
 						]),
 						currentOutput !== null && react.createElement("div", { key: "body", style: { marginTop: 6, padding: 6, background: "var(--dsw-alias-bg-module-platform)", borderRadius: 4 } }, [
 							currentOutput.error !== null
-								? react.createElement("div", { key: "e", style: { fontSize: 11, color: "var(--dsw-alias-state-error-primary)" } }, "操作失败: " + currentOutput.error)
+								? react.createElement("div", { key: "e", style: { fontSize: 11, color: "var(--dsw-alias-state-error-primary)" } }, _dsht("plugin.sidebar.err_op_fail", "操作失败: ") + currentOutput.error)
 								: react.createElement("pre", { key: "o", style: { margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-all", fontSize: 11, lineHeight: 1.5 } }, currentOutput.text),
 						]),
 					]);
@@ -1196,6 +1249,12 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 		// ---- 侧边栏外壳 (折叠 + Tab 切换) ----
 
 		function SidebarShell({ ctx }) {
+		const [i18nTick, setI18nTick] = react.useState(0);
+		react.useEffect(() => {
+			const handler = () => setI18nTick(t => t + 1);
+			document.addEventListener('dsh-i18n-change', handler);
+			return () => document.removeEventListener('dsh-i18n-change', handler);
+		}, []);
 			const [open, setOpen] = react.useState(true);
 			const [tab, setTab] = react.useState("explorer"); // 'explorer' | 'browser' | 'terminal' | 'tasks'
 			const [cwd, setCwd] = react.useState(null);
@@ -1389,8 +1448,8 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 				id: N + "-rail",
 				style: railStyle,
 				onClick: () => setOpen((previous) => !previous),
-				title: open ? "收起侧边栏" : "展开侧边栏",
-				"aria-label": open ? "收起侧边栏" : "展开侧边栏",
+				title: open ? _dsht("plugin.sidebar.btn_collapse", "收起侧边栏") : _dsht("plugin.sidebar.btn_expand", "展开侧边栏"),
+				"aria-label": open ? _dsht("plugin.sidebar.btn_collapse", "收起侧边栏") : _dsht("plugin.sidebar.btn_expand", "展开侧边栏"),
 			}, react.createElement(PanelGlyph, { size: 18 }));
 
 			if (!open) {
@@ -1408,17 +1467,17 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 					onMouseDown: onResizeStart,
 				}),
 				react.createElement("div", { key: "title", style: { position: "relative", display: "flex", alignItems: "center", gap: 4, padding: "6px 8px", borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)", fontSize: 12.5, fontWeight: 600 } }, [
-					react.createElement("span", { key: "t", style: { flex: 1 } }, "侧边栏"),
+					react.createElement("span", { key: "t", style: { flex: 1 } }, _dsht("plugin.sidebar.tab_sidebar", "侧边栏")),
 					// 收起开关已移到右上角 rail (fixed 定位 toggle, 不与官方按钮重叠),
 					// 标题条内部不再重复放 collapse 按钮 — 避免两个相同图标挤在一起。
 				]),
 				react.createElement("div", { key: "tabs", style: { display: "flex", borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)" } }, [
-					tabButton("explorer", "资源管理"),
-					tabButton("terminal", "终端"),
-					tabButton("tasks", "任务"),
-					tabButton("browser", "浏览器"),
+					tabButton("explorer", _dsht("plugin.sidebar.tab_file", "资源管理")),
+					tabButton("terminal", _dsht("plugin.sidebar.tab_terminal", "终端")),
+					tabButton("tasks", _dsht("plugin.sidebar.tab_tasks", "任务")),
+					tabButton("browser", _dsht("plugin.sidebar.tab_browser", "浏览器")),
 				]),
-				sessionErr !== null && react.createElement("div", { key: "serr", style: { padding: 6, fontSize: 11, color: "var(--dsw-alias-state-error-primary)" } }, "会话定位失败: " + sessionErr),
+				sessionErr !== null && react.createElement("div", { key: "serr", style: { padding: 6, fontSize: 11, color: "var(--dsw-alias-state-error-primary)" } }, _dsht("plugin.sidebar.explorer_err_session", "会话定位失败: ") + sessionErr),
 				react.createElement("div", { key: "body", style: { flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" } }, [
 					tab === "explorer"
 						? react.createElement(ExplorerView, { key: "ex", scope, cwd, workspaceRoot, rootName, onOpenFile: openPreview, bridge })
