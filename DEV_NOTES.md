@@ -69,6 +69,7 @@
   * `locales/zh.json` 和 `locales/en.json` 必须同步，每次改完跑对齐验证脚本。
   * 默认 / fallback 一律 `zh`，bridge `_dsht` 禁止跨语言兜底。
   * 插件 JS 必须有 `_dsht()` + `i18nTick` 监听 `dsh-i18n-change` 事件。
+  * 插件 WebUI 侧完整规范已沉淀到 skill：`skills/dsh-deploy-maintain/references/i18n-webui-plugin.md` + `templates/i18n_client_template.js`；tkinter 通用规范：`skills/python-tkinter-desktop-dev/references/i18n_gui.md`。
 
 ## 四、核心架构（launcher.py）关键设定
 
@@ -225,6 +226,15 @@
 
 11. **更新界面 / 确认升级对话框是 Toplevel 弹窗，语言切换后不重建**（v1.0.32 发现）：
     Treeview heading 和行内容是一次性 insert，语言切换不会自动刷新。策略：关掉重开对话框自然更新（当前够用）。详见 `doc/I18N_SPEC.md` 第三节。
+
+12. **waitReady 注册严禁 setTimeout 强制注册 → slot 重复注册报错**（v1.0.32 发现，7 条 `list slot "settings.section" already has an entry with id "XXX"`）：
+    轮询注册成功后 2 秒的 setTimeout 还会无条件再注册一次。正确写法只保留"立即 or 轮询"两分支，天然幂等。详见 `skills/dsh-deploy-maintain/references/i18n-webui-plugin.md` 第五节。
+
+13. **原生 DOM 插件（如 dsh-media-background 观星）语言切换不会自动刷新**（v1.0.32 发现）：
+    React 插件靠 `useEffect` 监听 `dsh-i18n-change` → `setI18nTick()` 自动 re-render；原生 DOM 插件的 `textContent` 一次性写死，必须手动两层修复：① `apply()` 等 `__DSH_I18N__._initialized`（100ms 轮询最多 5s）再 init；② 监听 `dsh-i18n-change` 销毁旧 rootEl + CSS 重建并恢复状态（`_i18nHandlerBound` 只绑一次）。判断依据：代码里有无 `react.createElement`。
+
+14. **bridge 注入必须全局去重**（v1.0.32 发现）：
+    10 个插件各注入一个 `<script src=...3081/__dsh_i18n_bridge.js>` 会发 10 个 114KB 重复请求。用 `window.__dsh_i18n_bridge_loaded` 全局标志，首个插件注入后后续跳过；桌面壳已预注入时直接 return。
 
 ### 发布 / 平台坑
 
