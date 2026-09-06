@@ -64,6 +64,12 @@
 
 * **每次改动后同步更新项目 md**（README.md / DEV\_NOTES.md，及涉及插件的 plugins/\*/README.md）；通用类经验同步回 `dsh-deploy-maintain` skill。
 
+* **所有 UI 多语言化必须遵循 `doc/I18N_SPEC.md`**：
+  * Tkinter 控件三步走（赋值 + 布局分行 → 注册 `_i18n_widgets` → 加 locales key）。
+  * `locales/zh.json` 和 `locales/en.json` 必须同步，每次改完跑对齐验证脚本。
+  * 默认 / fallback 一律 `zh`，bridge `_dsht` 禁止跨语言兜底。
+  * 插件 JS 必须有 `_dsht()` + `i18nTick` 监听 `dsh-i18n-change` 事件。
+
 ## 四、核心架构（launcher.py）关键设定
 
 * **零第三方依赖**（仅标准库）；`build_env()` 把 npm 缓存 / pnpm store / TEMP 全部重定向 `runtime/` 下。
@@ -173,6 +179,52 @@
 2. onefile 里程序根目录用 `sys.executable` 所在目录（`frozen` 判定），别用 `__file__`（指向 `_MEIPASS` 临时解压目录）。
 3. 更新器自替换：运行中的 exe 不能覆盖自己 → 先把自己 `copy2` 到 `runtime/tmp/<name>_worker.exe`，从副本带原参数再 Popen、原进程退出；用 `normcase` 比较绝对路径避免无限自启。
 4. 分离进程/无控制台的休眠用 `wscript.exe "%~dp0sleep_helper.vbs" <ms>`（WScript.Sleep），**别用 ping/timeout/choice**：ping 闪窗且依赖可能损坏的 ping.exe，timeout/choice 在 stdin 重定向时失效。
+
+### i18n / 多语言坑（v1.0.31 引入）
+
+1. **`__pycache__` 会缓存旧 pyc，改了代码却运行旧版**：
+   Python 优先加载 `.pyc` 缓存，尤其是内置 Python（`runtime/python/python/`）可能不做时间戳检查。改了源码后 GUI 显示旧内容 → 第一件事清 `__pycache__`：
+   ```powershell
+   Get-ChildItem -Directory -Recurse __pycache__ | Remove-Item -Recurse -Force
+   ```
+   **打包前必须清**，否则 PyInstaller 会把旧 pyc 打进去。
+
+2. **Combobox 国际化需要单独注册**：
+   普通 Label/Button 走 `widget.config(text=...)` 刷新路径（refresh_all_text 第 3 步），但 Combobox 要刷新 `values` 列表 + 通过 internal 值映射显示值（第 4 步）。只设 `_i18n_internal` / `_i18n_key_map` / `_i18n_values_keys` 不够，**必须追加一行注册**：
+   ```python
+   _i18n_widgets.append((bind_combo, 'combobox', None))
+   ```
+   attr 必须是 `'combobox'`，不能是 `'text'`——否则被第 3 步误处理没效果，第 4 步又找不到。
+
+3. **启动器用内置 Python（start.bat），shell 里直接 python 可能走系统 Python**：
+   start.bat 调的是 `runtime\python\python\pythonw.exe`，而 PowerShell 里直接 `python launcher.py` 可能走系统 PATH 的 Python。改了代码后**一定要用 start.bat 验证真实效果**，不要假设 shell 里 import 对了就等于 exe 里也对了。
+
+4. **Combobox 的 internal 值必须是英文，不能用中文做状态判断**：
+   例如 bind 选项的 internal 值应该是 `"lan"` / `"local"` 而不是 `"局域网"` / `"本机"`。所有 `if combo.get() == "局域网":` 这种语言敏感逻辑都要改成 `if _combo_internal == "lan":`。i18n 改造时**先跑一次 grep 找语言敏感判断**：
+   ```bash
+   grep -n 'combo\.get() ==' launcher.py
+   ```
+
+5. **config.json 的 `language` 字段会持久化语言偏好**：
+   测试时切到 EN 忘了切回来，下次启动默认全英文。**每次改完启动器先把 config.json 的 language 改成 `"zh"`**，免得界面混乱。
+
+6. **release_upload.py 分阶段调用有新鲜度竞态**：
+   `--pack-only` 内部会回写 `GREEN_VERSION_DATE`（等于改了 launcher.py mtime），紧接着 `--upload-only` 报 `exe 新鲜度校验失败`。**正确做法**：`build_exe.bat → python release_upload.py`（不带任何 flag，内部先 pack 再 upload 一口气跑完）。
+
+7. **Tk 布局方法返回 None，连写 .pack()/.grid() 会导致注册失效**（v1.0.32 发现）：
+   `bad = ttk.Button(frame, text="...").pack(side="left")` → `bad` 是 None，注册 `_i18n_widgets.append((bad, 'text', 'key'))` 存的也是 None，语言切换时 `None.config(text=...)` 静默失败。**铁律：赋值 + 布局分行写**，详见 `doc/I18N_SPEC.md` 第二节。
+
+8. **硬编码中文漏替换 → 界面永远有一部分是中文**（v1.0.32 发现）：
+   只 grep 替换 `text="..."` 里的字面量，手工构建的多行字符串（如 `text=("当前版本: %s\n\n将升级到..." % ...)`）容易漏。**每次改完跑终极扫描**：找 `text=...中文字符串 + 没有 i18n.t` 的行。
+
+9. **zh.json 和 en.json key 数量不对齐 → 切到英文某处显示 key 本身**（v1.0.32 发现）：
+   改了一个文件忘了改另一个。**每次加 key 后跑验证脚本**（见 `doc/I18N_SPEC.md` 第四节），必须 `zk == ek`。
+
+10. **bridge `_dsht` 做了"另一种语言兜底"导致 fallback 方向错误**（v1.0.32 发现）：
+    之前代码：当前语言没翻译 → 尝试另一语言（zh→en / en→zh）→ 再返回 fallback。结果：切到中文时某些插件文字还是英文。**正确做法：当前语言没翻译直接返回调用方传入的中文 fallback**，不做跨语言兜底。
+
+11. **更新界面 / 确认升级对话框是 Toplevel 弹窗，语言切换后不重建**（v1.0.32 发现）：
+    Treeview heading 和行内容是一次性 insert，语言切换不会自动刷新。策略：关掉重开对话框自然更新（当前够用）。详见 `doc/I18N_SPEC.md` 第三节。
 
 ### 发布 / 平台坑
 
