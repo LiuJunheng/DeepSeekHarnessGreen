@@ -314,7 +314,7 @@
       "desc3": "After selecting sessions, choose 'Restore Selected' (un-archive, no data loss) or 'Delete Selected' (permanent deletion, irrecoverable)."
     },
     "session_import": {
-      "tab_label": "📥 Import Sessions",
+      "tab_label": "Import Sessions",
       "title": "Import Sessions",
       "hint": "Import sessions from .jsonl (dsh native export) or .zip batch. Sessions will attach to the current workspace, refresh to see.",
       "drop_hint": "Drag & drop .jsonl / .zip files here, or click to select",

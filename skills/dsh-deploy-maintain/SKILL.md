@@ -2,7 +2,7 @@
 
 name: dsh-deploy-maintain
 description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护、插件开发与避坑经验。覆盖便携 Node/dsh 安装、环境变量重定向、工作区 ACL 沙箱、更新备份、插件管理与 dsh 插件双端加载/路由注册等全套实操知识。"
-updated: "2026-09-02"
+updated: "2026-09-07"
 ---------------------
 
 # DeepSeek Harness 绿色整合版 · 部署维护与插件开发
@@ -576,6 +576,24 @@ function _savePersist(patch) { ... }
 - 规避重叠的正解不是"把开关挪开"，而是靠 `#root` 让位：面板展开时 `#root{margin-right:面板宽}` 把**官方 header（含下载按钮）推到面板左侧**，故面板内右上角本就没有官方按钮 → 标题条右端放折叠按钮天然不重叠。收起态若用右上角 cluster，需让官方 header `padding-right` 给 cluster 让位。左缘拖拽调宽条保持窄透明（宽 5px），避免挡内容。
 
 - **多浮动面板并存时的让位累加**（如侧栏 + 独立文件预览框）：额外面板用 `position:fixed; right:主面板宽; width:预览宽` 叠在主面板**左侧**，并把它的宽度也累进 `#root` 的 `margin-right`（`calc(var(--w1)+var(--w2))`）；面板关闭/收起时对应让位变量归零，否则主内容会被后开的浮动面板遮挡（`dsh-sidebar-lite` 已如此实现）。
+
+### 5.13 插件 WebUI 多语言（i18n，10 个插件统一后的规范）
+
+> 完整规范见 `references/i18n-webui-plugin.md`，client.js 模板见 `templates/i18n_client_template.js`，检查清单见 `checklists/plugin-dev-checklist.md` 〇·五节。
+
+- **两种 bridge 场景**：桌面壳（WebView2 `evaluate_js` 同步预注入 `window.__DSH_I18N__`）与浏览器直接访问（心跳 3081 端口 `/__dsh_i18n_bridge.js` **异步**加载）。插件**不能假设 bridge 已就绪**，`_dsht(key, fallback)` 只负责读，不负责等。
+
+- **`_dsht(key, fallback)` 统一实现**：读 `bridge[bridge.current][key]`（扁平化点路径字典），缺失/为空返回 fallback。UI 文案禁止硬编码中文（注释除外）。
+
+- **bridge 注入必须全局去重**（`window.__dsh_i18n_bridge_loaded` 标志）：10 个插件各注入一个 `<script>` 会发 10 个 114KB 重复请求；桌面壳已注入时直接跳过。
+
+- **React 插件 vs 原生 DOM 插件（核心坑）**：React 插件靠 `useEffect` 监听 `dsh-i18n-change` → `setI18nTick()` 自动 re-render；原生 DOM 插件（media-background 观星）`textContent` 一次性写死，必须手动两层修复——① `apply()` 等 `__DSH_I18N__._initialized` 再 init（100ms 轮询最多 5s，超时兜底）；② 监听 `dsh-i18n-change` 销毁旧 rootEl + CSS 重建并恢复状态（`_i18nHandlerBound` 只绑一次）。判断依据：代码里有无 `react.createElement`。
+
+- **waitReady 注册必须幂等**：只保留"立即 or 轮询"两分支；**严禁 setTimeout 强制注册**——轮询成功后 2 秒再注册一次，报 7 条 `list slot "settings.section" already has an entry with id "XXX"`。
+
+- **语言字典对齐纪律**：`locales/zh.json` / `en.json` 扁平化后 key 集合必须完全一致（实测 799 key），漏一个 key 该语言 fallback 回 key 本身；launcher 的 3081 心跳端口同时服务 `/__dsh_ui_alive` 心跳、`/__dsh_i18n_bridge.js` bridge 脚本、`/__dsh_locales/{zh,en}.json` 字典四类请求。
+
+- **验证**：切 en 后全部插件面板实时变英文；控制台无 `already has an entry`；Network 里 bridge 请求只有一次。
 
 ## 六、验证与排查速查表
 

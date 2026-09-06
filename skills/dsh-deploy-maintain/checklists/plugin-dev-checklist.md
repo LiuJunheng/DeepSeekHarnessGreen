@@ -21,6 +21,19 @@
 - [ ] 路由始终注册（enabled=false 时跳过 hooks 但保留 config 路由，方便用户随时改开关）
 - [ ] **重启服务验证**（改 package.json/exports 后必须重装 + 重启，ClientModuleRegistry 按请求扫描）
 
+## 〇·五、多语言（i18n）检查项（有 WebUI 的插件必查）
+
+> 完整规范与模板见 `references/i18n-webui-plugin.md` 与 `templates/i18n_client_template.js`。
+
+- [ ] **有 `_dsht(key, fallback)` 工具函数**，UI 文案全部走它，禁止硬编码中文（注释除外）
+- [ ] **异步 bridge 注入带全局去重标志** `window.__dsh_i18n_bridge_loaded`（否则多插件共存时 N 次重复请求）
+- [ ] **React 插件**：组件内监听 `dsh-i18n-change` → `setI18nTick()` 自动 re-render
+- [ ] **原生 DOM 插件**：`apply()` 先等 `__DSH_I18N__._initialized`（100ms 轮询最多 5s）再 init；并监听 `dsh-i18n-change` 销毁旧 DOM + CSS 重建（`_i18nHandlerBound` 只绑一次）
+- [ ] **waitReady 注册幂等**：只有"立即 or 轮询"两分支，**无 setTimeout 强制注册**（否则 `list slot "settings.section" already has an entry` 报错）
+- [ ] **语言字典对齐**：locales/zh.json 与 en.json 扁平化后 key 集合完全一致（新增文案两套同步加）
+- [ ] **切语言验证**：切到 en 后所有插件面板文本实时变英文，无需手动刷新
+- [ ] **控制台无报错**：无 `already has an entry`、`__dsh_i18n_bridge.js` 网络请求只出现一次
+
 ## 一、两种插件类型
 
 ### 类型 A：路由 + 客户端双端插件（有 UI）
