@@ -174,7 +174,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                             "autoRecall": value ? _dsht("plugin.memory.msg_auto_inject_on", "自动注入已开启") : _dsht("plugin.memory.msg_auto_inject_off", "自动注入已关闭"),
                             "crossSessionRecall": value ? _dsht("plugin.memory.msg_cross_on", "跨会话加载已开启 (会注入全局记忆)") : _dsht("plugin.memory.msg_cross_off", "跨会话加载已关闭 (只加载当前会话记忆)"),
                         };
-                        setSavedTip(tipMap[fieldName] || (value ? "已开启" : "已关闭"));
+                        setSavedTip(tipMap[fieldName] || (value ? _dsht("plugin.memory.status_on", "已开启") : _dsht("plugin.memory.status_off", "已关闭")));
                     } else {
                         // 回滚
                         setAutoRemember(prevRemember);

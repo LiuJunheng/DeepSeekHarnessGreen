@@ -308,7 +308,10 @@
       "no_archived": "没有已归档的会话。",
       "action_hint": "删除/恢复请到启动器 GUI: 停止服务 → 「数据维护」→「会话管理」",
       "refreshing": "刷新中…",
-      "refresh_btn": "刷新列表"
+      "refresh_btn": "刷新列表",
+      "desc": "这里列出的是已归档（隐藏）的会话。当前服务处于运行中, WebUI 无法在此直接删除或恢复。",
+      "desc2": "如需永久删除或恢复, 请在本机的启动器 GUI 操作：先点击「停止服务」, 再在「数据维护」区点击「会话管理」, ",
+      "desc3": "勾选会话后可选择「恢复选中」（取消归档, 不删数据）或「删除选中」（永久删除, 不可恢复）。"
     },
     "session_import": {
       "tab_label": "📥 导入会话",
@@ -337,7 +340,9 @@
       "detail_media": "附件",
       "detail_imported": "导入",
       "detail_exists": "已存在",
-      "export_hint": "💡 导出: 直接点会话右上角「Session 日志」按钮 —— 已被本插件 hook 为系统「另存为」对话框。"
+      "export_hint": "💡 导出: 直接点会话右上角「Session 日志」按钮 —— 已被本插件 hook 为系统「另存为」对话框。",
+      "desc": "把官方「Session 日志 ↓」按钮导出的 ZIP（或单个 .jsonl 日志）导入回本机。导入后按日志头部的 cwd 写回持久化目录，并自动挂到对应工作区；导入完成后请重启 DSH 服务以刷新会话列表（会话列表在启动时从持久化目录加载）。重复导入同一会话会被跳过。",
+      "tip_export": "💡 导出: 直接点会话右上角「Session 日志」按钮 —— 已被本插件 hook 为系统「另存为」对话框。"
     },
     "session_rewind": {
       "no_title": "(无标题)",
@@ -379,7 +384,14 @@
       "unfinished_warn_suggest": "建议回退到最后一个已完成回合(第 {turn} 回合)之后。",
       "unfinished_warn_no_complete": "该会话没有任何已完成回合。",
       "bottom_hint": "提示: 回退 = 从该回合之后派生新会话并自动打开; 原会话保留不动。",
-      "tab_label": "会话回退"
+      "tab_label": "会话回退",
+      "confirm_title": "从第 {turn} 回合之后「回退」?",
+      "confirm_body": "将派生一个全新的续接会话(携带截至该回合的历史),\n并自动打开新会话。原会话保留不动。\n\n会话: {sessionId}",
+      "success": "回退成功! 已派生新会话 {childId}, 正在为你打开…",
+      "desc1": "当某个会话因插件不兼容等原因出错(例如工具反复报 UNKNOWN_TOOL / 代码执行失败)而无法继续时, ",
+      "desc2": "可对任意会话做「回合分析」, 然后在任意一个已完成的回合上点「回退到此」: ",
+      "desc3": "系统会从该回合之后派生一个干净的续接会话并自动打开, 相当于把失败的消息之后的内容移除, ",
+      "desc4": "继续对话不再受干扰。原会话保留不动。"
     },
     "file_browser": {
       "tab_label": "文件",
@@ -530,7 +542,9 @@
       "empty_no_mem": "暂无记忆",
       "loading": "加载中...",
       "hint_current_session": "当前会话: {{id}}",
-      "title_importance": "Importance 0.0 ~ 1.0"
+      "title_importance": "Importance 0.0 ~ 1.0",
+      "status_on": "已开启",
+      "status_off": "已关闭"
     },
     "ollama": {
       "title": "Ollama 设置",
@@ -569,7 +583,14 @@
       "msg_reconnect_no_models": "重探完成，但未检测到可接入的 Ollama 模型",
       "err_read": "读取配置失败: ",
       "err_save": "保存失败: ",
-      "err_one_click": "一键接入失败: "
+      "err_one_click": "一键接入失败: ",
+      "status_not_checked": "尚未检测",
+      "time_just_now": "刚刚",
+      "time_seconds_ago": "{n} 秒前",
+      "time_minutes_ago": "{n} 分钟前",
+      "time_ms": "{n} 毫秒",
+      "time_s": "{n} 秒",
+      "time_min": "{n} 分钟"
     },
     "rules": {
       "title": "用户规则",

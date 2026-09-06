@@ -171,7 +171,7 @@ window.__ModuleLoader__.load({
 						overflowWrap: "break-word",
 					},
 					title: t.userText || "",
-				}, t.userText || "(无用户消息)"),
+				}, t.userText || _dsht("plugin.session_rewind.no_user_msg", "(无用户消息)")),
 				// 信息行: 回合号/步骤/工具调用 + 错误/未完成 + 回退按钮 (自动换行)
 				react.createElement("div", {
 					key: "info",
@@ -276,10 +276,10 @@ window.__ModuleLoader__.load({
 				const boundarySeq = turn.boundarySeq;
 				if (boundarySeq === null || boundarySeq === void 0) return;
 				const confirmMsg = _dsht("plugin.session_rewind.confirm_fmt",
-					"从第 {turn} 回合之后「回退」?\n\n" +
-					"将派生一个全新的续接会话(携带截至该回合的历史),\n" +
-					"并自动打开新会话。原会话保留不动。\n\n" +
-					"会话: {sessionId}")
+					_dsht("plugin.session_rewind.confirm_title", "从第 {turn} 回合之后「回退」?").replace("{turn}", turn) + "\n\n" + _dsht("plugin.session_rewind.confirm_body", "将派生一个全新的续接会话(携带截至该回合的历史),\n并自动打开新会话。原会话保留不动。\n\n会话: {sessionId}").replace("{sessionId}", s.id) +
+					" +
+					" +
+					"
 					.replace("{turn}", turn.turn).replace("{sessionId}", sessionId);
 			const ok = window.confirm(confirmMsg);
 				if (!ok) return;
@@ -289,7 +289,7 @@ window.__ModuleLoader__.load({
 				try {
 					const sessions = getSessions();
 					const childId = await sessions.fork({ sessionId, atSeq: boundarySeq, increaseTitle: true });
-					setMessage("回退成功! 已派生新会话 " + childId + ", 正在为你打开…");
+					setMessage(_dsht("plugin.session_rewind.success", "回退成功! 已派生新会话 {childId}, 正在为你打开…").replace("{childId}", childId));
 					try {
 						sessions.open(childId);
 					} catch (_) { /* 打开失败也不阻塞提示 */ }
@@ -355,7 +355,7 @@ window.__ModuleLoader__.load({
 				react.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
 					react.createElement("button", { type: "button", onClick: backToList, style: btn }, _dsht("plugin.session_rewind.back_btn", "← 返回列表")),
 					react.createElement("p", { style: { ...titleStyle, margin: 0, minWidth: 0, flex: 1, wordBreak: "break-word" } },
-						s && (s.displayTitle || "(无标题)"),
+						s && (s.displayTitle || _dsht("plugin.session_rewind.no_title", "(无标题)")),
 						react.createElement("span", { style: { ...monoStyle, marginLeft: 8 } }, s && s.id)
 					)
 				),

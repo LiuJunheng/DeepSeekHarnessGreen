@@ -94,11 +94,11 @@ window.__ModuleLoader__.load({
 
 		/** 把毫秒时间戳格式化为 "刚刚 / 相对时间 / 具体时间"。 */
 		function fmtCheckedAt(checkedAt) {
-			if (typeof checkedAt !== "number" || !isFinite(checkedAt) || checkedAt <= 0) return "尚未检测";
+			if (typeof checkedAt !== "number" || !isFinite(checkedAt) || checkedAt <= 0) return _dsht("plugin.ollama.status_not_checked", "尚未检测");
 			const elapsedSeconds = Math.floor((Date.now() - checkedAt) / 1000);
-			if (elapsedSeconds < 10) return "刚刚";
-			if (elapsedSeconds < 60) return elapsedSeconds + " 秒前";
-			if (elapsedSeconds < 3600) return Math.floor(elapsedSeconds / 60) + " 分钟前";
+			if (elapsedSeconds < 10) return _dsht("plugin.ollama.time_just_now", "刚刚");
+			if (elapsedSeconds < 60) return _dsht("plugin.ollama.time_seconds_ago", "{n} 秒前").replace("{n}", elapsedSeconds);
+			if (elapsedSeconds < 3600) return _dsht("plugin.ollama.time_minutes_ago", "{n} 分钟前").replace("{n}", Math.floor(elapsedSeconds / 60));
 			try {
 				return new Date(checkedAt).toLocaleString("zh-CN", { hour12: false });
 			} catch (error) {
@@ -109,9 +109,9 @@ window.__ModuleLoader__.load({
 		/** 把毫秒数格式化为可读的 "x 秒 / x 分" (供提示文案用)。 */
 		function fmtInterval(ms) {
 			if (typeof ms !== "number" || !isFinite(ms)) return String(ms);
-			if (ms < 1000) return ms + " 毫秒";
-			if (ms < 60000) return (ms / 1000) + " 秒";
-			return (ms / 60000) + " 分钟";
+			if (ms < 1000) return _dsht("plugin.ollama.time_ms", "{n} 毫秒").replace("{n}", ms);
+			if (ms < 60000) return _dsht("plugin.ollama.time_s", "{n} 秒").replace("{n}", Math.round(ms / 1000));
+			return _dsht("plugin.ollama.time_min", "{n} 分钟").replace("{n}", Math.round(ms / 60000));
 		}
 
 		// ---- 表单输入小部件 ----

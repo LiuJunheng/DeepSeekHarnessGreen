@@ -308,7 +308,10 @@
       "no_archived": "No archived sessions.",
       "action_hint": "Delete / restore sessions from launcher GUI: Stop Service → Data Maintenance → Session Management",
       "refreshing": "Refreshing…",
-      "refresh_btn": "Refresh"
+      "refresh_btn": "Refresh",
+      "desc": "List of archived (hidden) sessions. While the service is running, deletion or recovery cannot be done directly from WebUI.",
+      "desc2": "To permanently delete or recover sessions, use the launcher GUI on your machine: click 'Stop Service', then in the 'Data Maintenance' section click 'Session Management'. ",
+      "desc3": "After selecting sessions, choose 'Restore Selected' (un-archive, no data loss) or 'Delete Selected' (permanent deletion, irrecoverable)."
     },
     "session_import": {
       "tab_label": "📥 Import Sessions",
@@ -337,7 +340,9 @@
       "detail_media": "Media",
       "detail_imported": "imported",
       "detail_exists": "already exists",
-      "export_hint": "💡 Export: click the Session Log button in top-right — hooked by this plugin to open system Save As dialog."
+      "export_hint": "💡 Export: click the Session Log button in top-right — hooked by this plugin to open system Save As dialog.",
+      "desc": "Import ZIP (or single .jsonl log) exported by the official 'Session Log ↓' button back to your machine. After import, files are written to the persistent directory based on cwd in the log header, and auto-attached to the corresponding workspace. Restart DSH service after import to refresh the session list (loaded from persistent directory at startup). Duplicate imports of the same session are skipped.",
+      "tip_export": "💡 Export: click the 'Session Log' button at the top-right of a session — this plugin has hooked it into the system 'Save As' dialog."
     },
     "session_rewind": {
       "no_title": "(Untitled)",
@@ -379,7 +384,14 @@
       "unfinished_warn_suggest": "Suggest rewinding to after the last completed turn (turn {turn}).",
       "unfinished_warn_no_complete": "No completed turns in this session.",
       "bottom_hint": "Tip: Rewind = fork new session from this turn onward and auto-open; original session stays.",
-      "tab_label": "Session Rewind"
+      "tab_label": "Session Rewind",
+      "confirm_title": "Rewind from turn {turn}?",
+      "confirm_body": "A brand new continuation session will be spawned (carrying history up to this turn),\nand auto-opened. Original session is kept intact.\n\nSession: {sessionId}",
+      "success": "Rewind successful! Spawned new session {childId}, opening for you...",
+      "desc1": "When a session keeps erroring due to plugin incompatibility (e.g. repeated UNKNOWN_TOOL / code execution failures) and cannot continue, ",
+      "desc2": "you can do 'Turn Analysis' on any session, then click 'Rewind Here' on any completed turn: ",
+      "desc3": "The system spawns a clean continuation session from that turn onwards and auto-opens it — effectively removing everything after the failed message, ",
+      "desc4": "so you can continue chatting without interference. Original session is kept intact."
     },
     "file_browser": {
       "tab_label": "Files",
@@ -530,7 +542,9 @@
       "empty_no_mem": "No memories",
       "loading": "Loading...",
       "hint_current_session": "Current session: {{id}}",
-      "title_importance": "Importance 0.0 ~ 1.0"
+      "title_importance": "Importance 0.0 ~ 1.0",
+      "status_on": "Enabled",
+      "status_off": "Disabled"
     },
     "ollama": {
       "title": "Ollama Settings",
@@ -569,7 +583,14 @@
       "msg_reconnect_no_models": "Reconnected but no connectable Ollama models detected",
       "err_read": "Failed to read config: ",
       "err_save": "Failed to save: ",
-      "err_one_click": "One-click connect failed: "
+      "err_one_click": "One-click connect failed: ",
+      "status_not_checked": "Not yet checked",
+      "time_just_now": "just now",
+      "time_seconds_ago": "{n}s ago",
+      "time_minutes_ago": "{n}min ago",
+      "time_ms": "{n}ms",
+      "time_s": "{n}s",
+      "time_min": "{n}min"
     },
     "rules": {
       "title": "User Rules",
