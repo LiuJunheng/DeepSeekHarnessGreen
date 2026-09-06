@@ -5,6 +5,21 @@
 // GET /__dsh/archive-purge 仅用于列出已归档会话供查看。
 // 这是加载器契约格式 (window.__ModuleLoader__.load), 与官方客户端插件一致。
 
+// i18n 工具函数: 优先读 window.__DSH_I18N__ (启动器桌面壳注入), 无则 fallback 到 key 本身
+// 浏览器方式 (webbrowser.open) 无此 bridge, 所有 fallback 到硬编码字符串时会显示中文 (默认行为)。
+function _dsht(key, fallback) {
+	try {
+		const bridge = window.__DSH_I18N__;
+		if (bridge && bridge.current && bridge[bridge.current]) {
+			const val = bridge[bridge.current][key];
+			if (val !== undefined && val !== null && val !== "") {
+				return val;
+			}
+		}
+	} catch (_e) { /* bridge 不存在或解析失败, 忽略 */ }
+	return fallback || key;
+}
+
 window.__ModuleLoader__.load({
 	id: "dsh-archive-purge",
 	factory: (require) => {
@@ -20,15 +35,20 @@ window.__ModuleLoader__.load({
 
 		/** 设置页「清理归档」区块内容。 */
 		function PurgeSection() {
-			// 状态: sessions 列表, 勾选集合, 加载/网络状态 (只读展示, 不执行删除)
-			const [sessions, setSessions] = react.useState(null);  // null = 加载中, [] = 无归档
+			const [sessions, setSessions] = react.useState(null);
 			const [selected, setSelected] = react.useState({});
 			const [busy, setBusy] = react.useState(false);
 			const [error, setError] = react.useState(null);
-			// 是否已加载 (首次加载后不再自动刷新, 由用户操作触发)
+			const [i18nTick, setI18nTick] = react.useState(0);
 			const loadedRef = react.useRef(false);
 
-			// 加载归档会话列表
+			// 监听 WebUI 官方语言切换事件, 触发插件重渲染
+			react.useEffect(() => {
+				const handler = () => setI18nTick((t) => t + 1);
+				document.addEventListener("dsh-i18n-change", handler);
+				return () => document.removeEventListener("dsh-i18n-change", handler);
+			}, []);
+
 			const loadList = react.useCallback(async () => {
 				setBusy(true);
 				setError(null);
@@ -43,22 +63,19 @@ window.__ModuleLoader__.load({
 					}
 					const list = Array.isArray(payload.sessions) ? payload.sessions : [];
 					setSessions(list);
-					// 清空旧勾选
 					setSelected({});
 				} catch (err) {
-					setError("加载失败: " + String((err && err.message) || err));
+					setError(_dsht("plugin.archive_purge.load_failed", "加载失败") + ": " + String((err && err.message) || err));
 				} finally {
 					setBusy(false);
 				}
 			}, []);
 
-			// 首次挂载加载
 			if (!loadedRef.current) {
 				loadedRef.current = true;
 				loadList();
 			}
 
-			// 切换勾选
 			const toggle = (id) => {
 				setSelected((prev) => {
 					const next = { ...prev };
@@ -71,7 +88,6 @@ window.__ModuleLoader__.load({
 				});
 			};
 
-			// 全选 / 全不选
 			const toggleAll = () => {
 				if (!sessions || sessions.length === 0) return;
 				const allSelected = sessions.every((s) => selected[s.id]);
@@ -86,10 +102,6 @@ window.__ModuleLoader__.load({
 				}
 			};
 
-			// 说明: WebUI 只读展示归档会话, 不提供删除/恢复 (实际启动时会话处于运行中无法操作)。
-			// 永久删除 / 恢复请在启动器 GUI 界面操作: 先停止服务 → 「数据维护」区 → 会话管理。
-
-			// 样式: 列表容器
 			const listStyle = {
 				border: "1px solid var(--dsw-alias-border-l1)",
 				borderRadius: 4,
@@ -99,7 +111,6 @@ window.__ModuleLoader__.load({
 				lineHeight: 1.6,
 				background: "var(--dsw-alias-bg-layer-2)"
 			};
-			// 行样式
 			const rowBase = {
 				display: "flex",
 				alignItems: "center",
@@ -108,54 +119,47 @@ window.__ModuleLoader__.load({
 				borderBottom: "1px solid var(--dsw-alias-border-l1)",
 				cursor: "pointer"
 			};
-			// 标签文字 (会话 id + 标题)
 			const labelStyle = {
 				flex: 1,
 				overflow: "hidden",
 				textOverflow: "ellipsis",
 				whiteSpace: "nowrap"
 			};
-			// 运行中标记
 			const runningStyle = {
-			fontSize: 11,
-			color: "var(--dsw-alias-state-success-primary)",
-			marginLeft: 6
-		};
-			// 工作区标记
+				fontSize: 11,
+				color: "var(--dsw-alias-state-success-primary)",
+				marginLeft: 6
+			};
 			const wsStyle = {
-			fontSize: 11,
-			color: "var(--dsw-alias-label-tertiary)",
-			marginLeft: 6
-		};
+				fontSize: 11,
+				color: "var(--dsw-alias-label-tertiary)",
+				marginLeft: 6
+			};
 
 			return react.createElement(
 				"div",
 				{ style: { display: "flex", flexDirection: "column", gap: 10, padding: 4, maxWidth: 640 } },
-				// 说明文字
 				react.createElement(
 					"p",
 					{ style: { margin: 0, fontSize: 13, lineHeight: 1.5 } },
-					"这里列出的是已归档（隐藏）的会话。当前服务处于运行中, WebUI 无法在此直接删除或恢复。" +
-					"如需永久删除或恢复, 请在本机的启动器 GUI 操作：先点击「停止服务」, 再在「数据维护」区点击「会话管理」, " +
-					"勾选会话后可选择「恢复选中」（取消归档, 不删数据）或「删除选中」（永久删除, 不可恢复）。"
+					_dsht("plugin.archive_purge.hint",
+						"这里列出的是已归档（隐藏）的会话。当前服务处于运行中, WebUI 无法在此直接删除或恢复。" +
+						"如需永久删除或恢复, 请在本机的启动器 GUI 操作：先点击「停止服务」, 再在「数据维护」区点击「会话管理」, " +
+						"勾选会话后可选择「恢复选中」（取消归档, 不删数据）或「删除选中」（永久删除, 不可恢复）。")
 				),
-				// 加载中提示
 				sessions === null && !error && react.createElement(
 					"p",
 					{ style: { color: "var(--dsw-alias-label-secondary)", margin: 0, fontSize: 13 } },
-					busy ? "加载中…" : "加载中…"
+					busy ? _dsht("plugin.archive_purge.loading", "加载中…") : _dsht("plugin.archive_purge.loading", "加载中…")
 				),
-				// 错误提示
 				error !== null && react.createElement(
 					"p",
 					{ style: { color: "var(--dsw-alias-state-error-primary)", margin: 0, fontSize: 13 } },
 					error
 				),
-				// 列表
 				Array.isArray(sessions) && sessions.length > 0 && react.createElement(
 					"div",
 					{ style: listStyle },
-					// 全选行
 					react.createElement(
 						"div",
 						{
@@ -170,11 +174,11 @@ window.__ModuleLoader__.load({
 							style: { cursor: "pointer", margin: 0 },
 							onClick: (e) => e.stopPropagation()
 						}),
-						react.createElement("span", { style: { fontSize: 12, color: "var(--dsw-alias-label-secondary)" } }, "全选 / 全不选"),
+						react.createElement("span", { style: { fontSize: 12, color: "var(--dsw-alias-label-secondary)" } },
+							_dsht("plugin.archive_purge.select_all", "全选 / 全不选")),
 						react.createElement("span", { style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)", marginLeft: "auto" } },
-							"共 " + sessions.length + " 个归档会话")
+							_dsht("plugin.archive_purge.total_count_fmt", "共 {count} 个归档会话").replace("{count}", sessions.length))
 					),
-					// 会话行
 					sessions.map((s) => react.createElement(
 						"div",
 						{
@@ -192,29 +196,28 @@ window.__ModuleLoader__.load({
 						react.createElement(
 							"span",
 							{ style: labelStyle, title: s.id + (s.displayTitle ? " - " + s.displayTitle : "") },
-							s.displayTitle || "(无标题)",
+							s.displayTitle || _dsht("plugin.archive_purge.no_title", "(无标题)"),
 							react.createElement("span", { style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)", marginLeft: 4 } },
 								s.id.slice(0, 28) + "…")
 						),
-						s.running && react.createElement("span", { style: runningStyle }, "[运行中]"),
+						s.running && react.createElement("span", { style: runningStyle },
+							_dsht("plugin.archive_purge.running_tag", "[运行中]")),
 						s.workspaceTitle && react.createElement("span", { style: wsStyle },
 							"(" + s.workspaceTitle + ")")
 					))
 				),
-				// 无归档提示
 				Array.isArray(sessions) && sessions.length === 0 && !error && react.createElement(
 					"p",
 					{ style: { color: "var(--dsw-alias-label-secondary)", margin: 0, fontSize: 13 } },
-					"没有已归档的会话。"
+					_dsht("plugin.archive_purge.no_archived", "没有已归档的会话。")
 				),
-				// 操作提示 + 刷新按钮 (仅查看, 不提供删除)
 				react.createElement(
 					"div",
 					{ style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
 					react.createElement(
 						"span",
 						{ style: { fontSize: 13, color: "var(--dsw-alias-state-business-primary)", background: "var(--dsw-alias-state-business-secondary)", padding: "6px 12px", borderRadius: 4 } },
-						"删除/恢复请到启动器 GUI：停止服务 → 「数据维护」→「会话管理」"
+						_dsht("plugin.archive_purge.action_hint", "删除/恢复请到启动器 GUI: 停止服务 → 「数据维护」→「会话管理」")
 					),
 					react.createElement(
 						"button",
@@ -224,7 +227,9 @@ window.__ModuleLoader__.load({
 							onClick: loadList,
 							style: { padding: "6px 16px", cursor: busy ? "default" : "pointer" }
 						},
-						busy ? "刷新中…" : "刷新列表"
+						busy
+							? _dsht("plugin.archive_purge.refreshing", "刷新中…")
+							: _dsht("plugin.archive_purge.refresh_btn", "刷新列表")
 					)
 				)
 			);
@@ -235,7 +240,7 @@ window.__ModuleLoader__.load({
 				name: "settings.section",
 				id: "archive-purge",
 				order: 500,
-				label: "清理归档"
+				label: _dsht("plugin.archive_purge.tab_label", "清理归档")
 			}, PurgeSection));
 		}
 

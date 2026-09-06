@@ -10,6 +10,18 @@
 //       "派生 (fork)": 新会话携带截至选定回合的历史, 等效于移除失败消息。
 // 这是加载器契约格式 (window.__ModuleLoader__.load), 与官方客户端插件一致。
 
+// i18n: 优先读 window.__DSH_I18N__ (启动器桌面壳注入, 跟随官方 WebUI LocaleRuntime)
+function _dsht(key, fallback) {
+	try {
+		var bridge = window.__DSH_I18N__;
+		if (bridge && bridge.current && bridge[bridge.current]) {
+			var val = bridge[bridge.current][key];
+			if (val !== undefined && val !== null && val !== '') return val;
+		}
+	} catch (_e) { }
+	return fallback || key;
+}
+
 window.__ModuleLoader__.load({
 	id: "dsh-session-rewind",
 	factory: (require) => {
@@ -105,24 +117,24 @@ window.__ModuleLoader__.load({
 				// 第一行: 标题(独占整行剩余宽度) + 运行中徽标 + 分析按钮
 				react.createElement("div", { key: "h", style: { display: "flex", alignItems: "center", gap: 8 } }, [
 					react.createElement("span", { key: "t", style: titleStyle, title: s.displayTitle || s.id },
-						s.displayTitle || "(无标题)"
+						s.displayTitle || _dsht("plugin.session_rewind.no_title", "(无标题)")
 					),
-					s.live && react.createElement("span", { key: "live", style: { flex: "none", fontSize: 11, color: "var(--dsw-alias-state-success-primary)", borderRadius: 999, padding: "1px 7px", whiteSpace: "nowrap" } }, "运行中"),
+					s.live && react.createElement("span", { key: "live", style: { flex: "none", fontSize: 11, color: "var(--dsw-alias-state-success-primary)", borderRadius: 999, padding: "1px 7px", whiteSpace: "nowrap" } }, _dsht("plugin.session_rewind.live_tag", "运行中")),
 					react.createElement("button", {
 						key: "btn",
 						type: "button",
 						disabled: busy || working,
 						style: { flex: "none", padding: "3px 12px", cursor: busy || working ? "default" : "pointer", fontSize: 12, borderRadius: 4 },
 						onClick: () => onAnalyze(s.id),
-					}, inspecting === s.id ? "分析中…" : "分析"),
+					}, inspecting === s.id ? _dsht("plugin.session_rewind.analyzing", "分析中…") : _dsht("plugin.session_rewind.analyze_btn", "分析")),
 				]),
 				// 第二行: 会话 ID (整行, 超长省略, 悬停可见完整)
 				react.createElement("div", { key: "id", style: idStyle, title: s.id }, s.id),
 				// 第三行: 元信息 chips (自动换行)
 				react.createElement("div", { key: "m", style: chipRowStyle }, [
-					react.createElement(MetaChip, { key: "ws", label: "工作区", value: (s.workspace && s.workspace.title) || s.workspaceKey || "—" }),
-					react.createElement(MetaChip, { key: "ct", label: "创建时间", value: fmtTime(s.createdAt) }),
-					react.createElement(MetaChip, { key: "st", label: "状态", value: s.live ? "运行中" : "空闲", valueStyle: { color: s.live ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-label-tertiary)" } }),
+					react.createElement(MetaChip, { key: "ws", label: _dsht("plugin.session_rewind.label_workspace", "工作区"), value: (s.workspace && s.workspace.title) || s.workspaceKey || "—" }),
+					react.createElement(MetaChip, { key: "ct", label: _dsht("plugin.session_rewind.label_created", "创建时间"), value: fmtTime(s.createdAt) }),
+					react.createElement(MetaChip, { key: "st", label: _dsht("plugin.session_rewind.label_status", "状态"), value: s.live ? _dsht("plugin.session_rewind.live_tag", "运行中") : _dsht("plugin.session_rewind.idle_tag", "空闲"), valueStyle: { color: s.live ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-label-tertiary)" } }),
 				]),
 			]);
 		}
@@ -163,10 +175,10 @@ window.__ModuleLoader__.load({
 						color: "var(--dsw-alias-label-secondary)",
 					},
 				}, [
-					react.createElement("span", { key: "turn", style: { fontWeight: 600, color: t.complete ? "var(--dsw-alias-label-secondary)" : "var(--dsw-alias-state-error-primary)" } }, "回合 #" + t.turn),
-					react.createElement("span", { key: "steps" }, "步骤 " + t.steps),
-					react.createElement("span", { key: "tools" }, "工具调用 " + t.toolCalls),
-					!t.complete && react.createElement("span", { key: "unfin", style: { fontSize: 11, color: "var(--dsw-alias-state-error-primary)", background: "var(--dsw-alias-state-error-secondary)", borderRadius: 3, padding: "1px 6px", fontWeight: 600, whiteSpace: "nowrap" } }, "⚠ 未完成"),
+					react.createElement("span", { key: "turn", style: { fontWeight: 600, color: t.complete ? "var(--dsw-alias-label-secondary)" : "var(--dsw-alias-state-error-primary)" } }, _dsht("plugin.session_rewind.turn_fmt", "回合 #{n}").replace("{n}", t.turn)),
+					react.createElement("span", { key: "steps" }, _dsht("plugin.session_rewind.steps_fmt", "步骤 {n}").replace("{n}", t.steps)),
+					react.createElement("span", { key: "tools" }, _dsht("plugin.session_rewind.tools_fmt", "工具调用 {n}").replace("{n}", t.toolCalls)),
+					!t.complete && react.createElement("span", { key: "unfin", style: { fontSize: 11, color: "var(--dsw-alias-state-error-primary)", background: "var(--dsw-alias-state-error-secondary)", borderRadius: 3, padding: "1px 6px", fontWeight: 600, whiteSpace: "nowrap" } }, _dsht("plugin.session_rewind.pending_tag", "⚠ 未完成")),
 					errorBadge(t.errors),
 					t.complete && react.createElement("button", {
 						key: "btn",
@@ -174,7 +186,7 @@ window.__ModuleLoader__.load({
 						disabled: working,
 						onClick: () => onRewind(t),
 						style: { marginLeft: "auto", padding: "3px 12px", cursor: working ? "default" : "pointer", fontSize: 12, borderRadius: 4, background: "var(--dsw-alias-bg-base)" },
-					}, working ? "回退中…" : "回退到此"),
+					}, working ? _dsht("plugin.session_rewind.rewinding", "回退中…") : _dsht("plugin.session_rewind.rewind_btn", "回退到此")),
 				]),
 			]);
 		}
@@ -187,7 +199,15 @@ window.__ModuleLoader__.load({
 			const [inspect, setInspect] = react.useState(null);
 			const [working, setWorking] = react.useState(false);
 			const [message, setMessage] = react.useState(null);
+			const [i18nTick, setI18nTick] = react.useState(0);
 			const loadedRef = react.useRef(false);
+
+			// 监听 WebUI 官方语言切换事件 (MutationObserver -> CustomEvent)
+			react.useEffect(function() {
+				var handler = function() { setI18nTick(function(t) { return t + 1; }); };
+				document.addEventListener('dsh-i18n-change', handler);
+				return function() { document.removeEventListener('dsh-i18n-change', handler); };
+			}, []);
 
 			const loadList = react.useCallback(async () => {
 				setBusy(true);
@@ -203,7 +223,7 @@ window.__ModuleLoader__.load({
 					}
 					setSessions(Array.isArray(payload.sessions) ? payload.sessions : []);
 				} catch (err) {
-					setError("加载失败: " + String((err && err.message) || err));
+					setError(_dsht("plugin.session_rewind.load_failed", "加载失败") + ": " + String((err && err.message) || err));
 				} finally {
 					setBusy(false);
 				}
@@ -230,7 +250,7 @@ window.__ModuleLoader__.load({
 					}
 					setInspect(payload);
 				} catch (err) {
-					setError("分析失败: " + String((err && err.message) || err));
+					setError(_dsht("plugin.session_rewind.analyze_failed", "分析失败") + ": " + String((err && err.message) || err));
 					setInspecting(null);
 				}
 			};
@@ -245,12 +265,13 @@ window.__ModuleLoader__.load({
 			const rewindAt = async (sessionId, turn) => {
 				const boundarySeq = turn.boundarySeq;
 				if (boundarySeq === null || boundarySeq === void 0) return;
-				const ok = window.confirm(
-					"从第 " + turn.turn + " 回合之后「回退」?\n\n" +
-					"将派生一个全新的续接会话(携带截至该回合的历史, 等效于移除失败消息之后的内容),\n" +
-					"并自动打开新会话。原会话保留不动(可在之后清理)。\n\n" +
-					"会话: " + sessionId
-				);
+				const confirmMsg = _dsht("plugin.session_rewind.confirm_fmt",
+					"从第 {turn} 回合之后「回退」?\n\n" +
+					"将派生一个全新的续接会话(携带截至该回合的历史),\n" +
+					"并自动打开新会话。原会话保留不动。\n\n" +
+					"会话: {sessionId}")
+					.replace("{turn}", turn.turn).replace("{sessionId}", sessionId);
+			const ok = window.confirm(confirmMsg);
 				if (!ok) return;
 				setWorking(true);
 				setMessage(null);
@@ -265,7 +286,7 @@ window.__ModuleLoader__.load({
 					backToList();
 					loadList();
 				} catch (err) {
-					setError("回退失败: " + String((err && err.message) || err));
+					setError(_dsht("plugin.session_rewind.rewind_failed", "回退失败") + ": " + String((err && err.message) || err));
 				} finally {
 					setWorking(false);
 				}
@@ -280,16 +301,16 @@ window.__ModuleLoader__.load({
 			// ---------- 列表视图 (卡片式) ----------
 			if (inspecting === null) {
 				return react.createElement("div", { style: rootStyle },
-					react.createElement("p", { style: titleStyle }, "会话回退"),
-					react.createElement("p", { style: descStyle },
+					react.createElement("p", { style: titleStyle }, _dsht("plugin.session_rewind.title", "会话回退")),
+					react.createElement("p", { style: descStyle }, _dsht("plugin.session_rewind.hint",
 						"当某个会话因插件不兼容等原因出错(例如工具反复报 UNKNOWN_TOOL / 代码执行失败)而无法继续时, " +
 						"可对任意会话做「回合分析」, 然后在任意一个已完成的回合上点「回退到此」: " +
 						"系统会从该回合之后派生一个干净的续接会话并自动打开, 相当于把失败的消息之后的内容移除, " +
 						"继续对话不再受干扰。原会话保留不动。"
-					),
+					)),
 					error !== null && react.createElement("p", { style: { color: "var(--dsw-alias-state-error-primary)", margin: 0, fontSize: 13 } }, error),
-					sessions === null && !error && react.createElement("p", { style: { color: "var(--dsw-alias-label-tertiary)", margin: 0, fontSize: 13 } }, "加载中…"),
-					Array.isArray(sessions) && sessions.length === 0 && !error && react.createElement("p", { style: { color: "var(--dsw-alias-label-tertiary)", margin: 0, fontSize: 13 } }, "没有找到任何会话。"),
+					sessions === null && !error && react.createElement("p", { style: { color: "var(--dsw-alias-label-tertiary)", margin: 0, fontSize: 13 } }, _dsht("plugin.session_rewind.loading", "加载中…")),
+					Array.isArray(sessions) && sessions.length === 0 && !error && react.createElement("p", { style: { color: "var(--dsw-alias-label-tertiary)", margin: 0, fontSize: 13 } }, _dsht("plugin.session_rewind.no_sessions", "没有找到任何会话。")),
 					Array.isArray(sessions) && sessions.map((s) =>
 						react.createElement(SessionCard, {
 							key: s.id,
@@ -301,7 +322,7 @@ window.__ModuleLoader__.load({
 						})
 					),
 					react.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
-						react.createElement("button", { type: "button", disabled: busy, onClick: loadList, style: { padding: "6px 16px", cursor: busy ? "default" : "pointer" } }, busy ? "刷新中…" : "刷新列表"),
+						react.createElement("button", { type: "button", disabled: busy, onClick: loadList, style: { padding: "6px 16px", cursor: busy ? "default" : "pointer" } }, busy ? _dsht("plugin.session_rewind.refreshing", "刷新中…") : _dsht("plugin.session_rewind.refresh_btn", "刷新列表")),
 						message !== null && react.createElement("span", { style: { fontSize: 13, color: "var(--dsw-alias-state-success-primary)" } }, message)
 					)
 				);
@@ -315,39 +336,39 @@ window.__ModuleLoader__.load({
 			const poisonHints = [];
 			if (summary && summary.errorCodes) {
 				const codes = summary.errorCodes;
-				if (codes.UNKNOWN_TOOL > 0) poisonHints.push("检测到 " + codes.UNKNOWN_TOOL + " 次工具缺失 (UNKNOWN_TOOL) —— 很可能是插件不兼容导致核心工具消失");
-				if (codes.CODE_RUN_FAILED > 0) poisonHints.push("检测到 " + codes.CODE_RUN_FAILED + " 次代码执行失败 (CODE_RUN_FAILED)");
+				if (codes.UNKNOWN_TOOL > 0) poisonHints.push(_dsht("plugin.session_rewind.poison_unknown_tool_fmt", "检测到 {n} 次工具缺失 (UNKNOWN_TOOL) —— 很可能是插件不兼容导致核心工具消失").replace("{n}", codes.UNKNOWN_TOOL));
+				if (codes.CODE_RUN_FAILED > 0) poisonHints.push(_dsht("plugin.session_rewind.poison_code_run_failed_fmt", "检测到 {n} 次代码执行失败 (CODE_RUN_FAILED)").replace("{n}", codes.CODE_RUN_FAILED));
 			}
 			const lastCompleted = [...turns].reverse().find((t) => t.complete);
 
 			return react.createElement("div", { style: rootStyle },
 				react.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
-					react.createElement("button", { type: "button", onClick: backToList, style: btn }, "← 返回列表"),
+					react.createElement("button", { type: "button", onClick: backToList, style: btn }, _dsht("plugin.session_rewind.back_btn", "← 返回列表")),
 					react.createElement("p", { style: { ...titleStyle, margin: 0, minWidth: 0, flex: 1, wordBreak: "break-word" } },
 						s && (s.displayTitle || "(无标题)"),
 						react.createElement("span", { style: { ...monoStyle, marginLeft: 8 } }, s && s.id)
 					)
 				),
-				data === null && react.createElement("p", { style: { color: "var(--dsw-alias-label-tertiary)" } }, "分析中…"),
+				data === null && react.createElement("p", { style: { color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.session_rewind.analyzing", "分析中…")),
 				error !== null && react.createElement("p", { style: { color: "var(--dsw-alias-state-error-primary)", margin: 0, fontSize: 13 } }, error),
 				data !== null && react.createElement(react.Fragment, null,
 					// 会话汇总 chips (自动换行)
 					react.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } }, [
-						react.createElement(MetaChip, { key: "ev", label: "事件数", value: summary.eventCount }),
-						react.createElement(MetaChip, { key: "turn", label: "回合", value: summary.totalTurns + " (完成 " + summary.completedTurns + " / 未完成 " + summary.unfinishedTurns + ")" }),
-						s && s.live && react.createElement(MetaChip, { key: "live", label: "状态", value: "运行中 (回退后自动切到新会话)", valueStyle: { color: "var(--dsw-alias-state-success-primary)" } }),
-						s && s.cwd && react.createElement(MetaChip, { key: "cwd", label: "工作区路径", value: s.cwd, valueStyle: { fontFamily: "Consolas, Menlo, monospace", fontSize: 11 } }),
+						react.createElement(MetaChip, { key: "ev", label: _dsht("plugin.session_rewind.label_events", "事件数"), value: summary.eventCount }),
+						react.createElement(MetaChip, { key: "turn", label: _dsht("plugin.session_rewind.label_turns", "回合"), value: _dsht("plugin.session_rewind.turns_summary_fmt", "{total} (完成 {complete} / 未完成 {unfin})").replace("{total}", summary.totalTurns).replace("{complete}", summary.completedTurns).replace("{unfin}", summary.unfinishedTurns) }),
+						s && s.live && react.createElement(MetaChip, { key: "live", label: "状态", value: _dsht("plugin.session_rewind.live_rewind_warn", "运行中 (回退后自动切到新会话)"), valueStyle: { color: "var(--dsw-alias-state-success-primary)" } }),
+						s && s.cwd && react.createElement(MetaChip, { key: "cwd", label: _dsht("plugin.session_rewind.label_workspace_path", "工作区路径"), value: s.cwd, valueStyle: { fontFamily: "Consolas, Menlo, monospace", fontSize: 11 } }),
 					]),
 					poisonHints.length > 0 && react.createElement("div", { style: { fontSize: 13, color: "var(--dsw-alias-state-warn-primary)", background: "var(--dsw-alias-state-warn-secondary)", borderRadius: 4, padding: "8px 12px", lineHeight: 1.6 } },
 						poisonHints.map((h, i) => react.createElement("div", { key: i }, "⚠ " + h))
 					),
 					summary.unfinishedTurns > 0 && react.createElement("div", { style: { fontSize: 13, color: "var(--dsw-alias-state-error-primary)", background: "var(--dsw-alias-state-error-secondary)", borderRadius: 4, padding: "8px 12px", lineHeight: 1.6 } },
-						"检测到 " + summary.unfinishedTurns + " 个未完成回合(有开始无结束, 通常是出错/中断留下)。" +
+						_dsht("plugin.session_rewind.unfinished_warn_prefix", "检测到 {n} 个未完成回合(有开始无结束, 通常是出错/中断留下)。").replace("{n}", summary.unfinishedTurns) +
 						(lastCompleted
-							? "建议回退到最后一个已完成回合(第 " + lastCompleted.turn + " 回合)之后。"
-							: "该会话没有任何已完成回合。")
+							? _dsht("plugin.session_rewind.unfinished_warn_suggest", "建议回退到最后一个已完成回合(第 {turn} 回合)之后。").replace("{turn}", lastCompleted.turn)
+							: _dsht("plugin.session_rewind.unfinished_warn_no_complete", "该会话没有任何已完成回合。"))
 					),
-					turns.length === 0 && react.createElement("p", { style: { color: "var(--dsw-alias-label-tertiary)", margin: 0, fontSize: 13 } }, "该会话还没有任何回合。"),
+					turns.length === 0 && react.createElement("p", { style: { color: "var(--dsw-alias-label-tertiary)", margin: 0, fontSize: 13 } }, _dsht("plugin.session_rewind.no_turns", "该会话还没有任何回合。")),
 					turns.map((t) =>
 						react.createElement(TurnCard, {
 							key: t.turn,
@@ -358,7 +379,7 @@ window.__ModuleLoader__.load({
 					),
 					react.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
 						message !== null && react.createElement("span", { style: { fontSize: 13, color: "var(--dsw-alias-state-success-primary)" } }, message),
-						react.createElement("span", { style: { fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, "提示: 回退 = 从该回合之后派生新会话并自动打开; 原会话保留不动。")
+						react.createElement("span", { style: { fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.session_rewind.bottom_hint", "提示: 回退 = 从该回合之后派生新会话并自动打开; 原会话保留不动。"))
 					)
 				)
 			);
@@ -371,7 +392,7 @@ window.__ModuleLoader__.load({
 				name: "settings.section",
 				id: "session-rewind",
 				order: 510,
-				label: "会话回退"
+				label: _dsht("plugin.session_rewind.tab_label", "会话回退")
 			}, () => react.createElement(RewindSection, { getSessions })));
 		}
 

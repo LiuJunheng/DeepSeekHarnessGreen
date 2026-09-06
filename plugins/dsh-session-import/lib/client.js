@@ -15,6 +15,18 @@
 //   唯一的拦截点是 HTMLAnchorElement.prototype.click —— 在 click 里判断 href
 //   是否是 session.export, 是的话替换成 fetch + showSaveFilePicker。
 
+// i18n 工具函数 (同其他内置插件): 优先读 window.__DSH_I18N__ (启动器桌面壳注入)
+function _dsht(key, fallback) {
+	try {
+		const bridge = window.__DSH_I18N__;
+		if (bridge && bridge.current && bridge[bridge.current]) {
+			const val = bridge[bridge.current][key];
+			if (val !== undefined && val !== null && val !== "") return val;
+		}
+	} catch (_e) { }
+	return fallback || key;
+}
+
 window.__ModuleLoader__.load({
 	id: "dsh-session-import",
 	factory: (require) => {
@@ -50,7 +62,7 @@ window.__ModuleLoader__.load({
 					// 方案 A: 弹系统「另存为」对话框 (桌面壳 WebView2 / Chrome 86+)
 					const handle = await window.showSaveFilePicker({
 						suggestedName: suggestedName,
-						types: [{ description: "ZIP 归档", accept: { "application/zip": [".zip"] } }]
+						types: [{ description: _dsht("plugin.session_import.zip_archive", "ZIP 归档"), accept: { "application/zip": [".zip"] } }]
 					});
 					const writable = await handle.createWritable();
 					await writable.write(blob);
@@ -75,7 +87,7 @@ window.__ModuleLoader__.load({
 					console.log("[dsh-session-import] 用户取消了另存为");
 				} else {
 					console.error("[dsh-session-import] 另存为失败:", err);
-					alert("Session 导出失败: " + msg);
+					alert(_dsht("plugin.session_import.export_failed", "Session 导出失败") + ": " + msg);
 				}
 			}
 		}
@@ -161,7 +173,7 @@ window.__ModuleLoader__.load({
 
 			const doImport = react.useCallback(async () => {
 				const file = fileRef.current && fileRef.current.files && fileRef.current.files[0];
-				if (!file) { setError("请先选择一个文件 (.zip 导出包或 .jsonl 日志)"); return; }
+				if (!file) { setError(_dsht("plugin.session_import.pick_file_first", "请先选择一个文件 (.zip 导出包或 .jsonl 日志)")); return; }
 				setBusy(true); setError(null); setResult(null);
 				try {
 					const response = await fetch(
@@ -176,13 +188,14 @@ window.__ModuleLoader__.load({
 					setResult(payload);
 
 				} catch (err) {
-					setError("导入失败: " + String((err && err.message) || err));
+					setError(_dsht("plugin.session_import.upload_failed", "导入失败") + ": " + String((err && err.message) || err));
 				} finally { setBusy(false); }
 			}, []);
 
 			return react.createElement(react.Fragment, null,
 				react.createElement("p", { style: { margin: 0, fontSize: 13, lineHeight: 1.5, color: "var(--dsw-alias-label-secondary)" } },
-					"把官方「Session 日志 ↓」按钮导出的 ZIP（或单个 .jsonl 日志）导入回本机。导入后按日志头部的 cwd 写回持久化目录，并自动挂到对应工作区；导入完成后请重启 DSH 服务以刷新会话列表（会话列表在启动时从持久化目录加载）。重复导入同一会话会被跳过。"
+					_dsht("plugin.session_import.hint",
+						"把官方「Session 日志 ↓」按钮导出的 ZIP（或单个 .jsonl 日志）导入回本机。导入后按日志头部的 cwd 写回持久化目录，并自动挂到对应工作区；导入完成后请重启 DSH 服务以刷新会话列表（会话列表在启动时从持久化目录加载）。重复导入同一会话会被跳过。")
 				),
 				react.createElement("div", { style: theme.box },
 					react.createElement("div", { style: theme.row },
@@ -195,19 +208,19 @@ window.__ModuleLoader__.load({
 							type: "button", disabled: busy || fileName === "",
 							onClick: doImport,
 							style: { ...theme.btn, cursor: busy || fileName === "" ? "default" : "pointer", opacity: busy || fileName === "" ? 0.5 : 1 }
-						}, busy ? "导入中…" : "开始导入")
+						}, busy ? _dsht("plugin.session_import.uploading", "导入中…") : _dsht("plugin.session_import.upload_btn", "开始导入"))
 					),
-					fileName !== "" && react.createElement("p", { style: { ...theme.hint, marginTop: 8, marginBottom: 0 } }, "已选择: " + fileName)
+					fileName !== "" && react.createElement("p", { style: { ...theme.hint, marginTop: 8, marginBottom: 0 } }, _dsht("plugin.session_import.selected_file", "已选择") + ": " + fileName)
 				),
 				error !== null && react.createElement("p", { style: theme.err }, error),
 				result !== null && react.createElement("div", { style: { ...theme.box, background: "var(--dsw-alias-bg-layer-2)", borderColor: "var(--dsw-alias-state-success-primary)", borderLeft: "3px solid var(--dsw-alias-state-success-primary)" } },
-					react.createElement("p", { style: { margin: "0 0 6px 0", fontWeight: "bold", fontSize: 13, color: "var(--dsw-alias-state-success-primary)" } }, "导入成功 ✅ 请重启 DSH 服务后查看"),
+					react.createElement("p", { style: { margin: "0 0 6px 0", fontWeight: "bold", fontSize: 13, color: "var(--dsw-alias-state-success-primary)" } }, _dsht("plugin.session_import.import_success", "导入成功 ✅ 请重启 DSH 服务后查看")),
 					react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: "var(--dsw-alias-label-secondary)" } },
-						react.createElement("span", null, "会话: " + result.sessionId),
-						react.createElement("span", null, "格式: " + (result.compression === "none" ? "明文 JSONL" : "zstd 压缩 JSONL")),
-						react.createElement("span", null, "写入 " + (result.imported ? result.imported.length : 0) + " 份日志" +
-							(result.skipped && result.skipped.length > 0 ? "（跳过 " + result.skipped.length + " 份）" : "")),
-						react.createElement("span", null, "附件: 导入 " + (result.media ? result.media.imported : 0) + " 个, 已存在 " + (result.media ? result.media.exists : 0) + " 个"),
+						react.createElement("span", null, _dsht("plugin.session_import.detail_session", "会话") + ": " + result.sessionId),
+						react.createElement("span", null, _dsht("plugin.session_import.detail_format", "格式") + ": " + (result.compression === "none" ? _dsht("plugin.session_import.format_plain", "明文 JSONL") : _dsht("plugin.session_import.format_zstd", "zstd 压缩 JSONL"))),
+						react.createElement("span", null, _dsht("plugin.session_import.detail_wrote", "写入") + " " + (result.imported ? result.imported.length : 0) + " " + _dsht("plugin.session_import.detail_logs", "份日志") +
+							(result.skipped && result.skipped.length > 0 ? _dsht("plugin.session_import.detail_skipped_fmt", "（跳过 {n} 份）").replace("{n}", result.skipped.length) : "")),
+						react.createElement("span", null, _dsht("plugin.session_import.detail_media", "附件") + ": " + _dsht("plugin.session_import.detail_imported", "导入") + " " + (result.media ? result.media.imported : 0) + ", " + _dsht("plugin.session_import.detail_exists", "已存在") + " " + (result.media ? result.media.exists : 0)),
 						result.note && react.createElement("span", { style: { color: "var(--dsw-alias-label-tertiary)" } }, result.note)
 					)
 				)
@@ -216,10 +229,17 @@ window.__ModuleLoader__.load({
 
 		// ------ 主组件: 单一导入区域 ------
 		function TransferSection() {
+			const [i18nTick, setI18nTick] = react.useState(0);
+			react.useEffect(() => {
+				const handler = () => setI18nTick((t) => t + 1);
+				document.addEventListener("dsh-i18n-change", handler);
+				return () => document.removeEventListener("dsh-i18n-change", handler);
+			}, []);
 			return react.createElement(
 				"div", { style: { display: "flex", flexDirection: "column", gap: 10, padding: 4, maxWidth: 680 } },
 				react.createElement("p", { style: { margin: 0, fontSize: 12, color: "var(--dsw-alias-label-tertiary)", padding: "4px 8px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: 4 } },
-					"💡 导出: 直接点会话右上角「Session 日志」按钮 —— 已被本插件 hook 为系统「另存为」对话框。"
+					_dsht("plugin.session_import.export_hint",
+					"💡 导出: 直接点会话右上角「Session 日志」按钮 —— 已被本插件 hook 为系统「另存为」对话框。")
 				),
 				react.createElement(ImportTab, null)
 			);
@@ -231,7 +251,7 @@ window.__ModuleLoader__.load({
 
 			// 设置面板只保留导入区域 (导出已通过 hook 官方按钮实现)
 			ctx.slots.inject("settings.section", () => ctx.slots.register({
-				name: "settings.section", id: "session-transfer", order: 510, label: "会话导入"
+				name: "settings.section", id: "session-transfer", order: 510, label: _dsht("plugin.session_import.tab_label", "会话导入")
 			}, TransferSection));
 		}
 
