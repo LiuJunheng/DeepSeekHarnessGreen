@@ -256,6 +256,205 @@ def apply_window_icon(title, icon_path):
     threading.Thread(target=worker, daemon=True).start()
 
 
+def _flatten_i18n(obj, prefix=""):
+    """把嵌套 dict 展平成 dot-key dict（locales JSON 统一格式）。"""
+    out = {}
+    for key, value in obj.items():
+        new_key = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            out.update(_flatten_i18n(value, new_key))
+        else:
+            out[new_key] = value
+    return out
+
+
+def _build_i18n_bridge_js():
+    """读取 locales/zh.json + en.json, 生成 window.__DSH_I18N__ 注入脚本。
+
+    语言来源 (优先顺序):
+      1) DSH 官方 LocaleRuntime 同步到 <html lang="zh-CN" | "en"> (MutationObserver 监听)
+      2) fallback: 启动器 config.json 的 language
+      3) fallback: "zh"
+
+    语言切换机制:
+      - WebUI settings.general.language 切语言 → LocaleRuntime.setLocale() →
+        document.documentElement.lang 更新 → MutationObserver 捕获 →
+        window.__DSH_I18N__.current 更新 + CustomEvent("dsh-i18n-change") 派发 →
+        插件里的 _dsht() 通过该事件触发 React 重渲染
+    """
+    locales_dir = os.path.join(BASE_DIR, "locales")
+    zh_path = os.path.join(locales_dir, "zh.json")
+    en_path = os.path.join(locales_dir, "en.json")
+    if not os.path.isfile(zh_path) or not os.path.isfile(en_path):
+        return ""
+
+    try:
+        with open(zh_path, "r", encoding="utf-8") as zh_fh:
+            zh_raw = json.load(zh_fh)
+        with open(en_path, "r", encoding="utf-8") as en_fh:
+            en_raw = json.load(en_fh)
+        zh_flat = _flatten_i18n(zh_raw)
+        en_flat = _flatten_i18n(en_raw)
+
+        # 启动器 config.json 仅作为 fallback (WebUI 加载后会被 <html lang> 覆盖)
+        config_fallback = "zh"
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as cfg_fh:
+                cfg = json.load(cfg_fh)
+            if cfg.get("language") in ("zh", "en"):
+                config_fallback = cfg["language"]
+        except Exception:
+            pass
+
+        zh_json = json.dumps(zh_flat, ensure_ascii=False, separators=(",", ":"))
+        en_json = json.dumps(en_flat, ensure_ascii=False, separators=(",", ":"))
+
+        # 重写版 bridge JS: 多源检测 + console.log 诊断 + 全局 _dsht 暴露
+        bridge = r"""
+(function() {
+    var BR = window.__DSH_I18N__ || (window.__DSH_I18N__ = {});
+    BR.zh = """ + zh_json + r""";
+    BR.en = """ + en_json + r""";
+    BR._configFallback = """ + repr(config_fallback) + r""";
+    BR._listeners = BR._listeners || [];
+    BR._debug = BR._debug || { initTime: Date.now(), events: [] };
+
+    // 幂等保护: 已初始化过则只更新翻译字典 (locales 更新时桥接会重新注入)
+    if (BR._initialized) {
+        BR._debug.events.push({ type: 're-inject', time: Date.now() });
+        try { console.log('[DSH-i18n] bridge re-injected (idempotent, zh=' + Object.keys(BR.zh).length + ', en=' + Object.keys(BR.en).length + ')'); } catch(_) {}
+        return;
+    }
+    BR._initialized = true;
+
+    try { console.log('[DSH-i18n] bridge v2 initializing... configFallback=' + BR._configFallback); } catch(_) {}
+
+    // ============ 多源语言检测 ============
+    function _parseHtmlLang() {
+        try {
+            var h = document.documentElement && document.documentElement.lang;
+            if (h === 'zh-CN' || h === 'zh') return 'zh';
+            if (h && h.indexOf('en') === 0) return 'en';
+        } catch (_) {}
+        return null;
+    }
+
+    function _parseLocalStorageLang() {
+        try {
+            var ls = window.localStorage;
+            if (!ls) return null;
+            // DSH 可能存语言在这些 key
+            var candidates = ['locale.preference', 'language', 'locale', 'dsh.locale', 'dsh.language'];
+            for (var i = 0; i < candidates.length; i++) {
+                var v = ls.getItem(candidates[i]);
+                if (v) {
+                    if (v === 'zh-CN' || v === 'zh') return 'zh';
+                    if (v.indexOf('en') === 0) return 'en';
+                }
+            }
+        } catch (_) {}
+        return null;
+    }
+
+    function _resolveCurrent() {
+        // 优先级 1: <html lang> (DSH LocaleRuntime 同步)
+        var fromHtml = _parseHtmlLang();
+        if (fromHtml) return fromHtml;
+        // 优先级 2: localStorage (手动切换后可能存这里)
+        var fromLS = _parseLocalStorageLang();
+        if (fromLS) return fromLS;
+        // 优先级 3: config.json fallback
+        return BR._configFallback || 'zh';
+    }
+
+    function _notifyChange(newLang, reason) {
+        BR._debug.events.push({ type: 'notify', lang: newLang, reason: reason || 'unknown', time: Date.now() });
+        try { console.log('[DSH-i18n] language changed to ' + newLang + ' (reason: ' + (reason || 'unknown') + ')'); } catch(_) {}
+        try {
+            document.dispatchEvent(new CustomEvent('dsh-i18n-change', { detail: { lang: newLang, reason: reason || 'unknown' } }));
+        } catch (_) {}
+    }
+
+    function _setCurrentAndNotify(newLang, reason) {
+        if (newLang !== BR.current) {
+            BR.current = newLang;
+            _notifyChange(newLang, reason);
+        }
+    }
+
+    // ============ 全局 _dsht 函数 ============
+    window._dsht = function(key, fallback) {
+        try {
+            var br = window.__DSH_I18N__;
+            if (br && br.current && br[br.current]) {
+                var val = br[br.current][key];
+                if (val !== undefined && val !== null && val !== '') return val;
+            }
+            // 当前语言没翻译 → 直接返回传入的 fallback (中文)
+        } catch (_) {}
+        return fallback || key;
+    };
+
+    // ============ 初始化 + 监听 ============
+    function _initAndWatch() {
+        BR.current = _resolveCurrent();
+        BR._debug.events.push({ type: 'init', current: BR.current, htmlLang: document.documentElement && document.documentElement.lang, time: Date.now() });
+        try { console.log('[DSH-i18n] initialized. current=' + BR.current + ' htmlLang="' + (document.documentElement && document.documentElement.lang || '') + '"'); } catch(_) {}
+
+        // 1) MutationObserver: 监听 <html lang>
+        if (window.MutationObserver) {
+            var ob = new MutationObserver(function(muts) {
+                for (var i = 0; i < muts.length; i++) {
+                    var m = muts[i];
+                    if (m.type === 'attributes' && m.attributeName === 'lang') {
+                        var newLang = _resolveCurrent();
+                        BR._debug.events.push({ type: 'mutation', htmlLang: document.documentElement.lang, newLang: newLang, time: Date.now() });
+                        _setCurrentAndNotify(newLang, 'html.lang mutation');
+                    }
+                }
+            });
+            ob.observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] });
+            BR._debug.observerActive = true;
+        }
+
+        // 2) localStorage 变化监听
+        try {
+            window.addEventListener('storage', function(e) {
+                BR._debug.events.push({ type: 'storage', key: e.key, newValue: e.newValue, time: Date.now() });
+                var newLang = _resolveCurrent();
+                _setCurrentAndNotify(newLang, 'localStorage change: ' + e.key);
+            });
+        } catch(_) {}
+
+        // 3) 兜底轮询: 每 1 秒检查一次所有来源 (最可靠)
+        BR._pollCount = 0;
+        setInterval(function() {
+            BR._pollCount++;
+            var newLang = _resolveCurrent();
+            if (newLang !== BR.current) {
+                BR._debug.events.push({ type: 'poll', newLang: newLang, htmlLang: document.documentElement && document.documentElement.lang, time: Date.now() });
+                _setCurrentAndNotify(newLang, 'poll detection #' + BR._pollCount);
+            }
+        }, 1000);
+
+        BR._debug.initComplete = true;
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _initAndWatch);
+    } else {
+        _initAndWatch();
+    }
+
+    try { console.log('[DSH-i18n] bridge ready. Try: _dsht("plugin.session_rewind.tab_label", "test")'); } catch(_) {}
+})();
+"""
+        return bridge
+    except Exception as exc:
+        print("[DSH Shell] 构建 i18n bridge 失败:", repr(exc), flush=True)
+        return ""
+
+
 def open_in_shell_window(server_url, port, icon_path):
     """用 pywebview 弹出内嵌 WebView2 的独立桌面窗口并阻塞到窗口关闭。
 
@@ -287,13 +486,69 @@ def open_in_shell_window(server_url, port, icon_path):
         resizable=True,
     )
 
+    i18n_bridge_js = _build_i18n_bridge_js()
+
+    def _inject_i18n():
+        """尝试在当前页面注入 window.__DSH_I18N__ bridge (忽略失败, SPA 导航可能重建上下文)."""
+        if not i18n_bridge_js:
+            return
+        try:
+            window_handle.evaluate_js(i18n_bridge_js)
+            # 注入后立即查询 bridge 状态 (pywebview evaluate_js 返回最后一个表达式结果)
+            status = window_handle.evaluate_js(
+                'window.__DSH_I18N__ ? '
+                'JSON.stringify({'
+                'current: window.__DSH_I18N__.current, '
+                'initialized: !!window.__DSH_I18N__._initialized, '
+                'hasZh: !!window.__DSH_I18N__.zh, '
+                'hasEn: !!window.__DSH_I18N__.en, '
+                'htmlLang: (document.documentElement && document.documentElement.lang) || ""'
+                '}) : "MISSING"'
+            )
+            try:
+                import json as _json
+                parsed = _json.loads(status)
+                print(f'[DSH-i18n] bridge OK: current={parsed.get("current","?")} '
+                      f'htmlLang="{parsed.get("htmlLang","")}" '
+                      f'zh={parsed.get("hasZh")} en={parsed.get("hasEn")} '
+                      f'initialized={parsed.get("initialized")}')
+            except Exception:
+                print(f'[DSH-i18n] bridge check raw: {status}')
+        except Exception as exc:
+            print(f'[DSH-i18n] inject failed: {exc}')
+
+    def _start_persistent_injector():
+        """启动后台线程, 持续注入 bridge 直到窗口关闭.
+
+        为什么需要: DSH WebUI 是 SPA (单页应用), 插件模块可能在 bridge 注入前就加载了,
+        或者 SPA 内部导航会重建 JS 上下文导致 bridge 丢失.
+        持续注入确保任意时刻 window.__DSH_I18N__ 都可用.
+        bridge JS 本身是幂等的 (已存在则跳过重复设置), 不会有副作用.
+        """
+        def inject_loop():
+            # 前 60 秒高频注入 (覆盖启动 + SPA 导航), 之后降频到 10 秒一次
+            start_time = time.time()
+            while True:
+                elapsed = time.time() - start_time
+                if elapsed < 60:
+                    time.sleep(3)
+                else:
+                    time.sleep(10)
+                _inject_i18n()
+        threading.Thread(target=inject_loop, daemon=True).start()
+
     def on_window_ready():
-        """窗口就绪后(主线程回调)再导航/轮询; 服务未起来则后台轮询端口, 一起来自动切真实界面。
+        """窗口就绪后(主线程回调)再导航/轮询; 服务未起来则后台轮询端口, 一起来自动切真实界面.
 
         必须在 start() 的窗口就绪回调里做 load_url, 不能在其之前调用
         (pywebview/WinForms 在 start() 前 load_url 会挂起窗口初始化)。
         """
+        # 启动持续注入 (不依赖服务是否就绪)
+        _start_persistent_injector()
+
         if server_ready:
+            # 服务已就绪, 先立即注入一次 (之后由持续线程接管)
+            _inject_i18n()
             return
 
         def wait_for_server():
@@ -301,6 +556,9 @@ def open_in_shell_window(server_url, port, icon_path):
                 time.sleep(PORT_POLL_SECONDS)
             try:
                 window_handle.load_url(server_url)
+                # load_url 后稍微等一下页面加载完成再注入
+                time.sleep(0.5)
+                _inject_i18n()
             except Exception:  # noqa: BLE001 - 窗口可能已关闭, 忽略
                 pass
 

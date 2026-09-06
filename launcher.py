@@ -2748,6 +2748,62 @@ class Launcher:
         env["TMP"] = tmp_dir
         return env
 
+    def _apply_language_preference(self):
+        """把启动器 config.json 的 language 写入 DSH settings.yaml 的 locale.preference。
+
+        DSH LocaleRuntime 初始化时优先读后端 settings 存储的 preference 字段
+        (settings.yaml → locale → preference), 没有才 fallback 到 navigator.languages。
+        每次启动 DSH 前调用, 让 WebUI 以启动器语言为初始语言;
+        用户在 WebUI Settings 里再切换则由 DSH 自己持久化覆盖, 下次启动器启动又会覆盖回来。
+        """
+        launcher_lang = self.config.get("language", "zh")
+        if launcher_lang not in ("zh", "en"):
+            launcher_lang = "zh"
+
+        settings_path = os.path.join(DSH_HOME_DIR, "settings.yaml")
+        os.makedirs(DSH_HOME_DIR, exist_ok=True)
+
+        # 读现有内容 (不存在则空串)
+        existing = ""
+        if os.path.isfile(settings_path):
+            try:
+                with open(settings_path, "r", encoding="utf-8") as f:
+                    existing = f.read()
+            except Exception:
+                existing = ""
+
+        # 正则替换 locale 段里的 preference 值
+        # 匹配: locale: 换行 + 缩进空格 + preference: 任意
+        pattern = r'(^locale:\s*\n(\s+)preference:\s*)([^\n#]+)'
+        import re as _re
+        new_content, count = _re.subn(
+            pattern,
+            lambda m: m.group(1) + launcher_lang,
+            existing,
+            count=1,
+            flags=_re.MULTILINE,
+        )
+
+        if count == 1:
+            # 替换成功, 看值有没有真的变化
+            if _re.search(r'^locale:\s*\n\s+preference:\s*' + _re.escape(launcher_lang) + r'\s*$',
+                          new_content, _re.MULTILINE):
+                self.log("语言同步: settings.yaml locale.preference = %s" % launcher_lang)
+            else:
+                self.log("语言同步: settings.yaml 替换后未匹配, 可能值仍是旧的")
+        else:
+            # locale 段不存在, 追加到文件末尾
+            if existing and not existing.endswith("\n"):
+                existing += "\n"
+            new_content = existing + "\nlocale:\n  preference: %s\n" % launcher_lang
+            self.log("语言同步: 新建 settings.yaml locale.preference = %s" % launcher_lang)
+
+        try:
+            with open(settings_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+        except Exception as error:
+            self.log("语言同步: 写 settings.yaml 失败: %s" % error)
+
     def ensure_runtime_dirs(self):
         """确保 runtime 下的所有目录与本地配置文件存在"""
         tmp_dir = self.config.get("tmp_dir") or TMP_DIR
@@ -4669,6 +4725,9 @@ class Launcher:
                 web_port = 3080
             self.ensure_firewall_port(web_port)
 
+        # 把启动器语言同步到 DSH settings.yaml (LocaleRuntime 初始化时优先读这个)
+        self._apply_language_preference()
+
         command = self.build_server_command()
         self.log("启动命令: %s" % " ".join(command))
         os.makedirs(RUNTIME_DIR, exist_ok=True)
@@ -6570,8 +6629,10 @@ def run_gui():
 
         footer_frame = ttk.Frame(detail_dialog, padding=12)
         footer_frame.pack(fill="x")
-        ttk.Label(footer_frame, justify="left", foreground="#888888",
-                  text=i18n.t('upgrade_confirm.footer')).pack(anchor="w")
+        _iw_6632 = ttk.Label(footer_frame, justify="left", foreground="#888888",
+                  text=i18n.t('upgrade_confirm.footer'))
+        _iw_6632.pack(anchor="w")
+        _i18n_widgets.append((_iw_6632, 'text', 'upgrade_confirm.footer'))
         button_row = ttk.Frame(footer_frame)
         button_row.pack(side="right")
         _iw_6528 = ttk.Button(button_row, text=i18n.t('close_dialog.cancel'), command=detail_dialog.destroy)
@@ -7525,9 +7586,11 @@ def run_gui():
                                     command=on_cleanup_backup)
     _i18n_widgets.append((cleanup_backup_btn, 'text', 'maintenance.cleanup_backup'))
     cleanup_backup_btn.pack(side="left", padx=(0, 8))
-    ttk.Label(cleanup_row,
+    cleanup_hint_label = ttk.Label(cleanup_row,
               text=i18n.t('maintenance.cleanup_hint'),
-              foreground="#606060").pack(side="left", padx=(4, 8))
+              foreground="#606060")
+    cleanup_hint_label.pack(side="left", padx=(4, 8))
+    _i18n_widgets.append((cleanup_hint_label, 'text', 'maintenance.cleanup_hint'))
 
     # 初始刷新状态
     refresh_status()
@@ -7679,10 +7742,12 @@ def run_gui():
     open_method_combo.bind('<<ComboboxSelected>>', _on_open_method_change)
 
     auto_open_var = tk.BooleanVar(value=bool(app.config.get("auto_open_browser", True)))
-    ttk.Checkbutton(settings_frame,
-                    text=i18n.t('settings.auto_open_label'),
-                    variable=auto_open_var).grid(row=2, column=0, columnspan=4,
-                                                 padx=8, pady=4, sticky="w")
+    auto_open_checkbox = ttk.Checkbutton(settings_frame,
+                     text=i18n.t('settings.auto_open_label'),
+                     variable=auto_open_var)
+    auto_open_checkbox.grid(row=2, column=0, columnspan=4,
+                                              padx=8, pady=4, sticky="w")
+    _i18n_widgets.append((auto_open_checkbox, 'text', 'settings.auto_open_label'))
 
     def sync_gui(silent=False):
         """把界面当前填入的值("所见")同步进 config 并落盘("所得")。
