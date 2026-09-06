@@ -5002,16 +5002,64 @@ class Launcher:
                 self.open_ui(force=False)   # 按默认打开方式(桌面窗口/网页窗口)自动打开; 已打开则内部跳过
 
     def wait_ready(self, port):
-        """阻塞等待服务端口就绪, 成功返回 True, 超时返回 False"""
+        """阻塞等待服务端口 + 前端都就绪, 成功返回 True, 超时返回 False.
+
+        两阶段等待:
+          1. port_open: DSH HTTP 端口开始监听 (快, 1-2s)
+          2. HTTP GET / 能返回有效 HTML 或 401 (认证). 不能是:
+               - ConnectionRefused (端口还没好)
+               - 空响应 / 极短响应 (cordis bundle 还没构建完)
+        为什么要等第二阶段? DSH 端口 open 后 cordis 还会异步构建 client bundle,
+        如果此时打开浏览器, 插件 bundle 会 404 → 页面白屏, 用户手动刷新才好.
+        """
         deadline = time.time() + SERVER_READY_TIMEOUT
+        phase1_done = False
         while time.time() < deadline:
             if self.is_server_running() is False:
                 self.log("服务进程已退出, 请查看日志 %s" % LOG_FILE)
                 return False
-            if self.port_open(port):
-                return True
+            if not phase1_done:
+                if self.port_open(port):
+                    phase1_done = True
+                    self.log("端口 %d 已监听, 等待前端构建完成 ..." % port)
+                    continue
+            else:
+                # phase 2: 等 HTTP 响应有效
+                if self._frontend_ready(port):
+                    self.log("前端已就绪 (cordis bundle 构建完成)")
+                    return True
             time.sleep(1)
         self.log("等待服务就绪超时, 请手动检查日志 %s" % LOG_FILE)
+        return False
+
+    def _frontend_ready(self, port):
+        """判断前端是否真正可访问: HTTP GET / 能返回有效响应.
+
+        - 200 + HTML → 肯定 ready
+        - 401 (authentication required) → HTTP server OK, cordis bundle 也已输出
+        - ConnectionRefused / 空响应 / 极短响应 → not ready
+        """
+        try:
+            request = urllib.request.Request(
+                "http://127.0.0.1:%d/" % port,
+                headers={"User-Agent": "DSH-Launcher-HealthCheck"}
+            )
+            response = urllib.request.urlopen(request, timeout=3)
+            body = response.read(2048)
+            # 必须有实质 HTML 内容, 不是空壳
+            if len(body) > 200:
+                return True
+        except urllib.error.HTTPError as error:
+            # 401 也算 ready (认证页面是 server 主动返回的)
+            if error.code == 401:
+                try:
+                    body = error.read(2048)
+                    if len(body) > 50:
+                        return True
+                except Exception:
+                    return True  # 401 本身就说明 server 活着
+        except Exception:
+            pass
         return False
 
     @staticmethod

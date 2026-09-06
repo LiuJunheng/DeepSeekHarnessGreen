@@ -537,18 +537,37 @@ def open_in_shell_window(server_url, port, icon_path):
                 _inject_i18n()
         threading.Thread(target=inject_loop, daemon=True).start()
 
+    # ===== 关键: 绑定 pywebview 事件, 在正确的 window 上下文里注入 =====
+    # 之前用 load_url + sleep(0.5) + evaluate_js, 但 load_url 后立即 sleep
+    # 注入会落在 about:blank 上 (JS 上下文不同), DSH 页面加载后 bridge 丢失.
+    # events.loaded = 页面 HTML + JS 都加载完, evaluate_js 一定在正确的 window 里.
+    # events.before_load = 更早触发, 如果能在新页面 JS 执行前注入就完美.
+    def _on_page_loaded():
+        """页面加载完成后注入 bridge (正确的 window 上下文)."""
+        _inject_i18n()
+
+    def _on_page_before_load(url):
+        """页面开始加载时就尝试注入 (可能在 JS 执行前, 最优时序)."""
+        _inject_i18n()
+
+    try:
+        window_handle.events.loaded += _on_page_loaded
+        window_handle.events.before_load += _on_page_before_load
+        print("[DSH-i18n] bound pywebview events.loaded + before_load for bridge injection")
+    except Exception as exc:
+        print(f"[DSH-i18n] bind events failed (will rely on persistent injector): {exc}")
+
     def on_window_ready():
         """窗口就绪后(主线程回调)再导航/轮询; 服务未起来则后台轮询端口, 一起来自动切真实界面.
 
         必须在 start() 的窗口就绪回调里做 load_url, 不能在其之前调用
         (pywebview/WinForms 在 start() 前 load_url 会挂起窗口初始化)。
         """
-        # 启动持续注入 (不依赖服务是否就绪)
+        # 启动持续注入 (不依赖服务是否就绪, 兜底 SPA 内部导航重建 JS 上下文)
         _start_persistent_injector()
 
         if server_ready:
-            # 服务已就绪, 先立即注入一次 (之后由持续线程接管)
-            _inject_i18n()
+            # 服务已就绪, load_url 后 events.loaded 会自动注入 bridge
             return
 
         def wait_for_server():
@@ -556,9 +575,8 @@ def open_in_shell_window(server_url, port, icon_path):
                 time.sleep(PORT_POLL_SECONDS)
             try:
                 window_handle.load_url(server_url)
-                # load_url 后稍微等一下页面加载完成再注入
-                time.sleep(0.5)
-                _inject_i18n()
+                # 不再手动 sleep + evaluate_js —— events.loaded/before_load 自动处理
+                # 插件里还有 slot-ready wait (setInterval 等 bridge 就绪再 register tab label)
             except Exception:  # noqa: BLE001 - 窗口可能已关闭, 忽略
                 pass
 
