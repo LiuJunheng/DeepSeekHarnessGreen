@@ -1,0 +1,4 @@
+# ads.txt 授权声明 - DeepSeek Harness 绿色整合版官网
+# Google AdSense 审核要求: ads.txt 必须部署在站点根目录且可被公开访问
+# 格式: google.com, "AdSense发布商ID", DIRECT, "Google官方授权卖家标识"
+google.com, pub-4210397233262199, DIRECT, f08c47fec0942fa0
