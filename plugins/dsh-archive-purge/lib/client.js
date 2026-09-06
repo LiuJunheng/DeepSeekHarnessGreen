@@ -23,6 +23,16 @@ function _dsht(key, fallback) {
 window.__ModuleLoader__.load({
 	id: "dsh-archive-purge",
 	factory: (require) => {
+		        // === 异步加载 i18n bridge ===
+		        (function() {
+		            if (window.__DSH_I18N__ && window.__DSH_I18N__._initialized) return;  // 桌面壳已预注入
+		            var _s = document.createElement('script');
+		            _s.src = 'http://127.0.0.1:3081/__dsh_i18n_bridge.js';
+		            _s.onerror = function() { _s.src = 'http://localhost:3081/__dsh_i18n_bridge.js'; };
+		            document.head.appendChild(_s);
+		        })();
+		        // === i18n bridge END ===
+
 		var module = { exports: {} };
 		var exports = module.exports;
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
@@ -236,12 +246,25 @@ window.__ModuleLoader__.load({
 		}
 
 		function apply(ctx) {
-			ctx.slots.inject("settings.section", () => ctx.slots.register({
+			function _doRegisterPurgeSection() {
+			    ctx.slots.inject("settings.section", () => ctx.slots.register({
 				name: "settings.section",
 				id: "archive-purge",
 				order: 500,
 				label: _dsht("plugin.archive_purge.tab_label", "清理归档")
 			}, PurgeSection));
+			}
+			if (window.__DSH_I18N__ && window.__DSH_I18N__._initialized) {
+			    _doRegisterPurgeSection();
+			} else {
+			    var _checkPurgeSection = setInterval(function() {
+			        if (window.__DSH_I18N__ && window.__DSH_I18N__._initialized) {
+			            clearInterval(_checkPurgeSection);
+			            _doRegisterPurgeSection();
+			        }
+			    }, 50);
+			    setTimeout(function() { clearInterval(_checkPurgeSection); _doRegisterPurgeSection(); }, 2000);
+			}
 		}
 
 		exports.apply = apply;

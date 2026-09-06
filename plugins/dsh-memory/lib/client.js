@@ -30,6 +30,16 @@ function _dsht(key, fallback) {
 window.__ModuleLoader__.load({
     id: "dsh-memory",
     factory: (require) => {
+                // === 异步加载 i18n bridge ===
+                (function() {
+                    if (window.__DSH_I18N__ && window.__DSH_I18N__._initialized) return;  // 桌面壳已预注入
+                    var _s = document.createElement('script');
+                    _s.src = 'http://127.0.0.1:3081/__dsh_i18n_bridge.js';
+                    _s.onerror = function() { _s.src = 'http://localhost:3081/__dsh_i18n_bridge.js'; };
+                    document.head.appendChild(_s);
+                })();
+                // === i18n bridge END ===
+
         var module = { exports: {} };
         var exports = module.exports;
         Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
@@ -685,12 +695,25 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
 
         // ---- 插件契约: 通过 ctx.slots.inject("settings.section", ...) 挂载到设置页 ----
         function apply(ctx) {
-            ctx.slots.inject("settings.section", () => ctx.slots.register({
+            function _doRegisterMemoryCard() {
+                ctx.slots.inject("settings.section", () => ctx.slots.register({
                 name: "settings.section",
                 id: "dsh-memory",
                 order: 530,
                 label: _dsht("plugin.memory.title", "祖宗记忆库"),
             }, MemoryCard));
+            }
+            if (window.__DSH_I18N__ && window.__DSH_I18N__._initialized) {
+                _doRegisterMemoryCard();
+            } else {
+                var _checkMemoryCard = setInterval(function() {
+                    if (window.__DSH_I18N__ && window.__DSH_I18N__._initialized) {
+                        clearInterval(_checkMemoryCard);
+                        _doRegisterMemoryCard();
+                    }
+                }, 50);
+                setTimeout(function() { clearInterval(_checkMemoryCard); _doRegisterMemoryCard(); }, 2000);
+            }
         }
 
         exports.apply = apply;

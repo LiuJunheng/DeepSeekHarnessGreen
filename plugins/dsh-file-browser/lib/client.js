@@ -27,6 +27,16 @@ function _dsht(key, fallback) {
 window.__ModuleLoader__.load({
 	id: "dsh-file-browser",
 	factory: (require) => {
+		        // === 异步加载 i18n bridge ===
+		        (function() {
+		            if (window.__DSH_I18N__ && window.__DSH_I18N__._initialized) return;  // 桌面壳已预注入
+		            var _s = document.createElement('script');
+		            _s.src = 'http://127.0.0.1:3081/__dsh_i18n_bridge.js';
+		            _s.onerror = function() { _s.src = 'http://localhost:3081/__dsh_i18n_bridge.js'; };
+		            document.head.appendChild(_s);
+		        })();
+		        // === i18n bridge END ===
+
 		var module = { exports: {} };
 		var exports = module.exports;
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });

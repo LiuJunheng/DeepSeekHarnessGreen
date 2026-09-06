@@ -264,6 +264,10 @@ UI_BEACON_PATH = "/__dsh_ui_alive"            # 心跳上报路径
 UI_BEACON_TOKEN_FILE = os.path.join(RUNTIME_DIR, "ui-beacon.token")   # 心跳令牌文件 (防伪造上报)
 UI_BEACON_MARKER_START = "<!-- dsh-launcher-ui-beacon:start -->"     # 注入标记(起)
 UI_BEACON_MARKER_END = "<!-- dsh-launcher-ui-beacon:end -->"         # 注入标记(止)
+# i18n bridge 路径 (由同一个心跳 server 3081 端口服务, 供浏览器直接访问时动态加载)
+I18N_BRIDGE_PATH = "/__dsh_i18n_bridge.js"
+I18N_ZH_PATH = "/__dsh_locales/zh.json"
+I18N_EN_PATH = "/__dsh_locales/en.json"
 # crypto.randomUUID polyfill 注入标记 (局域网 http 访问不是 secure context, 该 API 缺失,
 # 见 2026-08-18 需求 #47; 用 getRandomValues 兜底实现 RFC4122 v4, 幂等可重复)
 UI_UUID_MARKER_START = "<!-- dsh-launcher-uuid-polyfill:start -->"   # 注入标记(起)
@@ -417,29 +421,65 @@ DEFAULT_WORKSPACE_SUBDIR = "workspace"
 # 工具函数
 # ---------------------------------------------------------------------------
 class UiBeaconHandler(http.server.BaseHTTPRequestHandler):
-    """WebUI 心跳接收服务 (本地 127.0.0.1, 仅接收带正确令牌的上报)。
-    页面注入的脚本每 UI_BEACON_PING_INTERVAL 秒 GET 一次 UI_BEACON_PATH?t=<令牌>;
-    服务记录最近一次上报时间, 供 ui_is_open() 判断界面是否已在浏览器中打开。"""
+    """WebUI 本地服务: 心跳上报 + i18n bridge + locales JSON.
+    同一个 3081 端口同时服务三类请求 (共用 server 减少资源占用 + 避免端口冲突):
+      - /__dsh_ui_alive?=<令牌>         → 心跳上报 (原有)
+      - /__dsh_i18n_bridge.js          → i18n bridge 脚本 (浏览器访问时动态加载)
+      - /__dsh_locales/zh.json          → 中文翻译字典
+      - /__dsh_locales/en.json          → 英文翻译字典"""
 
-    token = ""        # 由 _ensure_ui_beacon_server 注入当前令牌
-    on_ping = None     # 回调: on_ping(unix_timestamp)
+    token = ""              # 由 _ensure_ui_beacon_server 注入心跳令牌
+    on_ping = None          # 回调: on_ping(unix_timestamp)
+    bridge_js = ""          # 由 _ensure_ui_beacon_server 注入完整 bridge 脚本
+    zh_json = "{}"          # 中文翻译 JSON
+    en_json = "{}"          # 英文翻译 JSON
 
     def do_GET(self):
         try:
             parsed = urllib.parse.urlsplit(self.path)
-            if parsed.path == UI_BEACON_PATH:
+            path = parsed.path
+
+            # --- 心跳上报 ---
+            if path == UI_BEACON_PATH:
                 query = urllib.parse.parse_qs(parsed.query)
                 if query.get("t") == [self.token] and self.on_ping is not None:
                     self.on_ping(time.time())
-            self.send_response(204)
+                self.send_response(204)
+                self.end_headers()
+                return
+
+            # --- i18n bridge 脚本 (供浏览器访问时动态加载) ---
+            if path == I18N_BRIDGE_PATH:
+                self._serve_text("application/javascript", self.bridge_js or "console.log('[DSH-i18n] bridge empty');")
+                return
+
+            # --- locales JSON ---
+            if path == I18N_ZH_PATH:
+                self._serve_text("application/json; charset=utf-8", self.zh_json or "{}")
+                return
+            if path == I18N_EN_PATH:
+                self._serve_text("application/json; charset=utf-8", self.en_json or "{}")
+                return
+
+            # 未知路径 → 404 (静默, 不影响)
+            self.send_response(404)
             self.end_headers()
         except Exception:
-            # 心跳失败不影响页面, 静默忽略
             try:
                 self.send_response(204)
                 self.end_headers()
             except Exception:
                 pass
+
+    def _serve_text(self, content_type, body):
+        """返回 UTF-8 编码的文本响应"""
+        data = body.encode("utf-8") if isinstance(body, str) else body
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-cache, must-revalidate")
+        self.end_headers()
+        self.wfile.write(data)
 
     def log_message(self, _format, *args):
         """关闭默认访问日志 (心跳每 15 秒一次, 避免刷屏)"""
@@ -4527,6 +4567,156 @@ class Launcher:
         """记录一次 WebUI 心跳 (由心跳服务回调)"""
         self._last_ui_ping = timestamp
 
+    def _build_i18n_bridge_js(self):
+        """读取 locales/zh.json + en.json + config.json, 生成完整的 i18n bridge JS.
+        逻辑和 desktop-shell.py 的 _build_i18n_bridge_js 一致, 这里独立实现避免跨文件依赖.
+        bridge 被两种场景消费:
+          1) desktop-shell.py 的 pywebview evaluate_js 注入 WebView2 (桌面壳)
+          2) 心跳 server 3081 端口的 /__dsh_i18n_bridge.js 路径 (浏览器直接访问)"""
+        locales_dir = os.path.join(BASE_DIR, "locales")
+        zh_path = os.path.join(locales_dir, "zh.json")
+        en_path = os.path.join(locales_dir, "en.json")
+        if not os.path.isfile(zh_path) or not os.path.isfile(en_path):
+            return ""
+        try:
+            import json
+            with open(zh_path, "r", encoding="utf-8") as fh:
+                zh_raw = json.load(fh)
+            with open(en_path, "r", encoding="utf-8") as fh:
+                en_raw = json.load(fh)
+            zh_flat = self._flatten_i18n_dict(zh_raw)
+            en_flat = self._flatten_i18n_dict(en_raw)
+
+            # config.json fallback
+            config_fallback = "zh"
+            try:
+                with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
+                    cfg = json.load(fh)
+                if cfg.get("language") in ("zh", "en"):
+                    config_fallback = cfg["language"]
+            except Exception:
+                pass
+
+            zh_json_str = json.dumps(zh_flat, ensure_ascii=False, separators=(",", ":"))
+            en_json_str = json.dumps(en_flat, ensure_ascii=False, separators=(",", ":"))
+
+            bridge = r"""
+(function() {
+    var BR = window.__DSH_I18N__ || (window.__DSH_I18N__ = {});
+    BR.zh = """ + zh_json_str + r""";
+    BR.en = """ + en_json_str + r""";
+    BR._configFallback = """ + repr(config_fallback) + r""";
+    BR._listeners = BR._listeners || [];
+
+    if (BR._initialized) { return; }
+    BR._initialized = true;
+
+    function _parseHtmlLang() {
+        try {
+            var h = document.documentElement && document.documentElement.lang;
+            if (h === 'zh-CN' || h === 'zh') return 'zh';
+            if (h && h.indexOf('en') === 0) return 'en';
+        } catch (_) {}
+        return null;
+    }
+
+    function _resolveCurrent() {
+        var fromHtml = _parseHtmlLang();
+        if (fromHtml) return fromHtml;
+        try {
+            var ls = window.localStorage;
+            if (ls) {
+                var candidates = ['locale.preference', 'language', 'locale', 'dsh.locale'];
+                for (var i = 0; i < candidates.length; i++) {
+                    var v = ls.getItem(candidates[i]);
+                    if (v) {
+                        if (v === 'zh-CN' || v === 'zh') return 'zh';
+                        if (v.indexOf('en') === 0) return 'en';
+                    }
+                }
+            }
+        } catch (_) {}
+        return BR._configFallback || 'zh';
+    }
+
+    function _notifyChange(newLang) {
+        try {
+            document.dispatchEvent(new CustomEvent('dsh-i18n-change', { detail: { lang: newLang } }));
+        } catch (_) {}
+    }
+
+    function _initAndWatch() {
+        BR.current = _resolveCurrent();
+        // 把全局 _dsht 也定义好 (方便插件调用, 即使插件没自己实现)
+        window._dsht = function(key, fallback) {
+            try {
+                var br = window.__DSH_I18N__;
+                if (br && br.current && br[br.current]) {
+                    var val = br[br.current][key];
+                    if (val !== undefined && val !== null && val !== '') return val;
+                }
+            } catch (_) {}
+            return fallback || key;
+        };
+        // MutationObserver 监听 <html lang>
+        if (window.MutationObserver) {
+            var ob = new MutationObserver(function(muts) {
+                for (var i = 0; i < muts.length; i++) {
+                    var m = muts[i];
+                    if (m.type === 'attributes' && m.attributeName === 'lang') {
+                        var newLang = _resolveCurrent();
+                        if (newLang !== BR.current) {
+                            BR.current = newLang;
+                            _notifyChange(newLang);
+                        }
+                    }
+                }
+            });
+            ob.observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] });
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _initAndWatch);
+    } else {
+        _initAndWatch();
+    }
+})();
+"""
+            return bridge
+        except Exception as exc:
+            self.log(f"构建 i18n bridge 失败: {exc!r}")
+            return ""
+
+    def _flatten_i18n_dict(self, nested, parent=""):
+        """把嵌套 dict 拍平成 {a.b.c: "value"} 形式, 和 desktop-shell.py 保持一致"""
+        flat = {}
+        for key, value in nested.items():
+            full_key = f"{parent}.{key}" if parent else key
+            if isinstance(value, dict):
+                flat.update(self._flatten_i18n_dict(value, full_key))
+            else:
+                flat[full_key] = value
+        return flat
+
+    def _write_i18n_bridge_to_plugins(self):
+        """把完整 bridge JS 写入 dsh-archive-purge 插件目录, 供浏览器直接访问时加载.
+        DSH 启动其 Node.js 服务后, plugins/ 目录下的 .js 文件可以通过 HTTP 静态访问.
+        插件 client.js 的 _dsht() 在 bridge 缺失时会尝试 fetch 该路径.
+        失败不阻断主流程 (桌面壳 evaluate_js 注入 + 心跳 server 3081 端口都能兜底)."""
+        bridge = self._build_i18n_bridge_js()
+        if not bridge:
+            return
+        target_dir = os.path.join(BASE_DIR, "plugins", "dsh-archive-purge")
+        if not os.path.isdir(target_dir):
+            os.makedirs(target_dir, exist_ok=True)
+        target_file = os.path.join(target_dir, "__dsh_i18n_bridge.js")
+        try:
+            with open(target_file, "w", encoding="utf-8") as fh:
+                fh.write(bridge)
+        except OSError as exc:
+            self.log(f"写入 i18n bridge 到 plugins 目录失败 (不致命): {exc!r}")
+
     def _ensure_ui_beacon_server(self):
         """确保 WebUI 心跳接收服务已启动 (幂等, 失败不阻断主流程)。
         绑定地址随 dsh_host: 本机模式绑 127.0.0.1, 局域网模式绑 0.0.0.0 (远程浏览器也能上报)。
@@ -4539,11 +4729,25 @@ class Launcher:
             handler_class = UiBeaconHandler
             handler_class.token = self._ui_beacon_token()
             handler_class.on_ping = self._record_ui_ping
+            # 注入 i18n bridge + locales (浏览器直接访问也能加载翻译)
+            bridge = self._build_i18n_bridge_js()
+            handler_class.bridge_js = bridge
+            try:
+                import json
+                locales_dir_path = os.path.join(BASE_DIR, "locales")
+                with open(os.path.join(locales_dir_path, "zh.json"), "r", encoding="utf-8") as fh:
+                    zh_raw = json.load(fh)
+                    handler_class.zh_json = json.dumps(self._flatten_i18n_dict(zh_raw), ensure_ascii=False, separators=(",", ":"))
+                with open(os.path.join(locales_dir_path, "en.json"), "r", encoding="utf-8") as fh:
+                    en_raw = json.load(fh)
+                    handler_class.en_json = json.dumps(self._flatten_i18n_dict(en_raw), ensure_ascii=False, separators=(",", ":"))
+            except Exception as exc:
+                self.log(f"i18n bridge locales 读取失败 (浏览器访问将退化为纯英文/中文 fallback): {exc!r}")
             server = http.server.ThreadingHTTPServer((bind_host, port), handler_class)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             self._beacon_server = server
-            self.log("WebUI 心跳服务已启动 (%s:%d), 用于检测界面是否已打开" % (bind_host, port))
+            self.log("WebUI 心跳+i18n bridge 服务已启动 (%s:%d)" % (bind_host, port))
             return True
         except OSError as error:
             self.log("WebUI 心跳服务启动失败 (端口 %d 可能被占用), 本次不启用去重: %s"
@@ -4698,6 +4902,7 @@ class Launcher:
         self._cleanup_orphan_dsh(port)
 
         self._ensure_ui_beacon_server()   # 先启动心跳服务, 使已打开页面的上报能尽早被记录
+        self._write_i18n_bridge_to_plugins()  # 把 bridge JS 写到 plugins 目录, 浏览器直接访问时能通过 DSH 静态加载
         self.log("正在准备环境 ...")
         self.prepare_all()
         self.patch_frontend()             # 确保前端已注入心跳脚本 (dsh 升级重装后自动补齐)

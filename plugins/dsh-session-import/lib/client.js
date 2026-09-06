@@ -30,6 +30,16 @@ function _dsht(key, fallback) {
 window.__ModuleLoader__.load({
 	id: "dsh-session-import",
 	factory: (require) => {
+		        // === 异步加载 i18n bridge ===
+		        (function() {
+		            if (window.__DSH_I18N__ && window.__DSH_I18N__._initialized) return;  // 桌面壳已预注入
+		            var _s = document.createElement('script');
+		            _s.src = 'http://127.0.0.1:3081/__dsh_i18n_bridge.js';
+		            _s.onerror = function() { _s.src = 'http://localhost:3081/__dsh_i18n_bridge.js'; };
+		            document.head.appendChild(_s);
+		        })();
+		        // === i18n bridge END ===
+
 		var module = { exports: {} };
 		var exports = module.exports;
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
@@ -250,9 +260,22 @@ window.__ModuleLoader__.load({
 			installSessionExportHook();
 
 			// 设置面板只保留导入区域 (导出已通过 hook 官方按钮实现)
-			ctx.slots.inject("settings.section", () => ctx.slots.register({
+			function _doRegisterTransferSection() {
+			    ctx.slots.inject("settings.section", () => ctx.slots.register({
 				name: "settings.section", id: "session-transfer", order: 510, label: _dsht("plugin.session_import.tab_label", "会话导入")
 			}, TransferSection));
+			}
+			if (window.__DSH_I18N__ && window.__DSH_I18N__._initialized) {
+			    _doRegisterTransferSection();
+			} else {
+			    var _checkTransferSection = setInterval(function() {
+			        if (window.__DSH_I18N__ && window.__DSH_I18N__._initialized) {
+			            clearInterval(_checkTransferSection);
+			            _doRegisterTransferSection();
+			        }
+			    }, 50);
+			    setTimeout(function() { clearInterval(_checkTransferSection); _doRegisterTransferSection(); }, 2000);
+			}
 		}
 
 		exports.apply = apply;

@@ -26,6 +26,16 @@ function _dsht(key, fallback) {
 window.__ModuleLoader__.load({
 	id: "dsh-ollama",
 	factory: (require) => {
+		        // === 异步加载 i18n bridge ===
+		        (function() {
+		            if (window.__DSH_I18N__ && window.__DSH_I18N__._initialized) return;  // 桌面壳已预注入
+		            var _s = document.createElement('script');
+		            _s.src = 'http://127.0.0.1:3081/__dsh_i18n_bridge.js';
+		            _s.onerror = function() { _s.src = 'http://localhost:3081/__dsh_i18n_bridge.js'; };
+		            document.head.appendChild(_s);
+		        })();
+		        // === i18n bridge END ===
+
 		var module = { exports: {} };
 		var exports = module.exports;
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
@@ -378,12 +388,25 @@ window.__ModuleLoader__.load({
 
 		// ---- 插件契约 ----
 		function apply(ctx) {
-			ctx.slots.inject("settings.section", () => ctx.slots.register({
+			function _doRegisterOllamaSettingsSection() {
+			    ctx.slots.inject("settings.section", () => ctx.slots.register({
 				name: "settings.section",
 				id: "dsh-ollama",
 				order: 520,
 				label: _dsht("plugin.ollama.title", "Ollama 设置"),
 			}, OllamaSettingsSection));
+			}
+			if (window.__DSH_I18N__ && window.__DSH_I18N__._initialized) {
+			    _doRegisterOllamaSettingsSection();
+			} else {
+			    var _checkOllamaSettingsSection = setInterval(function() {
+			        if (window.__DSH_I18N__ && window.__DSH_I18N__._initialized) {
+			            clearInterval(_checkOllamaSettingsSection);
+			            _doRegisterOllamaSettingsSection();
+			        }
+			    }, 50);
+			    setTimeout(function() { clearInterval(_checkOllamaSettingsSection); _doRegisterOllamaSettingsSection(); }, 2000);
+			}
 		}
 
 		exports.apply = apply;
