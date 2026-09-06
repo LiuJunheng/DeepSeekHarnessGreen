@@ -263,8 +263,7 @@ window.__ModuleLoader__.load({
 			            _doRegisterPurgeSection();
 			        }
 			    }, 50);
-			    setTimeout(function() { clearInterval(_checkPurgeSection); _doRegisterPurgeSection(); }, 2000);
-			}
+			    }
 		}
 
 		exports.apply = apply;

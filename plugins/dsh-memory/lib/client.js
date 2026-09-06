@@ -712,8 +712,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                         _doRegisterMemoryCard();
                     }
                 }, 50);
-                setTimeout(function() { clearInterval(_checkMemoryCard); _doRegisterMemoryCard(); }, 2000);
-            }
+                }
         }
 
         exports.apply = apply;

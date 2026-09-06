@@ -405,8 +405,7 @@ window.__ModuleLoader__.load({
 			            _doRegisterOllamaSettingsSection();
 			        }
 			    }, 50);
-			    setTimeout(function() { clearInterval(_checkOllamaSettingsSection); _doRegisterOllamaSettingsSection(); }, 2000);
-			}
+			    }
 		}
 
 		exports.apply = apply;

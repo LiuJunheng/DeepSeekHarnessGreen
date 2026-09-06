@@ -274,8 +274,7 @@ window.__ModuleLoader__.load({
 			            _doRegisterTransferSection();
 			        }
 			    }, 50);
-			    setTimeout(function() { clearInterval(_checkTransferSection); _doRegisterTransferSection(); }, 2000);
-			}
+			    }
 		}
 
 		exports.apply = apply;

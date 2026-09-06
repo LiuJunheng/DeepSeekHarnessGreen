@@ -1010,8 +1010,7 @@ window.__ModuleLoader__.load({
 			            _doRegisterUsageStatsSection();
 			        }
 			    }, 50);
-			    setTimeout(function() { clearInterval(_checkUsageStatsSection); _doRegisterUsageStatsSection(); }, 2000);
-			}
+			    }
 
 			ctx.slots.inject("conversation.chat.turnTail", () => ctx.slots.register(
 				{

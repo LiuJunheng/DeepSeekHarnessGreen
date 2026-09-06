@@ -674,6 +674,7 @@
       "terminal_hint": "输入命令后回车执行 (如 dir / cd / python --version)。",
       "terminal_placeholder": "输入命令, 回车执行",
       "terminal_stopped": "[终端已停止]",
+      "terminal_stream_fail": "终端流连接失败: HTTP ",
       "tasks_btn_output": "输出",
       "tasks_btn_stop": "停止",
       "tasks_title_view_output": "查看 AI 读取到的输出",

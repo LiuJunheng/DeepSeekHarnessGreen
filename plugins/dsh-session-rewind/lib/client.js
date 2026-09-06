@@ -416,8 +416,7 @@ window.__ModuleLoader__.load({
 						_doRegisterRewind();
 					}
 				}, 50);
-				setTimeout(function() { clearInterval(_checkRewind); _doRegisterRewind(); }, 2000);
-			}
+				}
 		}
 
 		exports.apply = apply;

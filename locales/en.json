@@ -674,6 +674,7 @@
       "terminal_hint": "Type command and press Enter (e.g. dir / cd / python --version).",
       "terminal_placeholder": "Command, Enter to run",
       "terminal_stopped": "[Terminal stopped]",
+      "terminal_stream_fail": "Terminal stream connect failed: HTTP ",
       "tasks_btn_output": "Output",
       "tasks_btn_stop": "Stop",
       "tasks_title_view_output": "View AI-read output",

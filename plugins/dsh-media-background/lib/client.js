@@ -34,6 +34,30 @@ window.__ModuleLoader__.load({
 		        })();
 		        // === i18n bridge END ===
 
+		// ---- i18n 语言切换重建监听 ----
+		// 观星插件用原生 DOM 构建 UI (不是 React), 所有文案在 buildUI() 里一次性写进 textContent.
+		// 需要监听 dsh-i18n-change 事件, 语言一变就销毁旧 DOM 重新 buildUI().
+		var _i18nHandlerBound = false;
+		function _bindI18nRebuildOnce() {
+			if (_i18nHandlerBound) return;
+			_i18nHandlerBound = true;
+			document.addEventListener('dsh-i18n-change', function() {
+				// 销毁旧 rootEl (含浮动按钮 + 面板 + 目录浏览弹窗 + CSS <style>)
+				var oldRoot = document.getElementById('dsw-mbg-root');
+				if (oldRoot && oldRoot.parentNode) oldRoot.parentNode.removeChild(oldRoot);
+				var oldCss = document.getElementById('dsw-mbg-css');
+				if (oldCss && oldCss.parentNode) oldCss.parentNode.removeChild(oldCss);
+				// 重新构建 + 恢复 UI 状态
+				buildUI();
+				renderPlaylist();
+				updateStatus();
+				updatePlayIcon();
+				if (videoEl && videoEl.parentNode) {
+					applyVideoAppearance();
+				}
+			});
+		}
+
 		var module = { exports: {} };
 		var exports = module.exports;
 
@@ -680,7 +704,8 @@ window.__ModuleLoader__.load({
 		}
 
 		function init() {
-			loadStore();
+				_bindI18nRebuildOnce();   // 注册一次语言切换监听, 触发时重建整个 UI DOM
+				loadStore();
 			buildUI();
 			applyVideoAppearance();
 			updatePlayIcon();
@@ -699,8 +724,25 @@ window.__ModuleLoader__.load({
 		}
 
 		// ---- 插件契约 ----
+		// 注意: init() 里所有 UI 文案都走 _dsht(), 必须等 i18n bridge 就绪后再构建 UI,
+		// 否则 bridge 还没加载完时 _dsht() 只能返回 fallback (中文), 切英文就失效。
 		function apply() {
-			init();
+			// 先看看 bridge 是否已经就绪 (desktop-shell 场景同步注入, 这里立即可命中)
+			var br = window.__DSH_I18N__;
+			if (br && br._initialized && br.current && br[br.current]) {
+				init();
+				return;
+			}
+			// 浏览器场景: 轮询等 bridge 异步加载完成 (最多等 5 秒, 超时也兜底调 init)
+			var waitedMs = 0;
+			var timer = setInterval(function() {
+				var b = window.__DSH_I18N__;
+				waitedMs += 100;
+				if ((b && b._initialized && b.current && b[b.current]) || waitedMs >= 5000) {
+					clearInterval(timer);
+					init();
+				}
+			}, 100);
 		}
 
 		exports.apply = apply;

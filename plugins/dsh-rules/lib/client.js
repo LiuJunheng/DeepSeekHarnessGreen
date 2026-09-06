@@ -411,8 +411,7 @@ window.__ModuleLoader__.load({
                         _doRegisterRulesSection();
                     }
                 }, 50);
-                setTimeout(function() { clearInterval(_checkRulesSection); _doRegisterRulesSection(); }, 2000);
-            }
+                }
         }
 
         exports.apply = apply;
