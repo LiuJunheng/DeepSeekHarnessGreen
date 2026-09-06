@@ -6483,7 +6483,8 @@ def run_gui():
                 github_releases = app.dsh_github_releases()
                 if tags is None and github_releases is None:
                     root.after(0, lambda: messagebox.showerror(
-                        "检查更新", "无法获取最新版本信息, 请检查网络后重试。"))
+                        i18n.t('check_update.fetch_fail_title'),
+                        i18n.t('check_update.fetch_fail_detail')))
                     return
                 # 设计原则: 不按"新旧"过滤候选, 让用户自己选
                 # - 用户可能想降级 / 切换通道 / 锁定某个已知稳定版本
@@ -6532,8 +6533,8 @@ def run_gui():
 
                 if not candidates:
                     root.after(0, lambda: messagebox.showinfo(
-                        "检查更新",
-                        "无法获取版本信息, 请检查网络后重试。"))
+                        i18n.t('check_update.fetch_fail_title'),
+                        i18n.t('check_update.no_candidate')))
                 else:
                     root.after(0, lambda: ask_update(current_version, candidates))
             finally:
@@ -6599,9 +6600,12 @@ def run_gui():
 
         header_frame = ttk.Frame(detail_dialog, padding=12)
         header_frame.pack(fill="x")
-        ttk.Label(header_frame, justify="left", text=(
-            "当前版本: %s\n\n将升级到: %s (%s)\n\n该版本的更新描述:" %
-            (current_version, version, tag_name))).pack(anchor="w")
+        _iw_confirm_header = ttk.Label(
+            header_frame, justify="left",
+            text=i18n.t('upgrade_confirm.current_version',
+                        current=current_version, target=version, tag=tag_name))
+        _iw_confirm_header.pack(anchor="w")
+        _i18n_widgets.append((_iw_confirm_header, 'text', 'upgrade_confirm.current_version'))
 
         # 更新描述文本区 (初始加载中, 后台线程查询后填充)
         notes_text = tk.Text(detail_dialog, height=12, width=72, wrap="word",
@@ -6620,8 +6624,9 @@ def run_gui():
         def fill_notes(notes):
             notes_text.configure(state="normal")
             notes_text.delete("1.0", "end")
-            placeholder = ("(未能获取该版本的更新描述, 可直接确认升级。\n"
-                           "目标版本: %s)" % version) if not notes else notes
+            placeholder = (
+                i18n.t('upgrade_confirm.notes_unavailable', version=version)
+                if not notes else notes)
             notes_text.insert("1.0", placeholder)
             notes_text.configure(state="disabled")
 
@@ -6661,9 +6666,12 @@ def run_gui():
         已按 通道(stable→prerelease→history) + 通道内版本新到旧 排序."""
         # 按通道分组, 收集通道内版本
         channel_info = {
-            "stable":    ("① 稳定正式通道 (npm latest)", "官方稳定发布通道"),
-            "prerelease": ("② 预发布通道 (npm next / GitHub prerelease)", "alpha/beta/rc 等预发布版本"),
-            "history":   ("③ GitHub 历史版本 (npm 已发布)", "过往正式版, 可用于降级"),
+            "stable": (i18n.t('version_select.channel_stable_title'),
+                       i18n.t('version_select.channel_stable_desc')),
+            "prerelease": (i18n.t('version_select.channel_prerelease_title'),
+                           i18n.t('version_select.channel_prerelease_desc')),
+            "history": (i18n.t('version_select.channel_history_title'),
+                       i18n.t('version_select.channel_history_desc')),
         }
         groups = {}
         for c in candidates:
@@ -6680,13 +6688,14 @@ def run_gui():
         header.pack(fill="x")
         channel_count = len(groups)
         version_count = len(candidates)
-        ttk.Label(header, justify="left", text=(
-            "当前已安装: %s\n\n"
-            "检测到 %d 个可用版本, 分布在 %d 个通道:\n"
-            "· stable 通道 = npm latest (官方稳定正式版)\n"
-            "· prerelease 通道 = npm next + GitHub 预发布 (alpha/beta/rc)\n"
-            "· history 通道 = GitHub 历史正式版 (可降级)"
-            % (current_version, version_count, channel_count))).pack(anchor="w")
+        _iw_ask_header = ttk.Label(
+            header, justify="left",
+            text=i18n.t('version_select.header_summary',
+                        current=current_version,
+                        version_count=version_count,
+                        channel_count=channel_count))
+        _iw_ask_header.pack(anchor="w")
+        _i18n_widgets.append((_iw_ask_header, 'text', 'version_select.header_summary'))
 
         # Treeview: 按通道分组的层级展示
         body = ttk.Frame(dialog)
@@ -6719,8 +6728,11 @@ def run_gui():
             iid_counter[0] += 1
             version_text = item["version"]
             if item["is_current"]:
-                version_text += "  (当前)"
-            installable_text = "✓ 可安装" if item["installable"] else "✗ 未发布到npm"
+                version_text += "  (%s)" % i18n.t('version_select.current_mark')
+            installable_text = (
+                i18n.t('version_select.status_installable')
+                if item["installable"]
+                else i18n.t('version_select.status_not_installable'))
             tree.insert(parent_iid, "end", iid=iid, text=version_text,
                         values=(item["tag_label"], item["published_at"],
                                 installable_text),
@@ -6757,7 +6769,7 @@ def run_gui():
             # 如果选的是通道父节点, 提示选子项
             if iid not in selected_items:
                 messagebox.showwarning(i18n.t('version_select.title'),
-                                       "请选择通道下的具体版本, 不要选通道标题。",
+                                       i18n.t('version_select.pick_channel_not_version'),
                                        parent=dialog)
                 return None
             return selected_items[iid]
@@ -6768,17 +6780,16 @@ def run_gui():
                 return
             if item["is_current"]:
                 messagebox.showinfo(i18n.t('version_select.title'),
-                                    "版本 %s 已是当前已安装版本, 无需更新。"
-                                    % item["version"], parent=dialog)
+                                    i18n.t('version_select.already_current',
+                                           version=item["version"]),
+                                    parent=dialog)
                 return
             if not item["installable"]:
                 messagebox.showwarning(
-                    "选择版本",
-                    "版本 %s 尚未发布到 npm, 暂无法自动安装。\n\n"
-                    "官方通常只把正式/稳定版本发布到 npm,\n"
-                    "源码 tag 会提前出现在 GitHub Releases。\n"
-                    "可点「打开 GitHub 发布页」查看源码与发布说明。"
-                    % item["version"], parent=dialog)
+                    i18n.t('version_select.not_installable_title'),
+                    i18n.t('version_select.not_installable_detail',
+                           version=item["version"]),
+                    parent=dialog)
                 return
             dialog.destroy()
             confirm_upgrade(current_version, item["version"],
@@ -6800,9 +6811,11 @@ def run_gui():
 
         footer = ttk.Frame(dialog, padding=12)
         footer.pack(fill="x")
-        ttk.Label(footer, justify="left", foreground="#888888", text=(
-            "提示: 绿色 = 当前版本; 灰色 = 未发布到 npm, 无法自动安装;\n"
-            "可以选择任何版本 (包括更旧的), 用于降级或切换通道。")).pack(anchor="w")
+        _iw_footer_hint = ttk.Label(
+            footer, justify="left", foreground="#888888",
+            text=i18n.t('version_select.footer_hint'))
+        _iw_footer_hint.pack(anchor="w")
+        _i18n_widgets.append((_iw_footer_hint, 'text', 'version_select.footer_hint'))
         button_row = ttk.Frame(footer)
         button_row.pack(side="right")
         _iw_6695 = ttk.Button(button_row, text=i18n.t('version_select.close'), command=lambda: (             dialog.destroy(), append_log("用户关闭版本选择")))

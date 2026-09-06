@@ -161,7 +161,9 @@
     "npm_latest": "npm dist-tag: latest (稳定正式)",
     "npm_next": "npm dist-tag: next (预发布通道)",
     "github_release": "GitHub release",
-    "github_prerelease": "GitHub release (预发布)"
+    "github_prerelease": "GitHub release (预发布)",
+    "fetch_fail_title": "检查更新",
+    "no_candidate": "无法获取版本信息, 请检查网络后重试。"
   },
   "upgrade_confirm": {
     "title": "确认升级",
@@ -169,7 +171,8 @@
     "loading_notes": "(加载中, 请稍候...)",
     "notes_fetch_fail": "(无法加载更新说明: {error})",
     "cancel": "取消",
-    "confirm": "确认升级"
+    "confirm": "确认升级",
+    "notes_unavailable": "(未能获取该版本的更新描述, 可直接确认升级。目标版本: {version})"
   },
   "version_select": {
     "title": "选择 DSH 版本",
@@ -190,7 +193,21 @@
     "current_mark": "当前",
     "select_first": "请先在上方列表中选择一个版本。",
     "no_installed": "(暂无已安装插件)",
-    "status_column": "状态"
+    "status_column": "状态",
+    "channel_stable_title": "① 稳定正式通道 (npm latest)",
+    "channel_stable_desc": "官方稳定发布通道",
+    "channel_prerelease_title": "② 预发布通道 (npm next / GitHub prerelease)",
+    "channel_prerelease_desc": "alpha/beta/rc 等预发布版本",
+    "channel_history_title": "③ GitHub 历史版本 (npm 已发布)",
+    "channel_history_desc": "过往正式版, 可用于降级",
+    "header_summary": "当前已安装: {current}\n\n检测到 {version_count} 个可用版本, 分布在 {channel_count} 个通道:\n· stable 通道 = npm latest (官方稳定正式版)\n· prerelease 通道 = npm next + GitHub 预发布 (alpha/beta/rc)\n· history 通道 = GitHub 历史正式版 (可降级)",
+    "status_installable": "✓ 可安装",
+    "status_not_installable": "✗ 未发布到npm",
+    "pick_channel_not_version": "请选择通道下的具体版本, 不要选通道标题。",
+    "already_current": "版本 {version} 已是当前已安装版本, 无需更新。",
+    "not_installable_title": "选择版本",
+    "not_installable_detail": "版本 {version} 尚未发布到 npm, 暂无法自动安装。\n\n官方通常只把正式/稳定版本发布到 npm,\n源码 tag 会提前出现在 GitHub Releases。\n可点「打开 GitHub 发布页」查看源码与发布说明。",
+    "footer_hint": "提示: 绿色 = 当前版本; 灰色 = 未发布到 npm, 无法自动安装;\n可以选择任何版本 (包括更旧的), 用于降级或切换通道。"
   },
   "open_fail": {
     "title": "打开失败",

@@ -154,14 +154,16 @@
     "title": "Check Update",
     "no_dsh": "dsh is not installed yet. Click Install Env first.",
     "fetch_fail": "Cannot fetch latest version info. Check network and retry.",
-    "fetch_fail_detail": "Cannot fetch latest version info. Check network and retry.",
+    "fetch_fail_detail": "Unable to fetch latest version info. Please check your network connection and try again.",
     "install_fail": "Install Failed",
     "install_fail_detail": "Cannot install selected version: {error}",
     "verify_close": "Close the version selector first before opening Plugin Manager.",
     "npm_latest": "npm dist-tag: latest (stable)",
     "npm_next": "npm dist-tag: next (prerelease)",
     "github_release": "GitHub release",
-    "github_prerelease": "GitHub release (prerelease)"
+    "github_prerelease": "GitHub release (prerelease)",
+    "fetch_fail_title": "Check for Updates",
+    "no_candidate": "Unable to fetch version info. Please check your network connection and try again."
   },
   "upgrade_confirm": {
     "title": "Confirm Upgrade",
@@ -169,7 +171,8 @@
     "loading_notes": "(Loading, please wait...)",
     "notes_fetch_fail": "(Cannot load release notes: {error})",
     "cancel": "Cancel",
-    "confirm": "Confirm Upgrade"
+    "confirm": "Confirm Upgrade",
+    "notes_unavailable": "(Release notes unavailable. You may confirm upgrade directly. Target: {version})"
   },
   "version_select": {
     "title": "Select DSH Version",
@@ -190,7 +193,21 @@
     "current_mark": "current",
     "select_first": "Select a version from the list above first.",
     "no_installed": "(no plugins installed)",
-    "status_column": "Status"
+    "status_column": "Status",
+    "channel_stable_title": "Stable (npm latest)",
+    "channel_stable_desc": "Official stable release channel",
+    "channel_prerelease_title": "Prerelease (npm next / GitHub prerelease)",
+    "channel_prerelease_desc": "Alpha/beta/rc pre-release builds",
+    "channel_history_title": "History (npm released GitHub versions)",
+    "channel_history_desc": "Previous releases, can be used for downgrade",
+    "header_summary": "Currently installed: {current}\n\nFound {version_count} available versions across {channel_count} channels:\n· stable = npm latest (official stable release)\n· prerelease = npm next + GitHub prerelease (alpha/beta/rc)\n· history = GitHub previous releases (downgrade available)",
+    "status_installable": "✓ Installable",
+    "status_not_installable": "✗ Not on npm",
+    "pick_channel_not_version": "Please select a specific version under the channel, not the channel title.",
+    "already_current": "Version {version} is already installed. No update needed.",
+    "not_installable_title": "Select Version",
+    "not_installable_detail": "Version {version} has not been published to npm yet and cannot be installed automatically.\n\nOfficially, only stable/release versions are published to npm.\nSource code tags appear on GitHub Releases earlier.\nClick \"Open GitHub Release Page\" to view source code and release notes.",
+    "footer_hint": "Tip: Green = current version; Gray = not on npm, cannot auto-install;\nYou can select any version (including older ones) for downgrade or channel switch."
   },
   "open_fail": {
     "title": "Open Failed",
