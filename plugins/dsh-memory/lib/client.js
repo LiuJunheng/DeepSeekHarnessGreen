@@ -15,6 +15,18 @@
 //   (bg-base, specific-input-major, border-l2), 文字走 label-primary/secondary/tertiary,
 //   状态色走 state-success/error/warn/business 变量。
 
+// i18n 工具函数 (同其他内置插件): 优先读 window.__DSH_I18N__ (启动器桌面壳注入)
+function _dsht(key, fallback) {
+	try {
+		const bridge = window.__DSH_I18N__;
+		if (bridge && bridge.current && bridge[bridge.current]) {
+			const val = bridge[bridge.current][key];
+			if (val !== undefined && val !== null && val !== "") return val;
+		}
+	} catch (_e) { }
+	return fallback || key;
+}
+
 window.__ModuleLoader__.load({
     id: "dsh-memory",
     factory: (require) => {
@@ -79,6 +91,12 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
 
         /** 记忆库主面板 (卡片式, 顶部双开关 + 实时保存)。 */
         function MemoryCard() {
+            const [i18nTick, setI18nTick] = react.useState(0);
+            react.useEffect(() => {
+                const handler = () => setI18nTick(t => t + 1);
+                document.addEventListener('dsh-i18n-change', handler);
+                return () => document.removeEventListener('dsh-i18n-change', handler);
+            }, []);
             const [status, setStatus] = react.useState(null);
             const [items, setItems] = react.useState([]);
             const [total, setTotal] = react.useState(0);
@@ -142,9 +160,9 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                     if (resp.ok && payload && payload.ok) {
                         // 提示文案: 根据字段名动态生成
                         const tipMap = {
-                            "autoRemember": value ? "自动记录已开启" : "自动记录已关闭",
-                            "autoRecall": value ? "自动注入已开启" : "自动注入已关闭",
-                            "crossSessionRecall": value ? "跨会话加载已开启 (会注入全局记忆)" : "跨会话加载已关闭 (只加载当前会话记忆)",
+                            "autoRemember": value ? _dsht("plugin.memory.msg_auto_record_on", "自动记录已开启") : _dsht("plugin.memory.msg_auto_record_off", "自动记录已关闭"),
+                            "autoRecall": value ? _dsht("plugin.memory.msg_auto_inject_on", "自动注入已开启") : _dsht("plugin.memory.msg_auto_inject_off", "自动注入已关闭"),
+                            "crossSessionRecall": value ? _dsht("plugin.memory.msg_cross_on", "跨会话加载已开启 (会注入全局记忆)") : _dsht("plugin.memory.msg_cross_off", "跨会话加载已关闭 (只加载当前会话记忆)"),
                         };
                         setSavedTip(tipMap[fieldName] || (value ? "已开启" : "已关闭"));
                     } else {
@@ -152,14 +170,14 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                         setAutoRemember(prevRemember);
                         setAutoRecall(prevRecall);
                         setCrossSessionRecall(prevCross);
-                        setError((payload && payload.error) || "保存失败");
+                        setError((payload && payload.error) || _dsht("plugin.memory.err_save", "保存失败"));
                     }
                 } catch (err) {
                     // 回滚
                     setAutoRemember(prevRemember);
                     setAutoRecall(prevRecall);
                     setCrossSessionRecall(prevCross);
-                    setError("保存失败: " + String((err && err.message) || err));
+                    setError(_dsht("plugin.memory.err_save_detail", "保存失败: ") + String((err && err.message) || err));
                 } finally {
                     setSavingField(null);
                 }
@@ -187,7 +205,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                         fetchJson(ROUTE_SESSIONS).catch(() => ({ ok: false })),
                     ]);
                     if (sRes.ok) setStatus(sRes.data);
-                    else setError(sRes.error || "状态获取失败");
+                    else setError(sRes.error || _dsht("plugin.memory.err_status", "状态获取失败"));
                     if (lRes.ok) {
                         setItems(lRes.data.items || []);
                         setTotal(lRes.data.total || 0);
@@ -215,7 +233,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                         setItems(res.data.results || []);
                         setTotal((res.data.results || []).length);
                     } else {
-                        setError(res.error || "搜索失败");
+                        setError(res.error || _dsht("plugin.memory.err_search", "搜索失败"));
                     }
                 } catch (err) {
                     setError(String(err.message || err));
@@ -226,7 +244,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
 
             /** 删除一条。 */
             const doDelete = react.useCallback(async (id) => {
-                if (!confirm(`确认删除记忆 #${id} ?`)) return;
+                if (!confirm(_dsht("plugin.memory.confirm_delete_title", "确认删除记忆 #{{id}} ?").replace("{{id}}", id))) return;
                 try {
                     await fetchJson(ROUTE_DELETE, {
                         method: "POST",
@@ -255,8 +273,8 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
             /** v3: 批量清理某个 session 的全部记忆。 */
             const batchDeleteSession = react.useCallback(async (sessionId, count) => {
                 if (!sessionId) return;
-                const label = sessionId === null ? "全局 (未关联会话)" : sessionId;
-                if (!confirm(`确定要清理会话「${label}」的 ${count} 条记忆吗?\n此操作不可恢复!`)) return;
+                const label = sessionId === null ? _dsht("plugin.memory.global_session", "全局") : sessionId;
+                if (!confirm(_dsht("plugin.memory.confirm_clean_session", "确定要清理会话「{{label}}」的 {{count}} 条记忆吗?\n此操作不可恢复!").replace("{{label}}", label).replace("{{count}}", count))) return;
                 try {
                     const res = await fetchJson(ROUTE_BATCH_SESSION, {
                         method: "POST",
@@ -264,10 +282,10 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                     });
                     if (res.ok) {
                         const deleted = res.data?.deleted ?? count;
-                        alert(`已清理 ${deleted} 条记忆`);
+                        alert(_dsht("plugin.memory.msg_cleaned_fmt", "已清理 {{deleted}} 条记忆").replace("{{deleted}}", deleted));
                         refreshAll({ session_id: activeTab === "session" ? activeSessionId : undefined });
                     } else {
-                        setError(res.error || "清理失败");
+                        setError(res.error || _dsht("plugin.memory.err_clean", "清理失败"));
                     }
                 } catch (err) {
                     setError(String(err.message || err));
@@ -276,9 +294,9 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
 
             /** v3: 按时间戳批量清理 (before_ts)。 */
             const batchDeleteBefore = react.useCallback(async (beforeTs) => {
-                if (!beforeTs || beforeTs <= 0) return;
+                if (!beforeTs || beforeTs <= 0) { alert(_dsht("plugin.memory.confirm_no_date", "请先选日期")); return; }
                 const dateStr = new Date(beforeTs * 1000).toLocaleDateString("zh-CN");
-                if (!confirm(`确定要清理 ${dateStr} (含) 之前的全部记忆吗?\n此操作不可恢复!`)) return;
+                if (!confirm(_dsht("plugin.memory.confirm_clean_date", "确定要清理 {{dateStr}} (含) 之前的全部记忆吗?\n此操作不可恢复!").replace("{{dateStr}}", dateStr))) return;
                 try {
                     const res = await fetchJson(ROUTE_BATCH_BEFORE, {
                         method: "POST",
@@ -286,10 +304,10 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                     });
                     if (res.ok) {
                         const deleted = res.data?.deleted ?? 0;
-                        alert(`已清理 ${deleted} 条记忆`);
+                        alert(_dsht("plugin.memory.msg_cleaned_fmt", "已清理 {{deleted}} 条记忆").replace("{{deleted}}", deleted));
                         refreshAll({ session_id: activeTab === "session" ? activeSessionId : undefined });
                     } else {
-                        setError(res.error || "清理失败");
+                        setError(res.error || _dsht("plugin.memory.err_clean", "清理失败"));
                     }
                 } catch (err) {
                     setError(String(err.message || err));
@@ -308,11 +326,11 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                     display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap",
                     marginBottom: "16px", borderBottom: "1px solid var(--dsw-alias-border-l2)", paddingBottom: "12px",
                 }},
-                    react.createElement("span", { style: { fontSize: "18px", fontWeight: 600, color: TEXT } }, "祖宗记忆库"),
+                    react.createElement("span", { style: { fontSize: "18px", fontWeight: 600, color: TEXT } }, _dsht("plugin.memory.title", "祖宗记忆库")),
                     react.createElement("span", { style: {
                         padding: "2px 10px", borderRadius: "10px", fontSize: "12px",
                         color: bridgeReady ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-state-warn-primary)",
-                    }}, bridgeReady ? "就绪" : "未就绪"),
+                    }}, bridgeReady ? _dsht("plugin.memory.status_ready", "就绪") : _dsht("plugin.memory.status_not_ready", "未就绪")),
                     // v4: 双 checkbox —— 自动记录
                     autoRemember !== null && react.createElement("label", { style: {
                         display: "flex", alignItems: "center", gap: "6px", marginLeft: "12px",
@@ -325,7 +343,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                             onChange: (e) => saveField("autoRemember", e.target.checked),
                             style: { cursor: savingField === "autoRemember" ? "default" : "pointer", margin: 0 },
                         }),
-                        react.createElement("span", null, "自动记录"),
+                        react.createElement("span", null, _dsht("plugin.memory.label_auto_record", "自动记录")),
                     ),
                     // v4: 双 checkbox —— 自动注入
                     autoRecall !== null && react.createElement("label", { style: {
@@ -339,14 +357,14 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                             onChange: (e) => saveField("autoRecall", e.target.checked),
                             style: { cursor: savingField === "autoRecall" ? "default" : "pointer", margin: 0 },
                         }),
-                        react.createElement("span", null, "自动注入"),
+                        react.createElement("span", null, _dsht("plugin.memory.label_auto_inject", "自动注入")),
                     ),
                     // v3.1: 跨会话加载 —— 只有 autoRecall 开了才有意义
                     crossSessionRecall !== null && autoRecall && react.createElement("label", { style: {
                         display: "flex", alignItems: "center", gap: "6px", marginLeft: "4px",
                         fontSize: "13px", color: TEXT, cursor: "pointer",
                         opacity: autoRecall ? 1 : 0.5,
-                    }, title: "关闭时只读当前会话自己的记忆; 开启后会把所有会话的全局记忆也加载到 system prompt" },
+                    }, title: _dsht("plugin.memory.hint_cross_session", "关闭时只读当前会话自己的记忆; 开启后会把所有会话的全局记忆也加载到 system prompt") },
                         react.createElement("input", {
                             type: "checkbox",
                             checked: crossSessionRecall,
@@ -354,7 +372,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                             onChange: (e) => saveField("crossSessionRecall", e.target.checked),
                             style: { cursor: (savingField === "crossSessionRecall" || !autoRecall) ? "default" : "pointer", margin: 0 },
                         }),
-                        react.createElement("span", null, "跨会话加载"),
+                        react.createElement("span", null, _dsht("plugin.memory.label_cross_session", "跨会话加载")),
                     ),
                     react.createElement("button", {
                         onClick: refreshAll,
@@ -363,7 +381,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                             background: "var(--dsw-alias-button-info-fill)", color: "#fff", border: "none", cursor: "pointer",
                             fontSize: "13px",
                         },
-                    }, "刷新"),
+                    }, _dsht("plugin.memory.btn_refresh", "刷新")),
                 ),
                 // 保存提示
                 savedTip !== null && react.createElement("div", { style: {
@@ -375,19 +393,19 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                 react.createElement("div", { style: {
                     display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px", marginBottom: "16px",
                 }},
-                    react.createElement(StatBox, { label: "总条数", value: String(totalMem), accent: "var(--dsw-alias-state-business-primary)" }),
+                    react.createElement(StatBox, { label: _dsht("plugin.memory.label_total", "总条数"), value: String(totalMem), accent: "var(--dsw-alias-state-business-primary)" }),
                     react.createElement(StatBox, {
-                        label: "平均重要性",
+                        label: _dsht("plugin.memory.label_importance", "平均重要性"),
                         value: status ? fmtImportance(status.avg_importance) : "—",
                         accent: "var(--dsw-alias-state-success-primary)",
                     }),
                     react.createElement(StatBox, {
-                        label: "引擎版本",
+                        label: _dsht("plugin.memory.label_engine", "引擎版本"),
                         value: status?.version || "—",
                         accent: "var(--dsw-alias-state-warn-primary)",
                     }),
                     react.createElement(StatBox, {
-                        label: "最新写入",
+                        label: _dsht("plugin.memory.label_last_write", "最新写入"),
                         value: fmtTime(status?.latest_memory_ts),
                         accent: "var(--dsw-alias-label-secondary)",
                     }),
@@ -411,7 +429,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                         value: searchText,
                         onChange: (e) => setSearchText(e.target.value),
                         onKeyDown: (e) => { if (e.key === "Enter") doSearch(); },
-                        placeholder: "搜索记忆内容...",
+                        placeholder: _dsht("plugin.memory.placeholder_search", "搜索记忆内容..."),
                         style: Object.assign({
                             flex: 1, padding: "8px 12px", borderRadius: "6px", fontSize: "13px", outline: "none",
                         }, INPUT),
@@ -422,7 +440,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                             padding: "8px 16px", borderRadius: "6px", background: "var(--dsw-alias-button-info-fill)",
                             color: "#fff", border: "none", cursor: "pointer", fontSize: "13px",
                         },
-                    }, "搜索"),
+                    }, _dsht("plugin.memory.btn_search", "搜索")),
                 ),
 
                 // --- 手动写入 ---
@@ -442,7 +460,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                             borderBottom: activeTab === "all" ? "2px solid var(--dsw-alias-button-info-fill)" : "2px solid transparent",
                             fontSize: "13px", fontWeight: activeTab === "all" ? 600 : 400,
                         },
-                    }, "全部记忆"),
+                    }, _dsht("plugin.memory.btn_all_memories", "全部记忆")),
                     react.createElement("button", {
                         onClick: () => { setActiveTab("session"); },
                         style: {
@@ -452,7 +470,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                             borderBottom: activeTab === "session" ? "2px solid var(--dsw-alias-button-info-fill)" : "2px solid transparent",
                             fontSize: "13px", fontWeight: activeTab === "session" ? 600 : 400,
                         },
-                    }, `会话分组 (${sessionGroups.length})`),
+                    }, _dsht("plugin.memory.btn_group_session", "会话分组 ({{count}})").replace("{{count}}", sessionGroups.length)),
                     // v3: 批量清理按时间 (只在全部记忆 Tab 显示)
                     activeTab === "all" && react.createElement("div", { style: {
                         marginLeft: "auto", display: "flex", gap: "6px", alignItems: "center",
@@ -469,7 +487,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                         }),
                         react.createElement("button", {
                             onClick: () => {
-                                if (!beforeDate) { alert("请先选日期"); return; }
+                                if (!beforeDate) { alert(_dsht("plugin.memory.confirm_no_date", "请先选日期")); return; }
                                 const ts = Math.floor(new Date(beforeDate + "T00:00:00").getTime() / 1000);
                                 batchDeleteBefore(ts);
                             },
@@ -478,7 +496,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                                 background: "var(--dsw-alias-state-error-fill, #e74c3c)", color: "#fff",
                                 fontSize: "12px",
                             },
-                        }, "清理此日期之前"),
+                        }, _dsht("plugin.memory.btn_clean_before", "清理此日期之前")),
                     ),
                 ),
 
@@ -492,7 +510,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                         borderRight: "1px solid var(--dsw-alias-border-l2)", paddingRight: "8px",
                     }},
                         sessionGroups.length === 0
-                            ? react.createElement("div", { style: { padding: "10px", color: HINT, fontSize: "12px" } }, "暂无会话数据")
+                            ? react.createElement("div", { style: { padding: "10px", color: HINT, fontSize: "12px" } }, _dsht("plugin.memory.empty_no_data", "暂无会话数据"))
                             : sessionGroups.map((sg) =>
                                 react.createElement("div", {
                                     key: String(sg.session_id),
@@ -507,10 +525,10 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                                     },
                                 },
                                     react.createElement("div", { style: { fontWeight: 500 } },
-                                        sg.display_title || sg.session_label || (sg.session_id ? String(sg.session_id).slice(0, 18) + "..." : "全局")
+                                        sg.display_title || sg.session_label || (sg.session_id ? String(sg.session_id).slice(0, 18) + "..." : _dsht("plugin.memory.global_session", "全局"))
                                     ),
                                     react.createElement("div", { style: { fontSize: "11px", opacity: 0.7 } },
-                                        `${sg.count} 条 · ${fmtTime(sg.latest)}`
+                                        `${sg.count} ${_dsht("plugin.memory.label_turns", "回合")} · ${fmtTime(sg.latest)}`
                                     ),
                                 )
                             ),
@@ -518,10 +536,10 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                     // 右侧: 当前选中会话的工具栏
                     react.createElement("div", { style: { flex: 1, paddingLeft: "8px", fontSize: "12px", color: LABEL } },
                         activeSessionId === null
-                            ? react.createElement("div", null, "请选择左侧一个会话查看其记忆")
+                            ? react.createElement("div", null, _dsht("plugin.memory.empty_pick_session", "请选择左侧一个会话查看其记忆"))
                             : react.createElement("div", null,
                                 react.createElement("div", { style: { marginBottom: "6px" } },
-                                    `当前会话: ${activeSessionId === null ? '全局' : activeSessionId}`
+                                    _dsht("plugin.memory.hint_current_session", "当前会话: {{id}}").replace("{{id}}", activeSessionId === null ? _dsht("plugin.memory.global_session", "全局") : activeSessionId)
                                 ),
                                 react.createElement("button", {
                                     onClick: () => {
@@ -533,7 +551,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                                         background: "var(--dsw-alias-state-error-fill, #e74c3c)", color: "#fff",
                                         fontSize: "12px",
                                     },
-                                }, "清理此会话全部记忆"),
+                                }, _dsht("plugin.memory.btn_clean_session", "清理此会话全部记忆")),
                             ),
                     ),
                 ),
@@ -543,8 +561,8 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                     maxHeight: "300px", overflowY: "auto",
                     borderTop: "1px solid var(--dsw-alias-border-l2)", paddingTop: "12px",
                 }},
-                    loading ? react.createElement("div", { style: { textAlign: "center", padding: "20px", color: HINT } }, "加载中...")
-                    : items.length === 0 ? react.createElement("div", { style: { textAlign: "center", padding: "20px", color: HINT } }, "暂无记忆")
+                    loading ? react.createElement("div", { style: { textAlign: "center", padding: "20px", color: HINT } }, _dsht("plugin.memory.loading", "加载中..."))
+                    : items.length === 0 ? react.createElement("div", { style: { textAlign: "center", padding: "20px", color: HINT } }, _dsht("plugin.memory.empty_no_mem", "暂无记忆"))
                     : items.map((item) =>
                         react.createElement(MemoryItem, {
                             key: item.id,
@@ -605,7 +623,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                             background: "var(--dsw-alias-state-error-primary)", color: "#fff",
                             border: "none", cursor: "pointer", fontSize: "11px",
                         },
-                    }, "删除"),
+                    }, _dsht("plugin.memory.btn_delete", "删除")),
                 ),
             );
         }
@@ -631,7 +649,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                 react.createElement("textarea", {
                     value: content,
                     onChange: (e) => setContent(e.target.value),
-                    placeholder: "快速写入一条记忆...",
+                    placeholder: _dsht("plugin.memory.placeholder_write", "快速写入一条记忆..."),
                     rows: 2,
                     style: Object.assign({
                         width: "100%", padding: "8px", borderRadius: "6px",
@@ -643,14 +661,14 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                     react.createElement("input", {
                         value: tagsStr,
                         onChange: (e) => setTagsStr(e.target.value),
-                        placeholder: "标签 (逗号分隔)",
+                        placeholder: _dsht("plugin.memory.placeholder_tags", "标签 (逗号分隔)"),
                         style: Object.assign({ flex: 1, padding: "6px 10px", borderRadius: "6px", fontSize: "12px", outline: "none" }, INPUT),
                     }),
                     react.createElement("input", {
                         type: "number", min: 0, max: 1, step: 0.1,
                         value: importance,
                         onChange: (e) => setImportance(parseFloat(e.target.value) || 0.6),
-                        title: "重要性 0.0 ~ 1.0",
+                        title: _dsht("plugin.memory.title_importance", "重要性 0.0 ~ 1.0"),
                         style: Object.assign({ width: "80px", padding: "6px 10px", borderRadius: "6px", fontSize: "12px", outline: "none" }, INPUT),
                     }),
                     react.createElement("button", {
@@ -660,7 +678,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                             background: "var(--dsw-alias-state-success-primary)", color: "#fff", border: "none",
                             cursor: "pointer", fontSize: "12px", fontWeight: 600,
                         },
-                    }, "写入"),
+                    }, _dsht("plugin.memory.btn_write", "写入")),
                 ),
             );
         }
@@ -671,7 +689,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                 name: "settings.section",
                 id: "dsh-memory",
                 order: 530,
-                label: "祖宗记忆库",
+                label: _dsht("plugin.memory.title", "祖宗记忆库"),
             }, MemoryCard));
         }
 

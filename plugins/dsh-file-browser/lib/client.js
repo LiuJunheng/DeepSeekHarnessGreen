@@ -1,4 +1,4 @@
-﻿// DeepSeek Harness 插件 (客户端): dsh-file-browser
+// DeepSeek Harness 插件 (客户端): dsh-file-browser
 // 在输入框工具行注册「📁 文件」按钮 (conversation.input.left), 在 shell.overlay
 // 注册右侧浮层文件浏览器: 列目录、返回上级、路径跳转、文本/图片预览。
 // 右键文件/目录弹出菜单: 插入路径/内容到输入框、复制路径 (追加进草稿, 用户可编辑后发送)。
@@ -11,6 +11,18 @@
 // 数据通过 fetch 调用宿主端路由 /__dsh/file-browser/* (带自定义头防跨站)。
 // 这是加载器契约格式 (window.__ModuleLoader__.load), 与官方客户端插件一致。
 // 注意: 不修改任何官方文件/包; 样式用内联对象 (与 dsh-archive-purge 同风格)。
+
+// i18n 工具函数 (同其他内置插件): 优先读 window.__DSH_I18N__ (启动器桌面壳注入)
+function _dsht(key, fallback) {
+	try {
+		const bridge = window.__DSH_I18N__;
+		if (bridge && bridge.current && bridge[bridge.current]) {
+			const val = bridge[bridge.current][key];
+			if (val !== undefined && val !== null && val !== "") return val;
+		}
+	} catch (_e) { }
+	return fallback || key;
+}
 
 window.__ModuleLoader__.load({
 	id: "dsh-file-browser",
@@ -142,6 +154,12 @@ window.__ModuleLoader__.load({
 		};
 
 		function FileBrowser(props) {
+			const [i18nTick, setI18nTick] = react.useState(0);
+			react.useEffect(() => {
+				const handler = () => setI18nTick(t => t + 1);
+				document.addEventListener('dsh-i18n-change', handler);
+				return () => document.removeEventListener('dsh-i18n-change', handler);
+			}, []);
 			const [cwd, setCwd] = react.useState("");
 			const [entries, setEntries] = react.useState(null);
 			const [listError, setListError] = react.useState(null);
@@ -315,7 +333,7 @@ window.__ModuleLoader__.load({
 						size: 512 * 1024,
 					});
 					if (res && (res.error || !res)) {
-						throw new Error((res && res.error) || "未知错误");
+						throw new Error((res && res.error) || _dsht("plugin.file_browser.err_no_thumb", "未知错误"));
 					}
 					setPreview((prev) => {
 						if (!prev) return prev;
@@ -361,7 +379,7 @@ window.__ModuleLoader__.load({
 						if (!prev || prev.kind !== "text") return prev;
 						return Object.assign({}, prev, {
 							kind: "text", // 保持类型不变, 附一个错误提示
-							content: prev.content + "\n\n[读取后续失败] " + String((e && e.message) || e) + "\n",
+							content: prev.content + "\n\n" + _dsht("plugin.file_browser.read_next_fail", "[读取后续失败] ") + String((e && e.message) || e) + "\n",
 						});
 					});
 				} finally {
@@ -381,7 +399,7 @@ window.__ModuleLoader__.load({
 						if (res && res.root) {
 							loadDir(res.root);
 						} else {
-							setListError((res && res.error) || "无法获取起始目录");
+							setListError((res && res.error) || _dsht("plugin.file_browser.err_start_dir", "无法获取起始目录"));
 						}
 					})
 					.catch((e) => {
@@ -427,25 +445,29 @@ window.__ModuleLoader__.load({
 					const res = await postJson(BASE + "/read", { path: menuEntry.path });
 					let text;
 					if (res && res.error) {
-						text = "[文件] " + menuEntry.path + "（读取失败：" + res.error + "）";
+						text = _dsht("plugin.file_browser.file_hint", "[文件] {{path}}（读取失败：{{err}}）")
+							.replace("{{path}}", menuEntry.path).replace("{{err}}", res.error);
 					} else if (res && res.kind === "image") {
-						text = "[图片] " + menuEntry.path + "（" + fmtSize(res.size) + (res.truncated ? "，过大仅预览前部" : "") + "）";
+						text = _dsht("plugin.file_browser.image_hint", "[图片] {{path}}（{{size}}，过大仅预览前部）")
+							.replace("{{path}}", menuEntry.path).replace("{{size}}", fmtSize(res.size));
 					} else if (res && res.kind === "binary") {
-						text = "[二进制文件] " + menuEntry.path + "（大小 " + fmtSize(res.size) + "，不支持内容插入）";
+						text = _dsht("plugin.file_browser.binary_hint", "[二进制文件] {{path}}（大小 {{size}}，不支持内容插入）")
+							.replace("{{path}}", menuEntry.path).replace("{{size}}", fmtSize(res.size));
 					} else {
 						let body = res && typeof res.content === "string" ? res.content : "";
 						let note = "";
 						if (body.length > CONTENT_INSERT_CAP) {
 							body = body.slice(0, CONTENT_INSERT_CAP);
-							note = "（内容过长，已截断为前 " + CONTENT_INSERT_CAP + " 字符）";
+							note = _dsht("plugin.file_browser.content_truncated", "（内容过长，已截断为前 {{cap}} 字符）").replace("{{cap}}", CONTENT_INSERT_CAP);
 						} else if (res && res.truncated) {
-							note = "（文件过大，预览仅前部内容；请在文件浏览面板点击「再看后面一段」分批查看全文）";
+							note = _dsht("plugin.file_browser.file_too_large", "（文件过大，预览仅前部内容；请在文件浏览面板点击「再看后面一段」分批查看全文）");
 						}
-						text = "[文件] " + menuEntry.path + "\n" + body + "\n[文件内容结束]" + note;
+						text = "[文件] " + menuEntry.path + "\n" + body + "\n" + _dsht("plugin.file_browser.file_end", "[文件内容结束]") + note;
 					}
 					queueInsert(text);
 				} catch (e) {
-					queueInsert("[文件] " + menuEntry.path + "（读取失败：" + String((e && e.message) || e) + "）");
+					queueInsert(_dsht("plugin.file_browser.file_hint", "[文件] {{path}}（读取失败：{{err}}）")
+						.replace("{{path}}", menuEntry.path).replace("{{err}}", String((e && e.message) || e)));
 				}
 			}
 
@@ -550,9 +572,9 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
             ce.dispatchEvent(new Event("input", { bubbles: true }));
             return { ok: true, method: "dom-fallback-ce" };
         }
-        return { ok: false, err: "无法找到输入框 (textarea/contenteditable)", method: "none" };
+        return { ok: false, err: _dsht("plugin.file_browser.err_no_input", "无法找到输入框 (textarea/contenteditable)"), method: "none" };
     } catch (e) {
-        return { ok: false, err: "DOM fallback 异常: " + String((e && e.message) || e), method: "none" };
+        return { ok: false, err: _dsht("plugin.file_browser.err_dom_fallback", "DOM fallback 异常: ") + String((e && e.message) || e), method: "none" };
     }
 }
 
@@ -628,21 +650,21 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 			                                editor.focus();
 			                                const inserted = document.execCommand("insertText", false, "@" + rel + " ");
 			                                if (inserted) {
-			                                    showNotice("已插入文本: @" + rel);
+			                                    showNotice(_dsht("plugin.file_browser.insert_success", "已插入文本: @{{rel}}").replace("{{rel}}", rel));
 			                                } else {
-			                                    showNotice("请手动输入: @" + rel);
+			                                    showNotice(_dsht("plugin.file_browser.insert_manual", "请手动输入: @{{rel}}").replace("{{rel}}", rel));
 			                                }
 			                            } else {
-			                                showNotice("请手动输入: @" + rel);
+			                                showNotice(_dsht("plugin.file_browser.insert_manual", "请手动输入: @{{rel}}").replace("{{rel}}", rel));
 			                            }
 			                        } catch (domErr) {
-			                            showNotice("请手动输入: @" + rel);
+			                            showNotice(_dsht("plugin.file_browser.insert_manual", "请手动输入: @{{rel}}").replace("{{rel}}", rel));
 			                        }
 			                    }
 			                    setMenu(null);
 			    } catch (e) {
 			        console.error("[file-browser] insertOfficialReference error:", e);
-			        try { showNotice("插入报错: " + (e && e.message || e)); } catch (_) {}
+			        try { showNotice(_dsht("plugin.file_browser.err_insert", "插入报错: ") + (e && e.message || e)); } catch (_) {}
 			    }
         }
 
@@ -652,25 +674,25 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 				// 官方 @+文件 引用插入 (文件专属, 排第一): 与官方 @ 菜单同源的引用 chip。
 				if (!isDir) {
 					items.push({
-						label: "以官方 @ 引用插入",
+						label: _dsht("plugin.file_browser.btn_insert_ref", "以官方 @ 引用插入"),
 						icon: "@",
 						onClick: () => { setMenu(null); insertOfficialReference(menuEntry); },
 					});
 				}
 				items.push({
-					label: isDir ? "插入目录路径到输入框" : "插入文件路径到输入框",
+					label: isDir ? _dsht("plugin.file_browser.btn_insert_dir", "插入目录路径到输入框") : _dsht("plugin.file_browser.btn_insert_file", "插入文件路径到输入框"),
 					icon: isDir ? "\uD83D\uDCC1" : "\uD83D\uDCC4",
 					onClick: () => { queueInsert(menuEntry.path); setMenu(null); },
 				});
 				if (!isDir) {
 					items.push({
-						label: "插入内容到输入框",
+						label: _dsht("plugin.file_browser.btn_insert_content", "插入内容到输入框"),
 						icon: "\u270D\uFE0F",
 						onClick: () => { insertContent(menuEntry); setMenu(null); },
 					});
 				}
 				items.push({
-					label: "复制路径",
+					label: _dsht("plugin.file_browser.btn_copy_path", "复制路径"),
 					icon: "\uD83D\uDCCB",
 					onClick: () => { copyText(menuEntry.path); setMenu(null); },
 				});
@@ -697,7 +719,7 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 					onClick: goUp,
 					onMouseEnter: () => setHoverKey(".."),
 					onMouseLeave: () => setHoverKey(null),
-				}, "\u2191 ..（上级目录）"),
+				}, _dsht("plugin.file_browser.parent_dir", "↑ ..（上级目录）")),
 			];
 
 			sorted.forEach((e) => {
@@ -732,26 +754,26 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 
 			let listBody;
 			if (busy && entries === null) {
-				listBody = react.createElement("div", { style: statusStyle }, "加载中…");
+				listBody = react.createElement("div", { style: statusStyle }, _dsht("plugin.file_browser.loading", "加载中…"));
 			} else if (listError) {
 				listBody = react.createElement("div", { style: errorStyle }, listError);
 			} else if (entries !== null && rows.length <= 1) {
-				listBody = react.createElement("div", { style: statusStyle }, "空目录");
+				listBody = react.createElement("div", { style: statusStyle }, _dsht("plugin.file_browser.empty", "空目录"));
 			} else {
 				listBody = react.createElement("div", { style: { padding: "4px 0" } }, rows);
 			}
 
 			let previewBody;
 			if (previewing) {
-				previewBody = react.createElement("div", { style: statusStyle }, "加载中…");
+				previewBody = react.createElement("div", { style: statusStyle }, _dsht("plugin.file_browser.loading", "加载中…"));
 			} else if (!preview) {
-				previewBody = react.createElement("div", { style: statusStyle }, "选中左侧文件查看预览");
+				previewBody = react.createElement("div", { style: statusStyle }, _dsht("plugin.file_browser.no_preview", "选中左侧文件查看预览"));
 			} else if (preview.kind === "error") {
 				previewBody = react.createElement("div", { style: errorStyle }, preview.message);
 			} else if (preview.kind === "image") {
 				previewBody = react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, [
 					preview.truncated
-						? react.createElement("div", { key: "note", style: statusStyle }, "图片过大（" + fmtSize(preview.size) + "），以下为前部缩略预览（建议直接用图片文件双击打开看原图）。")
+						? react.createElement("div", { key: "note", style: statusStyle }, _dsht("plugin.file_browser.too_large_image", "图片过大（{{size}}），以下为前部缩略预览（建议直接用图片文件双击打开看原图）。").replace("{{size}}", fmtSize(preview.size)))
 						: react.createElement("div", { key: "note", style: statusStyle }, fmtSize(preview.size)),
 					preview.src
 						? react.createElement("img", {
@@ -760,7 +782,7 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 							alt: "preview",
 							style: { maxWidth: "100%", height: "auto", borderRadius: 6, display: "block" },
 						})
-						: react.createElement("div", { key: "na", style: errorStyle }, "预览失败：未能生成缩略数据"),
+						: react.createElement("div", { key: "na", style: errorStyle }, _dsht("plugin.file_browser.preview_fail", "预览失败：未能生成缩略数据")),
 				]);
 			} else if (preview.kind === "binary") {
 				const head = preview.head || "";
@@ -774,7 +796,9 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 					} catch (_decodeErr) { headDisplay = ""; }
 				}
 				previewBody = react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, [
-					react.createElement("div", { key: "note", style: statusStyle }, "二进制文件，大小 " + fmtSize(preview.size) + (preview.truncated ? "（预览仅前部 " + BINARY_HEAD_BYTES + " 字节 head）" : "")),
+					react.createElement("div", { key: "note", style: statusStyle },
+						_dsht("plugin.file_browser.binary_preview", "二进制文件，大小 {{size}}（预览仅前部 {{bytes}} 字节 head）")
+							.replace("{{size}}", fmtSize(preview.size)).replace("{{bytes}}", BINARY_HEAD_BYTES)),
 					headDisplay
 						? react.createElement("pre", {
 							key: "head",
@@ -797,8 +821,9 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 				// kind === "text"
 				const meta = fmtSize(preview.size);
 				const truncatedNote = preview.truncated
-					? "已预览前部 " + fmtSize(preview.loadedBytes || 0) + "，共 " + meta
-					: meta + "（已全部载入）";
+					? _dsht("plugin.file_browser.partial_loaded", "已预览前部 {{loaded}}, 共 {{total}}")
+						.replace("{{loaded}}", fmtSize(preview.loadedBytes || 0)).replace("{{total}}", meta)
+					: _dsht("plugin.file_browser.full_loaded", "{{size}}（已全部载入）").replace("{{size}}", meta);
 				const children = [
 					react.createElement("div", { key: "meta", style: statusStyle }, truncatedNote),
 					react.createElement("pre", {
@@ -833,11 +858,11 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 								opacity: chunkLoading ? 0.6 : 1,
 							},
 							onClick: loadMoreChunk,
-						}, chunkLoading ? "加载中…" : "再看后面一段（512KB）"),
-						react.createElement("span", { key: "tip", style: { fontSize: 11, color: C.text2 } }, "可连续点击直到文件末尾"),
+						}, chunkLoading ? _dsht("plugin.file_browser.loading", "加载中…") : _dsht("plugin.file_browser.btn_next_chunk", "再看后面一段（512KB）")),
+						react.createElement("span", { key: "tip", style: { fontSize: 11, color: C.text2 } }, _dsht("plugin.file_browser.can_continue", "可连续点击直到文件末尾")),
 					]));
 				} else if (preview.eof) {
-					children.push(react.createElement("div", { key: "eof", style: { fontSize: 11, color: C.text2, padding: "4px 0" } }, "已到文件末尾 ✓"));
+					children.push(react.createElement("div", { key: "eof", style: { fontSize: 11, color: C.text2, padding: "4px 0" } }, _dsht("plugin.file_browser.at_end", "已到文件末尾 ✓")));
 				}
 				previewBody = react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, minHeight: "100%" } }, children);
 			}
@@ -992,9 +1017,9 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 
 			return react.createElement("div", { style: panelStyle }, [
 				// 拉伸手柄: 右下角 BR + 右侧 R + 底部 B (顺序靠前, 避免被其他内部元素盖住事件)。
-				react.createElement("div", { key: "hrR", style: rightHandleStyle, onMouseDown: (e) => windowOnDown(e, "r"), title: "拖动调整宽度" }),
-				react.createElement("div", { key: "hrB", style: bottomHandleStyle, onMouseDown: (e) => windowOnDown(e, "b"), title: "拖动调整高度" }),
-				react.createElement("div", { key: "hrBR", style: brHandleStyle, onMouseDown: (e) => windowOnDown(e, "br"), title: "拖动调整尺寸" },
+				react.createElement("div", { key: "hrR", style: rightHandleStyle, onMouseDown: (e) => windowOnDown(e, "r"), title: _dsht("plugin.file_browser.resize_width", "拖动调整宽度") }),
+				react.createElement("div", { key: "hrB", style: bottomHandleStyle, onMouseDown: (e) => windowOnDown(e, "b"), title: _dsht("plugin.file_browser.resize_height", "拖动调整高度") }),
+				react.createElement("div", { key: "hrBR", style: brHandleStyle, onMouseDown: (e) => windowOnDown(e, "br"), title: _dsht("plugin.file_browser.resize_both", "拖动调整尺寸") },
 					react.createElement("div", { key: "grip", style: brGripStyle })),
 				react.createElement("div", {
 					key: "header", style: headerStyle,
@@ -1002,18 +1027,18 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 					// 避免拖动头部时选中文本
 					onDoubleClick: (e) => { e.preventDefault(); /* 预留: 双击可重置尺寸 */ },
 				}, [
-					react.createElement("span", { key: "t", style: { fontWeight: 600, fontSize: 13, whiteSpace: "nowrap" } }, "文件浏览"),
+					react.createElement("span", { key: "t", style: { fontWeight: 600, fontSize: 13, whiteSpace: "nowrap" } }, _dsht("plugin.file_browser.title", "文件浏览")),
 					react.createElement("input", {
 						key: "p",
 						style: inputStyle,
 						value: pathInput,
-						placeholder: "输入路径后回车",
+						placeholder: _dsht("plugin.file_browser.placeholder", "输入路径后回车"),
 						onChange: (ev) => setPathInput(ev.target.value),
 						onKeyDown: (ev) => { if (ev.key === "Enter") goToPath(); },
 						onMouseDown: (e) => e.stopPropagation(),  // 输入框不触发拖动
 					}),
-					react.createElement("button", { key: "r", type: "button", style: btnStyle, onClick: () => loadDir(cwd || pathInput), title: "刷新", onMouseDown: (e) => e.stopPropagation() }, "\u21BB"),
-					react.createElement("button", { key: "c", type: "button", style: btnStyle, onClick: props.onClose, title: "关闭", onMouseDown: (e) => e.stopPropagation() }, "\u2715"),
+					react.createElement("button", { key: "r", type: "button", style: btnStyle, onClick: () => loadDir(cwd || pathInput), title: _dsht("plugin.file_browser.btn_refresh", "刷新"), onMouseDown: (e) => e.stopPropagation() }, "\u21BB"),
+					react.createElement("button", { key: "c", type: "button", style: btnStyle, onClick: props.onClose, title: _dsht("plugin.file_browser.btn_close", "关闭"), onMouseDown: (e) => e.stopPropagation() }, "\u2715"),
 				]),
 				react.createElement("div", { key: "body", style: { flex: 1, display: "flex", minHeight: 0 } }, [
 					react.createElement("div", { key: "list", style: { width: "46%", flex: "none", borderRight: "1px solid " + C.border, overflowY: "auto" } }, listBody),
@@ -1024,7 +1049,11 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 					style: { flex: "none", borderTop: "1px solid " + C.border, padding: "6px 12px", color: notice ? C.error : C.text2, fontSize: 11 },
 				}, notice
 					? notice
-					: (busy ? "加载中…" : (entries ? entries.length + (truncated ? "+ 项（已截断）" : " 项") : ""))),
+					: (busy ? _dsht("plugin.file_browser.loading", "加载中…") : (entries
+						? (truncated
+							? _dsht("plugin.file_browser.count_truncated_fmt", "{{count}} 项（已截断）").replace("{{count}}", entries.length)
+							: _dsht("plugin.file_browser.count_fmt", "{{count}} 项").replace("{{count}}", entries.length))
+						: ""))),
 				menuEl,
 			]);
 		}
@@ -1033,6 +1062,12 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 			ctx.slots.inject("conversation.input.left", () => ctx.slots.register(
 				{ name: "conversation.input.left", id: "file-browser-toggle", order: 5 },
 				(ownerProps) => {
+					const [i18nTick, setI18nTick] = react.useState(0);
+					react.useEffect(() => {
+						const handler = () => setI18nTick(t => t + 1);
+						document.addEventListener('dsh-i18n-change', handler);
+						return () => document.removeEventListener('dsh-i18n-change', handler);
+					}, []);
 					const isOpen = useOpen();
 					const pending = usePendingInsert();
 					const inputActions = ownerProps && ownerProps.inputActions;
@@ -1061,7 +1096,7 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 					return react.createElement("button", {
 						type: "button",
 						onClick: () => setOpen(!isOpen),
-						title: "文件浏览（右键文件可 @ 引用插入 / 插入路径 / 插入内容 / 复制）",
+						title: _dsht("plugin.file_browser.hint_toolbar", "文件浏览（右键文件可 @ 引用插入 / 插入路径 / 插入内容 / 复制）"),
 						style: {
 							display: "inline-flex",
 							alignItems: "center",
@@ -1076,7 +1111,7 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 							fontFamily: "inherit",
 							fontSize: 12,
 						},
-					}, "\uD83D\uDCC1", react.createElement("span", { style: { marginLeft: 4 } }, "文件"));
+					}, "\uD83D\uDCC1", react.createElement("span", { style: { marginLeft: 4 } }, _dsht("plugin.file_browser.tab_label", "文件")));
 				},
 			));
 
@@ -1123,4 +1158,3 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 		return module.exports;
 	},
 });
-

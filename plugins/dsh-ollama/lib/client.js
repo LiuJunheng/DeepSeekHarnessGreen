@@ -11,6 +11,18 @@
 // 这是加载器契约格式 (window.__ModuleLoader__.load), 与官方客户端插件一致。
 // 注意: 不修改任何官方文件/包; 样式用内联对象 + WebUI 主题变量。
 
+// i18n 工具函数 (同其他内置插件): 优先读 window.__DSH_I18N__ (启动器桌面壳注入)
+function _dsht(key, fallback) {
+	try {
+		var bridge = window.__DSH_I18N__;
+		if (bridge && bridge.current && bridge[bridge.current]) {
+			var val = bridge[bridge.current][key];
+			if (val !== undefined && val !== null && val !== "") return val;
+		}
+	} catch (_e) { }
+	return fallback || key;
+}
+
 window.__ModuleLoader__.load({
 	id: "dsh-ollama",
 	factory: (require) => {
@@ -140,6 +152,14 @@ window.__ModuleLoader__.load({
 		// ---- 主设置面板 ----
 
 		function OllamaSettingsSection() {
+			// i18n 语言切换监听器: 切换语言时触发重渲染
+			const [i18nTick, setI18nTick] = react.useState(0);
+			react.useEffect(() => {
+				const handler = () => setI18nTick((t) => t + 1);
+				document.addEventListener("dsh-i18n-change", handler);
+				return () => document.removeEventListener("dsh-i18n-change", handler);
+			}, []);
+
 			// 生效配置 (来自宿主端: 默认值 + cordis config + 面板持久化覆盖)
 			const [config, setConfig] = react.useState(null);
 			// 连接状态: { online, models, checkedAt, lastError }
@@ -169,7 +189,7 @@ window.__ModuleLoader__.load({
 					setDraft({ ...(payload.config || {}) });
 					return payload;
 				} catch (err) {
-					setError("读取配置失败: " + String((err && err.message) || err));
+					setError(_dsht("plugin.ollama.err_read", "读取配置失败: ") + String((err && err.message) || err));
 					return null;
 				} finally {
 					setBusy(false);
@@ -198,10 +218,10 @@ window.__ModuleLoader__.load({
 					setProviderWritten(payload.providerWritten === true);
 					setDraft({ ...(payload.config || {}) });
 					setSavedTip(payload.error
-						? "已保存，但按新配置接入时出错: " + payload.error
-						: "已保存，并按新配置重新接入 Ollama");
+						? _dsht("plugin.ollama.msg_saved_with_err", "已保存，但按新配置接入时出错: {{err}}").replace("{{err}}", String(payload.error))
+						: _dsht("plugin.ollama.msg_saved_reconnect", "已保存，并按新配置重新接入 Ollama"));
 				} catch (err) {
-					setError("保存失败: " + String((err && err.message) || err));
+					setError(_dsht("plugin.ollama.err_save", "保存失败: ") + String((err && err.message) || err));
 				} finally {
 					setBusy(false);
 				}
@@ -227,12 +247,12 @@ window.__ModuleLoader__.load({
 					if (payload.error) {
 						setError(String(payload.error));
 					} else if (payload.reconnected === true) {
-						setSavedTip("已重新接入 Ollama，模型已按当前配置同步");
+						setSavedTip(_dsht("plugin.ollama.msg_reconnected", "已重新接入 Ollama，模型已按当前配置同步"));
 					} else {
-						setSavedTip("重探完成，但未检测到可接入的 Ollama 模型");
+						setSavedTip(_dsht("plugin.ollama.msg_reconnect_no_models", "重探完成，但未检测到可接入的 Ollama 模型"));
 					}
 				} catch (err) {
-					setError("一键接入失败: " + String((err && err.message) || err));
+					setError(_dsht("plugin.ollama.err_one_click", "一键接入失败: ") + String((err && err.message) || err));
 				} finally {
 					setBusy(false);
 				}
@@ -262,25 +282,25 @@ window.__ModuleLoader__.load({
 							background: online ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-state-error-primary)",
 						} }),
 						react.createElement("span", { key: "txt", style: { fontSize: 13, fontWeight: 600, color: "var(--dsw-alias-label-primary)" } },
-							online ? "Ollama 服务在线" : "Ollama 服务未检测到"),
+							online ? _dsht("plugin.ollama.status_online", "Ollama 服务在线") : _dsht("plugin.ollama.status_offline", "Ollama 服务未检测到")),
 						react.createElement("span", { key: "at", style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)" } },
-							"最近检测: " + fmtCheckedAt(status && status.checkedAt)),
+							_dsht("plugin.ollama.status_last_check", "最近检测: {{relativeTime}}").replace("{{relativeTime}}", fmtCheckedAt(status && status.checkedAt))),
 						providerWritten
-							? react.createElement("span", { key: "badge", style: { fontSize: 11, color: "var(--dsw-alias-state-success-primary)", border: "1px solid var(--dsw-alias-state-success-primary)", borderRadius: 10, padding: "1px 8px" } }, "已接入 Models 页")
-							: react.createElement("span", { key: "badge", style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: 10, padding: "1px 8px" } }, "未接入"),
+							? react.createElement("span", { key: "badge", style: { fontSize: 11, color: "var(--dsw-alias-state-success-primary)", border: "1px solid var(--dsw-alias-state-success-primary)", borderRadius: 10, padding: "1px 8px" } }, _dsht("plugin.ollama.status_connected", "已接入 Models 页"))
+							: react.createElement("span", { key: "badge", style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: 10, padding: "1px 8px" } }, _dsht("plugin.ollama.status_not_connected", "未接入")),
 						// 「一键接入」按钮: 强制按当前配置重新探测接入 (不需保存表单)。
 						react.createElement("button", { key: "reconnect", type: "button", disabled: busy, onClick: reconnectNow, style: {
 							padding: "4px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600,
 							background: "var(--dsw-alias-state-business-primary)", color: "#ffffff", border: "none", borderRadius: 4,
 						} },
-							busy ? "接入中…" : "一键接入"),
+							busy ? _dsht("plugin.ollama.btn_connecting", "接入中…") : _dsht("plugin.ollama.btn_one_click", "一键接入")),
 					]),
 					status && status.lastError
 						? react.createElement("div", { key: "err", style: { fontSize: 12, color: "var(--dsw-alias-state-error-primary)", marginBottom: 6 } }, status.lastError)
 						: null,
 					react.createElement("div", { key: "models", style: { display: "flex", flexWrap: "wrap", gap: 6 } }, [
 						models.length === 0
-							? react.createElement("span", { key: "none", style: { fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, "尚未发现模型（服务在线后自动列出）")
+							? react.createElement("span", { key: "none", style: { fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.ollama.status_no_models_yet", "尚未发现模型（服务在线后自动列出）"))
 							: models.map((model) =>
 								react.createElement("span", { key: model, style: {
 									fontFamily: "Consolas, Menlo, monospace",
@@ -298,61 +318,59 @@ window.__ModuleLoader__.load({
 			// ---- 配置表单 ----
 			const formCard = (() => {
 				if (draft === null) {
-					return react.createElement("div", { key: "loading", style: { padding: 12, color: "var(--dsw-alias-label-tertiary)" } }, "加载中…");
+					return react.createElement("div", { key: "loading", style: { padding: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.ollama.btn_loading", "加载中…"));
 				}
 				return react.createElement("div", { key: "form", style: cardStyle }, [
 					react.createElement("div", { key: "enable", style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 12 } }, [
 						react.createElement("input", { type: "checkbox", id: "ollama-enabled", checked: Boolean(draft.enabled), onChange: (e) => setDraftField("enabled", e.target.checked) }),
-						react.createElement("label", { htmlFor: "ollama-enabled", style: { fontSize: 13, color: "var(--dsw-alias-label-primary)", cursor: "pointer" } }, "启用自动识别 Ollama"),
+						react.createElement("label", { htmlFor: "ollama-enabled", style: { fontSize: 13, color: "var(--dsw-alias-label-primary)", cursor: "pointer" } }, _dsht("plugin.ollama.label_enable", "启用自动识别 Ollama")),
 					]),
-					react.createElement(FieldRow, { key: "baseUrl", label: "Ollama 服务地址", hint: "Ollama 原生接口根地址，不含 /v1。默认 http://localhost:11434（本机默认端口）；远程/自定义端口请按 http://主机:端口 填写。" },
+					react.createElement(FieldRow, { key: "baseUrl", label: _dsht("plugin.ollama.label_endpoint", "Ollama 服务地址"), hint: _dsht("plugin.ollama.hint_endpoint", "Ollama 原生接口根地址，不含 /v1。默认 http://localhost:11434（本机默认端口）；远程/自定义端口请按 http://主机:端口 填写。") },
 						react.createElement(TextInput, { value: draft.baseUrl || "", onChange: (e) => setDraftField("baseUrl", e.target.value) })
 					),
-					react.createElement(FieldRow, { key: "displayName", label: "Models 页显示名称", hint: "模型选择页里该提供方显示的名字。" },
+					react.createElement(FieldRow, { key: "displayName", label: _dsht("plugin.ollama.label_display_name", "Models 页显示名称"), hint: _dsht("plugin.ollama.hint_display_name", "模型选择页里该提供方显示的名字。") },
 						react.createElement(TextInput, { value: draft.displayName || "", onChange: (e) => setDraftField("displayName", e.target.value) })
 					),
 					react.createElement("div", { key: "nums", style: { display: "flex", gap: 16, flexWrap: "wrap" } }, [
-						react.createElement(FieldRow, { key: "ctx", label: "目标上下文窗口 (tokens)", hint: "生效值：写入 Models 页模型容量 + 自动创建变体固化的 num_ctx。" },
+						react.createElement(FieldRow, { key: "ctx", label: _dsht("plugin.ollama.label_ctx_window", "目标上下文窗口 (tokens)"), hint: _dsht("plugin.ollama.hint_ctx_window", "生效值：写入 Models 页模型容量 + 自动创建变体固化的 num_ctx。") },
 							react.createElement(NumberInput, { min: 1024, value: draft.targetContextWindow || "", onChange: (e) => setDraftField("targetContextWindow", e.target.value) })
 						),
-						react.createElement(FieldRow, { key: "max", label: "目标最大输出 (tokens)", hint: "生效值：单次输出上限，必须远小于上下文窗口（如 32768/8192），否则输入空间为零必截断。" },
+						react.createElement(FieldRow, { key: "max", label: _dsht("plugin.ollama.label_max_output", "目标最大输出 (tokens)"), hint: _dsht("plugin.ollama.hint_max_output", "生效值：单次输出上限，必须远小于上下文窗口（如 32768/8192），否则输入空间为零必截断。") },
 							react.createElement(NumberInput, { min: 256, value: draft.targetMaxTokens || "", onChange: (e) => setDraftField("targetMaxTokens", e.target.value) })
 						),
 					]),
 					react.createElement("div", { key: "times", style: { display: "flex", gap: 16, flexWrap: "wrap" } }, [
-						react.createElement(FieldRow, { key: "detect", label: "探测间隔 (毫秒)", hint: "周期探测 Ollama 的间隔。改小则模型增删同步更快，但更耗资源。" },
+						react.createElement(FieldRow, { key: "detect", label: _dsht("plugin.ollama.label_probe_interval", "探测间隔 (毫秒)"), hint: _dsht("plugin.ollama.hint_probe_interval", "周期探测 Ollama 的间隔。改小则模型增删同步更快，但更耗资源。") },
 							react.createElement(NumberInput, { min: 1000, value: draft.detectIntervalMs || "", onChange: (e) => setDraftField("detectIntervalMs", e.target.value) })
 						),
-						react.createElement(FieldRow, { key: "probe", label: "探测超时 (毫秒)" },
+						react.createElement(FieldRow, { key: "probe", label: _dsht("plugin.ollama.label_probe_timeout", "探测超时 (毫秒)") },
 							react.createElement(NumberInput, { min: 200, value: draft.probeTimeoutMs || "", onChange: (e) => setDraftField("probeTimeoutMs", e.target.value) })
 						),
 					]),
-					react.createElement(FieldRow, { key: "auth", label: "授权请求头 (Authorization)", hint: "pi-ai 的 openai-completions 协议要求请求必须带 apiKey 或 authorization 头才放行，Ollama 不校验该头、值可任意。走自定义网关/中间件时可改为真实鉴权头，留空表示不发。" },
-						react.createElement(TextInput, { value: draft.authorizationHeader || "", placeholder: "Bearer ollama-local", onChange: (e) => setDraftField("authorizationHeader", e.target.value) })
+					react.createElement(FieldRow, { key: "auth", label: _dsht("plugin.ollama.label_auth_header", "授权请求头 (Authorization)"), hint: _dsht("plugin.ollama.hint_auth", "pi-ai 的 openai-completions 协议要求请求必须带 apiKey 或 authorization 头才放行，Ollama 不校验该头、值可任意。走自定义网关/中间件时可改为真实鉴权头，留空表示不发。") },
+						react.createElement(TextInput, { value: draft.authorizationHeader || "", placeholder: _dsht("plugin.ollama.placeholder_auth", "Bearer ollama-local"), onChange: (e) => setDraftField("authorizationHeader", e.target.value) })
 					),
 				]);
 			})();
 
 			return react.createElement("div", { style: rootStyle }, [
-				react.createElement("p", { key: "title", style: titleStyle }, "Ollama 设置"),
+				react.createElement("p", { key: "title", style: titleStyle }, _dsht("plugin.ollama.title", "Ollama 设置")),
 				react.createElement("p", { key: "desc", style: descStyle },
-					"自动识别本机 Ollama 服务并接入 DSH：在线时自动把 Ollama 注册为 OpenAI 兼容 Provider（写入 llm-pi-ai 配置），" +
-					"WebUI「Models」设置页即可选择 Ollama 模型并发起对话；模型有增删时按探测间隔自动同步。" +
-					"修改下方配置并保存后立即生效（无需重启服务），并自动按新配置重新接入。"
+					_dsht("plugin.ollama.desc", "自动识别本机 Ollama 服务并接入 DSH：在线时自动把 Ollama 注册为 OpenAI 兼容 Provider（写入 llm-pi-ai 配置），WebUI「Models」设置页即可选择 Ollama 模型并发起对话；模型有增删时按探测间隔自动同步。修改下方配置并保存后立即生效（无需重启服务），并自动按新配置重新接入。")
 				),
 				error !== null && react.createElement("p", { key: "err", style: { color: "var(--dsw-alias-state-error-primary)", margin: 0, fontSize: 13 } }, error),
 				statusCard,
 				formCard,
 				react.createElement("div", { key: "ops", style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } }, [
 					react.createElement("button", { key: "save", type: "button", disabled: busy, onClick: save, style: { ...btn, fontWeight: 600 } },
-						busy ? "处理中…" : "保存设置"
+						busy ? _dsht("plugin.ollama.btn_processing", "处理中…") : _dsht("plugin.ollama.btn_save", "保存设置")
 					),
 					react.createElement("button", { key: "refresh", type: "button", disabled: busy, onClick: () => loadAll(false), style: btnGhost },
-						busy ? "处理中…" : "刷新状态"
+						busy ? _dsht("plugin.ollama.btn_processing", "处理中…") : _dsht("plugin.ollama.btn_refresh", "刷新状态")
 					),
 					savedTip !== null && react.createElement("span", { key: "tip", style: { fontSize: 11, color: "var(--dsw-alias-state-success-primary)" } }, savedTip),
 					config !== null && react.createElement("span", { key: "interval", style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)" } },
-						"当前探测间隔: " + fmtInterval(config.detectIntervalMs)
+						_dsht("plugin.ollama.status_interval_fmt", "当前探测间隔: {{fmtInterval}}").replace("{{fmtInterval}}", fmtInterval(config.detectIntervalMs))
 					),
 				]),
 			]);
@@ -364,7 +382,7 @@ window.__ModuleLoader__.load({
 				name: "settings.section",
 				id: "dsh-ollama",
 				order: 520,
-				label: "Ollama 设置",
+				label: _dsht("plugin.ollama.title", "Ollama 设置"),
 			}, OllamaSettingsSection));
 		}
 

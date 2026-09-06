@@ -8,6 +8,19 @@
 //   POST /__dsh/media-bg/config  -> {ok, dir}  (面板里改目录)
 //   GET  /__dsh/media-bg/list    -> {ok, dir, files:[{name, path, size, url}]}
 // <video> 的 src 用 host 端返回的 stream URL (该路由不带防御头, 见 index.js 说明)。
+
+// i18n 工具函数 (同其他内置插件): 优先读 window.__DSH_I18N__ (启动器桌面壳注入)
+function _dsht(key, fallback) {
+	try {
+		const bridge = window.__DSH_I18N__;
+		if (bridge && bridge.current && bridge[bridge.current]) {
+			const val = bridge[bridge.current][key];
+			if (val !== undefined && val !== null && val !== "") return val;
+		}
+	} catch (_e) { }
+	return fallback || key;
+}
+
 window.__ModuleLoader__.load({
 	id: "dsh-media-background",
 	factory: () => {
@@ -82,7 +95,7 @@ window.__ModuleLoader__.load({
 			return data;
 		}
 
-		/** 带防御头的 GET (可带查询参数), 返回 payload (host 侧 ok 校验)。 */
+		/** 带防御头的 GET, 返回 payload (host 侧 ok 校验)。 */
 		async function getJson(method) {
 			const response = await fetch(API + "/" + method, { headers: { [GUARD]: "1" } });
 			const data = await response.json().catch(() => null);
@@ -179,8 +192,8 @@ window.__ModuleLoader__.load({
 				else stop();
 			} else {
 				playListIndex(S.cur + 1);
+			}
 		}
-	}
 
 	/** 当前正在播放的媒体项 (试播优先, 其次是清单当前项); 均无则返回 null。 */
 	function currentItem() {
@@ -209,7 +222,7 @@ window.__ModuleLoader__.load({
 
 	/** 开启背景并播放清单里某项。 */
 		function playListIndex(index) {
-			if (!S.list.length) { setStatus("请先往播放清单里添加视频"); return; }
+			if (!S.list.length) { setStatus(_dsht("plugin.media_background.status_no_video", "请先往播放清单里添加视频")); return; }
 			const idx = Math.max(0, Math.min(index, S.list.length - 1));
 			S.preview = null;
 			S.cur = idx;
@@ -224,7 +237,7 @@ window.__ModuleLoader__.load({
 			S.active = true;
 			applyMediaMode();
 			updatePlayIcon();
-			setStatus("播放中: " + S.list[idx].name);
+			setStatus(_dsht("plugin.media_background.status_playing", "播放中: ") + S.list[idx].name);
 			renderPlaylist();
 		}
 
@@ -239,7 +252,7 @@ window.__ModuleLoader__.load({
 			S.active = true;
 			applyMediaMode();
 			updatePlayIcon();
-			setStatus("试播: " + displayName);
+			setStatus(_dsht("plugin.media_background.status_preview", "试播: ") + displayName);
 		}
 
 		function togglePause() {
@@ -282,7 +295,7 @@ window.__ModuleLoader__.load({
 			S.preview = null;
 			setBackgroundActive(false);
 			updatePlayIcon();
-			setStatus("背景已关闭");
+			setStatus(_dsht("plugin.media_background.status_closed", "背景已关闭"));
 		}
 
 		// ---- 数据加载 ----
@@ -292,12 +305,12 @@ window.__ModuleLoader__.load({
 				S.dir = data.dir || "";
 				if (dirInput) dirInput.value = S.dir;
 			} catch (error) {
-				setStatus("读取配置失败: " + errMessage(error));
+				setStatus(_dsht("plugin.media_background.status_read_config_fail", "读取配置失败: ") + errMessage(error));
 			}
 		}
 
 		async function scanList() {
-			setStatus("扫描中…");
+			setStatus(_dsht("plugin.media_background.status_scanning", "扫描中…"));
 			try {
 				const data = await getJson("list");
 				S.dir = data.dir || "";
@@ -307,21 +320,21 @@ window.__ModuleLoader__.load({
 				renderFiles();
 				updateStatus();
 			} catch (error) {
-				setStatus("扫描失败: " + errMessage(error));
+				setStatus(_dsht("plugin.media_background.status_scan_fail", "扫描失败: ") + errMessage(error));
 			}
 		}
 
 		async function commitDir() {
 			const dirValue = dirInput ? dirInput.value.trim() : "";
-			if (!dirValue) { setStatus("目录不能为空"); return; }
-			setStatus("设置目录…");
+			if (!dirValue) { setStatus(_dsht("plugin.media_background.status_dir_empty", "目录不能为空")); return; }
+			setStatus(_dsht("plugin.media_background.status_setting_dir", "设置目录…"));
 			try {
 				await postJson("config", { dir: dirValue });
 				S.dir = dirValue;
-				setStatus("目录已设置, 正在扫描…");
+				setStatus(_dsht("plugin.media_background.status_dir_set_scanning", "目录已设置, 正在扫描…"));
 				await scanList();
 			} catch (error) {
-				setStatus("设置目录失败: " + errMessage(error));
+				setStatus(_dsht("plugin.media_background.status_set_dir_fail", "设置目录失败: ") + errMessage(error));
 			}
 		}
 
@@ -351,7 +364,7 @@ window.__ModuleLoader__.load({
 
 		async function loadBrowse() {
 			if (!browsePathEl || !browseBody) return;
-			browsePathEl.textContent = browseDir || "我的电脑";
+			browsePathEl.textContent = browseDir || _dsht("plugin.media_background.err_my_computer", "我的电脑");
 			browseBody.textContent = "";
 			try {
 				const data = await browseQuery({ path: browseDir });
@@ -361,7 +374,7 @@ window.__ModuleLoader__.load({
 				}
 				renderBrowseBody(data);
 			} catch (error) {
-				browseBody.appendChild(el("div", { className: "bempty", textContent: "读取失败: " + errMessage(error) }));
+				browseBody.appendChild(el("div", { className: "bempty", textContent: _dsht("plugin.media_background.err_read_fail", "读取失败: ") + errMessage(error) }));
 			}
 		}
 
@@ -369,12 +382,12 @@ window.__ModuleLoader__.load({
 			// 上一级按钮 (根层隐藏)。
 			const goUp = el("div", { className: "brow", on: { click: () => { browseDir = data.parent; loadBrowse(); } } }, [
 				el("span", { className: "ico", textContent: "↑" }),
-				el("span", { className: "nm", textContent: "… (返回上层)" }),
+				el("span", { className: "nm", textContent: _dsht("plugin.media_background.err_parent", "… (返回上层)") }),
 			]);
 			if (!data.isRoot) browseBody.appendChild(goUp);
 			const children = (data.children || []);
 			if (!children.length) {
-				browseBody.appendChild(el("div", { className: "bempty", textContent: "此目录没有子文件夹" }));
+				browseBody.appendChild(el("div", { className: "bempty", textContent: _dsht("plugin.media_background.err_no_subdirs", "此目录没有子文件夹") }));
 			} else {
 				for (const child of children) {
 					const full = (data.dir ? joinPath(data.dir, child) : child);
@@ -395,7 +408,7 @@ window.__ModuleLoader__.load({
 
 		/** 点击"使用此目录": 把当前浏览目录填进输入框并应用。 */
 		function useBrowsedDir() {
-			if (!browseDir) { setStatus("未选择目录"); return; }
+			if (!browseDir) { setStatus(_dsht("plugin.media_background.status_no_dir", "未选择目录")); return; }
 			if (dirInput) dirInput.value = browseDir;
 			closeBrowse();
 			commitDir();
@@ -407,7 +420,9 @@ window.__ModuleLoader__.load({
 		}
 
 		function updateStatus() {
-			const mode = S.list.length ?("清单 " + S.list.length + " 首 · 目录: " + S.dir) : ("目录: " + (S.dir || "未配置"));
+			const mode = S.list.length
+				? _dsht("plugin.media_background.status_list_fmt", "清单 {{count}} 首 · 目录: {{dir}}").replace("{{count}}", S.list.length).replace("{{dir}}", S.dir)
+				: _dsht("plugin.media_background.status_dir_fmt", "目录: {{dir}} (未配置)").replace("{{dir}}", S.dir || "");
 			setStatus(mode);
 		}
 
@@ -427,7 +442,7 @@ window.__ModuleLoader__.load({
 			if (!listEl) return;
 			listEl.textContent = "";
 			if (!S.files.length) {
-				listEl.appendChild(el("div", { className: "dsw-mbg-tip" }, "该目录下没有可播放的媒体（支持视频 mp4/webm/mkv/mov/avi 等，音频 mp3/wav/flac/m4a 等）"));
+				listEl.appendChild(el("div", { className: "dsw-mbg-tip" }, _dsht("plugin.media_background.empty_list", "该目录下没有可播放的媒体（支持视频 mp4/webm/mkv/mov/avi 等，音频 mp3/wav/flac/m4a 等）")));
 				return;
 			}
 			for (const file of S.files) {
@@ -436,14 +451,14 @@ window.__ModuleLoader__.load({
 					// ▷ 按钮 = 试播 (单次, 不入清单)
 					el("button", {
 						className: "dsw-mbg-act",
-						title: "试播 (单次, 不入清单)",
+						title: _dsht("plugin.media_background.btn_preview_once", "试播 (单次, 不入清单)"),
 						textContent: "▷",
 						on: { click: (ev) => { ev.stopPropagation(); playPreview(file.url, file.name, file.kind); } },
 					}),
 					// ＋ 按钮 = 加入播放清单 (收藏夹)
 					el("button", {
 						className: "dsw-mbg-act",
-						title: "加入播放清单 (收藏夹)",
+						title: _dsht("plugin.media_background.btn_add_playlist", "加入播放清单 (收藏夹)"),
 						textContent: "＋",
 						on: { click: (ev) => { ev.stopPropagation(); addToList(file); } },
 					}),
@@ -459,7 +474,7 @@ window.__ModuleLoader__.load({
 		function addToList(file) {
 			const exists = S.list.some((item) => item.url === file.url);
 			if (exists) {
-				setStatus("已在清单中: " + file.name);
+				setStatus(_dsht("plugin.media_background.status_already_in_list", "已在清单中: ") + file.name);
 				return;
 			}
 			S.list.push({ name: file.name, url: file.url, kind: file.kind || "video" });
@@ -490,7 +505,7 @@ window.__ModuleLoader__.load({
 			if (!playlistEl) return;
 			playlistEl.textContent = "";
 			if (!S.list.length) {
-				playlistEl.appendChild(el("div", { className: "dsw-mbg-tip" }, "播放清单为空"));
+				playlistEl.appendChild(el("div", { className: "dsw-mbg-tip" }, _dsht("plugin.media_background.empty_playlist", "播放清单为空")));
 				return;
 			}
 			S.list.forEach((item, index) => {
@@ -499,7 +514,7 @@ window.__ModuleLoader__.load({
 					el("span", { className: "dsw-mbg-name", title: item.name },
 						((index + 1) + ". " + item.name)),
 					el("button", {
-						className: "dsw-mbg-act", title: "移除", textContent: "✕",
+						className: "dsw-mbg-act", title: _dsht("plugin.media_background.btn_remove", "移除"), textContent: "✕",
 						on: { click: (ev) => { ev.stopPropagation(); removeFromList(index); } },
 					}),
 				]);
@@ -577,70 +592,70 @@ window.__ModuleLoader__.load({
 			btn.style.cssText = "position:fixed;right:14px;bottom:14px;z-index:2147483000;padding:8px 14px;" +
 				"border-radius:20px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);" +
 				"color:var(--dsw-alias-label-primary);font-size:13px;backdrop-filter:blur(6px);";
-			btn.textContent = "🎬 观星";
+			btn.textContent = "🎬 " + _dsht("plugin.media_background.tab_label", "观星");
 			rootEl.appendChild(btn);
 
 			// 面板。
 			const head = el("div", { id: "dsw-mbg-head" }, [
-				el("span", { id: "dsw-mbg-title", textContent: "观星 · 背景影画" }),
+				el("span", { id: "dsw-mbg-title", textContent: _dsht("plugin.media_background.title", "观星 · 背景影画") }),
 				el("button", { className: "dsw-mbg-b", textContent: "✕", on: { click: () => { S.panelOpen = false; panel.style.display = "none"; } } }),
 			]);
 			const dirRow = el("div", { id: "dsw-mbg-dirrow" }, [
-				(dirInput = el("input", { id: "dsw-mbg-dir", type: "text", placeholder: "输入视频目录绝对路径，如 D:\\Videos", value: S.dir })),
-				el("button", { className: "dsw-mbg-b", textContent: "选目录…", title: "优先使用 Windows 文件选择框选择目录", on: { click: openBrowse } }),
-				el("button", { className: "dsw-mbg-b", textContent: "扫描", on: { click: commitDir } }),
+				(dirInput = el("input", { id: "dsw-mbg-dir", type: "text", placeholder: _dsht("plugin.media_background.placeholder", "输入视频目录绝对路径，如 D:\\Videos"), value: S.dir })),
+				el("button", { className: "dsw-mbg-b", textContent: _dsht("plugin.media_background.btn_pick_dir", "选目录…"), title: _dsht("plugin.media_background.title_folder_pick", "优先使用 Windows 文件选择框选择目录"), on: { click: openBrowse } }),
+				el("button", { className: "dsw-mbg-b", textContent: _dsht("plugin.media_background.btn_scan", "扫描"), on: { click: commitDir } }),
 			]);
 			listEl = el("div", { id: "dsw-mbg-list" });
 			playlistEl = el("div", { id: "dsw-mbg-playlist" });
 			const fileBlock = el("div", { className: "dsw-mbg-block" }, [
-				el("div", { className: "dsw-mbg-cap" }, "目录视频（点击即播，▷ 试播，＋ 加入清单）"),
+				el("div", { className: "dsw-mbg-cap" }, _dsht("plugin.media_background.hint_dir_videos", "目录视频（点击即播，▷ 试播，＋ 加入清单）")),
 				listEl,
 			]);
 			const playBlock = el("div", { className: "dsw-mbg-block" }, [
-				el("div", { className: "dsw-mbg-cap" }, "播放清单"),
+				el("div", { className: "dsw-mbg-cap" }, _dsht("plugin.media_background.hint_playlist", "播放清单")),
 				playlistEl,
 			]);
 			playIcon = el("span", {});
 			const ctl = el("div", { id: "dsw-mbg-ctl" }, [
 				el("div", { className: "dsw-mbg-row" }, [
-					el("button", { className: "dsw-mbg-b", textContent: "⏮", title: "上一首", on: { click: prev } }),
+					el("button", { className: "dsw-mbg-b", textContent: "⏮", title: _dsht("plugin.media_background.btn_prev", "上一首"), on: { click: prev } }),
 					el("button", { className: "dsw-mbg-b dsw-mbg-play", on: { click: togglePause } }, playIcon),
-					el("button", { className: "dsw-mbg-b", textContent: "⏭", title: "下一首", on: { click: next } }),
-					el("button", { className: "dsw-mbg-b", textContent: "⏹", title: "停止并关闭背景", on: { click: stop } }),
-					el("button", { className: "dsw-mbg-b", textContent: "清空清单", on: { click: clearList } }),
+					el("button", { className: "dsw-mbg-b", textContent: "⏭", title: _dsht("plugin.media_background.btn_next", "下一首"), on: { click: next } }),
+					el("button", { className: "dsw-mbg-b", textContent: "⏹", title: _dsht("plugin.media_background.btn_stop_bg", "停止并关闭背景"), on: { click: stop } }),
+					el("button", { className: "dsw-mbg-b", textContent: _dsht("plugin.media_background.btn_clear_list", "清空清单"), on: { click: clearList } }),
 				]),
 				el("div", { className: "dsw-mbg-row" }, [
-					el("label", { className: "dsw-mbg-lab", textContent: "音量" }),
+					el("label", { className: "dsw-mbg-lab", textContent: _dsht("plugin.media_background.label_volume", "音量") }),
 					el("input", {
 						className: "dsw-mbg-vol", type: "range", min: 0, max: 100, value: Math.round(S.volume * 100),
 						on: { input: (ev) => { S.volume = Number(ev.target.value) / 100; if (videoEl) { videoEl.volume = S.volume; videoEl.muted = (S.volume === 0); } saveStore(); } },
 					}),
 				]),
 				el("div", { className: "dsw-mbg-row" }, [
-					el("label", { className: "dsw-mbg-lab", textContent: "浓度" }),
+					el("label", { className: "dsw-mbg-lab", textContent: _dsht("plugin.media_background.label_concentration", "浓度") }),
 					el("input", {
 						className: "dsw-mbg-vol", type: "range", min: 0, max: 100, value: Math.round(S.opacity * 100),
 						on: { input: (ev) => { S.opacity = Number(ev.target.value) / 100; applyVideoAppearance(); saveStore(); } },
 					}),
-					el("label", { className: "dsw-mbg-lab", textContent: "循环" }),
+					el("label", { className: "dsw-mbg-lab", textContent: _dsht("plugin.media_background.label_loop", "循环") }),
 					el("input", { type: "checkbox", checked: S.loop, on: { change: (ev) => { S.loop = ev.target.checked; saveStore(); } } }),
 				]),
 			]);
-			statusEl = el("div", { id: "dsw-mbg-status", textContent: "加载中…" });
+			statusEl = el("div", { id: "dsw-mbg-status", textContent: _dsht("plugin.media_background.status_scanning", "扫描中…") });
 			panel = el("div", { id: "dsw-mbg-panel" }, [head, dirRow, fileBlock, playBlock, ctl, statusEl]);
 			rootEl.appendChild(panel);
 
 			// 目录浏览弹窗 (覆盖整个页面, 在其内部逐层下钻选择目录)。
-			(browsePathEl = el("div", { className: "bpath", textContent: "我的电脑" }));
+			(browsePathEl = el("div", { className: "bpath", textContent: _dsht("plugin.media_background.err_my_computer", "我的电脑") }));
 			(browseBody = el("div", { className: "bbody" }));
 			const browseBox = el("div", { className: "box" }, [
 				el("div", { className: "bd" }, [
 					browsePathEl,
-					el("button", { className: "dsw-mbg-b", textContent: "关闭", on: { click: closeBrowse } }),
+					el("button", { className: "dsw-mbg-b", textContent: _dsht("plugin.media_background.btn_close", "关闭"), on: { click: closeBrowse } }),
 				]),
 				browseBody,
 				el("div", { className: "bfoot" }, [
-					el("button", { className: "dsw-mbg-b", textContent: "使用此目录", on: { click: useBrowsedDir } }),
+					el("button", { className: "dsw-mbg-b", textContent: _dsht("plugin.media_background.btn_use_dir", "使用此目录"), on: { click: useBrowsedDir } }),
 				]),
 			]);
 			browseEl = el("div", { id: "dsw-mbg-browse" }, [browseBox]);
@@ -665,7 +680,7 @@ window.__ModuleLoader__.load({
 					// 只恢复循环播放模式, 不恢复单次试播 (preview 是临时的, 关了页面就丢)。
 					if (S.loop && S.list.length > 0) {
 						playListIndex(0);
-						setStatus("恢复播放: " + S.list[0].name + " (上次循环清单, 可在面板里停掉)");
+						setStatus(_dsht("plugin.media_background.status_resume_fmt", "恢复播放: {{name}} (上次循环清单, 可在面板里停掉)").replace("{{name}}", S.list[0].name));
 					}
 				});
 			});

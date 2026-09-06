@@ -10,6 +10,18 @@
 // 数据走宿主端路由 /__dsh/rules/config + /__dsh/rules/content + /__dsh/rules/open-folder。
 // 加载器契约格式 (window.__ModuleLoader__.load), 与官方客户端插件一致。
 
+// i18n 工具函数 (同其他内置插件): 优先读 window.__DSH_I18N__ (启动器桌面壳注入)
+function _dsht(key, fallback) {
+	try {
+		var bridge = window.__DSH_I18N__;
+		if (bridge && bridge.current && bridge[bridge.current]) {
+			var val = bridge[bridge.current][key];
+			if (val !== undefined && val !== null && val !== "") return val;
+		}
+	} catch (_e) { }
+	return fallback || key;
+}
+
 window.__ModuleLoader__.load({
     id: "dsh-rules",
     factory: (require) => {
@@ -78,6 +90,14 @@ window.__ModuleLoader__.load({
 
         /** 规则设置面板组件。 */
         function RulesSection() {
+            // i18n 语言切换监听器: 切换语言时触发重渲染
+            const [i18nTick, setI18nTick] = react.useState(0);
+            react.useEffect(() => {
+                const handler = () => setI18nTick((t) => t + 1);
+                document.addEventListener("dsh-i18n-change", handler);
+                return () => document.removeEventListener("dsh-i18n-change", handler);
+            }, []);
+
             // config 状态
             const [config, setConfig] = react.useState(null);
             const [loading, setLoading] = react.useState(false);
@@ -106,7 +126,7 @@ window.__ModuleLoader__.load({
                     setConfig(cfg);
                     setDraftEnabled(Boolean(cfg.enabled));
                 } catch (err) {
-                    setError("读取配置失败: " + String((err && err.message) || err));
+                    setError(_dsht("plugin.rules.err_read_config", "读取配置失败: ") + String((err && err.message) || err));
                 } finally {
                     setLoading(false);
                 }
@@ -122,7 +142,7 @@ window.__ModuleLoader__.load({
                     setContent(text);
                     setDraftContent(text); // 同步草稿
                 } catch (err) {
-                    setContentError("读取规则失败: " + String((err && err.message) || err));
+                    setContentError(_dsht("plugin.rules.err_read_rules", "读取规则失败: ") + String((err && err.message) || err));
                 } finally {
                     setLoadingContent(false);
                 }
@@ -139,11 +159,11 @@ window.__ModuleLoader__.load({
                     const payload = await postConfig({ enabled: newValue });
                     const cfg = payload.config || {};
                     setConfig(config ? { ...config, ...cfg } : cfg);
-                    setSavedTip(payload.note || "已保存");
+                    setSavedTip(payload.note || _dsht("plugin.rules.msg_saved", "已保存"));
                 } catch (err) {
                     // 保存失败 → 回滚 UI 状态
                     setDraftEnabled(!newValue);
-                    setError("保存开关失败: " + String((err && err.message) || err));
+                    setError(_dsht("plugin.rules.err_save_toggle", "保存开关失败: ") + String((err && err.message) || err));
                 } finally {
                     setSavingEnabled(false);
                 }
@@ -173,14 +193,14 @@ window.__ModuleLoader__.load({
                 try {
                     const payload = await postContent(draftContent);
                     setContent(draftContent); // 保存成功 → 正式内容更新
-                    setContentTip(payload.note || "规则已保存");
+                    setContentTip(payload.note || _dsht("plugin.rules.msg_rules_saved", "规则已保存"));
                     setEditMode(false); // 退出编辑模式
                     // 同时刷新 config (文件大小可能变了)
                     if (config) {
                         setConfig({ ...config, ruleSize: draftContent.length });
                     }
                 } catch (err) {
-                    setContentError("保存规则失败: " + String((err && err.message) || err));
+                    setContentError(_dsht("plugin.rules.err_save_rules", "保存规则失败: ") + String((err && err.message) || err));
                 } finally {
                     setSavingContent(false);
                 }
@@ -195,10 +215,10 @@ window.__ModuleLoader__.load({
                         // 已开文件管理器, 不需要额外反馈, 但把路径记录一下
                         console.log("dsh-rules: 已打开目录", payload.path);
                     } else {
-                        setError((payload && payload.error) || "打开目录失败");
+                        setError((payload && payload.error) || _dsht("plugin.rules.err_open_dir", "打开目录失败"));
                     }
                 } catch (err) {
-                    setError("打开目录失败: " + String((err && err.message) || err));
+                    setError(_dsht("plugin.rules.err_open_dir_detail", "打开目录失败: ") + String((err && err.message) || err));
                 }
             };
 
@@ -220,11 +240,10 @@ window.__ModuleLoader__.load({
             return react.createElement("div", { style: rootStyle }, [
                 // ===== 标题 + 说明 =====
                 react.createElement("p", { key: "title", style: { margin: 0, fontSize: 14, fontWeight: 600, color: "var(--dsw-alias-label-primary)" } },
-                    "用户规则设置 (类似 TRAE Work 的「规则」功能)"
+                    _dsht("plugin.rules.title", "用户规则设置 (类似 TRAE Work 的「规则」功能)")
                 ),
                 react.createElement("p", { key: "desc", style: { margin: 0, fontSize: 13, lineHeight: 1.6, color: "var(--dsw-alias-label-secondary)" } },
-                    "把你的个人习惯/代码风格/表达要求写成 Markdown, 每次对话会自动注入到 system prompt 里。" +
-                    "开启后会占用少量 token, 建议按需开启。支持 WebUI 内直接编辑, 或点「打开所在目录」用本地编辑器修改 user-rules.md (文件变化自动重载)。"
+                    _dsht("plugin.rules.desc", "把你的个人习惯/代码风格/表达要求写成 Markdown, 每次对话会自动注入到 system prompt 里。开启后会占用少量 token, 建议按需开启。支持 WebUI 内直接编辑, 或点「打开所在目录」用本地编辑器修改 user-rules.md (文件变化自动重载)。")
                 ),
 
                 error !== null && react.createElement("p", { key: "err", style: { color: "var(--dsw-alias-state-error-primary)", margin: 0, fontSize: 13 } }, error),
@@ -241,9 +260,11 @@ window.__ModuleLoader__.load({
                             style: { cursor: savingEnabled ? "default" : "pointer", margin: 0 },
                         }),
                         react.createElement("label", { htmlFor: "rules-enabled", style: { fontSize: 13, cursor: "pointer" } },
-                            "启用用户规则注入",
+                            _dsht("plugin.rules.label_enable", "启用用户规则注入"),
                             config && react.createElement("span", { style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)", marginLeft: 8 } },
-                                draftEnabled ? "(每次对话会注入规则到 system prompt)" : "(关闭后不占 token)"
+                                draftEnabled
+                                    ? _dsht("plugin.rules.label_each_dialog", "(每次对话会注入规则到 system prompt)")
+                                    : _dsht("plugin.rules.label_no_token", "(关闭后不占 token)")
                             )
                         ),
                         savedTip !== null && react.createElement("span", { key: "tip", style: { fontSize: 11, color: "#2ecc71", marginLeft: 4 } }, savedTip),
@@ -254,21 +275,23 @@ window.__ModuleLoader__.load({
                         padding: "8px 10px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: 4,
                     } }, [
                         react.createElement("div", { key: "path", style: { fontFamily: "Consolas, Menlo, monospace", fontSize: 11, wordBreak: "break-all" } },
-                            "规则文件: " + (config.rulesPath || "—")
+                            _dsht("plugin.rules.label_file_fmt", "规则文件: {{path}}").replace("{{path}}", config.rulesPath || "—")
                         ),
                         react.createElement("div", { key: "state", style: { marginTop: 4 } },
                             config.ruleFileExists
-                                ? "✓ 文件存在, 大小 " + (config.ruleSize || 0) + " 字符"
-                                : "✗ 文件不存在 (首次使用会自动创建)"
+                                ? _dsht("plugin.rules.label_file_ok", "✓ 文件存在, 大小 {{size}} 字符").replace("{{size}}", String(config.ruleSize || 0))
+                                : _dsht("plugin.rules.label_file_missing", "✗ 文件不存在 (首次使用会自动创建)")
                         ),
                         react.createElement("div", { key: "reload", style: { marginTop: 2 } },
-                            "自动重载: " + (config.autoReload ? "开启 (编辑后自动生效)" : "关闭")
+                            config.autoReload
+                                ? _dsht("plugin.rules.label_autoreload_on", "自动重载: 开启 (编辑后自动生效)")
+                                : _dsht("plugin.rules.label_autoreload_off", "自动重载: 关闭")
                         ),
                     ]),
                     // 刷新按钮 (开关已改成勾选即实时保存, 不再需要"保存开关"按钮)
                     react.createElement("div", { key: "ops", style: { display: "flex", gap: 10, alignItems: "center", marginTop: 10 } }, [
                         react.createElement("button", { key: "refresh", type: "button", disabled: loading, onClick: () => { loadConfig(); loadContent(); }, style: btnGhost },
-                            loading ? "加载中…" : "刷新"
+                            loading ? _dsht("plugin.rules.btn_loading", "加载中…") : _dsht("plugin.rules.btn_refresh", "刷新")
                         ),
                     ]),
                 ]),
@@ -278,7 +301,7 @@ window.__ModuleLoader__.load({
                     // 卡片标题 + 操作按钮
                     react.createElement("div", { key: "header", style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 } }, [
                         react.createElement("strong", { style: { fontSize: 13 } },
-                            editMode ? "编辑规则内容" : "规则内容预览"
+                            editMode ? _dsht("plugin.rules.btn_edit", "编辑规则内容") : _dsht("plugin.rules.btn_preview", "规则内容预览")
                         ),
                         react.createElement("div", { style: { display: "flex", gap: 8 } },
                             editMode
@@ -287,20 +310,20 @@ window.__ModuleLoader__.load({
                                     react.createElement("button", {
                                         key: "saveC", type: "button", disabled: savingContent, onClick: saveContent,
                                         style: { ...btnPrimary, color: "#fff", background: "#27ae60", borderColor: "#27ae60" },
-                                    }, savingContent ? "保存中…" : "保存规则"),
+                                    }, savingContent ? _dsht("plugin.rules.btn_saving", "保存中…") : _dsht("plugin.rules.btn_save", "保存规则")),
                                     react.createElement("button", {
                                         key: "cancel", type: "button", onClick: cancelEdit, style: btnGhost,
-                                    }, "取消"),
+                                    }, _dsht("plugin.rules.btn_cancel", "取消")),
                                 ]
                                 // 预览模式: 编辑 + 打开所在目录
                                 : [
                                     react.createElement("button", {
                                         key: "edit", type: "button", onClick: enterEdit, style: btnPrimary,
-                                    }, "编辑规则"),
+                                    }, _dsht("plugin.rules.btn_edit", "编辑规则内容")),
                                     react.createElement("button", {
                                         key: "folder", type: "button", onClick: openFolder, style: btnGhost,
-                                        title: "用系统文件管理器打开规则文件所在目录, 直接编辑 user-rules.md",
-                                    }, "打开所在目录"),
+                                        title: _dsht("plugin.rules.hint_open_dir", "用系统文件管理器打开规则文件所在目录, 直接编辑 user-rules.md"),
+                                    }, _dsht("plugin.rules.btn_open_dir", "打开所在目录")),
                                 ]
                         ),
                     ]),
@@ -316,7 +339,7 @@ window.__ModuleLoader__.load({
                             key: "ta",
                             value: draftContent,
                             onChange: (e) => { setDraftContent(e.target.value); setContentTip(null); setContentError(null); },
-                            placeholder: "# 个人规则\n\n- 回复用中文\n- 代码注释写详细...",
+                            placeholder: _dsht("plugin.rules.placeholder", "# 个人规则\n\n- 回复用中文\n- 代码注释写详细..."),
                             style: {
                                 width: "100%", minHeight: 280, resize: "vertical",
                                 fontFamily: "Consolas, Menlo, 'Courier New', monospace",
@@ -340,9 +363,9 @@ window.__ModuleLoader__.load({
                                 borderRadius: 4, whiteSpace: "pre-wrap", wordBreak: "break-word",
                             },
                         },
-                            loadingContent ? "加载中…" :
-                            (content === null ? "未加载" :
-                             (content.length === 0 ? "(规则文件为空, 点击「编辑规则」开始写)" : content))
+                            loadingContent ? _dsht("plugin.rules.loading", "加载中…") :
+                            (content === null ? _dsht("plugin.rules.empty_no_load", "未加载") :
+                             (content.length === 0 ? _dsht("plugin.rules.empty_start_write", "(规则文件为空, 点击「编辑规则」开始写)") : content))
                         ),
 
                     // 底部字符数统计
@@ -350,9 +373,10 @@ window.__ModuleLoader__.load({
                         fontSize: 11, color: "var(--dsw-alias-label-tertiary)", marginTop: 6, textAlign: "right",
                     } },
                         editMode
-                            ? "当前 " + draftContent.length + " 字符" +
-                              (config && config.maxLength > 0 ? " / 上限 " + config.maxLength : "")
-                            : (content !== null ? (content.length + " 字符") : "")
+                            ? _dsht("plugin.rules.char_count", "当前 {{len}} 字符 / 上限 {{max}}")
+                                .replace("{{len}}", String(draftContent.length))
+                                .replace("{{max}}", String(config && config.maxLength > 0 ? config.maxLength : "—"))
+                            : (content !== null ? _dsht("plugin.rules.char_count_short", "{{len}} 字符").replace("{{len}}", String(content.length)) : "")
                     ),
                 ]),
             ]);
@@ -364,7 +388,7 @@ window.__ModuleLoader__.load({
                 name: "settings.section",
                 id: "dsh-rules",
                 order: 540,
-                label: "用户规则",
+                label: _dsht("plugin.rules.title", "用户规则"),
             }, RulesSection));
         }
 
