@@ -16,6 +16,7 @@ A one-click local launcher that wraps DeepSeek Harness (`dsh`) into a **double-c
 - **📦 10 Built-in Plugins**: Session rewind/import, usage stats, file browser, archive cleanup, sidebar, background media, **Ollama local LLM integration**, **Zuzong Memory Bank (cross-session auto-memory, default OFF since v3)**, **user rules injection (similar to TRAE rules, editable in WebUI since v4)**, and more. See [Built-in Plugins](#built-in-plugins).
 - **🔁 Two Independent Update Channels**: The official `dsh` core and the green-portable shell update independently — each checks its own source, backs up before overwriting, and never touches your settings or sessions.
 - **🏠 LAN Remote Access**: One click to bind to `0.0.0.0` and **auto-create Windows Firewall rule** — open the WebUI from your phone or other computers on the same LAN.
+- **🌐 Chinese / English Interface**: One-click toggle in the top-right corner. All buttons, dropdowns, dialogs and status text refresh in real time — no restart needed. Language preference auto-saves to `config.json`.
 
 ---
 
