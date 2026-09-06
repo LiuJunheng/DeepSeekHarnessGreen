@@ -47,6 +47,7 @@ import http.server
 import secrets
 import ctypes
 from ctypes import wintypes
+import i18n
 
 # ---------------------------------------------------------------------------
 # 常量与路径
@@ -173,6 +174,8 @@ DEFAULT_CONFIG = {
     # 默认工作区: 空=自动解析(见 resolve_default_workspace, 不写死);
     # 高级用户可自定义为任意绝对路径, 若与临时目录冲突会自动回退并警告
     "default_workspace": "",
+    # 多语言设置: "zh"=简体中文 / "en"=英文。启动时从 config.json 读取, 切换语言按钮会自动保存
+    "language": "zh",
     # 注: 绿色版版本号统一以 GREEN_VERSION 常量为准 (唯一来源, 见 green_local_version)。
     # 曾把 "green_version" 默认值写在这里, 发布新版本时与常量不同步,
     # 导致本地一直显示旧版本号并反复提示更新 (见 DEV_NOTES 需求 #20)。
@@ -337,7 +340,7 @@ RECOMMENDED_PLUGINS = [
     {"name": "dsh-anchored-standard", "category": "预设", "source": "github", "version": "latest",
      "spec": "github:xiaobright/dsh-anchored-standard",
      "description": "两阶段预设: 先最小对齐引导、再挂全量标准工具集"},
-    {"name": "modsearch", "category": "搜索", "source": "github", "version": "latest",
+    {"name": "modsearch", "category": i18n.t('plugin.search_btn'), "source": "github", "version": "latest",
      "spec": "github:liustack/modsearch",
      "description": "联网实时搜索、引用来源, 与 modlens 同作者配套使用"},
     {"name": "dsh-agent-teams", "category": "Agent", "source": "github", "version": "latest",
@@ -464,7 +467,7 @@ class Launcher:
 
     # ---------- 配置 ----------
     def load_config(self):
-        """读取 config.json, 不存在则使用默认配置"""
+        """读取 config.json, 不存在则使用默认配置. 同时根据 language 字段初始化 i18n translator"""
         config = dict(DEFAULT_CONFIG)
         if os.path.exists(CONFIG_PATH):
             try:
@@ -473,6 +476,9 @@ class Launcher:
                 config.update(saved)
             except Exception as error:
                 self.log("读取配置失败, 使用默认配置: %s" % error)
+        # 根据 config 里的 language 字段初始化多语言翻译器
+        lang_code = config.get("language", "zh")
+        i18n.translator.switch(lang_code)
         return config
 
     def save_config(self):
@@ -480,7 +486,6 @@ class Launcher:
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as file_handle:
                 json.dump(self.config, file_handle, ensure_ascii=False, indent=2)
-            self.log("配置已保存: %s" % CONFIG_PATH)
         except Exception as error:
             self.log("保存配置失败: %s" % error)
 
@@ -823,8 +828,7 @@ class Launcher:
         # 不让用户"装了才发现局域网用不了" (2026-08-17, 避坑 #56)。
         lan_api_patched = self.patch_lan_api_trust()
         if not lan_api_patched:
-            self.log("[警告] client-connection 局域网补丁未生效: 局域网模式 /api 可能报 403 "
-                     "(本机模式不受影响); 可稍后重启服务重试, 或等 dsh 更新后再装一次环境")
+            self.log(i18n.t('warn.lan_api_not_patched'))
         # 安装/升级后同步 web token 认证开关 (2026-08-31, 需求 #49):
         # dsh 重装会还原所有 client-connection 代码, 之前打的 auth patch 会丢, 需重新应用.
         self.patch_auth(require_auth=bool(self.config.get("dsh_require_auth", True)))
@@ -5661,10 +5665,18 @@ class SysTrayIcon:
 
 
 # ---------------------------------------------------------------------------
+# 多语言 i18n 全局引用列表 (run_gui 内所有需要动态翻译的控件注册到这里)
+# ---------------------------------------------------------------------------
+_i18n_widgets = []      # 每项: (widget, attr_name, i18n_key)  attr_name='text'|'labelframe_text'|'tooltip'
+_i18n_stringvars = []   # 每项: (stringvar, i18n_key, None)  动态值的 StringVar 不注册
+
+
+# ---------------------------------------------------------------------------
 # tkinter 图形界面
 # ---------------------------------------------------------------------------
 def run_gui():
     """以 tkinter 图形界面方式运行"""
+    global _i18n_widgets, _i18n_stringvars
     try:
         import tkinter as tk
         from tkinter import ttk, messagebox, filedialog
@@ -5696,10 +5708,8 @@ def run_gui():
         root_tmp = tk.Tk()
         root_tmp.withdraw()
         messagebox.showwarning(
-            "DSH 启动器",
-            "启动器已在后台运行, 但找不到其窗口。\n"
-            "请查看任务栏或系统托盘; 若存在异常残留进程,\n"
-            "可在任务管理器结束 DSH_Launcher.exe 后重新打开。",
+            i18n.t('single_instance.dialog_title'),
+            i18n.t('single_instance.already_running'),
             parent=root_tmp)
         root_tmp.destroy()
         return
@@ -5708,7 +5718,7 @@ def run_gui():
     _SINGLE_INSTANCE_MUTEX_HANDLE = mutex_handle
 
     root = tk.Tk()
-    root.title(WINDOW_TITLE)
+    root.title(i18n.t('window.title'))
     root.geometry("1160x780")
     root.minsize(1000, 660)
 
@@ -5770,21 +5780,21 @@ def run_gui():
         # 也显示勾选, 且在"装环境"时 Python 失败还会被报成"安装完成", 误导用户。
         if server_running:
             status_indicator.itemconfig(dot, fill="#22c55e")   # 绿色
-            status_text.set("服务运行中")
-            detail_text.set("端口: %s" % app.config.get("dsh_port", 3080))
+            status_text.set(i18n.t('status.server_running'))
+            detail_text.set(i18n.t('status.port', port=app.config.get("dsh_port", 3080)))
         elif env_ready:
             if python_ok():
                 status_indicator.itemconfig(dot, fill="#f59e0b")   # 黄色
-                status_text.set("环境已就绪, 待启动")
-                detail_text.set("Node: \u2713  dsh: \u2713  Python: \u2713")
+                status_text.set(i18n.t('status.env_ready'))
+                detail_text.set(i18n.t('status.node_dsh_python_ready'))
             else:
                 status_indicator.itemconfig(dot, fill="#dc2626")   # 红色: 内置 Python 缺失
-                status_text.set("环境已就绪, 内置 Python 缺失")
-                detail_text.set("内置 Python 未安装, 请点击「安装环境」重装 (不影响 dsh 服务)")
+                status_text.set(i18n.t('status.env_ready_python_missing'))
+                detail_text.set(i18n.t('status.python_missing_hint'))
         else:
             status_indicator.itemconfig(dot, fill="#999999")   # 灰色
-            status_text.set("环境未准备")
-            detail_text.set("点击「安装环境」自动下载 Node 和 dsh 至 runtime/ 目录")
+            status_text.set(i18n.t('status.env_not_ready'))
+            detail_text.set(i18n.t('status.install_hint'))
 
         # 更新按钮状态
         install_btn.config(state="normal" if not server_running and not is_busy[0] else "disabled")
@@ -5803,7 +5813,8 @@ def run_gui():
     status_indicator.pack(side="left", padx=(0, 6))
     dot = status_indicator.create_oval(3, 3, 15, 15, fill="#999999", outline="")
 
-    status_text = tk.StringVar(value="就绪")
+    status_text = tk.StringVar(value=i18n.t('status.ready'))
+    _i18n_stringvars.append((status_text, 'status.ready', None))
     ttk.Label(status_frame, textvariable=status_text,
               font=("Microsoft YaHei", 12, "bold")).pack(side="left")
 
@@ -5815,31 +5826,31 @@ def run_gui():
     def show_about():
         """弹出「关于」对话框: 作者 / 版本 / 本仓库 / 发布主页 / 官方 dsh 引用 (2026-08-16)"""
         about_window = tk.Toplevel(root)
-        about_window.title("关于")
+        about_window.title(i18n.t('about.dialog_title'))
         about_window.resizable(False, False)
         about_window.geometry("500x525")
         about_window.transient(root)    # 依附主窗口
         about_window.grab_set()         # 模态, 关闭前不能操作主窗口
 
         # 主标题
-        ttk.Label(about_window, text="DeepSeek Harness 桌面绿色整合版启动器",
-                  font=("Microsoft YaHei", 13, "bold")).pack(pady=(18, 4))
-        ttk.Label(about_window, text="绿色整合版 · 所有文件与依赖全部本地化",
-                  font=("Microsoft YaHei", 9), foreground="#666666").pack(pady=(0, 12))
+        _iw_5835 = ttk.Label(about_window, text=i18n.t('about.main_title'),                   font=("Microsoft YaHei", 13, "bold")).pack(pady=(18, 4))
+        _i18n_widgets.append((_iw_5835, 'text', 'about.main_title'))
+        _iw_5837 = ttk.Label(about_window, text=i18n.t('about.subtitle'),                   font=("Microsoft YaHei", 9), foreground="#666666").pack(pady=(0, 12))
+        _i18n_widgets.append((_iw_5837, 'text', 'about.subtitle'))
 
         # 信息表 (左标签 / 右取值)
         # 链接项: value 用 (url, 显示文本) 元组, 以可点击链接文字呈现, 鼠标手型 + 点击跳转
         info_items = [
-            ("作者", "刘俊亨"),
-            ("版本号", "v" + GREEN_VERSION),
-            ("版本日期", GREEN_VERSION_DATE),
-            ("GitHub 仓库", ("https://github.com/LiuJunheng/DeepSeekHarnessGreen",
+            (i18n.t('about.author'), "刘俊亨"),
+            (i18n.t('about.version'), "v" + GREEN_VERSION),
+            (i18n.t('about.version_date'), GREEN_VERSION_DATE),
+            (i18n.t('about.github_repo'), ("https://github.com/LiuJunheng/DeepSeekHarnessGreen",
                               "github.com/LiuJunheng/DeepSeekHarnessGreen")),
-            ("Gitee 仓库", ("https://gitee.com/liujunheng/DeepSeekHarnessGreen",
+            (i18n.t('about.gitee_repo'), ("https://gitee.com/liujunheng/DeepSeekHarnessGreen",
                              "gitee.com/liujunheng/DeepSeekHarnessGreen")),
-            ("发布主页", (GREEN_HOME_PAGE_URL,
+            (i18n.t('about.home_page'), (GREEN_HOME_PAGE_URL,
                            GREEN_HOME_PAGE_URL.replace("https://", ""))),
-            ("官方仓库", ("https://github.com/deepseek-ai/deepseek-harness",
+            (i18n.t('about.official_repo'), ("https://github.com/deepseek-ai/deepseek-harness",
                            "github.com/deepseek-ai/deepseek-harness")),
         ]
         info_frame = ttk.Frame(about_window)
@@ -5861,25 +5872,118 @@ def run_gui():
         # 绿色便携·本地化说明区块 (2026-08-16 补充: 强调所有文件与依赖全部本地化)
         local_frame = ttk.Frame(about_window)
         local_frame.pack(fill="x", padx=24, pady=(12, 0))
-        ttk.Label(local_frame, text="绿色整合 · 本地化特点", font=("Microsoft YaHei", 9, "bold"),
-                  foreground="#2f6f2f").pack(anchor="w")
+        _iw_5874 = ttk.Label(local_frame, text=i18n.t('about.local_title'), font=("Microsoft YaHei", 9, "bold"),                   foreground="#2f6f2f")
+        _iw_5874.pack(anchor="w")
+        _i18n_widgets.append((_iw_5874, 'text', 'about.local_title'))
         local_points = [
-            "· 双击即用，无需安装、无需手动配置环境",
-            "· 运行时依赖全部在程序根目录 runtime/ 下：便携 Node.js / 内置 Python /",
-            "  dsh 本体 / npm-pnpm 缓存 / 会话数据 / 临时文件",
-            "· 不写用户主目录、不修改系统环境变量、不占用 C 盘默认路径",
-            "· 整目录拷贝即用（可拷到其他位置或其他电脑，随拷随用）",
-            "· 更新只更新启动器自身，不覆盖 config.json（你的设置）与你的数据",
+            i18n.t('about.local_point_1'),
+            i18n.t('about.local_point_2'),
+            i18n.t('about.local_point_3'),
+            i18n.t('about.local_point_4'),
+            i18n.t('about.local_point_5'),
+            i18n.t('about.local_point_6'),
         ]
         for point in local_points:
             ttk.Label(local_frame, text=point, font=("Microsoft YaHei", 9),
                       foreground="#444444").pack(anchor="w", pady=1)
 
         # 按钮行 (仅关闭; 跳转统一用上方可点击链接文字)
-        ttk.Button(about_window, text="关闭", command=about_window.destroy).pack(pady=(18, 18))
+        ttk.Button(about_window, text=i18n.t('about.close'), command=about_window.destroy).pack(pady=(18, 18))
 
-    about_btn = ttk.Button(status_frame, text="关于", command=show_about)
+    about_btn = ttk.Button(status_frame, text=i18n.t('buttons.about'), command=show_about)
+    _i18n_widgets.append((about_btn, 'text', 'buttons.about'))
     about_btn.pack(side="right", padx=(10, 0))
+
+    # ---------- 语言切换按钮组 (右上角: 中文 / EN, 使用中亮起, 未使用暗色) ----------
+    lang_btn_frame = ttk.Frame(status_frame)
+    lang_btn_frame.pack(side="right", padx=(10, 0))
+
+    # 激活态 (当前使用的语言): 深绿背景 + 白字
+    LANG_ACTIVE_BG = "#2e7d32"
+    LANG_ACTIVE_FG = "#ffffff"
+    LANG_ACTIVE_BORDER = "#1b5e20"
+    # 非激活态: 浅灰背景 + 深灰字
+    LANG_INACTIVE_BG = "#f0f0f0"
+    LANG_INACTIVE_FG = "#777777"
+    LANG_INACTIVE_BORDER = "#cccccc"
+
+    zh_lang_btn = tk.Button(
+        lang_btn_frame, text="中文", width=4, bd=1,
+        relief="solid", cursor="hand2",
+        activebackground=LANG_ACTIVE_BG, activeforeground=LANG_ACTIVE_FG)
+    en_lang_btn = tk.Button(
+        lang_btn_frame, text="EN", width=3, bd=1,
+        relief="solid", cursor="hand2",
+        activebackground=LANG_ACTIVE_BG, activeforeground=LANG_ACTIVE_FG)
+
+    def refresh_lang_buttons():
+        """根据当前语言刷新两个按钮的样式 (激活态 vs 非激活态)"""
+        current = i18n.translator.current_lang
+        if current == 'zh':
+            zh_lang_btn.config(bg=LANG_ACTIVE_BG, fg=LANG_ACTIVE_FG,
+                               highlightbackground=LANG_ACTIVE_BORDER)
+            en_lang_btn.config(bg=LANG_INACTIVE_BG, fg=LANG_INACTIVE_FG,
+                               highlightbackground=LANG_INACTIVE_BORDER)
+        else:
+            zh_lang_btn.config(bg=LANG_INACTIVE_BG, fg=LANG_INACTIVE_FG,
+                               highlightbackground=LANG_INACTIVE_BORDER)
+            en_lang_btn.config(bg=LANG_ACTIVE_BG, fg=LANG_ACTIVE_FG,
+                               highlightbackground=LANG_ACTIVE_BORDER)
+
+    def set_lang_and_refresh(new_lang):
+        """切换语言 + 保存 + 刷新按钮样式 + 刷新所有文本"""
+        if i18n.translator.current_lang == new_lang:
+            return  # 已经是这个语言, 不重复操作
+        i18n.translator.switch(new_lang)
+        app.config['language'] = new_lang
+        app.save_config()
+        refresh_lang_buttons()
+        refresh_all_text()
+
+    zh_lang_btn.config(command=lambda: set_lang_and_refresh('zh'))
+    en_lang_btn.config(command=lambda: set_lang_and_refresh('en'))
+
+    en_lang_btn.pack(side="left")
+    zh_lang_btn.pack(side="left")
+    refresh_lang_buttons()  # 初始态刷新
+
+    def refresh_all_text():
+        """语言切换时刷新所有界面控件文本 (主窗口, 已打开的子窗口不自动刷新, 需关闭重开)"""
+        # 1. 刷新窗口标题
+        root.title(i18n.t('window.title'))
+        # 2. 刷新 StringVar
+        for sv, key, _ in _i18n_stringvars:
+            sv.set(i18n.t(key))
+        # 3. 刷新静态控件 (Button/Label/LabelFrame 等)
+        for widget, attr, key in _i18n_widgets:
+            if attr == 'text' and key is not None:
+                try:
+                    widget.config(text=i18n.t(key))
+                except Exception:
+                    pass
+            elif attr == 'labelframe_text' and key is not None:
+                try:
+                    widget.config(text=i18n.t(key))
+                except Exception:
+                    pass
+        # 4. 刷新所有带 _i18n_internal 属性的 Combobox (更新 values 和显示值)
+        for widget, attr, key in _i18n_widgets:
+            if hasattr(widget, '_i18n_internal') and hasattr(widget, '_i18n_values_keys'):
+                try:
+                    widget['values'] = [i18n.t(k) for k in widget._i18n_values_keys]
+                    internal = widget._i18n_internal
+                    key_map = getattr(widget, '_i18n_key_map', {})
+                    if internal in key_map:
+                        widget.set(i18n.t(key_map[internal]))
+                except Exception:
+                    pass
+        # 5. 刷新 auth_warning_label (动态计算, 直接调已有回调)
+        try:
+            _refresh_auth_warning()
+        except Exception:
+            pass
+
+    i18n.translator.on_change(refresh_all_text)
 
     # ---------- 最小化: 任务栏 + 托盘图标都保持常驻 (2026-08-16) ----------
     # 设计说明: 旧逻辑是"最小化 → 隐藏窗口进托盘; 恢复 → 移除托盘图标",
@@ -5918,17 +6022,17 @@ def run_gui():
             tk_root=root,
             on_click_restore=restore_from_tray,
             on_minimize=minimize_to_tray,
-            tooltip="DeepSeek Harness 绿色整合版启动器",
+            tooltip=i18n.t('tray.tooltip'),
         )
         # 启动即添加托盘图标并常驻 (2026-08-16): 无论是否最小化, 托盘图标都显示,
         # 避免"展开后托盘消失"让用户误以为程序退出了。add() 幂等且失败不抛异常,
         # 若启动时添加失败, 最小化时会再次尝试。
         if tray_icon.add():
-            append_log("托盘图标已常驻, 关闭窗口时请点 [退出] 或点 X 确认。")
+            append_log(i18n.t('tray.log_initialized'))
     except Exception as error:
         # 托盘初始化失败 (如窗口环境异常) 时降级: 退回普通最小化, 不拖垮整个 GUI
         tray_icon = _NoTray()
-        append_log("系统托盘初始化失败, 已退回普通最小化: %s" % error)
+        append_log(i18n.t('tray.log_init_failed', error=error))
 
     # ---------- 按钮区 ----------
     button_frame = ttk.Frame(root)
@@ -5950,7 +6054,7 @@ def run_gui():
             return
         sync_gui(silent=True)   # 安装/下载前也按界面当前填入值落盘 (含镜像源), 所见即所得
         set_busy(True)
-        status_text.set("正在安装环境 ...")
+        status_text.set(i18n.t('status.installing'))
         status_indicator.itemconfig(dot, fill="#f59e0b")   # 黄色闪烁
         append_log("--- 开始安装环境 ---")
         def worker():
@@ -5963,14 +6067,11 @@ def run_gui():
                         # 明确提示 Python 失败, 不再假装"全部装好" (2026-08-17)
                         append_log("--- 环境安装完成, 但内置 Python 下载失败 ---")
                         messagebox.showwarning(
-                            "内置 Python 下载失败",
-                            "Node 和 dsh 已安装成功, 但内置便携 Python 未下载成功。\n\n"
-                            "这不影响 dsh 服务 (服务由 Node 运行), 但会让顶栏状态灯显示红色。\n"
-                            "你可稍后再次点击「安装环境」重试; 或把 python-build-standalone 的\n"
-                            "install_only 压缩包手动解压到 runtime/python 即可。")
+                            i18n.t('install.python_fail_title'),
+                            i18n.t('install.python_fail_detail'))
                 root.after(0, lambda: finish(python_ok))
             except Exception as error:
-                root.after(0, lambda: messagebox.showerror("安装失败", str(error)))
+                root.after(0, lambda: messagebox.showerror(i18n.t('install.fail_title'), str(error)))
             finally:
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=worker, daemon=True).start()
@@ -5986,7 +6087,7 @@ def run_gui():
             return
         sync_gui(silent=True)   # 端口非法仅警告不阻断, 沿用旧端口
         set_busy(True)
-        status_text.set("正在启动服务 ...")
+        status_text.set(i18n.t('status.starting'))
         status_indicator.itemconfig(dot, fill="#f59e0b")
         def worker():
             try:
@@ -5994,7 +6095,7 @@ def run_gui():
                 if not ok:
                     root.after(0, lambda: append_log("启动失败, 请查看日志"))
             except Exception as error:
-                root.after(0, lambda: messagebox.showerror("启动失败", str(error)))
+                root.after(0, lambda: messagebox.showerror(i18n.t('start.fail_title'), str(error)))
             finally:
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=worker, daemon=True).start()
@@ -6004,13 +6105,13 @@ def run_gui():
         if is_busy[0]:
             return
         set_busy(True)
-        status_text.set("正在停止服务 ...")
+        status_text.set(i18n.t('status.stopping'))
         status_indicator.itemconfig(dot, fill="#f59e0b")
         def worker():
             try:
                 app.stop_server()
             except Exception as error:
-                root.after(0, lambda: messagebox.showerror("停止失败", str(error)))
+                root.after(0, lambda: messagebox.showerror(i18n.t('stop.fail_title'), str(error)))
             finally:
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=worker, daemon=True).start()
@@ -6020,7 +6121,7 @@ def run_gui():
         if is_busy[0]:
             return
         if app.is_server_running():
-            messagebox.showwarning("清理归档", "请先点击「停止服务」, 再执行清理。")
+            messagebox.showwarning(i18n.t('purge.title_short'), i18n.t('purge.hint_server_running'))
             return
         open_purge_dialog()
 
@@ -6028,7 +6129,7 @@ def run_gui():
         """可视化会话列表窗口: 显示标题/工作区/状态, 支持勾选(全选/单选)后
         选择「恢复(取消归档)」或「永久删除」。"""
         top = tk.Toplevel(root)
-        top.title("会话管理 (勾选后恢复或永久删除)")
+        top.title(i18n.t('purge.title'))
         top.geometry("920x540")
         top.minsize(720, 380)
         top.transient(root)
@@ -6052,15 +6153,15 @@ def run_gui():
                             show="headings", selectmode="none",
                             yscrollcommand=tree_scrollbar.set)
         tree_scrollbar.config(command=tree.yview)
-        tree.heading("check", text="☐")
+        tree.heading("check", text=i18n.t('purge.check_col'))
         tree.column("check", width=40, anchor="center")
-        tree.heading("title", text="标题")
+        tree.heading("title", text=i18n.t('purge.title_col'))
         tree.column("title", width=260)
-        tree.heading("workspace", text="工作区")
+        tree.heading("workspace", text=i18n.t('purge.workspace_col'))
         tree.column("workspace", width=280)
-        tree.heading("status", text="状态")
+        tree.heading("status", text=i18n.t('purge.status_col'))
         tree.column("status", width=70, anchor="center")
-        tree.heading("log", text="日志")
+        tree.heading("log", text=i18n.t('purge.log_col'))
         tree.column("log", width=50, anchor="center")
         tree.pack(fill="both", expand=True)
 
@@ -6091,21 +6192,21 @@ def run_gui():
             # 更新选中计数
             selected_count = sum(1 for v in checked.values() if v)
             if selected_count > 0:
-                delete_btn.config(text="删除选中 (%d)" % selected_count)
+                delete_btn.config(text=i18n.t('purge.delete_selected_count', count=selected_count))
             else:
-                delete_btn.config(text="删除选中")
+                delete_btn.config(text=i18n.t('purge.delete_selected'))
             # 更新已归档选中计数 (供恢复按钮显示, 只有已归档的才可恢复)
             archived_selected = sum(1 for sid, value in checked.items()
                                     if value and any(rec["id"] == sid and rec["archived"]
                                                      for rec in all_items))
             if archived_selected > 0:
-                restore_btn.config(text="恢复选中 (%d)" % archived_selected)
+                restore_btn.config(text=i18n.t('purge.restore_selected_count', count=archived_selected))
             else:
-                restore_btn.config(text="恢复选中")
+                restore_btn.config(text=i18n.t('purge.restore_selected'))
             # 更新全选/全不选按钮文字
             all_checked = all(checked.get(s["id"], False) for s in all_items) if all_items else False
             if all_items:
-                toggle_all_btn.config(text="全不选" if all_checked else "全选")
+                toggle_all_btn.config(text=i18n.t('purge.select_none') if all_checked else i18n.t('purge.select_all'))
 
         def toggle_all():
             if not all_items:
@@ -6123,41 +6224,41 @@ def run_gui():
             try:
                 all_items = app.list_sessions()
             except Exception as error:
-                messagebox.showerror("读取会话失败", str(error), parent=top)
-                count_label.config(text="读取失败")
+                messagebox.showerror(i18n.t('purge.read_error_title'), str(error), parent=top)
+                count_label.config(text=i18n.t('purge.read_failed'))
                 all_items = []
                 return
             if not all_items:
                 tree.insert("", "end", iid="__none__",
-                            values=("", "(没有找到任何会话)", "", "", ""))
+                            values=("", i18n.t('purge.no_sessions'), "", "", ""))
             else:
                 # 全选/全不选行
                 tree.insert("", "end", iid="__all__",
-                            values=("☐", "全选 / 全不选", "共 %d 个会话" % len(all_items), "", ""),
+                            values=(i18n.t('purge.check_col'), i18n.t('purge.select_all_label'), i18n.t('purge.total_count', count=len(all_items)), "", ""),
                             tags=("all_row",))
                 # 会话行
                 for rec in all_items:
-                    status_text = "已归档" if rec["archived"] else "正常"
+                    status_text = i18n.t('purge.status_archived') if rec["archived"] else i18n.t('purge.status_normal')
                     tree.insert("", "end", iid=rec["id"], values=(
                         "☐",
-                        rec["title"] or "(无标题)",
-                        rec["workspace"] or "(未归属)",
+                        rec["title"] or i18n.t('purge.untitled'),
+                        rec["workspace"] or i18n.t('purge.no_workspace'),
                         status_text,
-                        "有" if rec["hasLog"] else "无",
+                        i18n.t('purge.has_log_yes') if rec["hasLog"] else i18n.t('purge.has_log_no'),
                     ))
-            count_label.config(text="共 %d 个会话" % len(all_items))
+            count_label.config(text=i18n.t('purge.total_count', count=len(all_items)))
             update_check_display()
 
         # 删除选中
         def on_delete():
             selected_ids = [sid for sid, v in checked.items() if v]
             if not selected_ids:
-                messagebox.showinfo("删除会话", "请先勾选要删除的会话。", parent=top)
+                messagebox.showinfo(i18n.t('purge.delete_title'), i18n.t('purge.delete_select_first'), parent=top)
                 return
             preview = "\n".join(selected_ids[:8]) + ("\n…" if len(selected_ids) > 8 else "")
             if not messagebox.askyesno(
-                    "删除会话",
-                    "确定要永久删除选中的 %d 个会话吗?\n\n%s\n\n不可恢复。" % (len(selected_ids), preview),
+                    i18n.t('purge.delete_title'),
+                    i18n.t('purge.delete_confirm', count=len(selected_ids), preview=preview),
                     parent=top):
                 return
             delete_btn.config(state="disabled")
@@ -6176,12 +6277,11 @@ def run_gui():
                         append_log("删除会话 %s 失败: %s" % (sid, error))
                 refresh()
                 if failed:
-                    messagebox.showwarning("删除完成", "已删除 %d 个会话, %d 个失败。" %
-                                           (len(selected_ids) - len(failed), len(failed)), parent=top)
+                    messagebox.showwarning(i18n.t('purge.delete_done_title'), i18n.t('purge.delete_partial_done', success=len(selected_ids) - len(failed), fail=len(failed)), parent=top)
                 else:
-                    messagebox.showinfo("删除完成", "已删除 %d 个会话。" % len(selected_ids), parent=top)
+                    messagebox.showinfo(i18n.t('purge.delete_done_title'), i18n.t('purge.delete_all_done', count=len(selected_ids)), parent=top)
             except Exception as error:
-                messagebox.showerror("删除失败", str(error), parent=top)
+                messagebox.showerror(i18n.t('purge.delete_fail'), str(error), parent=top)
             finally:
                 delete_btn.config(state="normal")
                 restore_btn.config(state="normal")
@@ -6194,14 +6294,12 @@ def run_gui():
             selected_ids = [sid for sid, value in checked.items()
                             if value and sid in archived_by_id]
             if not selected_ids:
-                messagebox.showinfo("恢复会话", "请先勾选要恢复(取消归档)的会话。", parent=top)
+                messagebox.showinfo(i18n.t('purge.restore_title'), i18n.t('purge.restore_select_first'), parent=top)
                 return
             preview = "\n".join(selected_ids[:8]) + ("\n…" if len(selected_ids) > 8 else "")
             if not messagebox.askyesno(
-                    "恢复会话",
-                    "确定要恢复(取消归档)选中的 %d 个会话吗?\n\n%s\n\n"
-                    "恢复后它们将重新出现在 WebUI 会话列表, 原日志与内容不受影响。"
-                    % (len(selected_ids), preview),
+                    i18n.t('purge.restore_title'),
+                    i18n.t('purge.restore_confirm', count=len(selected_ids), preview=preview),
                     parent=top):
                 return
             delete_btn.config(state="disabled")
@@ -6220,12 +6318,11 @@ def run_gui():
                         append_log("恢复会话 %s 失败: %s" % (sid, error))
                 refresh()
                 if failed:
-                    messagebox.showwarning("恢复完成", "已恢复 %d 个会话, %d 个失败。" %
-                                           (len(selected_ids) - len(failed), len(failed)), parent=top)
+                    messagebox.showwarning(i18n.t('purge.restore_done_title'), i18n.t('purge.restore_partial_done', success=len(selected_ids) - len(failed), fail=len(failed)), parent=top)
                 else:
-                    messagebox.showinfo("恢复完成", "已恢复 %d 个会话。" % len(selected_ids), parent=top)
+                    messagebox.showinfo(i18n.t('purge.restore_done_title'), i18n.t('purge.restore_all_done', count=len(selected_ids)), parent=top)
             except Exception as error:
-                messagebox.showerror("恢复失败", str(error), parent=top)
+                messagebox.showerror(i18n.t('purge.restore_fail'), str(error), parent=top)
             finally:
                 delete_btn.config(state="normal")
                 restore_btn.config(state="normal")
@@ -6237,17 +6334,22 @@ def run_gui():
         bottom.pack(fill="x", padx=8, pady=(0, 8))
         count_label = ttk.Label(bottom, text="")
         count_label.pack(side="left")
-        ttk.Label(bottom, text="需先停止服务; 删除不可恢复, 恢复不删数据",
-                  foreground="#a04040").pack(side="left", padx=(10, 0))
-        toggle_all_btn = ttk.Button(bottom, text="全选", command=toggle_all)
+        _iw_6335 = ttk.Label(bottom, text=i18n.t('purge.need_stop_hint'),                   foreground="#a04040").pack(side="left", padx=(10, 0))
+        _i18n_widgets.append((_iw_6335, 'text', 'purge.need_stop_hint'))
+        toggle_all_btn = ttk.Button(bottom, text=i18n.t('purge.select_all'), command=toggle_all)
+        _i18n_widgets.append((toggle_all_btn, 'text', 'purge.select_all'))
         toggle_all_btn.pack(side="right", padx=(6, 0))
-        close_btn = ttk.Button(bottom, text="关闭", command=top.destroy)
+        close_btn = ttk.Button(bottom, text=i18n.t('purge.close'), command=top.destroy)
+        _i18n_widgets.append((close_btn, 'text', 'purge.close'))
         close_btn.pack(side="right", padx=(6, 0))
-        refresh_btn = ttk.Button(bottom, text="刷新", command=refresh)
+        refresh_btn = ttk.Button(bottom, text=i18n.t('purge.refresh'), command=refresh)
+        _i18n_widgets.append((refresh_btn, 'text', 'purge.refresh'))
         refresh_btn.pack(side="right", padx=(6, 0))
-        delete_btn = ttk.Button(bottom, text="删除选中", command=on_delete)
+        delete_btn = ttk.Button(bottom, text=i18n.t('purge.delete_selected'), command=on_delete)
+        _i18n_widgets.append((delete_btn, 'text', 'purge.delete_selected'))
         delete_btn.pack(side="right", padx=(6, 0))
-        restore_btn = ttk.Button(bottom, text="恢复选中", command=on_restore)
+        restore_btn = ttk.Button(bottom, text=i18n.t('purge.restore_selected'), command=on_restore)
+        _i18n_widgets.append((restore_btn, 'text', 'purge.restore_selected'))
         restore_btn.pack(side="right", padx=(6, 0))
 
         # 初始加载
@@ -6264,10 +6366,10 @@ def run_gui():
             return
         # 环境未就绪时先提示 (查询需要便携 Node + 已安装 dsh)
         if not app.dsh_installed():
-            messagebox.showinfo("检查更新", "当前尚未安装 dsh, 请先点击「安装环境」。")
+            messagebox.showinfo(i18n.t('check_update.title'), i18n.t('check_update.no_dsh'))
             return
         set_busy(True)
-        status_text.set("正在检查更新 ...")
+        status_text.set(i18n.t('status.checking_update'))
         status_indicator.itemconfig(dot, fill="#f59e0b")
         append_log("--- 开始检查 dsh 更新 ---")
         def worker():
@@ -6307,16 +6409,16 @@ def run_gui():
                 #    latest = 稳定正式版通道    next = 预发布/rc/alpha 通道
                 if tags:
                     add_candidate(tags.get("latest"), "stable",
-                                  "npm dist-tag: latest (稳定正式)", True)
+                                  i18n.t('check_update.npm_latest'), True)
                     add_candidate(tags.get("next"), "prerelease",
-                                  "npm dist-tag: next (预发布通道)", True)
+                                  i18n.t('check_update.npm_next'), True)
                 # 2) GitHub Releases 全部 tag: 历史版本, 是否可安装看 npm 有没有发
                 if github_releases:
                     for item in github_releases:
                         installable = (npm_versions is not None
                                        and item["version"] in npm_versions)
                         channel = "prerelease" if item["prerelease"] else "history"
-                        source_label = "GitHub release (预发布)" if item["prerelease"] else "GitHub release"
+                        source_label = i18n.t('check_update.github_prerelease') if item["prerelease"] else i18n.t('check_update.github_release')
                         add_candidate(item["version"], channel, source_label,
                                       installable, item["published_at"],
                                       item["body"], item["tag_name"])
@@ -6342,16 +6444,14 @@ def run_gui():
         if is_busy[0]:
             return
         choose = messagebox.askyesno(
-            "清理更新",
-            "将清空更新暂存目录 (runtime/update),\n"
-            "包括: 暂存的新版 zip、解压内容、覆盖前的旧文件备份、更新任务文件。\n\n"
-            "若更新程序正在运行中, 被占用的文件会跳过, 不影响更新。是否继续?",
+            i18n.t('cleanup.update_confirm_title'),
+            i18n.t('cleanup.update_confirm_detail'),
             icon="warning")
         if not choose:
-            append_log("用户取消清理更新")
+            append_log(i18n.t('cleanup.cancelled_update'))
             return
         removed_count = app.cleanup_update_files()
-        messagebox.showinfo("清理更新", "已清理更新目录, 共删除 %d 项。" % removed_count)
+        messagebox.showinfo(i18n.t('cleanup.update_done_title'), i18n.t('cleanup.update_done_detail', count=removed_count))
         append_log("已清理更新目录, 删除 %d 项" % removed_count)
 
     def on_cleanup_backup():
@@ -6359,32 +6459,29 @@ def run_gui():
         if is_busy[0]:
             return
         choose = messagebox.askyesno(
-            "清理备份",
-            "将清空备份目录 (runtime/backup),\n"
-            "包括: 更新 dsh 前自动备份的旧版本目录, 以及旧版散落的 dsh-backup-* 残留。\n\n"
-            "清理后无法回退旧版本! 是否继续?",
+            i18n.t('cleanup.backup_confirm_title'),
+            i18n.t('cleanup.backup_confirm_detail'),
             icon="warning")
         if not choose:
-            append_log("用户取消清理备份")
+            append_log(i18n.t('cleanup.cancelled_backup'))
             return
         removed_count = app.cleanup_backup_files()
-        messagebox.showinfo("清理备份", "已清理备份目录, 共删除 %d 项。" % removed_count)
+        messagebox.showinfo(i18n.t('cleanup.backup_done_title'), i18n.t('cleanup.backup_done_detail', count=removed_count))
         append_log("已清理备份目录, 删除 %d 项" % removed_count)
 
     def start_update_to(target_version):
         """按用户选择的目标版本, 后台执行 备份 + 重装"""
         set_busy(True)
-        status_text.set("正在更新 dsh ...")
+        status_text.set(i18n.t('status.updating_dsh'))
         status_indicator.itemconfig(dot, fill="#f59e0b")
         append_log("--- 开始更新 dsh (目标: %s) ---" % target_version)
         def update_worker():
             try:
                 new_version = app.update_dsh(target_version=target_version)
                 root.after(0, lambda: messagebox.showinfo(
-                    "更新完成", "dsh 已更新到版本: %s\n\n"
-                    "旧版本已备份到 runtime/backup, 可在「数据维护」里一键清理。" % new_version))
+                    i18n.t('update.done_title'), i18n.t('update.done_msg', version=new_version)))
             except Exception as error:
-                root.after(0, lambda: messagebox.showerror("更新失败", str(error)))
+                root.after(0, lambda: messagebox.showerror(i18n.t('update.failed_title'), str(error)))
             finally:
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=update_worker, daemon=True).start()
@@ -6395,7 +6492,7 @@ def run_gui():
         preloaded_notes: 动态检测时已拉到的发布说明 (GitHub body), 有则直接用,
         避免重复网络查询; 无则在后台线程拉取 (需求: 动态 tag 列表复用)"""
         detail_dialog = tk.Toplevel(root)
-        detail_dialog.title("确认升级")
+        detail_dialog.title(i18n.t('upgrade_confirm.title'))
         detail_dialog.transient(root)
         detail_dialog.grab_set()   # 模态
 
@@ -6431,14 +6528,16 @@ def run_gui():
 
         footer_frame = ttk.Frame(detail_dialog, padding=12)
         footer_frame.pack(fill="x")
-        ttk.Label(footer_frame, justify="left", foreground="#888888", text=(
-            "升级前会自动备份当前版本到 runtime/backup/dsh-<版本>,\n"
-            "旧版本备份不会自动删除, 可随时在「数据维护」里一键清理。")).pack(anchor="w")
+        ttk.Label(footer_frame, justify="left", foreground="#888888",
+                  text=i18n.t('upgrade_confirm.footer')).pack(anchor="w")
         button_row = ttk.Frame(footer_frame)
         button_row.pack(side="right")
-        ttk.Button(button_row, text="取消", command=detail_dialog.destroy).pack(side="right")
-        ttk.Button(button_row, text="确认升级", command=lambda: (
-            detail_dialog.destroy(), start_update_to(version))).pack(side="right", padx=6)
+        _iw_6528 = ttk.Button(button_row, text=i18n.t('close_dialog.cancel'), command=detail_dialog.destroy)
+        _iw_6528.pack(side="right")
+        _i18n_widgets.append((_iw_6528, 'text', 'close_dialog.cancel'))
+        _iw_6529 = ttk.Button(button_row, text=i18n.t('upgrade_confirm.confirm'), command=lambda: (             detail_dialog.destroy(), start_update_to(version)))
+        _iw_6529.pack(side="right", padx=6)
+        _i18n_widgets.append((_iw_6529, 'text', 'upgrade_confirm.confirm'))
 
         # 居中于主窗口
         detail_dialog.update_idletasks()
@@ -6468,7 +6567,7 @@ def run_gui():
             groups.setdefault(c["channel"], []).append(c)
 
         dialog = tk.Toplevel(root)
-        dialog.title("选择 DSH 版本")
+        dialog.title(i18n.t('version_select.title'))
         dialog.transient(root)
         dialog.grab_set()   # 模态: 关闭前主窗口不可操作
         dialog.geometry("720x520")
@@ -6491,10 +6590,10 @@ def run_gui():
         body.pack(fill="both", expand=True, padx=12, pady=(0, 6))
         tree = ttk.Treeview(body, columns=("source", "time", "installable"),
                             show="tree headings", height=12)
-        tree.heading("#0", text="版本")
-        tree.heading("source", text="来源 / 标签")
-        tree.heading("time", text="发布时间")
-        tree.heading("installable", text="状态")
+        tree.heading("#0", text=i18n.t('version_select.version_column'))
+        tree.heading("source", text=i18n.t('version_select.channel_column'))
+        tree.heading("time", text=i18n.t('version_select.published_column'))
+        tree.heading("installable", text=i18n.t('version_select.status_column'))
         tree.column("#0", width=180, anchor="w")
         tree.column("source", width=220, anchor="w")
         tree.column("time", width=140, anchor="center")
@@ -6548,13 +6647,13 @@ def run_gui():
         def get_selected():
             selection = tree.selection()
             if not selection:
-                messagebox.showwarning("选择版本",
-                                       "请先在上方列表中选择一个版本。", parent=dialog)
+                messagebox.showwarning(i18n.t('version_select.title'),
+                                       i18n.t('version_select.select_first'), parent=dialog)
                 return None
             iid = selection[0]
             # 如果选的是通道父节点, 提示选子项
             if iid not in selected_items:
-                messagebox.showwarning("选择版本",
+                messagebox.showwarning(i18n.t('version_select.title'),
                                        "请选择通道下的具体版本, 不要选通道标题。",
                                        parent=dialog)
                 return None
@@ -6565,7 +6664,7 @@ def run_gui():
             if item is None:
                 return
             if item["is_current"]:
-                messagebox.showinfo("选择版本",
+                messagebox.showinfo(i18n.t('version_select.title'),
                                     "版本 %s 已是当前已安装版本, 无需更新。"
                                     % item["version"], parent=dialog)
                 return
@@ -6593,7 +6692,7 @@ def run_gui():
                 webbrowser.open(url)
                 append_log("已打开 GitHub 发布页: %s" % url)
             except Exception as error:
-                messagebox.showerror("打开失败", "无法打开浏览器: %s" % error,
+                messagebox.showerror(i18n.t('open_fail.title'), i18n.t('open_fail.detail', error=error),
                                      parent=dialog)
 
         footer = ttk.Frame(dialog, padding=12)
@@ -6603,12 +6702,14 @@ def run_gui():
             "可以选择任何版本 (包括更旧的), 用于降级或切换通道。")).pack(anchor="w")
         button_row = ttk.Frame(footer)
         button_row.pack(side="right")
-        ttk.Button(button_row, text="关闭", command=lambda: (
-            dialog.destroy(), append_log("用户关闭版本选择"))).pack(side="right")
-        ttk.Button(button_row, text="打开 GitHub 发布页",
-                   command=on_open_github).pack(side="right", padx=6)
-        ttk.Button(button_row, text="安装选中版本",
-                   command=on_confirm).pack(side="right", padx=(6, 0))
+        _iw_6695 = ttk.Button(button_row, text=i18n.t('version_select.close'), command=lambda: (             dialog.destroy(), append_log("用户关闭版本选择")))
+        _iw_6695.pack(side="right")
+        _i18n_widgets.append((_iw_6695, 'text', 'version_select.close'))
+        _iw_6697 = ttk.Button(button_row, text=i18n.t('version_select.open_github_page'),                    command=on_open_github)
+        _iw_6697.pack(side="right", padx=6)
+        _i18n_widgets.append((_iw_6697, 'text', 'version_select.open_github_page'))
+        _iw_6699 = ttk.Button(button_row, text=i18n.t('version_select.install_selected'),                    command=on_confirm).pack(side="right", padx=(6, 0))
+        _i18n_widgets.append((_iw_6699, 'text', 'version_select.install_selected'))
 
         # 居中于主窗口
         dialog.update_idletasks()
@@ -6628,7 +6729,7 @@ def run_gui():
         if is_busy[0]:
             return
         if app.is_server_running():
-            messagebox.showinfo("检查绿色版更新", "请先点击「停止服务」, 再进行绿色版更新。")
+            messagebox.showinfo(i18n.t('green_update.title'), i18n.t('green_update.need_stop'))
             return
         set_busy(True)
         status_text.set("正在检查绿色版更新 ...")
@@ -6639,7 +6740,7 @@ def run_gui():
                 release_info = app.green_latest_release()
                 root.after(0, lambda: confirm_green_update(release_info))
             except Exception as error:
-                root.after(0, lambda: messagebox.showerror("检查绿色版更新", str(error)))
+                root.after(0, lambda: messagebox.showerror(i18n.t('green_update.title'), str(error)))
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=worker, daemon=True).start()
 
@@ -6647,18 +6748,18 @@ def run_gui():
         """绿色版查询结果处理: 无 Release / 已是最新 / 发现新版 -> 确认是否下载"""
         if release_info is None:
             set_busy(False)
-            messagebox.showerror("检查绿色版更新", "无法获取最新版本, 请检查网络后重试。")
+            messagebox.showerror(i18n.t('green_update.title'), "无法获取最新版本, 请检查网络后重试。")
             return
         local_version = app.green_local_version()
         latest_version = app.green_release_version(release_info)
         if not latest_version:
             set_busy(False)
-            messagebox.showwarning("检查绿色版更新",
+            messagebox.showwarning(i18n.t('green_update.title'),
                                    "当前版本尚未发布正式 Release, 请稍后再试。")
             return
         if not app._green_version_greater(latest_version, local_version):
             set_busy(False)
-            messagebox.showinfo("检查绿色版更新", "已是最新绿色版 v%s" % local_version)
+            messagebox.showinfo(i18n.t('green_update.title'), "已是最新绿色版 v%s" % local_version)
             return
         asset = app.green_find_zip_asset(release_info)
         if asset is None:
@@ -6679,19 +6780,16 @@ def run_gui():
         prefer_gitee = (app.resolve_mirror()[0] == "cn")
         if is_gitee_source:
             if prefer_gitee:
-                source_hint = ("\n\n本次更新来自 Gitee 镜像源 (国内源优先, 发布版 zip 直连, "
-                               "与 GitHub 发货内容一致)。")
+                source_hint = i18n.t('source_hint.gitee_preferred')
             else:
-                source_hint = ("\n\n注意: GitHub 通道连不通, 本次更新来自 Gitee 镜像源"
-                               " (发布版 zip / 整仓快照, 与 GitHub 发货内容一致)。")
+                source_hint = i18n.t('source_hint.gitee_fallback')
         else:
             source_hint = ""
         choose = messagebox.askyesno(
-            "发现新绿色版",
-            "当前版本: v%s\n最新版本: v%s\n\n更新说明:\n%s%s\n\n"
-            "是否下载并更新?\n\n更新流程: 下载到 runtime/update 暂存 → 退出启动器 → "
-            "自动覆盖安装 → 重启。\n不替换 config.json(你的设置) 与 runtime/(你的数据)。"
-            % (local_version, latest_version, release_note, source_hint),
+            i18n.t('green_update.detected_title'),
+            i18n.t('green_update.detected_msg',
+                    current=local_version, latest=latest_version,
+                    note=release_note, source_hint=source_hint),
             icon="question")
         if not choose:
             append_log("用户选择暂不更新绿色版")
@@ -6716,7 +6814,7 @@ def run_gui():
                 root.after(0, lambda: ask_apply_green_update(
                     content_root, job_path))
             except Exception as error:
-                root.after(0, lambda: messagebox.showerror("下载绿色版更新失败", str(error)))
+                root.after(0, lambda: messagebox.showerror(i18n.t('green_update.download_fail'), str(error)))
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=download_worker, daemon=True).start()
 
@@ -6740,7 +6838,7 @@ def run_gui():
             append_log("绿色版更新脚本已启动, 启动器即将退出 ...")
             on_close(confirm=False)
         except Exception as error:
-            messagebox.showerror("启动更新脚本失败", str(error))
+            messagebox.showerror(i18n.t('green_update.start_script_fail'), str(error))
             set_busy(False)
 
     def on_plugin_manager():
@@ -6748,7 +6846,7 @@ def run_gui():
         if is_busy[0]:
             return
         if not check_environment_ready():
-            messagebox.showinfo("插件管理", "请先点击「安装环境」准备环境 (需要 Node + dsh)。")
+            messagebox.showinfo(i18n.t('plugin.title'), "请先点击「安装环境」准备环境 (需要 Node + dsh)。")
             return
         open_plugin_manager()
 
@@ -6756,7 +6854,7 @@ def run_gui():
         """插件管理窗口: 查看已安装 / 搜索 (npm + GitHub 官方话题页) / 安装 / 移除插件
         所有耗时操作都在后台线程执行, 通过 root.after 回主线程更新界面"""
         top = tk.Toplevel(root)
-        top.title("插件管理")
+        top.title(i18n.t('plugin.title'))
         top.geometry("900x600")
         top.minsize(760, 520)
 
@@ -6784,7 +6882,7 @@ def run_gui():
             installed_item_urls.clear()
             dependencies = app.list_installed_plugins(profile)
             if not dependencies:
-                installed_tree.insert("", "end", text="(暂无已安装插件)", values=("", "", ""))
+                installed_tree.insert("", "end", text=i18n.t('plugin.no_installed'), values=("", "", ""))
                 return
             for package_name, version in sorted(dependencies.items()):
                 state = app.get_plugin_state(package_name, profile)
@@ -6804,7 +6902,7 @@ def run_gui():
             search_tree.delete(*search_tree.get_children())
             search_item_urls.clear()
             if not plugins:
-                search_tree.insert("", "end", text="(无结果)", values=("", default_source, "", ""))
+                search_tree.insert("", "end", text=i18n.t('plugin.search_no_result'), values=("", default_source, "", ""))
                 plugin_status.set("没有搜索到结果")
                 return
             for plugin in plugins:
@@ -6837,7 +6935,7 @@ def run_gui():
                     plugins = app.search_npm_plugins(keyword)
                     root.after(0, lambda: show_search_results(plugins, "npm"))
                 except Exception as error:
-                    root.after(0, lambda: (messagebox.showerror("搜索失败", str(error), parent=top),
+                    root.after(0, lambda: (messagebox.showerror(i18n.t('plugin.search_fail'), str(error), parent=top),
                                            plugin_status.set("搜索失败")))
                 finally:
                     root.after(0, lambda: set_plugin_busy(False))
@@ -6854,7 +6952,7 @@ def run_gui():
                     plugins = app.fetch_github_topic_plugins()
                     root.after(0, lambda: show_search_results(plugins, "github"))
                 except Exception as error:
-                    root.after(0, lambda: (messagebox.showerror("加载失败", str(error), parent=top),
+                    root.after(0, lambda: (messagebox.showerror(i18n.t('plugin.load_fail'), str(error), parent=top),
                                            plugin_status.set("加载失败")))
                 finally:
                     root.after(0, lambda: set_plugin_busy(False))
@@ -6936,7 +7034,7 @@ def run_gui():
                 return
             spec, display_name = resolve_selected_spec()
             if spec is None:
-                messagebox.showinfo("插件管理", "请先在右侧选中要安装的插件。", parent=top)
+                messagebox.showinfo(i18n.t('plugin.title'), "请先在右侧选中要安装的插件。", parent=top)
                 return
             do_install(spec, display_name)
 
@@ -6946,7 +7044,7 @@ def run_gui():
                 return
             spec = manual_var.get().strip()
             if not spec:
-                messagebox.showinfo("插件管理",
+                messagebox.showinfo(i18n.t('plugin.title'),
                                     "请先输入要安装的插件规格, 如 dsh-advisor 或 github:用户/仓库#提交号。",
                                     parent=top)
                 return
@@ -6981,7 +7079,7 @@ def run_gui():
             if plugin_busy[0]:
                 return
             if not app.bundled_plugin_dirs():
-                messagebox.showinfo("插件管理", "程序目录 plugins/ 下未发现内置插件。", parent=top)
+                messagebox.showinfo(i18n.t('plugin.title'), "程序目录 plugins/ 下未发现内置插件。", parent=top)
                 return
             if not messagebox.askyesno(
                     "安装内置插件",
@@ -7013,7 +7111,7 @@ def run_gui():
                             "%s(%s)" % (name, reason) for name, reason in failed_update))
                     message = "\n".join(summary) if summary else "(没有可安装/更新的内置插件)"
                     root.after(0, lambda: (refresh_installed(),
-                                           messagebox.showinfo("安装内置插件", message, parent=top),
+                                           messagebox.showinfo(i18n.t('plugin.install_title'), message, parent=top),
                                            plugin_status.set("内置插件安装/更新完成")))
                 except Exception as error:
                     root.after(0, lambda: (messagebox.showerror("安装失败", str(error), parent=top),
@@ -7075,14 +7173,14 @@ def run_gui():
                 return
             package_names = _collect_selected_package_names()
             if not package_names:
-                messagebox.showinfo("插件管理", "请先在左侧选中要移除的插件 (可 Ctrl/Shift 多选)。", parent=top)
+                messagebox.showinfo(i18n.t('plugin.title'), "请先在左侧选中要移除的插件 (可 Ctrl/Shift 多选)。", parent=top)
                 return
             if len(package_names) == 1:
                 confirm_msg = "确定要移除插件「%s」吗?" % package_names[0]
             else:
                 confirm_msg = "确定要移除以下 %d 个插件吗?\n\n%s" % (
                     len(package_names), "\n".join("· " + name for name in package_names))
-            if not messagebox.askyesno("移除插件", confirm_msg, parent=top):
+            if not messagebox.askyesno(i18n.t('plugin.remove_title'), confirm_msg, parent=top):
                 return
             set_plugin_busy(True)
             plugin_status.set("正在移除 %d 个插件 ..." % len(package_names))
@@ -7104,7 +7202,7 @@ def run_gui():
                         "; ".join("%s(%s)" % (name, reason) for name, reason in removed_fail)))
                 summary_text = "\n".join(summary_parts) if summary_parts else "(没有需要移除的插件)"
                 root.after(0, lambda: (refresh_installed(),
-                                       messagebox.showinfo("移除插件", summary_text, parent=top),
+                                       messagebox.showinfo(i18n.t('plugin.remove_title'), summary_text, parent=top),
                                        plugin_status.set("移除完成: %s" % summary_text.split("\n")[0])))
             threading.Thread(target=worker, daemon=True).start()
 
@@ -7114,7 +7212,7 @@ def run_gui():
                 return
             package_names = _collect_selected_package_names()
             if not package_names:
-                messagebox.showinfo("插件管理", "请先在左侧选中要启停的插件 (可 Ctrl/Shift 多选)。", parent=top)
+                messagebox.showinfo(i18n.t('plugin.title'), "请先在左侧选中要启停的插件 (可 Ctrl/Shift 多选)。", parent=top)
                 return
             action = "启用" if enable else "停用"
             if len(package_names) == 1:
@@ -7156,28 +7254,36 @@ def run_gui():
         toolbar = ttk.Frame(top)
         toolbar.pack(fill="x", padx=10, pady=(10, 6))
 
-        ttk.Label(toolbar, text="搜索插件:").pack(side="left")
+        _iw_7245 = ttk.Label(toolbar, text=i18n.t('plugin.search_label'))
+        _iw_7245.pack(side="left")
+        _i18n_widgets.append((_iw_7245, 'text', 'plugin.search_label'))
         keyword_var = tk.StringVar(value="dsh-plugin")
         keyword_entry = ttk.Entry(toolbar, textvariable=keyword_var, width=28)
         keyword_entry.pack(side="left", padx=(6, 6))
 
         ttk.Label(toolbar, text="  ").pack(side="left")
 
-        ttk.Label(toolbar, text="GitHub 官方入口:").pack(side="left")
-        github_btn = ttk.Button(toolbar, text="打开官方话题页", command=do_open_github_topic)
+        _iw_7252 = ttk.Label(toolbar, text=i18n.t('plugin.github_label'))
+        _iw_7252.pack(side="left")
+        _i18n_widgets.append((_iw_7252, 'text', 'plugin.github_label'))
+        github_btn = ttk.Button(toolbar, text=i18n.t('plugin.github_btn'), command=do_open_github_topic)
+        _i18n_widgets.append((github_btn, 'text', 'plugin.github_btn'))
         github_btn.pack(side="left", padx=(6, 0))
 
-        bundled_btn = ttk.Button(toolbar, text="一键安装内置插件",
+        bundled_btn = ttk.Button(toolbar, text=i18n.t('plugin.bundled_btn'),
                                  command=on_install_bundled)
+        _i18n_widgets.append((bundled_btn, 'text', 'plugin.bundled_btn'))
         bundled_btn.pack(side="left", padx=(12, 0))
-        ttk.Label(toolbar, text="(打开本窗口自动同步内置插件)").pack(side="left", padx=(6, 0))
+        _iw_7259 = ttk.Label(toolbar, text=i18n.t('plugin.bundled_hint')).pack(side="left", padx=(6, 0))
+        _i18n_widgets.append((_iw_7259, 'text', 'plugin.bundled_hint'))
 
         # ---------- 中间: 左右两个面板 ----------
         middle = ttk.Panedwindow(top, orient="horizontal")
         middle.pack(fill="both", expand=True, padx=10, pady=6)
 
         # 左侧: 已安装插件
-        installed_frame = ttk.LabelFrame(middle, text="已安装插件 (profile: %s)" % profile)
+        installed_frame = ttk.LabelFrame(middle, text=i18n.t('plugin.installed_tab', profile=profile))
+        _i18n_widgets.append((installed_frame, 'text', 'plugin.installed_tab'))
         middle.add(installed_frame, weight=1)
         # 列表区: 左 Treeview + 右垂直滚动条 (方便上下滑动)
         installed_body = ttk.Frame(installed_frame)
@@ -7185,9 +7291,9 @@ def run_gui():
         # selectmode="extended": 允许多选 (Ctrl+点击 逐个选, Shift+点击 连选)
         installed_tree = ttk.Treeview(installed_body, columns=("version", "state"),
                                       show="tree headings", selectmode="extended")
-        installed_tree.heading("#0", text="插件名")
-        installed_tree.heading("version", text="版本")
-        installed_tree.heading("state", text="状态")
+        installed_tree.heading("#0", text=i18n.t('plugin.column_name'))
+        installed_tree.heading("version", text=i18n.t('plugin.column_version'))
+        installed_tree.heading("state", text=i18n.t('plugin.column_status'))
         installed_tree.column("#0", width=240)
         installed_tree.column("version", width=80, anchor="center")
         installed_tree.column("state", width=56, anchor="center")
@@ -7199,28 +7305,33 @@ def run_gui():
 
         installed_buttons = ttk.Frame(installed_frame)
         installed_buttons.pack(fill="x", padx=6, pady=(0, 6))
-        remove_btn = ttk.Button(installed_buttons, text="批量移除", command=on_remove)
+        remove_btn = ttk.Button(installed_buttons, text=i18n.t('plugin.batch_remove'), command=on_remove)
+        _i18n_widgets.append((remove_btn, 'text', 'plugin.batch_remove'))
         remove_btn.pack(side="left")
-        enable_btn = ttk.Button(installed_buttons, text="批量启用", command=lambda: on_toggle(True))
+        enable_btn = ttk.Button(installed_buttons, text=i18n.t('plugin.batch_enable'), command=lambda: on_toggle(True))
+        _i18n_widgets.append((enable_btn, 'text', 'plugin.batch_enable'))
         enable_btn.pack(side="left", padx=(6, 0))
-        disable_btn = ttk.Button(installed_buttons, text="批量停用", command=lambda: on_toggle(False))
+        disable_btn = ttk.Button(installed_buttons, text=i18n.t('plugin.batch_disable'), command=lambda: on_toggle(False))
+        _i18n_widgets.append((disable_btn, 'text', 'plugin.batch_disable'))
         disable_btn.pack(side="left", padx=(6, 0))
-        ttk.Button(installed_buttons, text="刷新", command=on_refresh_installed).pack(side="left", padx=(6, 0))
-        ttk.Label(installed_buttons, text="(Ctrl/Shift 多选 · 启停需重启服务生效)",
-                  foreground="#666666").pack(side="left", padx=(8, 0))
+        _iw_7294 = ttk.Button(installed_buttons, text=i18n.t('plugin.refresh'), command=on_refresh_installed).pack(side="left", padx=(6, 0))
+        _i18n_widgets.append((_iw_7294, 'text', 'plugin.refresh'))
+        _iw_7295 = ttk.Label(installed_buttons, text=i18n.t('plugin.multi_select_hint'),                   foreground="#666666").pack(side="left", padx=(8, 0))
+        _i18n_widgets.append((_iw_7295, 'text', 'plugin.multi_select_hint'))
 
         # 右侧: 搜索结果
-        search_frame = ttk.LabelFrame(middle, text="搜索结果")
+        search_frame = ttk.LabelFrame(middle, text=i18n.t('plugin.search_tab'))
+        _i18n_widgets.append((search_frame, 'text', 'plugin.search_tab'))
         middle.add(search_frame, weight=2)
         # 列表区: 左 Treeview + 右垂直滚动条 (方便上下滑动)
         search_body = ttk.Frame(search_frame)
         search_body.pack(fill="both", expand=True, padx=6, pady=6)
         search_tree = ttk.Treeview(search_body, columns=("category", "source", "version", "description"), show="tree headings")
-        search_tree.heading("#0", text="插件名")
-        search_tree.heading("category", text="分类")
-        search_tree.heading("source", text="来源")
-        search_tree.heading("version", text="版本")
-        search_tree.heading("description", text="描述")
+        search_tree.heading("#0", text=i18n.t('plugin.column_name'))
+        search_tree.heading("category", text=i18n.t('plugin.column_category'))
+        search_tree.heading("source", text=i18n.t('plugin.column_source'))
+        search_tree.heading("version", text=i18n.t('version_select.version_column'))
+        search_tree.heading("description", text=i18n.t('plugin.column_desc'))
         # 列宽留足余量: 总和需明显小于面板宽度, 否则 pack 会把右侧滚动条压缩成 1x1
         search_tree.column("#0", width=150)
         search_tree.column("category", width=56, anchor="center")
@@ -7235,29 +7346,37 @@ def run_gui():
 
         search_buttons = ttk.Frame(search_frame)
         search_buttons.pack(fill="x", padx=6, pady=(0, 6))
-        search_btn = ttk.Button(search_buttons, text="搜索", command=do_search)
+        search_btn = ttk.Button(search_buttons, text=i18n.t('plugin.search_btn'), command=do_search)
+        _i18n_widgets.append((search_btn, 'text', 'plugin.search_btn'))
         search_btn.pack(side="left")
-        load_rec_btn = ttk.Button(search_buttons, text="加载推荐", command=do_load_recommended)
+        load_rec_btn = ttk.Button(search_buttons, text=i18n.t('plugin.load_recommended'), command=do_load_recommended)
+        _i18n_widgets.append((load_rec_btn, 'text', 'plugin.load_recommended'))
         load_rec_btn.pack(side="left", padx=(6, 0))
-        load_github_btn = ttk.Button(search_buttons, text="加载 GitHub 热门", command=do_load_github)
+        load_github_btn = ttk.Button(search_buttons, text=i18n.t('plugin.load_github_hot'), command=do_load_github)
+        _i18n_widgets.append((load_github_btn, 'text', 'plugin.load_github_hot'))
         load_github_btn.pack(side="left", padx=(6, 0))
-        install_btn = ttk.Button(search_buttons, text="安装选中插件", command=on_install_selected)
+        install_btn = ttk.Button(search_buttons, text=i18n.t('plugin.install_selected'), command=on_install_selected)
+        _i18n_widgets.append((install_btn, 'text', 'plugin.install_selected'))
         install_btn.pack(side="left", padx=(6, 0))
 
         # ---------- 手动安装栏 ----------
         manual_frame = ttk.Frame(top)
         manual_frame.pack(fill="x", padx=10, pady=(0, 6))
-        ttk.Label(manual_frame, text="手动安装 (支持 npm 包名 或 github:用户/仓库#提交号):").pack(side="left")
+        _iw_7336 = ttk.Label(manual_frame, text=i18n.t('plugin.manual_install_hint'))
+        _iw_7336.pack(side="left")
+        _i18n_widgets.append((_iw_7336, 'text', 'plugin.manual_install_hint'))
         manual_var = tk.StringVar()
         manual_entry = ttk.Entry(manual_frame, textvariable=manual_var, width=48)
         manual_entry.pack(side="left", padx=(6, 6))
-        manual_btn = ttk.Button(manual_frame, text="安装", command=on_manual_install)
+        manual_btn = ttk.Button(manual_frame, text=i18n.t('plugin.install_btn'), command=on_manual_install)
+        _i18n_widgets.append((manual_btn, 'text', 'plugin.install_btn'))
         manual_btn.pack(side="left")
-        local_install_btn = ttk.Button(manual_frame, text="选择本地插件文件夹安装…",
+        local_install_btn = ttk.Button(manual_frame, text=i18n.t('plugin.local_install'),
                                        command=on_install_local)
+        _i18n_widgets.append((local_install_btn, 'text', 'plugin.local_install'))
         local_install_btn.pack(side="left", padx=(8, 0))
-        ttk.Label(manual_frame, text="(本地插件: 重启服务后生效)",
-                  foreground="#666666").pack(side="left", padx=(8, 0))
+        _iw_7345 = ttk.Label(manual_frame, text=i18n.t('plugin.local_hint'),                   foreground="#666666").pack(side="left", padx=(8, 0))
+        _i18n_widgets.append((_iw_7345, 'text', 'plugin.local_hint'))
 
         # ---------- 底部状态栏 ----------
         plugin_status = tk.StringVar(value="就绪")
@@ -7299,51 +7418,63 @@ def run_gui():
         threading.Thread(target=auto_sync_bundled_on_open, daemon=True).start()
 
     # 八个按钮: 安装环境 / 启动服务 / 停止服务 / 打开界面 / 检查更新 / 检查绿色版更新 / 插件管理 / 刷新状态
-    install_btn = ttk.Button(button_frame, text="安装环境", command=on_install)
+    install_btn = ttk.Button(button_frame, text=i18n.t('buttons.install'), command=on_install)
+    _i18n_widgets.append((install_btn, 'text', 'buttons.install'))
     install_btn.pack(side="left", padx=(0, 8))
 
-    start_btn = ttk.Button(button_frame, text="启动服务", command=on_start)
+    start_btn = ttk.Button(button_frame, text=i18n.t('buttons.start'), command=on_start)
+    _i18n_widgets.append((start_btn, 'text', 'buttons.start'))
     start_btn.pack(side="left", padx=8)
 
-    stop_btn = ttk.Button(button_frame, text="停止服务", command=on_stop)
+    stop_btn = ttk.Button(button_frame, text=i18n.t('buttons.stop'), command=on_stop)
+    _i18n_widgets.append((stop_btn, 'text', 'buttons.stop'))
     stop_btn.pack(side="left", padx=8)
 
     # 分隔: 打开界面 → 桌面窗口 / 网页窗口 两项 (可分别手动打开)
-    ttk.Button(button_frame, text="桌面窗口",
-               command=lambda: on_open("desktop")).pack(side="left", padx=(0, 8))
-    ttk.Button(button_frame, text="网页窗口",
+    _iw_7401 = ttk.Button(button_frame, text=i18n.t('buttons.desktop'),                command=lambda: on_open("desktop")).pack(side="left", padx=(0, 8))
+    _i18n_widgets.append((_iw_7401, 'text', 'buttons.desktop'))
+    ttk.Button(button_frame, text=i18n.t('buttons.browser'),
                command=lambda: on_open("browser")).pack(side="left", padx=8)
 
-    update_btn = ttk.Button(button_frame, text="检查更新", command=on_check_update)
+    update_btn = ttk.Button(button_frame, text=i18n.t('buttons.check_update'), command=on_check_update)
+    _i18n_widgets.append((update_btn, 'text', 'buttons.check_update'))
     update_btn.pack(side="left", padx=8)
 
-    green_update_btn = ttk.Button(button_frame, text="检查绿色版更新", command=on_check_green_update)
+    green_update_btn = ttk.Button(button_frame, text=i18n.t('buttons.check_green_update'), command=on_check_green_update)
+    _i18n_widgets.append((green_update_btn, 'text', 'buttons.check_green_update'))
     green_update_btn.pack(side="left", padx=8)
 
-    plugin_btn = ttk.Button(button_frame, text="插件管理", command=on_plugin_manager)
+    plugin_btn = ttk.Button(button_frame, text=i18n.t('buttons.plugin_manager'), command=on_plugin_manager)
+    _i18n_widgets.append((plugin_btn, 'text', 'buttons.plugin_manager'))
     plugin_btn.pack(side="left", padx=8)
 
-    ttk.Button(button_frame, text="刷新状态", command=refresh_status).pack(side="left", padx=8)
+    _iw_7418 = ttk.Button(button_frame, text=i18n.t('buttons.refresh'), command=refresh_status)
+    _iw_7418.pack(side="left", padx=8)
+    _i18n_widgets.append((_iw_7418, 'text', 'buttons.refresh'))
 
     # ---------- 数据维护区 (需先停止服务) ----------
-    maintenance_frame = ttk.LabelFrame(root, text="数据维护 (需先停止服务, 恢复不删数据)")
+    maintenance_frame = ttk.LabelFrame(root, text=i18n.t('maintenance.labelframe'))
+    _i18n_widgets.append((maintenance_frame, 'labelframe_text', 'maintenance.labelframe'))
     maintenance_frame.pack(fill="x", padx=14, pady=(0, 8))
-    purge_btn = ttk.Button(maintenance_frame, text="会话管理", command=on_purge)
+    purge_btn = ttk.Button(maintenance_frame, text=i18n.t('maintenance.session_manage'), command=on_purge)
+    _i18n_widgets.append((purge_btn, 'text', 'maintenance.session_manage'))
     purge_btn.pack(side="left", padx=8, pady=6)
     ttk.Label(maintenance_frame,
-              text="弹出会话列表, 勾选(可全选)后可恢复(取消归档)或永久删除选中的会话(日志+注册表条目)",
+              text=i18n.t('maintenance.session_hint'),
               foreground="#a04040").pack(side="left", padx=(12, 8))
     # 清理维护: 清空更新暂存目录 / 统一备份目录 (独立文件夹集中管理)
     cleanup_row = ttk.Frame(maintenance_frame)
     cleanup_row.pack(fill="x", padx=8, pady=(0, 6))
-    cleanup_update_btn = ttk.Button(cleanup_row, text="清理更新",
+    cleanup_update_btn = ttk.Button(cleanup_row, text=i18n.t('maintenance.cleanup_update'),
                                     command=on_cleanup_update)
+    _i18n_widgets.append((cleanup_update_btn, 'text', 'maintenance.cleanup_update'))
     cleanup_update_btn.pack(side="left", padx=(0, 8))
-    cleanup_backup_btn = ttk.Button(cleanup_row, text="清理备份",
+    cleanup_backup_btn = ttk.Button(cleanup_row, text=i18n.t('maintenance.cleanup_backup'),
                                     command=on_cleanup_backup)
+    _i18n_widgets.append((cleanup_backup_btn, 'text', 'maintenance.cleanup_backup'))
     cleanup_backup_btn.pack(side="left", padx=(0, 8))
     ttk.Label(cleanup_row,
-              text="清空 runtime/update (更新暂存) 与 runtime/backup (旧版备份) 文件夹",
+              text=i18n.t('maintenance.cleanup_hint'),
               foreground="#606060").pack(side="left", padx=(4, 8))
 
     # 初始刷新状态
@@ -7356,28 +7487,41 @@ def run_gui():
     config_area.columnconfigure(1, weight=1)   # 右列: 常规设置
 
     # ===== 左: 网络设置 (局域网远程访问) =====
-    network_frame = ttk.LabelFrame(config_area, text="网络设置 (局域网远程访问)")
+    network_frame = ttk.LabelFrame(config_area, text=i18n.t('network.labelframe'))
+    _i18n_widgets.append((network_frame, 'labelframe_text', 'network.labelframe'))
     network_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
 
-    ttk.Label(network_frame, text="服务绑定:").grid(row=0, column=0, padx=8, pady=6, sticky="w")
-    bind_var = tk.StringVar(value=("局域网 (允许局域网访问 0.0.0.0)"
-                                   if app.config.get("dsh_host", "127.0.0.1") == "0.0.0.0"
-                                   else "本机 (仅本机访问 127.0.0.1)"))
-    bind_choices = ["本机 (仅本机访问 127.0.0.1)", "局域网 (允许局域网访问 0.0.0.0)"]
+    _iw_7457 = ttk.Label(network_frame, text=i18n.t('network.bind_label'))
+    _iw_7457.grid(row=0, column=0, padx=8, pady=6, sticky="w")
+    _i18n_widgets.append((_iw_7457, 'text', 'network.bind_label'))
+    _bind_internal = "lan" if app.config.get("dsh_host", "127.0.0.1") == "0.0.0.0" else "local"
+    _bind_display = i18n.t('network.bind_lan') if _bind_internal == "lan" else i18n.t('network.bind_local')
+    bind_var = tk.StringVar(value=_bind_display)
+    bind_choices = [i18n.t('network.bind_local'), i18n.t('network.bind_lan')]
     bind_combo = ttk.Combobox(network_frame, textvariable=bind_var,
                               values=bind_choices, state="readonly", width=30)
     bind_combo.grid(row=0, column=1, padx=8, pady=6, sticky="w")
+    bind_combo._i18n_internal = _bind_internal
+    bind_combo._i18n_key_map = {"local": "network.bind_local", "lan": "network.bind_lan"}
+    bind_combo._i18n_values_keys = ["network.bind_local", "network.bind_lan"]
+    _i18n_widgets.append((bind_combo, 'combobox', None))
+    def _on_bind_change(event):
+        for _int_val, _key in bind_combo._i18n_key_map.items():
+            if i18n.t(_key) == bind_combo.get():
+                bind_combo._i18n_internal = _int_val
+                break
+    bind_combo.bind('<<ComboboxSelected>>', _on_bind_change)
 
-    ttk.Label(network_frame, text="受信任主机:").grid(row=1, column=0, padx=8, pady=6, sticky="w")
+    _iw_7475 = ttk.Label(network_frame, text=i18n.t('network.trusted_hosts_label'))
+    _iw_7475.grid(row=1, column=0, padx=8, pady=6, sticky="w")
+    _i18n_widgets.append((_iw_7475, 'text', 'network.trusted_hosts_label'))
     trusted_var = tk.StringVar(
         value=", ".join(str(host) for host in app.config.get("trusted_hosts", [])))
     trusted_entry = ttk.Entry(network_frame, textvariable=trusted_var, width=30)
     trusted_entry.grid(row=1, column=1, padx=8, pady=6, sticky="w")
 
     ttk.Label(network_frame,
-              text="受信任主机: 可空, 逗号分隔的 host 或 host:port。\n"
-                   "不填=绑定局域网时自动信任全部局域网 IP; 填了任意一个=只信任填写的地址,\n"
-                   "不再自动全局域网放行。",
+              text=i18n.t('network.trusted_hosts_hint'),
               foreground="#606060", justify="left", wraplength=430).grid(
                   row=2, column=0, columnspan=2, padx=8, pady=(0, 6), sticky="w")
 
@@ -7387,7 +7531,7 @@ def run_gui():
     # 0.0.0.0 下关了 = 局域网任何人可直接访问, 需醒目警告.
     auth_var = tk.BooleanVar(value=bool(app.config.get("dsh_require_auth", True)))
     auth_checkbox = ttk.Checkbutton(network_frame,
-                                    text="启用 Web 安全认证 (首次访问需 token 换取 Cookie)",
+                                    text=i18n.t('network.auth_label'),
                                     variable=auth_var)
     auth_checkbox.grid(row=3, column=0, columnspan=2, padx=8, pady=4, sticky="w")
 
@@ -7400,17 +7544,14 @@ def run_gui():
     def _refresh_auth_warning(*_args):
         """auth_var / bind_var 任一变化时刷新安全警告标签的内容与可见性。"""
         require_auth = bool(auth_var.get())
-        is_lan = "局域网" in bind_var.get()
+        is_lan = bind_combo._i18n_internal == "lan"
         if not require_auth and is_lan:
             auth_warning_label.config(
-                text="[安全警告] 当前已关闭 Web token 认证 + 绑定局域网 0.0.0.0: "
-                     "局域网内任何人可直接访问界面 (仅 Host/Origin 围栏防护). "
-                     "如不需要局域网访问, 建议改回「本机 127.0.0.1」彻底消除外部暴露面.",
+                text=i18n.t('network.auth_warning_lan_off'),
                 foreground="#c03030")
         elif not require_auth and not is_lan:
             auth_warning_label.config(
-                text="[提示] 已关闭 Web token 认证, 但当前绑定本机 127.0.0.1, "
-                     "外部网络无法访问, 实际风险极低. 打开局域网绑定后请慎重考虑.",
+                text=i18n.t('network.auth_warning_local_off'),
                 foreground="#b07030")
         else:
             auth_warning_label.config(text="")   # auth 开启时清空警告
@@ -7421,39 +7562,69 @@ def run_gui():
     _refresh_auth_warning()   # 初始渲染
 
     # ===== 右: 常规设置 =====
-    settings_frame = ttk.LabelFrame(config_area, text="常规设置")
+    settings_frame = ttk.LabelFrame(config_area, text=i18n.t('settings.labelframe'))
+    _i18n_widgets.append((settings_frame, 'labelframe_text', 'settings.labelframe'))
     settings_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
 
-    mirror_var = tk.StringVar(value={"auto": "自动 (国内优先, 失败回退官方)",
-                                     "cn": "国内 (npmmirror)",
-                                     "official": "官方 (npmjs.org)"}.get(app.config["mirror"], "自动"))
-    mirror_choices = ["自动 (国内优先, 失败回退官方)", "国内 (npmmirror)", "官方 (npmjs.org)"]
+    _mirror_internal = app.config.get("mirror", "auto")
+    if _mirror_internal not in ("auto", "cn", "official"):
+        _mirror_internal = "auto"
+    _mirror_key_map = {"auto": "settings.mirror_auto", "cn": "settings.mirror_cn", "official": "settings.mirror_official"}
+    _mirror_display = i18n.t(_mirror_key_map.get(_mirror_internal, "settings.mirror_auto"))
+    mirror_var = tk.StringVar(value=_mirror_display)
+    mirror_choices = [i18n.t('settings.mirror_auto'), i18n.t('settings.mirror_cn'), i18n.t('settings.mirror_official')]
     mirror_combo = ttk.Combobox(settings_frame, textvariable=mirror_var,
                                 values=mirror_choices, state="readonly", width=30)
-    ttk.Label(settings_frame, text="镜像源:").grid(row=0, column=0, padx=8, pady=6, sticky="w")
+    _iw_7536 = ttk.Label(settings_frame, text=i18n.t('settings.mirror_label'))
+    _iw_7536.grid(row=0, column=0, padx=8, pady=6, sticky="w")
+    _i18n_widgets.append((_iw_7536, 'text', 'settings.mirror_label'))
     # 常规设置里让「镜像源」与「端口」同一行并列, 善用横向宽度, 压缩纵向高度
     mirror_combo.grid(row=0, column=1, padx=8, pady=6, sticky="w")
+    mirror_combo._i18n_internal = _mirror_internal
+    mirror_combo._i18n_key_map = _mirror_key_map
+    mirror_combo._i18n_values_keys = ["settings.mirror_auto", "settings.mirror_cn", "settings.mirror_official"]
+    _i18n_widgets.append((mirror_combo, 'combobox', None))
+    def _on_mirror_change(event):
+        for _int_val, _key in mirror_combo._i18n_key_map.items():
+            if i18n.t(_key) == mirror_combo.get():
+                mirror_combo._i18n_internal = _int_val
+                break
+    mirror_combo.bind('<<ComboboxSelected>>', _on_mirror_change)
 
-    ttk.Label(settings_frame, text="端口:").grid(row=0, column=2, padx=(16, 0), pady=6, sticky="w")
+    _iw_7549 = ttk.Label(settings_frame, text=i18n.t('settings.port_label')).grid(row=0, column=2, padx=(16, 0), pady=6, sticky="w")
+    _i18n_widgets.append((_iw_7549, 'text', 'settings.port_label'))
     port_var = tk.StringVar(value=str(app.config["dsh_port"]))
     port_entry = ttk.Entry(settings_frame, textvariable=port_var, width=10)
     port_entry.grid(row=0, column=3, padx=8, pady=6, sticky="w")
 
     # 默认打开方式: 影响「启动服务后自动打开」与单击按钮时的默认方式 (也可在按钮区单独指定)。
     # 注意: 下拉选项是中文, 初始值必须也用中文标签, 否则选项框显示出英文 desktop/browser 对不上。
-    open_method_var = tk.StringVar(
-        value=("独立桌面窗口 (内嵌 WebView2)"
-               if app.config.get("open_method", "desktop") == "desktop"
-               else "网页窗口 (系统浏览器)"))
-    ttk.Label(settings_frame, text="默认打开方式:").grid(row=1, column=0, padx=8, pady=6, sticky="w")
-    open_method_choices = ["独立桌面窗口 (内嵌 WebView2)", "网页窗口 (系统浏览器)"]
+    _open_method_internal = app.config.get("open_method", "desktop")
+    if _open_method_internal not in ("desktop", "browser"):
+        _open_method_internal = "desktop"
+    _open_display = i18n.t('settings.open_desktop') if _open_method_internal == "desktop" else i18n.t('settings.open_browser')
+    open_method_var = tk.StringVar(value=_open_display)
+    _iw_7561 = ttk.Label(settings_frame, text=i18n.t('settings.open_method_label'))
+    _iw_7561.grid(row=1, column=0, padx=8, pady=6, sticky="w")
+    _i18n_widgets.append((_iw_7561, 'text', 'settings.open_method_label'))
+    open_method_choices = [i18n.t('settings.open_desktop'), i18n.t('settings.open_browser')]
     open_method_combo = ttk.Combobox(settings_frame, textvariable=open_method_var,
                                      values=open_method_choices, state="readonly", width=30)
     open_method_combo.grid(row=1, column=1, padx=8, pady=6, sticky="w")
+    open_method_combo._i18n_internal = _open_method_internal
+    open_method_combo._i18n_key_map = {"desktop": "settings.open_desktop", "browser": "settings.open_browser"}
+    open_method_combo._i18n_values_keys = ["settings.open_desktop", "settings.open_browser"]
+    _i18n_widgets.append((open_method_combo, 'combobox', None))
+    def _on_open_method_change(event):
+        for _int_val, _key in open_method_combo._i18n_key_map.items():
+            if i18n.t(_key) == open_method_combo.get():
+                open_method_combo._i18n_internal = _int_val
+                break
+    open_method_combo.bind('<<ComboboxSelected>>', _on_open_method_change)
 
     auto_open_var = tk.BooleanVar(value=bool(app.config.get("auto_open_browser", True)))
     ttk.Checkbutton(settings_frame,
-                    text="启动服务后自动打开界面 (按默认方式打开, 已打开则不重复开新页)",
+                    text=i18n.t('settings.auto_open_label'),
                     variable=auto_open_var).grid(row=2, column=0, columnspan=4,
                                                  padx=8, pady=4, sticky="w")
 
@@ -7471,16 +7642,16 @@ def run_gui():
             raw_port = port_var.get().strip()
             new_port = int(raw_port) if raw_port else None
             if new_port is not None and not (1 <= new_port <= 65535):
-                raise ValueError("端口范围 1-65535")
+                raise ValueError(i18n.t('settings.port_invalid'))
             if new_port is not None:
                 app.config["dsh_port"] = new_port
         except ValueError as error:
             if not silent:
-                messagebox.showerror("设置错误", "端口无效: %s" % error)
+                messagebox.showerror(i18n.t('settings.settings_error'), i18n.t('settings.port_invalid_detail', error=error))
                 return False
             append_log("[警告] 端口无效, 本次未改动端口: %s" % error)
         # 网络设置: 服务绑定 (仅允许 127.0.0.1 / 0.0.0.0) + 受信任主机 (逗号/空白分隔, 去空)
-        app.config["dsh_host"] = ("0.0.0.0" if "局域网" in bind_var.get() else "127.0.0.1")
+        app.config["dsh_host"] = "0.0.0.0" if bind_combo._i18n_internal == "lan" else "127.0.0.1"
         trusted_list = []
         for item in trusted_var.get().replace("，", ",").split(","):
             item = item.strip()
@@ -7491,10 +7662,8 @@ def run_gui():
         # 关掉 auth 后启动服务前 patch_auth 会跳过 BrowserAuth, 裸地址直开.
         app.config["dsh_require_auth"] = bool(auth_var.get())
         # 常规设置: 镜像源 / 默认打开方式 / 自动打开 / 背景视频目录
-        raw = mirror_var.get()
-        app.config["mirror"] = "cn" if "国内" in raw else ("official" if "官方" in raw else "auto")
-        open_raw = open_method_var.get()
-        app.config["open_method"] = ("desktop" if "桌面" in open_raw else "browser")
+        app.config["mirror"] = mirror_combo._i18n_internal
+        app.config["open_method"] = open_method_combo._i18n_internal
         app.config["auto_open_browser"] = bool(auto_open_var.get())
         app.save_config()
         return True
@@ -7502,17 +7671,21 @@ def run_gui():
     def on_save():
         """手动「保存设置」: 同步两块并将结果落盘"""
         if sync_gui(silent=False):
-            messagebox.showinfo("设置已保存", "配置已保存。下次启动服务时生效。")
+            messagebox.showinfo(i18n.t('settings.settings_saved'), i18n.t('settings.settings_saved_detail'))
 
     # ===== 保存设置 (「网络设置」与「常规设置」共同, 放在两块下方统一提交) =====
     settings_action = ttk.Frame(root)
     settings_action.pack(fill="x", padx=14, pady=(0, 8))
-    ttk.Label(settings_action, text="改动后即使不点保存, 启动服务或安装下载时也会自动按最新填入值落盘生效",
-              foreground="#606060").pack(side="left", padx=8)
-    ttk.Button(settings_action, text="保存设置", command=on_save).pack(side="right", padx=8)
+    _iw_7630 = ttk.Label(settings_action, text=i18n.t('settings.save_hint'),               foreground="#606060")
+    _iw_7630.pack(side="left", padx=8)
+    _i18n_widgets.append((_iw_7630, 'text', 'settings.save_hint'))
+    _iw_7632 = ttk.Button(settings_action, text=i18n.t('settings.save_button'), command=on_save)
+    _iw_7632.pack(side="right", padx=8)
+    _i18n_widgets.append((_iw_7632, 'text', 'settings.save_button'))
 
     # ---------- 日志文本框 ----------
-    log_frame = ttk.LabelFrame(root, text="运行日志")
+    log_frame = ttk.LabelFrame(root, text=i18n.t('log.labelframe'))
+    _i18n_widgets.append((log_frame, 'labelframe_text', 'log.labelframe'))
     log_frame.pack(fill="both", expand=True, padx=14, pady=(0, 12))
 
     # 内容多的运行日志需要用滚动条上下翻看 (消息多了自动换行成很长的滚动区,
@@ -7541,28 +7714,28 @@ def run_gui():
             dialog.destroy()
 
         dialog = tk.Toplevel(root)
-        dialog.title("确认关闭")
+        dialog.title(i18n.t('close_dialog.title'))
         dialog.transient(root)
         dialog.grab_set()          # 模态: 关闭操作期间主窗口不响应
         dialog.resizable(False, False)
 
         label_frame = ttk.Frame(dialog, padding=14)
         label_frame.pack(fill="x")
-        ttk.Label(label_frame, justify="left", text=(
-            "请选择关闭方式:\n\n"
-            "退出并停止服务   —— 关闭启动器, 同时停止 dsh 服务。\n"
-            "最小化到托盘     —— dsh 服务继续运行, 可随时从\n"
-            "                     任务栏或托盘图标恢复窗口。\n"
-            "取消             —— 什么都不做, 继续使用。")).pack(anchor="w")
+        _iw_7672 = ttk.Label(label_frame, justify="left", text=i18n.t('close_dialog.label'))
+        _iw_7672.pack(anchor="w")
+        _i18n_widgets.append((_iw_7672, 'text', 'close_dialog.label'))
 
         button_row = ttk.Frame(dialog, padding=14)
         button_row.pack(fill="x")
-        ttk.Button(button_row, text="取消",
-                   command=lambda: choose(None)).pack(side="right")
-        ttk.Button(button_row, text="最小化到托盘(服务继续)",
-                   command=lambda: choose("tray")).pack(side="right", padx=8)
-        ttk.Button(button_row, text="退出并停止服务",
-                   command=lambda: choose("exit")).pack(side="right")
+        _iw_7676 = ttk.Button(button_row, text=i18n.t('close_dialog.cancel'),                    command=lambda: choose(None))
+        _iw_7676.pack(side="right")
+        _i18n_widgets.append((_iw_7676, 'text', 'close_dialog.cancel'))
+        _iw_7678 = ttk.Button(button_row, text=i18n.t('close_dialog.minimize'),                    command=lambda: choose("tray"))
+        _iw_7678.pack(side="right", padx=8)
+        _i18n_widgets.append((_iw_7678, 'text', 'close_dialog.minimize'))
+        _iw_7680 = ttk.Button(button_row, text=i18n.t('close_dialog.exit'),                    command=lambda: choose("exit"))
+        _iw_7680.pack(side="right")
+        _i18n_widgets.append((_iw_7680, 'text', 'close_dialog.exit'))
 
         # 居中于主窗口
         dialog.update_idletasks()
@@ -7589,7 +7762,7 @@ def run_gui():
             if close_choice is None:   # 取消
                 return
             # close_choice == "exit" → 继续往下执行退出
-        status_text.set("正在退出并停止服务 ...")
+        status_text.set(i18n.t('status.exiting'))
         tray_icon.dispose()   # 先移除托盘图标并还原窗口过程, 避免残留
         app.on_exit()
         root.destroy()
@@ -7606,7 +7779,7 @@ def run_gui():
         root.after(80, poll_tray_loop)
     root.after(80, poll_tray_loop)
 
-    append_log("DeepSeek Harness 绿色整合版启动器已启动, 点击 [安装环境] 或直接 [启动服务] 开始。")
+    append_log(i18n.t('log.launch_hint'))
     root.mainloop()
 
 

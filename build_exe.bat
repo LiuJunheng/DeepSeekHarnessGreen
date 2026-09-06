@@ -100,7 +100,7 @@ set "PYTHONPATH=%PYINSTALLER_DIR%;%PYTHONPATH%"
 rem ---------- 4. Build DSH_Launcher.exe ----------
 echo.
 echo [INFO] Building DSH_Launcher.exe ...
-"%PYTHON_EXE%" -m PyInstaller --clean --noconfirm --onefile --windowed --noupx --name DSH_Launcher --icon "%~dp0DSH_Launcher.ico" --add-data "%~dp0DSH_Launcher.ico;."%VC_BINARIES% --distpath dist --workpath build --specpath build "%~dp0launcher.py"
+"%PYTHON_EXE%" -m PyInstaller --clean --noconfirm --onefile --windowed --noupx --name DSH_Launcher --icon "%~dp0DSH_Launcher.ico" --add-data "%~dp0DSH_Launcher.ico;." --add-data "%~dp0locales;locales"%VC_BINARIES% --distpath dist --workpath build --specpath build "%~dp0launcher.py"
 if errorlevel 1 (
     echo [ERROR] DSH_Launcher.exe build failed. See PyInstaller output above.
     pause
@@ -112,7 +112,7 @@ rem Standalone updater that overlays files AFTER main exe exits.
 rem It also embeds python, so needs same VC DLLs.
 echo.
 echo [INFO] Building DSH_Update.exe ...
-"%PYTHON_EXE%" -m PyInstaller --clean --noconfirm --onefile --windowed --noupx --name DSH_Update --icon "%~dp0DSH_Launcher.ico" --add-data "%~dp0DSH_Launcher.ico;."%VC_BINARIES% --distpath dist --workpath build --specpath build "%~dp0update_agent.py"
+"%PYTHON_EXE%" -m PyInstaller --clean --noconfirm --onefile --windowed --noupx --name DSH_Update --icon "%~dp0DSH_Launcher.ico" --add-data "%~dp0DSH_Launcher.ico;." --add-data "%~dp0locales;locales"%VC_BINARIES% --distpath dist --workpath build --specpath build "%~dp0update_agent.py"
 if errorlevel 1 (
     echo [ERROR] DSH_Update.exe build failed. See PyInstaller output above.
     pause

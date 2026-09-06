@@ -35,6 +35,19 @@ import sys
 import time
 import tkinter
 from tkinter import messagebox
+import i18n
+
+
+def _init_i18n_for_update_agent():
+    """独立更新程序也需要加载 i18n 语言表. 从 launcher 的 config.json 读取 language 设置"""
+    config_path = os.path.join(os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__)), "config.json")
+    try:
+        with open(config_path, "r", encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        lang = cfg.get("language", "zh")
+    except Exception:
+        lang = "zh"
+    i18n.translator.switch(lang)
 
 # 等待本体退出时的最长等待时间 (秒)
 MAX_WAIT_SECONDS = 30
@@ -218,21 +231,23 @@ def relaunch(base_dir, relaunch_mode):
 
 def build_status_window(job_data):
     """创建简易状态窗口, 让用户在覆盖过程中看到进度 (不依赖 cmd 控制台)"""
+    _init_i18n_for_update_agent()
     root = tkinter.Tk()
-    root.title("DSH 绿色版更新")
+    root.title(i18n.t('update_agent.window_title'))
     root.geometry("460x150")
     root.resizable(False, False)
     new_version = job_data.get("new_version") or ""
-    title_text = "DeepSeek Harness 绿色版更新中"
     if new_version:
-        title_text += "  (新版本 v%s)" % new_version
+        title_text = i18n.t('update_agent.updating_version', version=new_version)
+    else:
+        title_text = i18n.t('update_agent.updating_title')
     title_label = tkinter.Label(root, text=title_text,
                                 font=("Microsoft YaHei", 12, "bold"))
     title_label.pack(pady=(18, 8))
-    status_label = tkinter.Label(root, text="正在准备 ...",
+    status_label = tkinter.Label(root, text=i18n.t('update_agent.status_preparing'),
                                  font=("Microsoft YaHei", 10), fg="#444444")
     status_label.pack()
-    tip_label = tkinter.Label(root, text="更新期间请勿关闭本窗口",
+    tip_label = tkinter.Label(root, text=i18n.t('update_agent.tip_dont_close'),
                               font=("Microsoft YaHei", 9), fg="#999999")
     tip_label.pack(pady=(6, 0))
     root.update_idletasks()
@@ -248,23 +263,23 @@ def set_status(root, status_label, text):
 def show_failure_dialog(job_data, error_text):
     """更新失败: 弹窗说明原因, 并给出手动下载覆盖源文件的地址。
     用户需求 (2026-08-18): 失败时必须提示从哪手动拿到更新覆盖源文件"""
+    _init_i18n_for_update_agent()
     release_url = job_data.get("manual_release_url") or ""
     zip_url = job_data.get("manual_zip_url") or ""
     message_parts = [
-        "更新失败, 你的程序未受影响(旧文件已备份), 可继续使用当前版本。",
+        i18n.t('update_agent.fail_msg1'),
         "",
-        "失败原因: %s" % error_text,
+        i18n.t('update_agent.fail_reason', error=error_text),
         "",
-        "要手动更新, 请二选一:",
+        i18n.t('update_agent.fail_manual'),
     ]
     if release_url:
-        message_parts.append("1) 打开发布页: %s" % release_url)
+        message_parts.append(i18n.t('update_agent.fail_release_page', url=release_url))
     if zip_url:
-        message_parts.append("2) 直接下载更新包: %s" % zip_url)
+        message_parts.append(i18n.t('update_agent.fail_direct_download', url=zip_url))
     if release_url or zip_url:
-        message_parts.append("   下载解压后, 把里面的文件覆盖到程序目录 "
-                             "(不要覆盖 config.json 与 runtime 文件夹)。")
-    messagebox.showerror("DSH 绿色版更新失败", "\n".join(message_parts))
+        message_parts.append("   " + i18n.t('update_agent.fail_final_hint'))
+    messagebox.showerror(i18n.t('update_agent.fail_title'), "\n".join(message_parts))
 
 
 def show_manual_tip():
