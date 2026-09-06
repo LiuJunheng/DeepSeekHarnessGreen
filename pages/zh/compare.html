@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="baidu-site-verification" content="codeva-Ll8XkairX3" />
+  <meta name="google-adsense-account" content="ca-pub-4210397233262199" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="DeepSeek Harness 绿色整合版启动器特色对比：为什么选择绿色便携版？逐维度对比官方 CLI / 社区桌面壳，一目了然。">
+  <meta name="robots" content="index, follow">
+  <title>特色对比 · DeepSeek Harness 绿色整合版</title>
+  <link rel="canonical" href="https://dsh-green.website/zh/compare.html">
+  <link rel="alternate" hreflang="zh-Hans" href="https://dsh-green.website/zh/compare.html">
+  <link rel="alternate" hreflang="zh-Hant" href="https://dsh-green.website/zh-Hant/compare.html">
+  <link rel="alternate" hreflang="en" href="https://dsh-green.website/en/compare.html">
+  <link rel="alternate" hreflang="x-default" href="https://dsh-green.website/">
+  <link rel="stylesheet" href="../assets/style.css?v=3.3">
+  <style>
+    /* ---- 对比页专用样式（复用 style.css 的 :root 变量） ---- */
+    .cmp-hero {
+      padding-top: 72px;
+    }
+    .cmp-hero .hero-sub {
+      max-width: 760px;
+    }
+    /* 逐维度对比表 */
+    .cmp-wrap {
+      max-width: var(--maxw);
+      margin: 0 auto;
+      padding: 56px 20px;
+    }
+    .cmp-table {
+      width: 100%;
+      min-width: 860px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    .cmp-table th,
+    .cmp-table td {
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      vertical-align: top;
+      line-height: 1.55;
+      color: #d3e2f7;
+    }
+    .cmp-table thead th {
+      background: rgba(57, 211, 255, 0.10);
+      color: #fff;
+      font-weight: 700;
+      text-align: left;
+      border-bottom: 1px solid var(--border-glow);
+      white-space: nowrap;
+    }
+    .cmp-table .dim {
+      background: rgba(20, 45, 90, 0.25);
+      color: var(--accent);
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .cmp-table .own-th {
+      background: linear-gradient(135deg, rgba(57,211,255,0.20), rgba(74, 158, 255, 0.20));
+      color: #fff;
+      border-left: 2px solid var(--accent-2);
+      border-right: 2px solid var(--accent-2);
+    }
+    .cmp-table col.col-own { background: rgba(57, 211, 255, 0.06); }
+    /* 绿色版列高亮 */
+    .own-col {
+      background: rgba(57, 211, 255, 0.07);
+      border-left: 2px solid var(--accent-2);
+      border-right: 2px solid var(--accent-2);
+    }
+    .tag-own {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      color: #04121a;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      border-radius: 999px;
+      padding: 1px 9px;
+      margin-bottom: 6px;
+    }
+    .tag-star { color: var(--accent); }
+    /* 事实条目 */
+    .cmp-table ul { margin: 0; padding-left: 16px; }
+    .cmp-table li { margin: 3px 0; list-style: square; }
+    .cmp-table li b { color: #fff; font-weight: 600; }
+    .legend {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 14px 0 8px;
+    }
+    .legend b { color: var(--accent); }
+    /* 项目速览卡 */
+    .proj-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 16px;
+      margin-top: 6px;
+    }
+    .proj-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--panel);
+      padding: 20px;
+      backdrop-filter: blur(10px) saturate(1.3);
+      transition: transform 0.25s, border-color 0.25s;
+    }
+    .proj-card:hover {
+      transform: translateY(-4px);
+      border-color: var(--border-glow);
+    }
+    .proj-card h3 {
+      font-size: 16px;
+      margin-bottom: 6px;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .proj-card h3 a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .proj-card h3 a:hover { text-decoration: underline; }
+    .proj-card .pill {
+      font-size: 11px;
+      color: var(--accent);
+      border: 1px solid rgba(57, 211, 255, 0.35);
+      background: rgba(57, 211, 255, 0.10);
+      border-radius: 999px;
+      padding: 1px 9px;
+      white-space: nowrap;
+    }
+    .proj-card p {
+      color: var(--muted);
+      font-size: 13.5px;
+      margin: 8px 0 0;
+      line-height: 1.6;
+    }
+    .proj-card .diff-line {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px dashed var(--border);
+      color: #c3d0e8;
+      font-size: 13.5px;
+    }
+    /* 插件特色 */
+    .plugin-tagline {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 20px;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: linear-gradient(135deg, rgba(57,211,255,0.10), rgba(154,107,255,0.10));
+      padding: 24px;
+      margin-top: 6px;
+    }
+    .plugin-tagline .text { color: #d3e2f7; font-size: 15px; line-height: 1.7; }
+    .plugin-tagline .cta { display: flex; gap: 12px; flex-wrap: wrap; }
+    /* 提示条 */
+    .note {
+      border: 1px solid rgba(255, 179, 71, 0.30);
+      background: rgba(255,179,71,0.06);
+      border-radius: var(--radius);
+      padding: 14px 18px;
+      font-size: 13.5px;
+      color: #ffe2b8;
+      margin-top: 18px;
+    }
+    .note b { color: var(--warn, #ffb347); }
+    @media (max-width: 720px) {
+      .plugin-tagline { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Background layers -->
+  <div class="bg-gradient" aria-hidden="true"></div>
+  <div class="bg-aurora" aria-hidden="true"></div>
+  <div class="bg-grid" aria-hidden="true"></div>
+  <canvas id="particles-canvas" aria-hidden="true"></canvas>
+  <canvas id="water-background" aria-hidden="true"></canvas>
+  <div class="scan-light" aria-hidden="true"></div>
+  <!-- Navigation -->
+  <header class="nav" id="top">
+    <a class="nav-brand" href="index.html">
+      <span class="brand-glyph" aria-hidden="true">◆</span>
+      <span class="brand-text">DeepSeek Harness · 绿色整合版</span>
+    </a>
+    <nav class="nav-links" aria-label="页面导航">
+      <a href="index.html">首页</a>
+      <a href="#compare">逐维度对比</a>
+      <a href="#projects">社区版速览</a>
+      <a href="#plugins">独有插件</a>
+      <a href="#download">下载</a>
+    </nav>
+    <div class="lang-switcher nav-lang-switcher" aria-label="语言切换">
+      <a href="compare.html" class="active" aria-current="page">简体中文</a>
+      <a href="../zh-Hant/compare.html" onclick="try{localStorage.setItem('dshe-lang-preference','zh-Hant');}catch(e){}">繁體中文</a>
+      <a href="../en/compare.html" onclick="try{localStorage.setItem('dshe-lang-preference','en');}catch(e){}">English</a>
+    </div>
+  </header>
+  <main>
+    <!-- Hero -->
+    <section class="hero cmp-hero" id="top">
+      <div class="hero-badge">
+        <span class="badge-dot" aria-hidden="true"></span>
+        特色对比 · 一屏看懂定位
+      </div>
+      <h1 class="hero-title">
+        同样是 DeepSeek Harness，<br>
+        一套<span class="gradient-text">绿色便携启动器</span>有什么不同
+      </h1>
+      <p class="hero-sub">
+        官方主打 <code>npx dsh</code> 命令行与浏览器界面；社区也做了各种桌面壳。
+        本绿色版在最前面补上「<b>免安装、免配置、不污染系统、整包拷走</b>」的一环——三者定位互补，按需选择。
+      </p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="#compare">查看对比表</a>
+        <a class="btn btn-ghost" href="#download">直接去下载</a>
+      </div>
+    </section>
+
+    <!-- 逐维度对比 -->
+    <section class="section" id="compare">
+      <h2 class="section-title">逐维度对比</h2>
+      <p class="section-sub">四列一览：本绿色版（高亮）｜ 官方 CLI ｜ 社区桌面壳代表</p>
+      <div class="legend">图例：<b>■ 高亮列 = 本绿色版</b>，置于最左优先进览；带 ⭐ 为他人相对亮点。对比不评判优劣，只看“各有什么、适不适合你的场景”。</div>
+      <div class="twrap cmp-wrap" style="padding-top:4px;padding-bottom:0;max-width:none;overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:rgba(10,18,38,.5)">
+        <table class="cmp-table">
+          <colgroup>
+            <col style="width:140px">
+            <col class="col-own" style="width:auto">
+            <col style="width:auto">
+            <col style="width:auto">
+          </colgroup>
+          <thead>
+            <tr>
+              <th>维度</th>
+              <th class="own-th">本绿色版<br><span style="font-weight:400;color:var(--muted);font-size:12px">DeepSeekHarnessGreen</span></th>
+              <th>DeepSeek 官方<br><span style="font-weight:400;color:var(--muted);font-size:12px">npx dsh · CLI / WebUI</span></th>
+              <th>社区桌面壳代表<br><span style="font-weight:400;color:var(--muted);font-size:12px">Electron / Tauri 等</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="dim">安装 / 启动</td>
+              <td class="own-col"><span class="tag-own">绿色便携</span>解压即用，双击 <code>DSH_Launcher.exe</code> 或 <code>start.bat</code> 一键就绪</td>
+              <td>需现装 Node.js + pnpm，终端运行 <code>npx dsh web</code></td>
+              <td>安装型整包（或便携 zip），自带 Node；体积普遍较大</td>
+            </tr>
+            <tr>
+              <td class="dim">分身体积</td>
+              <td class="own-col"><span class="tag-own">最轻</span>绿色 zip <b>≈18MB</b>，不含运行时；环境首装联网补齐，之后全离线</td>
+              <td>纯命令行，无独立体积</td>
+              <td>整包自检率高：约 <b>87MB</b>（Tauri）~ <b>157MB+</b>（Electron，Chromium）</td>
+            </tr>
+            <tr>
+              <td class="dim">数据归属</td>
+              <td class="own-col"><span class="tag-own">随包走</span>Node / dsh / 缓存 / 会话全在 <code>runtime/</code>，<code>DSH_HOME</code> 内置，整目录拷贝即迁移</td>
+              <td><code>~/.dsh</code>（用户主目录）</td>
+              <td>安装型写在 <code>AppData</code>；部分与主目录隔离</td>
+            </tr>
+            <tr>
+              <td class="dim">系统污染</td>
+              <td class="own-col"><span class="tag-own">零污染</span>不装系统、不写注册表、不写用户主目录</td>
+              <td>写全局 Node 环境与依赖缓存</td>
+              <td>安装型写注册表、程序目录、更新项</td>
+            </tr>
+            <tr>
+              <td class="dim">桌面窗口</td>
+              <td class="own-col">内嵌 WebView2 的独立窗口（可回退系统浏览器）；壳层最轻，无 Chromium 体积</td>
+              <td>浏览器标签页</td>
+              <td>Electron / Tauri 独立窗口，可自绘边框、托盘、手势</td>
+            </tr>
+            <tr>
+              <td class="dim">更新机制</td>
+              <td class="own-col"><span class="tag-own">双通道</span>官方核心 + 绿色版外壳<b>各查各的、互不干扰</b>；更新前自动备份可回退</td>
+              <td><code>npx dsh</code> 重新拉取</td>
+              <td>单通道整包更新，自动校验哈希</td>
+            </tr>
+            <tr>
+              <td class="dim">镜像 / 速度</td>
+              <td class="own-col"><span class="tag-own">国内友好</span>镜像可切「国内 / 官方」，GitHub 不通自动转 Gitee</td>
+              <td>默认走官方源，国内较慢</td>
+              <td>部分内置国内镜像</td>
+            </tr>
+            <tr>
+              <td class="dim">插件生态</td>
+              <td class="own-col">内置 <b>10 款自研插件</b>（记忆库 / 规则注入 / 会话回退 / 导入 / 用量统计 / Ollama…），开箱即用</td>
+              <td>官方插件，需自行安装管理</td>
+              <td>预装社区插件、预设包（.dshpreset）、视觉引擎等</td>
+            </tr>
+            <tr>
+              <td class="dim">会话维护</td>
+              <td class="own-col">离线<b>取消归档</b>与<b>永久删除</b>归档会话，会话可回退到健康回合</td>
+              <td>仅归档，不提供删除入口</td>
+              <td>会话管理浮窗 / 快照恢复（部分项目有）</td>
+            </tr>
+            <tr>
+              <td class="dim">局域网访问</td>
+              <td class="own-col"><span class="tag-own">远程</span>一键绑 <code>0.0.0.0</code> 并自动放行防火墙，手机 / 其它电脑直接开 WebUI</td>
+              <td>默认仅本机</td>
+              <td>默认仅 loopback（更稳更安全）</td>
+            </tr>
+            <tr>
+              <td class="dim">语言支持</td>
+              <td class="own-col">本站提供<br><b>中文 / 繁體 / English</b> 多语言页面，随站点语言自动切换</td>
+              <td>官方提供中英文档</td>
+              <td>各项目语言覆盖不同：部分多语言，部分以中文或英文为主，无统一标准</td>
+            </tr>
+            <tr>
+              <td class="dim">发布渠道</td>
+              <td class="own-col">双远端发布（GitHub / Gitee），国内访问顺畅</td>
+              <td>GitHub / npm 官方源</td>
+              <td>多为 GitHub 单一渠道</td>
+            </tr>
+            <tr>
+              <td class="dim">亮点速览</td>
+              <td class="own-col">⭐ 轻量便携、零污染、双通道更新、独有自研插件、局域网远程</td>
+              <td>官方内核，稳定权威</td>
+              <td>⭐ 跨平台（mac/Linux）、代码签名、安全模式、任务看板、桌面宠物、A/B 双槽更新等</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note">
+        <b>说明：</b>绿色便携与“全内置整包 / 官方 CLI”是三条互补路线，没有绝对优劣。本绿色版的核心取舍是——<b>更轻、更干净、更可迁移</b>，聚焦 Windows 便携用户；牺牲了跨平台与代码签名等“重交付”能力。社区项目的 Guarded / 安全模式、Task Board 等亮点未刻意复刻，可按需参考移植。
+      </div>
+    </section>
+
+    <!-- 社区版速览 -->
+    <section class="section" id="projects">
+      <h2 class="section-title">社区桌面 / 整合版速览</h2>
+      <p class="section-sub">调研 2026-09-05～09-06，star 为调研当天快照，活跃度以 Release 频率为准</p>
+      <div class="proj-grid">
+        <article class="proj-card">
+          <h3><a href="https://github.com/dataelement/dsh-desktop" target="_blank" rel="nofollow noopener noreferrer">dataelement/dsh-desktop</a></h3>
+          <span class="pill">≈4244★ · Electron</span>
+          <p>社区最接近“商业成品”：六语种官网、mac 签名 + Win 代码签名、.dshpreset 预设包、手机配对、Safe Mode、诊断恢复。规格最完整。</p>
+          <div class="diff-line">对照本绿色版：它是更"重交付"的产品化路线，适合看重「客户端级体验 + 多语言」的用户。</div>
+        </article>
+        <article class="proj-card">
+          <h3><a href="https://github.com/myYangyunfan/dsh_desktop" target="_blank" rel="nofollow noopener noreferrer">myYangyunfan/dsh_desktop</a></h3>
+          <span class="pill">≈637★ · Tauri 2</span>
+          <p>中文功能最全的社区版：内置全套离线、守护瀑布自愈、桌面宠物 / 余额小部件、GitHub/Gitee 双源 sha256 校验更新。定位与我们最近。</p>
+          <div class="diff-line">本绿色版更强调“零污染 + 随包迁移”，它强调“全内置 + 桌面宠物等增强交互”。</div>
+        </article>
+        <article class="proj-card">
+          <h3><a href="https://github.com/anywhere-labs/deepseek-harness-desktop" target="_blank" rel="nofollow noopener noreferrer">anywhere-labs/deepseek-harness-desktop</a></h3>
+          <span class="pill">较新·活跃</span>
+          <p>基于 Electron，社区持续跟进上游 rc；以 Cordis 插件行组合桌面能力（窗口 / 托盘 / 终端 / 更新），偏向“零 fork 跟随上游”。</p>
+          <div class="diff-line">跟随上游更保守，适合重视“内核原样 + 少分叉”的开发者。</div>
+        </article>
+        <article class="proj-card">
+          <h3><a href="https://github.com/citrusli2026/dsh-desktop" target="_blank" rel="nofollow noopener noreferrer">citrusli2026/dsh-desktop（dsh-desktop.com）</a></h3>
+          <span class="pill">v0.1.2-rc.1.shell.5 · macOS/Windows/Linux</span>
+          <p>官方形态新出的社区桌面壳（Electron）：“只把 Harness 带到桌面，不另做一套”。内置 Node、默认独立数据目录 <code>~/.dsh-desktop</code>。</p>
+          <div class="diff-line">与官方命令行数据隔离、互不干扰；跨平台三端全支持。</div>
+        </article>
+        <article class="proj-card">
+          <h3><a href="https://github.com/ningbainb/deepseek-harness-desktop" target="_blank" rel="nofollow noopener noreferrer">ningbainb/deepseek-harness-desktop</a></h3>
+          <span class="pill">v2.6.0 · Windows · BSD-3</span>
+          <p>Windows AI 编程整包：Task Board 任务看板、Git 图谱、右侧文件面板、Skills 技能库、Codex 接入，偏向“开发者工作台”。</p>
+          <div class="diff-line">功能堆叠更强，面向重度编程用户；体积更大、更重交付。</div>
+        </article>
+        <article class="proj-card">
+          <h3><a href="https://github.com/libi/dsh-desktop" target="_blank" rel="nofollow noopener noreferrer">libi/dsh-desktop</a></h3>
+          <span class="pill">Electron · 跟随上游</span>
+          <p>另一套 Electron/TS 桌面壳：自动拉起 DSH 后端、识别可用端口、托盘与窗口管理、跟随上游自动构建发布。结构与此类壳一致。</p>
+          <div class="diff-line">思路同类，整体定位与 citrusli 相近。</div>
+        </article>
+      </div>
+    </section>
+
+    <!-- 独有插件 -->
+    <section class="section" id="plugins">
+      <h2 class="section-title">独有特色插件</h2>
+      <p class="section-sub">全部为纯插件，不修改官方文件；安装后重启服务生效</p>
+      <div class="plugin-grid">
+        <article class="plugin-card">
+          <h3>🧠 祖宗记忆库</h3>
+          <p>对话关键信息沉淀到 SQLite，下次自动召回注入 system prompt，跨会话保持记忆；支持会话分组与批量清理。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>📜 用户规则注入</h3>
+          <p>编写个人偏好 / 代码风格 / 沟通要求的 markdown，每次对话自动注入 system prompt。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>↩️ 会话回退 / 导入</h3>
+          <p>会话被工具崩溃“毒化”时回退到健康回合；会话 ZIP / JSONL 导入与官方导出互逆。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>🧾 用量统计</h3>
+          <p>每条消息的「本次 token / 预估费用」+ 汇总用量。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>🖼️ 背景影画</h3>
+          <p>本地目录视频作为 WebUI 背景播放（画面 + 声音）。</p>
+        </article>
+        <article class="plugin-card">
+          <h3>🤖 Ollama 接入</h3>
+          <p>自动识别本机 Ollama 服务并接入，模型选择器直接选 Ollama 模型。</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- 下载 -->
+    <section class="section" id="download">
+      <h2 class="section-title">下载绿色便携版</h2>
+      <p class="section-sub">绿色 zip 不带预装环境，体积小；新机联网后由启动器自动补齐运行环境</p>
+      <div class="plugin-tagline">
+        <div class="text">
+          一个 <b>≈18MB</b> 的绿色 zip，内含启动器、内置插件与文档。<br>
+          解压 → 双击 → 首次联网补环境 → 之后全离线可用。<br>
+          不装系统、不写注册表、不污染用户目录，整包拷走即可迁移。
+        </div>
+        <div class="cta">
+          <a class="btn btn-primary btn-lg" href="https://gitee.com/liujunheng/DeepSeekHarnessGreen/releases/latest" data-dl="gitee" target="_blank" rel="noopener">
+            Gitee 下载（推荐）</a>
+          <a class="btn btn-ghost btn-lg" href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest" data-dl="github" target="_blank" rel="noopener">
+            GitHub 下载</a>
+        </div>
+      </div>
+      <p class="section-sub" style="margin-top:18px">
+        <span class="version-chip" id="footer-version">最新版本见 Release</span> ·
+        <a class="inline-link" href="index.html">← 返回首页</a>
+      </p>
+    </section>
+  </main>
+  <footer class="footer">
+    <p>DeepSeek Harness 桌面绿色整合版启动器 · 特色对比页</p>
+    <p>Apache License 2.0 · Copyright (c) 2026 LiuJunheng</p>
+    <p class="footer-note">
+      独立社区项目，非 DeepSeek 官方产品，也不代表 DeepSeek 官方提供支持、认证或安全保证。
+    </p>
+    <div class="footer-links">
+      <span class="footer-links-label">📎 相关链接</span>
+      <a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="nofollow noopener">DSH 官方仓库</a> ·
+      <a href="https://gitee.com/liujunheng/DeepSeekHarnessGreen" target="_blank" rel="noopener">Gitee 绿色版</a> ·
+      <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen" target="_blank" rel="noopener">GitHub 绿色版</a>
+    </div>
+    <div class="footer-legal">
+      <a href="index.html">首页</a> ·
+      <a href="about.html">关于</a> ·
+      <a href="privacy.html">隐私政策</a>
+    </div>
+  </footer>
+  <script src="../assets/app.js?v=3.3" defer></script>
+</body>
+</html>

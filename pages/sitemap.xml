@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <!--
   sitemap.xml: 多语言站点地图
   每个 <url> 条目都带 xhtml:link 互指所有语言变体 (zh-Hans / zh-Hant / en / x-default),
@@ -58,6 +58,18 @@
                 href="https://dsh-green.website/"/>
     <changefreq>monthly</changefreq>
   </url>
+  <url>
+    <loc>https://dsh-green.website/zh/compare.html</loc>
+    <xhtml:link rel="alternate" hreflang="zh-Hans"
+                href="https://dsh-green.website/zh/compare.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant"
+                href="https://dsh-green.website/zh-Hant/compare.html"/>
+    <xhtml:link rel="alternate" hreflang="en"
+                href="https://dsh-green.website/en/compare.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default"
+                href="https://dsh-green.website/"/>
+    <changefreq>monthly</changefreq>
+  </url>
 
   <!-- Traditional Chinese (zh-Hant) versions -->
   <url>
@@ -96,6 +108,18 @@
                 href="https://dsh-green.website/"/>
     <changefreq>monthly</changefreq>
   </url>
+  <url>
+    <loc>https://dsh-green.website/zh-Hant/compare.html</loc>
+    <xhtml:link rel="alternate" hreflang="zh-Hans"
+                href="https://dsh-green.website/zh/compare.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant"
+                href="https://dsh-green.website/zh-Hant/compare.html"/>
+    <xhtml:link rel="alternate" hreflang="en"
+                href="https://dsh-green.website/en/compare.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default"
+                href="https://dsh-green.website/"/>
+    <changefreq>monthly</changefreq>
+  </url>
 
   <!-- English versions -->
   <url>
@@ -130,6 +154,18 @@
                 href="https://dsh-green.website/zh-Hant/privacy.html"/>
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://dsh-green.website/en/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default"
+                href="https://dsh-green.website/"/>
+    <changefreq>monthly</changefreq>
+  </url>
+  <url>
+    <loc>https://dsh-green.website/en/compare.html</loc>
+    <xhtml:link rel="alternate" hreflang="zh-Hans"
+                href="https://dsh-green.website/zh/compare.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant"
+                href="https://dsh-green.website/zh-Hant/compare.html"/>
+    <xhtml:link rel="alternate" hreflang="en"
+                href="https://dsh-green.website/en/compare.html"/>
     <xhtml:link rel="alternate" hreflang="x-default"
                 href="https://dsh-green.website/"/>
     <changefreq>monthly</changefreq>

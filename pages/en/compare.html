@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="baidu-site-verification" content="codeva-Ll8XkairX3" />
+  <meta name="google-adsense-account" content="ca-pub-4210397233262199" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="DeepSeek Harness Green Portable launcher — see how it differs from the official CLI and community desktop shells, dimension by dimension.">
+  <meta name="robots" content="index, follow">
+  <title>Feature Comparison · DeepSeek Harness Green Portable</title>
+  <link rel="canonical" href="https://dsh-green.website/en/compare.html">
+  <link rel="alternate" hreflang="zh-Hans" href="https://dsh-green.website/zh/compare.html">
+  <link rel="alternate" hreflang="zh-Hant" href="https://dsh-green.website/zh-Hant/compare.html">
+  <link rel="alternate" hreflang="en" href="https://dsh-green.website/en/compare.html">
+  <link rel="alternate" hreflang="x-default" href="https://dsh-green.website/">
+  <link rel="stylesheet" href="../assets/style.css?v=3.3">
+  <style>
+    /* ---- Compare-page styles (reuse :root variables from style.css) ---- */
+    .cmp-hero {
+      padding-top: 72px;
+    }
+    .cmp-hero .hero-sub {
+      max-width: 760px;
+    }
+    /* Dimension comparison table */
+    .cmp-wrap {
+      max-width: var(--maxw);
+      margin: 0 auto;
+      padding: 56px 20px;
+    }
+    .cmp-table {
+      width: 100%;
+      min-width: 860px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    .cmp-table th,
+    .cmp-table td {
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      vertical-align: top;
+      line-height: 1.55;
+      color: #d3e2f7;
+    }
+    .cmp-table thead th {
+      background: rgba(57, 211, 255, 0.10);
+      color: #fff;
+      font-weight: 700;
+      text-align: left;
+      border-bottom: 1px solid var(--border-glow);
+      white-space: nowrap;
+    }
+    .cmp-table .dim {
+      background: rgba(20, 45, 90, 0.25);
+      color: var(--accent);
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .cmp-table .own-th {
+      background: linear-gradient(135deg, rgba(57,211,255,0.20), rgba(74, 158, 255, 0.20));
+      color: #fff;
+      border-left: 2px solid var(--accent-2);
+      border-right: 2px solid var(--accent-2);
+    }
+    .cmp-table col.col-own { background: rgba(57, 211, 255, 0.06); }
+    /* Green column highlight */
+    .own-col {
+      background: rgba(57, 211, 255, 0.07);
+      border-left: 2px solid var(--accent-2);
+      border-right: 2px solid var(--accent-2);
+    }
+    .tag-own {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      color: #04121a;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      border-radius: 999px;
+      padding: 1px 9px;
+      margin-bottom: 6px;
+    }
+    .tag-star { color: var(--accent); }
+    /* Fact items */
+    .cmp-table ul { margin: 0; padding-left: 16px; }
+    .cmp-table li { margin: 3px 0; list-style: square; }
+    .cmp-table li b { color: #fff; font-weight: 600; }
+    .legend {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 14px 0 8px;
+    }
+    .legend b { color: var(--accent); }
+    /* Project cards */
+    .proj-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 16px;
+      margin-top: 6px;
+    }
+    .proj-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--panel);
+      padding: 20px;
+      backdrop-filter: blur(10px) saturate(1.3);
+      transition: transform 0.25s, border-color 0.25s;
+    }
+    .proj-card:hover {
+      transform: translateY(-4px);
+      border-color: var(--border-glow);
+    }
+    .proj-card h3 {
+      font-size: 16px;
+      margin-bottom: 6px;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .proj-card h3 a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .proj-card h3 a:hover { text-decoration: underline; }
+    .proj-card .pill {
+      font-size: 11px;
+      color: var(--accent);
+      border: 1px solid rgba(57, 211, 255, 0.35);
+      background: rgba(57, 211, 255, 0.10);
+      border-radius: 999px;
+      padding: 1px 9px;
+      white-space: nowrap;
+    }
+    .proj-card p {
+      color: var(--muted);
+      font-size: 13.5px;
+      margin: 8px 0 0;
+      line-height: 1.6;
+    }
+    .proj-card .diff-line {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px dashed var(--border);
+      color: #c3d0e8;
+      font-size: 13.5px;
+    }
+    /* Plugin CTA */
+    .plugin-tagline {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 20px;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: linear-gradient(135deg, rgba(57,211,255,0.10), rgba(154,107,255,0.10));
+      padding: 24px;
+      margin-top: 6px;
+    }
+    .plugin-tagline .text { color: #d3e2f7; font-size: 15px; line-height: 1.7; }
+    .plugin-tagline .cta { display: flex; gap: 12px; flex-wrap: wrap; }
+    /* Note */
+    .note {
+      border: 1px solid rgba(255, 179, 71, 0.30);
+      background: rgba(255,179,71,0.06);
+      border-radius: var(--radius);
+      padding: 14px 18px;
+      font-size: 13.5px;
+      color: #ffe2b8;
+      margin-top: 18px;
+    }
+    .note b { color: var(--warn, #ffb347); }
+    @media (max-width: 720px) {
+      .plugin-tagline { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Background layers -->
+  <div class="bg-gradient" aria-hidden="true"></div>
+  <div class="bg-aurora" aria-hidden="true"></div>
+  <div class="bg-grid" aria-hidden="true"></div>
+  <canvas id="particles-canvas" aria-hidden="true"></canvas>
+  <canvas id="water-background" aria-hidden="true"></canvas>
+  <div class="scan-light" aria-hidden="true"></div>
+  <!-- Navigation -->
+  <header class="nav" id="top">
+    <a class="nav-brand" href="index.html">
+      <span class="brand-glyph" aria-hidden="true">◆</span>
+      <span class="brand-text">DeepSeek Harness · Green Portable</span>
+    </a>
+    <nav class="nav-links" aria-label="Page navigation">
+      <a href="index.html">Home</a>
+      <a href="#compare">Comparison</a>
+      <a href="#projects">Community Builds</a>
+      <a href="#plugins">Plugins</a>
+      <a href="#download">Download</a>
+    </nav>
+    <div class="lang-switcher nav-lang-switcher" aria-label="Language switch">
+      <a href="../zh/compare.html" onclick="try{localStorage.setItem('dshe-lang-preference','zh');}catch(e){}">简体中文</a>
+      <a href="../zh-Hant/compare.html" onclick="try{localStorage.setItem('dshe-lang-preference','zh-Hant');}catch(e){}">繁體中文</a>
+      <a href="compare.html" class="active" aria-current="page">English</a>
+    </div>
+  </header>
+  <main>
+    <!-- Hero -->
+    <section class="hero cmp-hero" id="top">
+      <div class="hero-badge">
+        <span class="badge-dot" aria-hidden="true"></span>
+        Feature comparison · Positioning at a glance
+      </div>
+      <h1 class="hero-title">
+        Same DeepSeek Harness,<br>
+        what makes a <span class="gradient-text">green portable launcher</span> different
+      </h1>
+      <p class="hero-sub">
+        The official route is <code>npx dsh</code> (CLI + browser). The community also ships
+        various desktop shells. This green build fills in the "no install, no setup,
+        no footprint, copy-and-go" niche — the three are complementary; pick what fits you.
+      </p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="#compare">View the comparison</a>
+        <a class="btn btn-ghost" href="#download">Go to download</a>
+      </div>
+    </section>
+
+    <!-- Dimension comparison -->
+    <section class="section" id="compare">
+      <h2 class="section-title">Dimension-by-dimension comparison</h2>
+      <p class="section-sub">Four columns: this green build (highlighted) ｜ official CLI ｜ community desktop shell</p>
+      <div class="legend">Legend: <b>■ highlighted column = this green build</b> (placed leftmost for quick review); ⭐ marks notable strengths of the others. Comparison is not about "better/worse" — just what each offers and which fits your scenario.</div>
+      <div class="twrap cmp-wrap" style="padding-top:4px;padding-bottom:0;max-width:none;overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:rgba(10,18,38,.5)">
+        <table class="cmp-table">
+          <colgroup>
+            <col style="width:140px">
+            <col class="col-own" style="width:auto">
+            <col style="width:auto">
+            <col style="width:auto">
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Dimension</th>
+              <th class="own-th">This green build<br><span style="font-weight:400;color:var(--muted);font-size:12px">DeepSeekHarnessGreen</span></th>
+              <th>DeepSeek official<br><span style="font-weight:400;color:var(--muted);font-size:12px">npx dsh · CLI / WebUI</span></th>
+              <th>Community shell<br><span style="font-weight:400;color:var(--muted);font-size:12px">Electron / Tauri, etc.</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="dim">Install / Start</td>
+              <td class="own-col"><span class="tag-own">Green portable</span>Extract &amp; run; double-click <code>DSH_Launcher.exe</code> or <code>start.bat</code> and you're ready</td>
+              <td>Install Node.js + pnpm first, then run <code>npx dsh web</code> in a terminal</td>
+              <td>Installer bundle (or portable zip) with bundled Node; usually larger</td>
+            </tr>
+            <tr>
+              <td class="dim">Bundle size</td>
+              <td class="own-col"><span class="tag-own">Lightest</span>Green zip <b>≈18&nbsp;MB</b>, no runtime inside; environment is fetched once online, then fully offline</td>
+              <td>Pure CLI, no standalone size</td>
+              <td>Self-contained packages: ≈<b>87&nbsp;MB</b> (Tauri) ~ <b>157&nbsp;MB+</b> (Electron, Chromium)</td>
+            </tr>
+            <tr>
+              <td class="dim">Where data lives</td>
+              <td class="own-col"><span class="tag-own">Travels with you</span>Node / dsh / cache / sessions all under <code>runtime/</code>, <code>DSH_HOME</code> built in; copy the folder to migrate</td>
+              <td><code>~/.dsh</code> (user home)</td>
+              <td>Installer writes to <code>AppData</code>; some isolate from home</td>
+            </tr>
+            <tr>
+              <td class="dim">System footprint</td>
+              <td class="own-col"><span class="tag-own">Zero footprint</span>No system install, no registry, nothing written to user home</td>
+              <td>Writes global Node env and dependency cache</td>
+              <td>Installer writes registry, program dir, update entries</td>
+            </tr>
+            <tr>
+              <td class="dim">Desktop window</td>
+              <td class="own-col">Embedded WebView2 window (falls back to browser); lightest shell, no Chromium payload</td>
+              <td>Browser tab</td>
+              <td>Electron / Tauri windows with custom frames, tray, gestures</td>
+            </tr>
+            <tr>
+              <td class="dim">Updates</td>
+              <td class="own-col"><span class="tag-own">Dual channel</span>Official core and shell <b>update independently</b>; auto-backup before updates, rollback on failure</td>
+              <td>Re-pull <code>npx dsh</code></td>
+              <td>Single-channel whole-package update, hash-verified</td>
+            </tr>
+            <tr>
+              <td class="dim">Mirror / speed</td>
+              <td class="own-col"><span class="tag-own">CN friendly</span>Switchable mirror (CN / official); auto-fallback to Gitee if GitHub is unreachable</td>
+              <td>Official source by default, slower in mainland China</td>
+              <td>Some bundle CN mirrors</td>
+            </tr>
+            <tr>
+              <td class="dim">Plugin ecosystem</td>
+              <td class="own-col">Bundled <b>10 self-built plugins</b> (memory lib / rules injection / session rollback / import / usage stats / Ollama…), ready out of the box</td>
+              <td>Official plugins, installed &amp; managed by you</td>
+              <td>Preloaded community plugins, preset packs (.dshpreset), vision engines</td>
+            </tr>
+            <tr>
+              <td class="dim">Session management</td>
+              <td class="own-col">Offline <b>unarchive</b> and <b>permanent delete</b> of archived sessions; roll a session back to a healthy turn</td>
+              <td>Archive only; no delete entry point</td>
+              <td>Session management popups / snapshot restore (some projects)</td>
+            </tr>
+            <tr>
+              <td class="dim">LAN access</td>
+              <td class="own-col"><span class="tag-own">Remote</span>One-click bind <code>0.0.0.0</code> with auto firewall allowance; open the WebUI from a phone or another PC</td>
+              <td>Localhost only by default</td>
+              <td>Loopback only by default (more stable &amp; secure)</td>
+            </tr>
+            <tr>
+              <td class="dim">Language support</td>
+              <td class="own-col">This site ships<br><b>Chinese / Traditional / English</b> pages, auto-switching with your locale</td>
+              <td>Official docs in CN + EN</td>
+              <td>Language coverage varies per project: some multilingual, others CN-only or EN-only</td>
+            </tr>
+            <tr>
+              <td class="dim">Release channels</td>
+              <td class="own-col">Dual remote release (GitHub / Gitee), smooth access in mainland China</td>
+              <td>GitHub / npm official source</td>
+              <td>Mostly GitHub-only</td>
+            </tr>
+            <tr>
+              <td class="dim">Highlight reels</td>
+              <td class="own-col">⭐ Light portable, zero footprint, dual-channel updates, self-built plugins, LAN remote</td>
+              <td>Official core, stable &amp; authoritative</td>
+              <td>⭐ Cross-platform (mac/Linux), code signing, safe mode, task board, desktop pet, A/B dual-slot updates</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note">
+        <b>Note:</b> Green portable, all-inclusive bundles, and the official CLI are three complementary paths — none is objectively "best". The core trade-off of this green build is <b>lighter, cleaner, more portable</b>, focused on Windows portable users; it gives up "heavy-delivery" features like cross-platform builds and code signing. Highlights from community projects (Guarded / Safe Mode, Task Board, etc.) are not replicated on purpose — borrow ideas as needed.
+      </div>
+    </section>
+
+    <!-- Community builds -->
+    <section class="section" id="projects">
+      <h2 class="section-title">Community desktop / all-in-one builds</h2>
+      <p class="section-sub">Survey 2026-09-05～09-06; star counts are snapshots, judge activity by Release frequency</p>
+      <div class="proj-grid">
+        <article class="proj-card">
+          <h3><a href="https://github.com/dataelement/dsh-desktop" target="_blank" rel="nofollow noopener noreferrer">dataelement/dsh-desktop</a></h3>
+          <span class="pill">≈4244★ · Electron</span>
+          <p>The community project closest to a commercial product: 6-language website, signed macOS + signed Windows builds, .dshpreset preset packages, phone pairing, Safe Mode, diagnostic recovery. Most complete spec.</p>
+          <div class="diff-line">Compared with our green build: a "heavy-delivery" product path, suited to users who want a full client-level experience + multilingual.</div>
+        </article>
+        <article class="proj-card">
+          <h3><a href="https://github.com/myYangyunfan/dsh_desktop" target="_blank" rel="nofollow noopener noreferrer">myYangyunfan/dsh_desktop</a></h3>
+          <span class="pill">≈637★ · Tauri 2</span>
+          <p>The most feature-complete Chinese community build: bundled offline everything, self-healing "guardian waterfall", desktop pet / balance widget, GitHub/Gitee dual-source sha256-verified updates. Closest to our positioning.</p>
+          <div class="diff-line">We emphasize "zero footprint + travel with the folder"; it emphasizes "all-inclusive + enhanced interaction".</div>
+        </article>
+        <article class="proj-card">
+          <h3><a href="https://github.com/anywhere-labs/deepseek-harness-desktop" target="_blank" rel="nofollow noopener noreferrer">anywhere-labs/deepseek-harness-desktop</a></h3>
+          <span class="pill">New · active</span>
+          <p>Electron-based, actively tracking upstream rc; composes desktop capabilities (window / tray / terminal / updates) via Cordis plugin lines, towards "zero-fork" upstream following.</p>
+          <div class="diff-line">More conservative upstream following, suited to developers who value an untouched core and minimal divergence.</div>
+        </article>
+        <article class="proj-card">
+          <h3><a href="https://github.com/citrusli2026/dsh-desktop" target="_blank" rel="nofollow noopener noreferrer">citrusli2026/dsh-desktop (dsh-desktop.com)</a></h3>
+          <span class="pill">v0.1.2-rc.1.shell.5 · macOS/Windows/Linux</span>
+          <p>A newer community shell (Electron) following the official stance — "just bring Harness to the desktop, don't build another product". Bundles Node, defaults to a separate data dir <code>~/.dsh-desktop</code>.</p>
+          <div class="diff-line">Isolated from the official CLI's data; full cross-platform support.</div>
+        </article>
+        <article class="proj-card">
+          <h3><a href="https://github.com/ningbainb/deepseek-harness-desktop" target="_blank" rel="nofollow noopener noreferrer">ningbainb/deepseek-harness-desktop</a></h3>
+          <span class="pill">v2.6.0 · Windows · BSD-3</span>
+          <p>A Windows AI-coding bundle: Task Board, Git graph, right-side file panel, Skills library, Codex integration — leaning toward a "developer workbench".</p>
+          <div class="diff-line">More feature stacking for heavy developers; larger and heavier to ship.</div>
+        </article>
+        <article class="proj-card">
+          <h3><a href="https://github.com/libi/dsh-desktop" target="_blank" rel="nofollow noopener noreferrer">libi/dsh-desktop</a></h3>
+          <span class="pill">Electron · follows upstream</span>
+          <p>Another Electron/TS shell: auto-launches the DSH backend, detects a usable port, tray &amp; window management, auto build/publish following upstream. Same family as this kind of shell.</p>
+          <div class="diff-line">Similar approach; overall positioning close to citrusli.</div>
+        </article>
+      </div>
+    </section>
+
+    <!-- Plugins -->
+    <section class="section" id="plugins">
+      <h2 class="section-title">Distinctive bundled plugins</h2>
+      <p class="section-sub">All are pure plugins — no official files are modified; restart the service after install</p>
+      <div class="plugin-grid">
+        <article class="plugin-card">
+          <h3>🧠 Ancestor Memory</h3>
+          <p>Sinks conversation key facts into SQLite; recalls and injects them into the system prompt next time — cross-session memory, with session grouping and batch cleanup.</p>
+        </article>
+        <article class="plugin-card">
+          <h3>📜 User Rules Injection</h3>
+          <p>Write personal preferences / code style / communication requirements in markdown; auto-injected into the system prompt every conversation.</p>
+        </article>
+        <article class="plugin-card">
+          <h3>↩️ Session Rollback / Import</h3>
+          <p>Roll back a "poisoned" session to a healthy turn; import session ZIP / JSONL, reciprocal to the official export.</p>
+        </article>
+        <article class="plugin-card">
+          <h3>🧾 Usage Stats</h3>
+          <p>Per-message "tokens / estimated cost" plus aggregated usage.</p>
+        </article>
+        <article class="plugin-card">
+          <h3>🖼️ Background Motion</h3>
+          <p>Play videos from a local folder as the WebUI background (picture + sound).</p>
+        </article>
+        <article class="plugin-card">
+          <h3>🤖 Ollama Integration</h3>
+          <p>Auto-detect a local Ollama service and connect; pick an Ollama model right from the model selector.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- Download -->
+    <section class="section" id="download">
+      <h2 class="section-title">Download the green portable build</h2>
+      <p class="section-sub">The green zip ships without a preloaded environment to stay small; the launcher fetches it once online on a new machine</p>
+      <div class="plugin-tagline">
+        <div class="text">
+          A single <b>≈18&nbsp;MB</b> green zip with the launcher, bundled plugins and docs.<br>
+          Extract → double-click → one online pass to fetch the environment → fully offline after.<br>
+          No system install, no registry writes, nothing pollutes your user folders — copy the whole folder to migrate.
+        </div>
+        <div class="cta">
+          <a class="btn btn-primary btn-lg" href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest" data-dl="github" target="_blank" rel="noopener">
+            Download from GitHub</a>
+          <a class="btn btn-ghost btn-lg" href="https://gitee.com/liujunheng/DeepSeekHarnessGreen/releases/latest" data-dl="gitee" target="_blank" rel="noopener">
+            Gitee (CN)</a>
+        </div>
+      </div>
+      <p class="section-sub" style="margin-top:18px">
+        <span class="version-chip" id="footer-version">Latest version see Release</span> ·
+        <a class="inline-link" href="index.html">← Back to home</a>
+      </p>
+    </section>
+  </main>
+  <footer class="footer">
+    <p>DeepSeek Harness Desktop Green Portable Launcher · Feature comparison</p>
+    <p>Apache License 2.0 · Copyright (c) 2026 LiuJunheng</p>
+    <p class="footer-note">
+      An independent community project — not a DeepSeek official product, and it does not imply official support, certification, or security guarantees.
+    </p>
+    <div class="footer-links">
+      <span class="footer-links-label">📎 Links</span>
+      <a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="nofollow noopener">Official DSH Repo</a> ·
+      <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen" target="_blank" rel="noopener">Green build (GitHub)</a> ·
+      <a href="https://gitee.com/liujunheng/DeepSeekHarnessGreen" target="_blank" rel="noopener">Green build (Gitee)</a>
+    </div>
+    <div class="footer-legal">
+      <a href="index.html">Home</a> ·
+      <a href="about.html">About</a> ·
+      <a href="privacy.html">Privacy Policy</a>
+    </div>
+  </footer>
+  <script src="../assets/app.js?v=3.3" defer></script>
+</body>
+</html>
