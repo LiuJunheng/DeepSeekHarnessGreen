@@ -205,7 +205,7 @@ window.__ModuleLoader__.load({
 			return react.createElement(react.Fragment, null,
 				react.createElement("p", { style: { margin: 0, fontSize: 13, lineHeight: 1.5, color: "var(--dsw-alias-label-secondary)" } },
 					_dsht("plugin.session_import.hint",
-						_dsht("plugin.session_import.desc", "把官方「Session 日志 ↓」按钮导出的 ZIP（或单个 .jsonl 日志）导入回本机。导入后按日志头部的 cwd 写回持久化目录，并自动挂到对应工作区；导入完成后请重启 DSH 服务以刷新会话列表（会话列表在启动时从持久化目录加载）。重复导入同一会话会被跳过。")
+						"把官方「Session 日志 ↓」按钮导出的 ZIP（或单个 .jsonl 日志）导入回本机。导入后按日志头部的 cwd 写回持久化目录，并自动挂到对应工作区；导入完成后请重启 DSH 服务以刷新会话列表（会话列表在启动时从持久化目录加载）。重复导入同一会话会被跳过。")
 				),
 				react.createElement("div", { style: theme.box },
 					react.createElement("div", { style: theme.row },
@@ -249,7 +249,7 @@ window.__ModuleLoader__.load({
 				"div", { style: { display: "flex", flexDirection: "column", gap: 10, padding: 4, maxWidth: 680 } },
 				react.createElement("p", { style: { margin: 0, fontSize: 12, color: "var(--dsw-alias-label-tertiary)", padding: "4px 8px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: 4 } },
 					_dsht("plugin.session_import.export_hint",
-					_dsht("plugin.session_import.tip_export", "💡 导出: 直接点会话右上角「Session 日志」按钮 —— 已被本插件 hook 为系统「另存为」对话框。")
+					"💡 导出: 直接点会话右上角「Session 日志」按钮 —— 已被本插件 hook 为系统「另存为」对话框。")
 				),
 				react.createElement(ImportTab, null)
 			);

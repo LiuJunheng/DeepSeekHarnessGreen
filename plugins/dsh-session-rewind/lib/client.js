@@ -276,10 +276,10 @@ window.__ModuleLoader__.load({
 				const boundarySeq = turn.boundarySeq;
 				if (boundarySeq === null || boundarySeq === void 0) return;
 				const confirmMsg = _dsht("plugin.session_rewind.confirm_fmt",
-					_dsht("plugin.session_rewind.confirm_title", "从第 {turn} 回合之后「回退」?").replace("{turn}", turn) + "\n\n" + _dsht("plugin.session_rewind.confirm_body", "将派生一个全新的续接会话(携带截至该回合的历史),\n并自动打开新会话。原会话保留不动。\n\n会话: {sessionId}").replace("{sessionId}", s.id) +
-					" +
-					" +
-					"
+					"从第 {turn} 回合之后「回退」?\n\n" +
+					"将派生一个全新的续接会话(携带截至该回合的历史),\n" +
+					"并自动打开新会话。原会话保留不动。\n\n" +
+					"会话: {sessionId}")
 					.replace("{turn}", turn.turn).replace("{sessionId}", sessionId);
 			const ok = window.confirm(confirmMsg);
 				if (!ok) return;

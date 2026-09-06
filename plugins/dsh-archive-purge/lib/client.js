@@ -153,9 +153,9 @@ window.__ModuleLoader__.load({
 					"p",
 					{ style: { margin: 0, fontSize: 13, lineHeight: 1.5 } },
 					_dsht("plugin.archive_purge.hint",
-						_dsht("plugin.archive_purge.desc", "这里列出的是已归档（隐藏）的会话。当前服务处于运行中, WebUI 无法在此直接删除或恢复。") +
-						_dsht("plugin.archive_purge.desc2", "如需永久删除或恢复, 请在本机的启动器 GUI 操作：先点击「停止服务」, 再在「数据维护」区点击「会话管理」, ") +
-						_dsht("plugin.archive_purge.desc3", "勾选会话后可选择「恢复选中」（取消归档, 不删数据）或「删除选中」（永久删除, 不可恢复）。")
+						"这里列出的是已归档（隐藏）的会话。当前服务处于运行中, WebUI 无法在此直接删除或恢复。" +
+						"如需永久删除或恢复, 请在本机的启动器 GUI 操作：先点击「停止服务」, 再在「数据维护」区点击「会话管理」, " +
+						"勾选会话后可选择「恢复选中」（取消归档, 不删数据）或「删除选中」（永久删除, 不可恢复）。")
 				),
 				sessions === null && !error && react.createElement(
 					"p",
