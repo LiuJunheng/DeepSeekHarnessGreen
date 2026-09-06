@@ -12,11 +12,12 @@
 
   /* 0. 自动检测最新 zip — 改下载按钮直链
      GitHub API 有 CORS 可直接调; Gitee 无 CORS, 但 zip 文件名两端一致,
-     拿到 GitHub 文件名后拼 Gitee 直链. localStorage 缓存 24h. */
+     拿到 GitHub 文件名后拼 Gitee 直链. localStorage 缓存 1h.
+     (v2: TTL 24h→1h, 避免新版本发布后缓存滞后仍然下载旧版) */
   var GH_REPO = "LiuJunheng/DeepSeekHarnessGreen";
   var GITEE_REPO = "liujunheng/DeepSeekHarnessGreen";
-  var CACHE_KEY = "dshe-latest-release";
-  var CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 小时
+  var CACHE_KEY = "dshe-latest-release-v2";
+  var CACHE_TTL_MS = 1 * 60 * 60 * 1000; // 1 小时
 
   function readReleaseCache() {
     try {
