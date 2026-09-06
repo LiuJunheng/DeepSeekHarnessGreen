@@ -5173,11 +5173,16 @@ class Launcher:
             except Exception:
                 pass   # 读取失败不阻断
 
-        # 2) session_projcache.json → 标题
-        proj_storage = os.path.join(DSH_HOME_DIR, "storages", "session_projcache.json")
-        if os.path.isfile(proj_storage):
+        # 2) session_projcache → 标题 (兼容新旧两种存储格式)
+        # 旧格式: storages/session_projcache.json (单文件, 顶层 tables.sessions[sid].rows.title.val)
+        # 新格式: storages/session_projcache/sessions/session-{sid}.json (每会话一文件, record.rows.title)
+        proj_storage_file = os.path.join(DSH_HOME_DIR, "storages", "session_projcache.json")
+        proj_storage_dir = os.path.join(DSH_HOME_DIR, "storages", "session_projcache", "sessions")
+
+        # 2a) 旧格式: 单 json 文件
+        if os.path.isfile(proj_storage_file):
             try:
-                with open(proj_storage, "r", encoding="utf-8") as file_handle:
+                with open(proj_storage_file, "r", encoding="utf-8") as file_handle:
                     data = json.load(file_handle)
                 tables = data.get("tables") if isinstance(data, dict) else None
                 rows = tables.get("sessions") if isinstance(tables, dict) else None
@@ -5189,6 +5194,38 @@ class Launcher:
                         title = title_row.get("val")
                         if isinstance(title, str) and title:
                             ensure(sid)["title"] = title
+            except Exception:
+                pass
+
+        # 2b) 新格式: sessions/ 目录下每会话一个 json
+        if os.path.isdir(proj_storage_dir):
+            try:
+                for proj_fn in os.listdir(proj_storage_dir):
+                    if not proj_fn.endswith(".json"):
+                        continue
+                    # 文件名就是完整 session id 加 .json: session-{sid}.json
+                    sid_match = re.match(r"^(.+)\.json$", proj_fn)
+                    if not sid_match:
+                        continue
+                    sid = sid_match.group(1)  # 保留完整的 "session-xxx"
+                    proj_fp = os.path.join(proj_storage_dir, proj_fn)
+                    try:
+                        with open(proj_fp, "r", encoding="utf-8") as file_handle:
+                            proj_data = json.load(file_handle)
+                        record = proj_data.get("record", {}) if isinstance(proj_data, dict) else {}
+                        proj_rows = record.get("rows", {}) if isinstance(record, dict) else {}
+                        title_obj = proj_rows.get("title")
+                        # title 可能是字符串 (老版本) 或带 val 的对象 (新版本)
+                        if isinstance(title_obj, str):
+                            title = title_obj
+                        elif isinstance(title_obj, dict):
+                            title = title_obj.get("val")
+                        else:
+                            title = None
+                        if isinstance(title, str) and title:
+                            ensure(sid)["title"] = title
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
