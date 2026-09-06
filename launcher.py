@@ -5833,9 +5833,11 @@ def run_gui():
         about_window.grab_set()         # 模态, 关闭前不能操作主窗口
 
         # 主标题
-        _iw_5835 = ttk.Label(about_window, text=i18n.t('about.main_title'),                   font=("Microsoft YaHei", 13, "bold")).pack(pady=(18, 4))
+        _iw_5835 = ttk.Label(about_window, text=i18n.t('about.main_title'),                   font=("Microsoft YaHei", 13, "bold"))
+        _iw_5835.pack(pady=(18, 4))
         _i18n_widgets.append((_iw_5835, 'text', 'about.main_title'))
-        _iw_5837 = ttk.Label(about_window, text=i18n.t('about.subtitle'),                   font=("Microsoft YaHei", 9), foreground="#666666").pack(pady=(0, 12))
+        _iw_5837 = ttk.Label(about_window, text=i18n.t('about.subtitle'),                   font=("Microsoft YaHei", 9), foreground="#666666")
+        _iw_5837.pack(pady=(0, 12))
         _i18n_widgets.append((_iw_5837, 'text', 'about.subtitle'))
 
         # 信息表 (左标签 / 右取值)
@@ -5888,7 +5890,9 @@ def run_gui():
                       foreground="#444444").pack(anchor="w", pady=1)
 
         # 按钮行 (仅关闭; 跳转统一用上方可点击链接文字)
-        ttk.Button(about_window, text=i18n.t('about.close'), command=about_window.destroy).pack(pady=(18, 18))
+        about_close_btn = ttk.Button(about_window, text=i18n.t('about.close'), command=about_window.destroy)
+        about_close_btn.pack(pady=(18, 18))
+        _i18n_widgets.append((about_close_btn, 'text', 'about.close'))
 
     about_btn = ttk.Button(status_frame, text=i18n.t('buttons.about'), command=show_about)
     _i18n_widgets.append((about_btn, 'text', 'buttons.about'))
@@ -6334,7 +6338,8 @@ def run_gui():
         bottom.pack(fill="x", padx=8, pady=(0, 8))
         count_label = ttk.Label(bottom, text="")
         count_label.pack(side="left")
-        _iw_6335 = ttk.Label(bottom, text=i18n.t('purge.need_stop_hint'),                   foreground="#a04040").pack(side="left", padx=(10, 0))
+        _iw_6335 = ttk.Label(bottom, text=i18n.t('purge.need_stop_hint'),                   foreground="#a04040")
+        _iw_6335.pack(side="left", padx=(10, 0))
         _i18n_widgets.append((_iw_6335, 'text', 'purge.need_stop_hint'))
         toggle_all_btn = ttk.Button(bottom, text=i18n.t('purge.select_all'), command=toggle_all)
         _i18n_widgets.append((toggle_all_btn, 'text', 'purge.select_all'))
@@ -6708,7 +6713,8 @@ def run_gui():
         _iw_6697 = ttk.Button(button_row, text=i18n.t('version_select.open_github_page'),                    command=on_open_github)
         _iw_6697.pack(side="right", padx=6)
         _i18n_widgets.append((_iw_6697, 'text', 'version_select.open_github_page'))
-        _iw_6699 = ttk.Button(button_row, text=i18n.t('version_select.install_selected'),                    command=on_confirm).pack(side="right", padx=(6, 0))
+        _iw_6699 = ttk.Button(button_row, text=i18n.t('version_select.install_selected'),                    command=on_confirm)
+        _iw_6699.pack(side="right", padx=(6, 0))
         _i18n_widgets.append((_iw_6699, 'text', 'version_select.install_selected'))
 
         # 居中于主窗口
@@ -7274,7 +7280,8 @@ def run_gui():
                                  command=on_install_bundled)
         _i18n_widgets.append((bundled_btn, 'text', 'plugin.bundled_btn'))
         bundled_btn.pack(side="left", padx=(12, 0))
-        _iw_7259 = ttk.Label(toolbar, text=i18n.t('plugin.bundled_hint')).pack(side="left", padx=(6, 0))
+        _iw_7259 = ttk.Label(toolbar, text=i18n.t('plugin.bundled_hint'))
+        _iw_7259.pack(side="left", padx=(6, 0))
         _i18n_widgets.append((_iw_7259, 'text', 'plugin.bundled_hint'))
 
         # ---------- 中间: 左右两个面板 ----------
@@ -7314,9 +7321,11 @@ def run_gui():
         disable_btn = ttk.Button(installed_buttons, text=i18n.t('plugin.batch_disable'), command=lambda: on_toggle(False))
         _i18n_widgets.append((disable_btn, 'text', 'plugin.batch_disable'))
         disable_btn.pack(side="left", padx=(6, 0))
-        _iw_7294 = ttk.Button(installed_buttons, text=i18n.t('plugin.refresh'), command=on_refresh_installed).pack(side="left", padx=(6, 0))
+        _iw_7294 = ttk.Button(installed_buttons, text=i18n.t('plugin.refresh'), command=on_refresh_installed)
+        _iw_7294.pack(side="left", padx=(6, 0))
         _i18n_widgets.append((_iw_7294, 'text', 'plugin.refresh'))
-        _iw_7295 = ttk.Label(installed_buttons, text=i18n.t('plugin.multi_select_hint'),                   foreground="#666666").pack(side="left", padx=(8, 0))
+        _iw_7295 = ttk.Label(installed_buttons, text=i18n.t('plugin.multi_select_hint'),                   foreground="#666666")
+        _iw_7295.pack(side="left", padx=(8, 0))
         _i18n_widgets.append((_iw_7295, 'text', 'plugin.multi_select_hint'))
 
         # 右侧: 搜索结果
@@ -7375,7 +7384,8 @@ def run_gui():
                                        command=on_install_local)
         _i18n_widgets.append((local_install_btn, 'text', 'plugin.local_install'))
         local_install_btn.pack(side="left", padx=(8, 0))
-        _iw_7345 = ttk.Label(manual_frame, text=i18n.t('plugin.local_hint'),                   foreground="#666666").pack(side="left", padx=(8, 0))
+        _iw_7345 = ttk.Label(manual_frame, text=i18n.t('plugin.local_hint'),                   foreground="#666666")
+        _iw_7345.pack(side="left", padx=(8, 0))
         _i18n_widgets.append((_iw_7345, 'text', 'plugin.local_hint'))
 
         # ---------- 底部状态栏 ----------
@@ -7431,10 +7441,13 @@ def run_gui():
     stop_btn.pack(side="left", padx=8)
 
     # 分隔: 打开界面 → 桌面窗口 / 网页窗口 两项 (可分别手动打开)
-    _iw_7401 = ttk.Button(button_frame, text=i18n.t('buttons.desktop'),                command=lambda: on_open("desktop")).pack(side="left", padx=(0, 8))
+    _iw_7401 = ttk.Button(button_frame, text=i18n.t('buttons.desktop'),                command=lambda: on_open("desktop"))
+    _iw_7401.pack(side="left", padx=(0, 8))
     _i18n_widgets.append((_iw_7401, 'text', 'buttons.desktop'))
-    ttk.Button(button_frame, text=i18n.t('buttons.browser'),
-               command=lambda: on_open("browser")).pack(side="left", padx=8)
+    browser_btn = ttk.Button(button_frame, text=i18n.t('buttons.browser'),
+               command=lambda: on_open("browser"))
+    browser_btn.pack(side="left", padx=8)
+    _i18n_widgets.append((browser_btn, 'text', 'buttons.browser'))
 
     update_btn = ttk.Button(button_frame, text=i18n.t('buttons.check_update'), command=on_check_update)
     _i18n_widgets.append((update_btn, 'text', 'buttons.check_update'))
@@ -7459,9 +7472,11 @@ def run_gui():
     purge_btn = ttk.Button(maintenance_frame, text=i18n.t('maintenance.session_manage'), command=on_purge)
     _i18n_widgets.append((purge_btn, 'text', 'maintenance.session_manage'))
     purge_btn.pack(side="left", padx=8, pady=6)
-    ttk.Label(maintenance_frame,
-              text=i18n.t('maintenance.session_hint'),
-              foreground="#a04040").pack(side="left", padx=(12, 8))
+    maintenance_session_hint = ttk.Label(maintenance_frame,
+               text=i18n.t('maintenance.session_hint'),
+               foreground="#a04040")
+    maintenance_session_hint.pack(side="left", padx=(12, 8))
+    _i18n_widgets.append((maintenance_session_hint, 'text', 'maintenance.session_hint'))
     # 清理维护: 清空更新暂存目录 / 统一备份目录 (独立文件夹集中管理)
     cleanup_row = ttk.Frame(maintenance_frame)
     cleanup_row.pack(fill="x", padx=8, pady=(0, 6))
@@ -7520,10 +7535,12 @@ def run_gui():
     trusted_entry = ttk.Entry(network_frame, textvariable=trusted_var, width=30)
     trusted_entry.grid(row=1, column=1, padx=8, pady=6, sticky="w")
 
-    ttk.Label(network_frame,
+    trusted_hosts_hint = ttk.Label(network_frame,
               text=i18n.t('network.trusted_hosts_hint'),
-              foreground="#606060", justify="left", wraplength=430).grid(
-                  row=2, column=0, columnspan=2, padx=8, pady=(0, 6), sticky="w")
+              foreground="#606060", justify="left", wraplength=430)
+    trusted_hosts_hint.grid(
+                   row=2, column=0, columnspan=2, padx=8, pady=(0, 6), sticky="w")
+    _i18n_widgets.append((trusted_hosts_hint, 'text', 'network.trusted_hosts_hint'))
 
     # web token 认证开关 (2026-08-31, 需求 #49):
     # DSH 0.1.2-alpha.2+ 强制 BrowserAuth, 关掉 token 层后裸地址直开 (Host/Origin 围栏仍在).
@@ -7534,6 +7551,7 @@ def run_gui():
                                     text=i18n.t('network.auth_label'),
                                     variable=auth_var)
     auth_checkbox.grid(row=3, column=0, columnspan=2, padx=8, pady=4, sticky="w")
+    _i18n_widgets.append((auth_checkbox, 'text', 'network.auth_label'))
 
     # 动态安全警告: 仅当 "关 auth + 绑定 0.0.0.0" 时才显示 (红色醒目)
     auth_warning_label = ttk.Label(network_frame, text="",
@@ -7591,7 +7609,8 @@ def run_gui():
                 break
     mirror_combo.bind('<<ComboboxSelected>>', _on_mirror_change)
 
-    _iw_7549 = ttk.Label(settings_frame, text=i18n.t('settings.port_label')).grid(row=0, column=2, padx=(16, 0), pady=6, sticky="w")
+    _iw_7549 = ttk.Label(settings_frame, text=i18n.t('settings.port_label'))
+    _iw_7549.grid(row=0, column=2, padx=(16, 0), pady=6, sticky="w")
     _i18n_widgets.append((_iw_7549, 'text', 'settings.port_label'))
     port_var = tk.StringVar(value=str(app.config["dsh_port"]))
     port_entry = ttk.Entry(settings_frame, textvariable=port_var, width=10)
