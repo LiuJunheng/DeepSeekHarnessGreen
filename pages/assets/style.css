@@ -387,7 +387,7 @@ main, .footer { position: relative; z-index: 5; }
 .btn:hover::before { left: 100%; }
 .btn:hover { transform: translateY(-2px); }
 .btn-primary {
-  color: #04121a;
+  color: #ffffff;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   box-shadow: 0 4px 20px rgba(57, 211, 255, 0.4), 0 0 0 1px rgba(57, 211, 255, 0.3);
 }
@@ -909,12 +909,12 @@ main, .footer { position: relative; z-index: 5; }
 
 .changelog-body code {
   font-family: "SF Mono", "JetBrains Mono", "Consolas", monospace;
-  background: rgba(57, 211, 255, 0.15);
-  color: #d5f4ff;
-  padding: 1px 6px;
-  border-radius: 3px;
+  background: transparent;
+  color: #ffffff;
+  padding: 0;
+  border-radius: 0;
   font-size: 13px;
-  border: 1px solid rgba(57, 211, 255, 0.2);
+  border: none;
 }
 
 .changelog-body pre code {
