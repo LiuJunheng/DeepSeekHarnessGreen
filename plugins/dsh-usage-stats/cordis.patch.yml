@@ -6,3 +6,4 @@
 - insert:
     - id: usage-stats
       name: dsh-usage-stats
+      displayName: 用量统计

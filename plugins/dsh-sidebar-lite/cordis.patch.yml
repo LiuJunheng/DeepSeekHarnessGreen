@@ -6,3 +6,4 @@
 - insert:
     - id: sidebar-lite
       name: dsh-sidebar-lite
+      displayName: 侧栏

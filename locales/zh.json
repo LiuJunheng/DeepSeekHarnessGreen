@@ -544,7 +544,8 @@
       "hint_current_session": "当前会话: {{id}}",
       "title_importance": "Importance 0.0 ~ 1.0",
       "status_on": "已开启",
-      "status_off": "已关闭"
+      "status_off": "已关闭",
+      "tab_label": "祖宗记忆库"
     },
     "ollama": {
       "title": "Ollama 设置",
@@ -590,7 +591,8 @@
       "time_minutes_ago": "{n} 分钟前",
       "time_ms": "{n} 毫秒",
       "time_s": "{n} 秒",
-      "time_min": "{n} 分钟"
+      "time_min": "{n} 分钟",
+      "tab_label": "Ollama"
     },
     "rules": {
       "title": "用户规则",
@@ -625,7 +627,8 @@
       "err_save_toggle": "保存开关失败: ",
       "err_save_rules": "保存规则失败: ",
       "err_open_dir": "打开目录失败",
-      "err_open_dir_detail": "打开目录失败: "
+      "err_open_dir_detail": "打开目录失败: ",
+      "tab_label": "规则"
     },
     "sidebar": {
       "tab_file": "资源管理",
@@ -693,7 +696,8 @@
       "tasks_stop_requested": "已请求停止该任务。",
       "err_no_input": "无法找到输入框 (textarea/contenteditable)",
       "err_dom_fallback": "DOM fallback 异常: ",
-      "err_op_fail": "操作失败: "
+      "err_op_fail": "操作失败: ",
+      "tab_label": "侧栏"
     },
     "usage_stats": {
       "title": "用量统计",
@@ -772,7 +776,8 @@
       "err_load": "加载失败: ",
       "err_balance_parse": "余额接口响应解析失败",
       "err_balance_req": "余额接口请求失败: ",
-      "err_balance_query": "余额查询失败: "
+      "err_balance_query": "余额查询失败: ",
+      "tab_label": "用量统计"
     }
   },
   "cleanup": {

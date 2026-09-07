@@ -6,3 +6,4 @@
 - insert:
     - id: rules
       name: dsh-rules
+      displayName: 规则

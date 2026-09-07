@@ -3,3 +3,4 @@
 - insert:
     - id: dsh-memory
       name: dsh-memory
+      displayName: 祖宗记忆库

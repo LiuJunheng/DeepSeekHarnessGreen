@@ -544,7 +544,8 @@
       "hint_current_session": "Current session: {{id}}",
       "title_importance": "Importance 0.0 ~ 1.0",
       "status_on": "Enabled",
-      "status_off": "Disabled"
+      "status_off": "Disabled",
+      "tab_label": "Memory"
     },
     "ollama": {
       "title": "Ollama Settings",
@@ -590,7 +591,8 @@
       "time_minutes_ago": "{n}min ago",
       "time_ms": "{n}ms",
       "time_s": "{n}s",
-      "time_min": "{n}min"
+      "time_min": "{n}min",
+      "tab_label": "Ollama"
     },
     "rules": {
       "title": "User Rules",
@@ -625,7 +627,8 @@
       "err_save_toggle": "Failed to save toggle: ",
       "err_save_rules": "Failed to save rules: ",
       "err_open_dir": "Failed to open directory",
-      "err_open_dir_detail": "Failed to open directory: "
+      "err_open_dir_detail": "Failed to open directory: ",
+      "tab_label": "Rules"
     },
     "sidebar": {
       "tab_file": "Files",
@@ -693,7 +696,8 @@
       "tasks_stop_requested": "Stop requested for this task.",
       "err_no_input": "Cannot find input box (textarea/contenteditable)",
       "err_dom_fallback": "DOM fallback error: ",
-      "err_op_fail": "Operation failed: "
+      "err_op_fail": "Operation failed: ",
+      "tab_label": "Sidebar"
     },
     "usage_stats": {
       "title": "Usage Stats",
@@ -772,7 +776,8 @@
       "err_load": "Load failed: ",
       "err_balance_parse": "Balance API response parse failed",
       "err_balance_req": "Balance API request failed: ",
-      "err_balance_query": "Balance query failed: "
+      "err_balance_query": "Balance query failed: ",
+      "tab_label": "Usage Stats"
     }
   },
   "cleanup": {
