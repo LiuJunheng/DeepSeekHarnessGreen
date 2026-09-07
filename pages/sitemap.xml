@@ -19,6 +19,7 @@
     <xhtml:link rel="alternate" hreflang="x-default"
                 href="https://dsh-green.website/"/>
     <changefreq>weekly</changefreq>
+    <lastmod>2026-09-07</lastmod>
   </url>
 
   <!-- Simplified Chinese (zh-Hans) versions -->
@@ -33,6 +34,7 @@
     <xhtml:link rel="alternate" hreflang="x-default"
                 href="https://dsh-green.website/"/>
     <changefreq>weekly</changefreq>
+    <lastmod>2026-09-07</lastmod>
   </url>
   <url>
     <loc>https://dsh-green.website/zh/about.html</loc>
@@ -43,8 +45,9 @@
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://dsh-green.website/en/about.html"/>
     <xhtml:link rel="alternate" hreflang="x-default"
-                href="https://dsh-green.website/"/>
+                href="https://dsh-green.website/en/about.html"/>
     <changefreq>monthly</changefreq>
+    <lastmod>2026-09-07</lastmod>
   </url>
   <url>
     <loc>https://dsh-green.website/zh/privacy.html</loc>
@@ -55,8 +58,9 @@
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://dsh-green.website/en/privacy.html"/>
     <xhtml:link rel="alternate" hreflang="x-default"
-                href="https://dsh-green.website/"/>
+                href="https://dsh-green.website/en/privacy.html"/>
     <changefreq>monthly</changefreq>
+    <lastmod>2026-09-07</lastmod>
   </url>  <url>
     <loc>https://dsh-green.website/zh/changelog.html</loc>
     <xhtml:link rel="alternate" hreflang="zh-Hans"
@@ -66,8 +70,9 @@
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://dsh-green.website/en/changelog.html"/>
     <xhtml:link rel="alternate" hreflang="x-default"
-                href="https://dsh-green.website/"/>
+                href="https://dsh-green.website/en/changelog.html"/>
     <changefreq>weekly</changefreq>
+    <lastmod>2026-09-07</lastmod>
   </url>
 
 
@@ -80,8 +85,9 @@
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://dsh-green.website/en/compare.html"/>
     <xhtml:link rel="alternate" hreflang="x-default"
-                href="https://dsh-green.website/"/>
+                href="https://dsh-green.website/en/compare.html"/>
     <changefreq>monthly</changefreq>
+    <lastmod>2026-09-07</lastmod>
   </url>
 
   <!-- Traditional Chinese (zh-Hant) versions -->
@@ -96,6 +102,7 @@
     <xhtml:link rel="alternate" hreflang="x-default"
                 href="https://dsh-green.website/"/>
     <changefreq>weekly</changefreq>
+    <lastmod>2026-09-07</lastmod>
   </url>
   <url>
     <loc>https://dsh-green.website/zh-Hant/about.html</loc>
@@ -106,8 +113,9 @@
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://dsh-green.website/en/about.html"/>
     <xhtml:link rel="alternate" hreflang="x-default"
-                href="https://dsh-green.website/"/>
+                href="https://dsh-green.website/en/about.html"/>
     <changefreq>monthly</changefreq>
+    <lastmod>2026-09-07</lastmod>
   </url>
   <url>
     <loc>https://dsh-green.website/zh-Hant/privacy.html</loc>
@@ -118,8 +126,9 @@
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://dsh-green.website/en/privacy.html"/>
     <xhtml:link rel="alternate" hreflang="x-default"
-                href="https://dsh-green.website/"/>
+                href="https://dsh-green.website/en/privacy.html"/>
     <changefreq>monthly</changefreq>
+    <lastmod>2026-09-07</lastmod>
   </url>  <url>
     <loc>https://dsh-green.website/zh-Hant/changelog.html</loc>
     <xhtml:link rel="alternate" hreflang="zh-Hans"
@@ -129,8 +138,9 @@
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://dsh-green.website/en/changelog.html"/>
     <xhtml:link rel="alternate" hreflang="x-default"
-                href="https://dsh-green.website/"/>
+                href="https://dsh-green.website/en/changelog.html"/>
     <changefreq>weekly</changefreq>
+    <lastmod>2026-09-07</lastmod>
   </url>
 
 
@@ -143,8 +153,9 @@
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://dsh-green.website/en/compare.html"/>
     <xhtml:link rel="alternate" hreflang="x-default"
-                href="https://dsh-green.website/"/>
+                href="https://dsh-green.website/en/compare.html"/>
     <changefreq>monthly</changefreq>
+    <lastmod>2026-09-07</lastmod>
   </url>
 
   <!-- English versions -->
@@ -159,6 +170,7 @@
     <xhtml:link rel="alternate" hreflang="x-default"
                 href="https://dsh-green.website/"/>
     <changefreq>weekly</changefreq>
+    <lastmod>2026-09-07</lastmod>
   </url>
   <url>
     <loc>https://dsh-green.website/en/about.html</loc>
@@ -169,8 +181,9 @@
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://dsh-green.website/en/about.html"/>
     <xhtml:link rel="alternate" hreflang="x-default"
-                href="https://dsh-green.website/"/>
+                href="https://dsh-green.website/en/about.html"/>
     <changefreq>monthly</changefreq>
+    <lastmod>2026-09-07</lastmod>
   </url>
   <url>
     <loc>https://dsh-green.website/en/privacy.html</loc>
@@ -181,8 +194,9 @@
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://dsh-green.website/en/privacy.html"/>
     <xhtml:link rel="alternate" hreflang="x-default"
-                href="https://dsh-green.website/"/>
+                href="https://dsh-green.website/en/privacy.html"/>
     <changefreq>monthly</changefreq>
+    <lastmod>2026-09-07</lastmod>
   </url>  <url>
     <loc>https://dsh-green.website/en/changelog.html</loc>
     <xhtml:link rel="alternate" hreflang="zh-Hans"
@@ -192,8 +206,9 @@
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://dsh-green.website/en/changelog.html"/>
     <xhtml:link rel="alternate" hreflang="x-default"
-                href="https://dsh-green.website/"/>
+                href="https://dsh-green.website/en/changelog.html"/>
     <changefreq>weekly</changefreq>
+    <lastmod>2026-09-07</lastmod>
   </url>
 
 
@@ -206,8 +221,9 @@
     <xhtml:link rel="alternate" hreflang="en"
                 href="https://dsh-green.website/en/compare.html"/>
     <xhtml:link rel="alternate" hreflang="x-default"
-                href="https://dsh-green.website/"/>
+                href="https://dsh-green.website/en/compare.html"/>
     <changefreq>monthly</changefreq>
+    <lastmod>2026-09-07</lastmod>
   </url>
 
 </urlset>
