@@ -4,3 +4,8 @@
 #  GSC 'Sitemap could not be read' on certain Cloudflare Pages builds)
 /sitemap.xml
   Content-Type: text/xml
+
+# 防止 *.pages.dev 别名子域名被搜索引擎收录, 避免与自定义域名 dsh-green.website 构成重复内容
+# 只有自定义域名的页面才会被 index
+https://deepseek-harness-green.pages.dev/*
+  X-Robots-Tag: noindex
