@@ -14,6 +14,23 @@
 // 这是加载器契约格式 (window.__ModuleLoader__.load), 与官方客户端插件一致。
 // 注意: 不修改任何官方文件/包; 样式用内联对象。
 
+
+// _tabLabel: 现场解析当前语言(读 <html lang>), 不依赖 BR.current 缓存,
+// 消除语言切换时 Tab 名滞后/与宿主语言不同步的竞态。宿主切语言会同步更新 <html lang>。
+function _tabLabel(key, fallback) {
+    var el = document.documentElement && document.documentElement.lang;
+    var lang = (el === 'zh-CN' || el === 'zh') ? 'zh'
+        : (el && el.indexOf('en') === 0) ? 'en'
+        : ((window.__DSH_I18N__ && window.__DSH_I18N__.current) || 'zh');
+    var br = window.__DSH_I18N__;
+    try {
+        if (br && br[lang]) {
+            var val = br[lang][key];
+            if (val !== undefined && val !== null && val !== '') return val;
+        }
+    } catch (_) {}
+    return fallback || key;
+}
 function _dsht(key, fallback) {
     try {
         const bridge = window.__DSH_I18N__;
@@ -998,7 +1015,7 @@ window.__ModuleLoader__.load({
 				name: "settings.section",
 				id: "usage-stats",
 				order: 510,
-				label: _dsht("plugin.usage_stats.title", "用量统计"),
+				label: () => _tabLabel("plugin.usage_stats.title", "用量统计"),
 			}, UsageStatsSection));
 			}
 			if (window.__DSH_I18N__ && window.__DSH_I18N__._initialized) {

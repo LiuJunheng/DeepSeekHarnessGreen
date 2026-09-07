@@ -16,6 +16,23 @@
 //   状态色走 state-success/error/warn/business 变量。
 
 // i18n 工具函数 (同其他内置插件): 优先读 window.__DSH_I18N__ (启动器桌面壳注入)
+
+// _tabLabel: 现场解析当前语言(读 <html lang>), 不依赖 BR.current 缓存,
+// 消除语言切换时 Tab 名滞后/与宿主语言不同步的竞态。宿主切语言会同步更新 <html lang>。
+function _tabLabel(key, fallback) {
+    var el = document.documentElement && document.documentElement.lang;
+    var lang = (el === 'zh-CN' || el === 'zh') ? 'zh'
+        : (el && el.indexOf('en') === 0) ? 'en'
+        : ((window.__DSH_I18N__ && window.__DSH_I18N__.current) || 'zh');
+    var br = window.__DSH_I18N__;
+    try {
+        if (br && br[lang]) {
+            var val = br[lang][key];
+            if (val !== undefined && val !== null && val !== '') return val;
+        }
+    } catch (_) {}
+    return fallback || key;
+}
 function _dsht(key, fallback) {
 	try {
 		const bridge = window.__DSH_I18N__;
@@ -700,7 +717,7 @@ const ROUTE_BATCH_SESSION = "/__dsh/memory/batch_session";
                 name: "settings.section",
                 id: "dsh-memory",
                 order: 530,
-                label: _dsht("plugin.memory.title", "祖宗记忆库"),
+                label: () => _tabLabel("plugin.memory.title", "祖宗记忆库"),
             }, MemoryCard));
             }
             if (window.__DSH_I18N__ && window.__DSH_I18N__._initialized) {
