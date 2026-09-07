@@ -205,7 +205,6 @@
       "https://api.github.com/repos/" + homepageRepo + "/releases/latest"
     );
     request.setRequestHeader("Accept", "application/vnd.github+json");
-    request.setRequestHeader("User-Agent", "DSH-GreenPortable-Pages");
     request.onload = function () {
       if (request.status !== 200) {
         return; // 非预期响应，保留通用提示
