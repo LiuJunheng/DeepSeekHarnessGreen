@@ -387,7 +387,7 @@ main, .footer { position: relative; z-index: 5; }
 .btn:hover::before { left: 100%; }
 .btn:hover { transform: translateY(-2px); }
 .btn-primary {
-  color: #ffffff;
+  color: #000000 !important;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   box-shadow: 0 4px 20px rgba(57, 211, 255, 0.4), 0 0 0 1px rgba(57, 211, 255, 0.3);
 }
