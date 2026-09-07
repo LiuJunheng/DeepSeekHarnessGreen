@@ -1,4 +1,4 @@
-// DeepSeek Harness 插件 (客户端): dsh-media-background
+﻿// DeepSeek Harness 插件 (客户端): dsh-media-background
 // 往 WebUI 注入"背景视频"能力 (命名空间 dsw-mbg):
 //   - 全屏 <video> 作半透明背景层 (position fixed inset:0, z-index:0, pointer-events:none),
 //     对话内容正常显示在上, 视频作为半透明壁纸透出, 浓度(opacity)滑块可调。
@@ -561,11 +561,15 @@ window.__ModuleLoader__.load({
 		function cssText() {
 			const css = [
 				'#dsw-mbg-btn{cursor:pointer;}' ,
-				'#dsw-mbg-panel{position:fixed;right:14px;top:14px;width:340px;height:70vh;max-height:560px;' +
+                          '#dsw-mbg-panel{position:fixed;width:340px;height:70vh;max-height:560px;' +
+                                  'display:none;flex-direction:column;z-index:2147483001;background:var(--dsw-alias-bg-layer-2);' +
+                          'border:1px solid var(--dsw-alias-border-l1);border-radius:12px;color:var(--dsw-alias-label-primary);font-size:13px;' +
+                                  'font-family:inherit;backdrop-filter:blur(14px);box-sizing:border-box;}',
 					'display:none;flex-direction:column;z-index:2147483001;background:var(--dsw-alias-bg-layer-2);' +
 				'border:1px solid var(--dsw-alias-border-l1);border-radius:12px;color:var(--dsw-alias-label-primary);font-size:13px;' +
 					'font-family:inherit;backdrop-filter:blur(14px);}',
-				'#dsw-mbg-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l1);}',
+                          '#dsw-mbg-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l1);cursor:grab;user-select:none;}',
+                          '#dsw-mbg-head:active{cursor:grabbing;}',
 				'#dsw-mbg-title{flex:1;font-weight:600;font-size:14px;}',
 				'.dsw-mbg-b{padding:4px 10px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-size:12px;cursor:pointer;}',
 				'.dsw-mbg-b:hover{background:var(--dsw-alias-interactive-bg-hover-solid);}',
@@ -604,7 +608,11 @@ window.__ModuleLoader__.load({
 			// 只透明化页面底座 token(--dsw-alias-bg-base, 即空壁纸/聊天画布背景),
 			// 刻意不动 layer-1/2/3 / specific-menu / bg-mask 等浮层 token ——
 			// 设置界面等悬浮面板用 var(--dsw-alias-bg-layer-N) 作背景, 保留不透明才不会把设置透掉。
-			'html.dsw-mbg-active body{background:transparent!important;--dsw-alias-bg-base:transparent!important;}',
+			                          // 拖拽 / 拉伸手柄 (三手柄: 右 ew-resize / 下 ns-resize / 右下 nwse-resize)
+                          '#dsw-mbg-panel .rh{position:absolute;right:-3px;top:32px;bottom:44px;width:6px;cursor:ew-resize;background:transparent;}',
+                          '#dsw-mbg-panel .bh{position:absolute;bottom:-3px;left:14px;right:14px;height:6px;cursor:ns-resize;background:transparent;}',
+                          '#dsw-mbg-panel .brh{position:absolute;right:-3px;bottom:-3px;width:14px;height:14px;cursor:nwse-resize;background:transparent;}',
+                          'html.dsw-mbg-active body{background:transparent!important;--dsw-alias-bg-base:transparent!important;}',
 			'html.dsw-mbg-active #root{background:transparent!important;}',
 		].join("\n");
 			const style = document.createElement("style");
@@ -676,7 +684,11 @@ window.__ModuleLoader__.load({
 				]),
 			]);
 			statusEl = el("div", { id: "dsw-mbg-status", textContent: _dsht("plugin.media_background.status_scanning", "扫描中…") });
-			panel = el("div", { id: "dsw-mbg-panel" }, [head, dirRow, fileBlock, playBlock, ctl, statusEl]);
+			                  // 三手柄: 右 / 下 / 右下拉伸, + 初始内联 style
+                  var rh = el("div", { className: "rh" });
+                  var bh = el("div", { className: "bh" });
+                  var brh = el("div", { className: "brh" });
+                  panel = el("div", { id: "dsw-mbg-panel", style: {} }, [head, dirRow, fileBlock, playBlock, ctl, statusEl, rh, bh, brh]);
 			rootEl.appendChild(panel);
 
 			// 目录浏览弹窗 (覆盖整个页面, 在其内部逐层下钻选择目录)。
@@ -749,3 +761,5 @@ window.__ModuleLoader__.load({
 		return module.exports;
 	}
 });
+
+
