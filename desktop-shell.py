@@ -42,6 +42,9 @@ ICON_FILE = os.path.join(BASE_DIR, "DSH_Launcher.ico")
 # 桌面版是"固定单实例程序": 进程启动后把自身 PID 写入 runtime, 供 launcher
 # 用进程身份判断是否在线做排重, 不再依赖 WebUI 心跳 (网页版才需要心跳)。
 PID_FILE = os.path.join(BASE_DIR, "runtime", "desktop_shell.pid")
+# WebView2 持久化存储目录 (localStorage / cookie / indexedDB)
+# private_mode=False + 指定 storage_path = 桌面端 localStorage 持久化
+STORAGE_PATH = os.path.join(BASE_DIR, "runtime", "webview2_data")
 WINDOW_WIDTH = 1200
 WINDOW_HEIGHT = 800
 WINDOW_MIN_WIDTH = 900
@@ -592,7 +595,11 @@ def open_in_shell_window(server_url, port, icon_path):
         # icon=: pywebview 的 WinForms 后端会把该 .ico 直接赋给窗体 Icon
         # (自绘 WM_SETICON 依赖窗口标题查找, 页面 title 覆盖后可能失效,
         #  而 start(icon=) 是权威方式); 传 None 时后端才退回 pythonw 默认图标)。
-        shell_webview_backend.start(on_window_ready, debug=False, icon=icon_path)
+        shell_webview_backend.start(
+		on_window_ready, debug=False, icon=icon_path,
+		private_mode=False,            # 关闭私密模式, localStorage 持久化
+		storage_path=STORAGE_PATH,      # 固定 WebView2 user data 目录
+)
     finally:
         remove_pid_file()
 
