@@ -36,3 +36,9 @@ doc/
 # Release notes (本地发版临时文件, 不提交 git)
 release_notes*.md
 release_notes/**/*.md
+
+# 公众号推文草稿（本地写作产物, 不提交 git）
+mp-article/
+
+# i18n bridge (启动时自动生成的副本, 已废弃, 不提交)
+__dsh_i18n_bridge.js

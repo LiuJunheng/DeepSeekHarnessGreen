@@ -4700,10 +4700,10 @@ class Launcher:
         return flat
 
     def _write_i18n_bridge_to_plugins(self):
-        """把完整 bridge JS 写入 dsh-archive-purge 插件目录, 供浏览器直接访问时加载.
-        DSH 启动其 Node.js 服务后, plugins/ 目录下的 .js 文件可以通过 HTTP 静态访问.
-        插件 client.js 的 _dsht() 在 bridge 缺失时会尝试 fetch 该路径.
-        失败不阻断主流程 (桌面壳 evaluate_js 注入 + 心跳 server 3081 端口都能兜底)."""
+        """已废弃 (2026-09-07): bridge 由心跳 server 3081 /__dsh_i18n_bridge.js +
+        desktop-shell.py evaluate_js 双通道提供, 这个写 plugins/ 静态副本的路径
+        没有任何消费者, 且每次启动会产生 114KB 孤儿文件。"""
+        return
         bridge = self._build_i18n_bridge_js()
         if not bridge:
             return
