@@ -1,0 +1,6 @@
+# Cloudflare Pages custom headers
+# sitemap.xml: force text/xml instead of application/xml
+# (some sitemap fetchers expect text/xml; application/xml is valid per RFC but causes
+#  GSC 'Sitemap could not be read' on certain Cloudflare Pages builds)
+/sitemap.xml
+  Content-Type: text/xml
