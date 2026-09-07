@@ -225,6 +225,210 @@
   }
 
   fetchLatestVersion();
+  /* 3.5 Changelog 页面：自动从 GitHub Releases 拉取最新 10 条 release
+       独立 localStorage 缓存，TTL 2h；fetchLatestRelease 用同一 GH_REPO 变量 */
+  var RELEASES_CACHE_KEY = "dshe-releases-v1";
+  var RELEASES_CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 小时
+
+  function fetchReleasesFromCache() {
+    try {
+      var raw = localStorage.getItem(RELEASES_CACHE_KEY);
+      if (!raw) return null;
+      var data = JSON.parse(raw);
+      if (Date.now() - data.fetchedAt < RELEASES_CACHE_TTL_MS) return data.releases;
+    } catch (e) { /* no-op */ }
+    return null;
+  }
+
+  function writeReleasesCache(releases) {
+    try {
+      localStorage.setItem(RELEASES_CACHE_KEY, JSON.stringify({ fetchedAt: Date.now(), releases: releases }));
+    } catch (e) { /* no-op */ }
+  }
+
+  /* 极简 markdown → HTML 渲染器，只处理 release body 常见格式：
+     ## 标题 / ### 小标题 / - 列表项 / ` 代码块 / **粗体** / code / [链接](url)
+     不追求通用，只够我们自己的 release notes 用 */
+  function renderSimpleMarkdown(text) {
+    if (!text) return "";
+    var lines = text.split(/\r?\n/);
+    var out = [];
+    var inCodeBlock = false;
+    var codeLines = [];
+    var listOpen = false;
+
+    function closeList() {
+      if (listOpen) { out.push("</ul>"); listOpen = false; }
+    }
+    function renderInline(line) {
+      // **粗体**
+      line = line.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      // code
+      line = line.replace(/([^]+)/g, "<code>$1</code>");
+      // [text](url)
+      line = line.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+      return line;
+    }
+
+    for (var i = 0; i < lines.length; i++) {
+      var raw = lines[i];
+      var stripped = raw.trim();
+
+      // 代码块 `
+      if (/^`/.test(stripped)) {
+        if (inCodeBlock) {
+          closeList();
+          out.push("<pre><code>" + codeLines.join("\n") + "</code></pre>");
+          codeLines = [];
+          inCodeBlock = false;
+        } else {
+          inCodeBlock = true;
+        }
+        continue;
+      }
+      if (inCodeBlock) { codeLines.push(raw); continue; }
+
+      // ## 二级标题
+      var h2 = raw.match(/^##\s+(.+)$/);
+      if (h2) { closeList(); out.push("<h3>" + renderInline(h2[1]) + "</h3>"); continue; }
+      // ### 三级标题
+      var h3 = raw.match(/^###\s+(.+)$/);
+      if (h3) { closeList(); out.push("<h4>" + renderInline(h3[1]) + "</h4>"); continue; }
+
+      // - 列表项
+      var li = raw.match(/^\s*[-*]\s+(.+)$/);
+      if (li) {
+        if (!listOpen) { out.push("<ul>"); listOpen = true; }
+        out.push("<li>" + renderInline(li[1]) + "</li>");
+        continue;
+      }
+
+      // 空行：关闭列表
+      if (stripped === "") { closeList(); continue; }
+
+      // 普通段落
+      closeList();
+      out.push("<p>" + renderInline(raw) + "</p>");
+    }
+    closeList();
+    if (inCodeBlock && codeLines.length > 0) {
+      out.push("<pre><code>" + codeLines.join("\n") + "</code></pre>");
+    }
+    return out.join("\n");
+  }
+
+  function formatReleaseDate(isoString) {
+    if (!isoString) return "";
+    var d = new Date(isoString);
+    if (isNaN(d.getTime())) return isoString;
+    var y = d.getFullYear();
+    var mo = ("0" + (d.getMonth() + 1)).slice(-2);
+    var da = ("0" + d.getDate()).slice(-2);
+    return y + "-" + mo + "-" + da;
+  }
+
+  function renderChangelogList(releases) {
+    var container = document.getElementById("changelog-list");
+    var loading = document.getElementById("changelog-loading");
+    var errorBox = document.getElementById("changelog-error");
+    if (!container) return;
+    container.innerHTML = "";
+    if (loading) loading.hidden = true;
+    if (errorBox) errorBox.hidden = true;
+
+    if (!releases || releases.length === 0) {
+      container.innerHTML = '<p class="changelog-empty">暂无发布记录。</p>';
+      return;
+    }
+
+    for (var i = 0; i < releases.length; i++) {
+      var r = releases[i];
+      if (r.draft || r.prerelease) continue;
+
+      var item = document.createElement("section");
+      item.className = "changelog-item";
+
+      // header: version tag + date + GitHub link
+      var header = document.createElement("header");
+      header.className = "changelog-header";
+      header.innerHTML =
+        '<a href="' + r.html_url + '" target="_blank" rel="noopener" class="changelog-tag">' +
+        (r.tag_name || r.name || "") + '</a>' +
+        '<span class="changelog-date">' + formatReleaseDate(r.published_at) + '</span>';
+      item.appendChild(header);
+
+      // body: rendered markdown
+      var body = document.createElement("div");
+      body.className = "changelog-body";
+      body.innerHTML = renderSimpleMarkdown(r.body || "");
+      item.appendChild(body);
+
+      // quick download link (if has assets)
+      if (r.assets && r.assets.length > 0) {
+        var zipAsset = null;
+        for (var j = 0; j < r.assets.length; j++) {
+          if (/\.zip$/i.test(r.assets[j].name) && r.assets[j].name.indexOf("GreenPortable") !== -1) {
+            zipAsset = r.assets[j]; break;
+          }
+        }
+        if (zipAsset) {
+          var dl = document.createElement("div");
+          dl.className = "changelog-download";
+          dl.innerHTML = '<a href="' + zipAsset.browser_download_url + '" target="_blank" rel="noopener" class="btn btn-primary">' +
+            (zipAsset.name || "下载") + '</a>';
+          item.appendChild(dl);
+        }
+      }
+
+      container.appendChild(item);
+    }
+
+    if (container.children.length === 0) {
+      container.innerHTML = '<p class="changelog-empty">暂无正式发布版本。</p>';
+    }
+  }
+
+  function fetchAndRenderChangelog() {
+    // 只在 changelog 页面（有 #changelog-list）运行
+    if (!document.getElementById("changelog-list")) return;
+
+    var releases = fetchReleasesFromCache();
+    if (releases) {
+      renderChangelogList(releases);
+      return;
+    }
+
+    var loading = document.getElementById("changelog-loading");
+    var errorBox = document.getElementById("changelog-error");
+    if (loading) loading.hidden = false;
+
+    var req = new XMLHttpRequest();
+    req.open("GET", "https://api.github.com/repos/" + GH_REPO + "/releases?per_page=10");
+    req.setRequestHeader("Accept", "application/vnd.github+json");
+    req.onload = function () {
+      if (req.status !== 200) {
+        if (loading) loading.hidden = true;
+        if (errorBox) errorBox.hidden = false;
+        return;
+      }
+      try {
+        var payload = JSON.parse(req.responseText);
+        writeReleasesCache(payload);
+        renderChangelogList(payload);
+      } catch (e) {
+        if (loading) loading.hidden = true;
+        if (errorBox) errorBox.hidden = false;
+      }
+    };
+    req.onerror = function () {
+      if (loading) loading.hidden = true;
+      if (errorBox) errorBox.hidden = false;
+    };
+    req.send();
+  }
+
+  fetchAndRenderChangelog();
+
 
   /* 4. 粒子网络动效：漂浮的光点 + 邻近连线（Canvas 2D，纯本地渲染）
        遵循系统"减少动态"偏好，无 Canvas / 被禁用时静默跳过，不阻塞页面 */

@@ -57,7 +57,20 @@
     <xhtml:link rel="alternate" hreflang="x-default"
                 href="https://dsh-green.website/"/>
     <changefreq>monthly</changefreq>
+  </url>  <url>
+    <loc>https://dsh-green.website/zh/changelog.html</loc>
+    <xhtml:link rel="alternate" hreflang="zh-Hans"
+                href="https://dsh-green.website/zh/changelog.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant"
+                href="https://dsh-green.website/zh-Hant/changelog.html"/>
+    <xhtml:link rel="alternate" hreflang="en"
+                href="https://dsh-green.website/en/changelog.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default"
+                href="https://dsh-green.website/"/>
+    <changefreq>weekly</changefreq>
   </url>
+
+
   <url>
     <loc>https://dsh-green.website/zh/compare.html</loc>
     <xhtml:link rel="alternate" hreflang="zh-Hans"
@@ -107,7 +120,20 @@
     <xhtml:link rel="alternate" hreflang="x-default"
                 href="https://dsh-green.website/"/>
     <changefreq>monthly</changefreq>
+  </url>  <url>
+    <loc>https://dsh-green.website/zh-Hant/changelog.html</loc>
+    <xhtml:link rel="alternate" hreflang="zh-Hans"
+                href="https://dsh-green.website/zh/changelog.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant"
+                href="https://dsh-green.website/zh-Hant/changelog.html"/>
+    <xhtml:link rel="alternate" hreflang="en"
+                href="https://dsh-green.website/en/changelog.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default"
+                href="https://dsh-green.website/"/>
+    <changefreq>weekly</changefreq>
   </url>
+
+
   <url>
     <loc>https://dsh-green.website/zh-Hant/compare.html</loc>
     <xhtml:link rel="alternate" hreflang="zh-Hans"
@@ -157,7 +183,20 @@
     <xhtml:link rel="alternate" hreflang="x-default"
                 href="https://dsh-green.website/"/>
     <changefreq>monthly</changefreq>
+  </url>  <url>
+    <loc>https://dsh-green.website/en/changelog.html</loc>
+    <xhtml:link rel="alternate" hreflang="zh-Hans"
+                href="https://dsh-green.website/zh/changelog.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant"
+                href="https://dsh-green.website/zh-Hant/changelog.html"/>
+    <xhtml:link rel="alternate" hreflang="en"
+                href="https://dsh-green.website/en/changelog.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default"
+                href="https://dsh-green.website/"/>
+    <changefreq>weekly</changefreq>
   </url>
+
+
   <url>
     <loc>https://dsh-green.website/en/compare.html</loc>
     <xhtml:link rel="alternate" hreflang="zh-Hans"
