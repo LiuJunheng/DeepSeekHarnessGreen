@@ -197,16 +197,49 @@ window.__ModuleLoader__.load({
 			// ---- 弹窗几何 (可拖动 + 可拉伸右/下/右下角) ----
 			// 初始为默认尺寸/位置 (680 × (视口高-128), 右下锚), 用户拖动后按记忆渲染;
 			// 最小尺寸 520×380, 最大不超过视口 - 16px (避免溢出屏幕外点不到关闭按钮)。
+			// 右侧 dsh-sidebar-lite 展开时 (CSS 变量 --dsh-sidebar-lite-width), 初始位置
+			// 自动让出侧栏宽度 + 20px gap, 避免弹窗被侧栏挡住。
 			const DEFAULT_W = 720;
 			const MIN_W = 520;
 			const MIN_H = 380;
 			const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+			/** 读取当前右侧侧栏实际占位宽度 (px)
+			 *  兼容 dsh-sidebar-lite (CSS 变量 + host 元素检测)
+			 *  + 任何其他设置了 --dsh-sidebar-offset 的侧栏 (通用 fallback)。
+			 *  返回 0 表示没有侧栏或侧栏完全收起。 */
+			const getSidebarRightOffset = () => {
+				// 1. 优先检测 dsh-sidebar-lite host 元素是否存在且未关闭
+				const host = document.getElementById("dsl-host");
+				if (host) {
+					const isClosed = host.classList.contains("dsl-closed");
+					if (!isClosed && host.offsetWidth > 0) {
+						// 加上预览框额外让位量
+						const root = document.documentElement;
+						const extra = parseFloat(getComputedStyle(root).getPropertyValue("--dsh-sidebar-lite-extra")) || 0;
+						return host.offsetWidth + extra;
+					}
+				}
+				// 2. fallback: 读 CSS 变量
+				const root = document.documentElement;
+				const w = parseFloat(getComputedStyle(root).getPropertyValue("--dsh-sidebar-lite-width")) || 0;
+				const extra = parseFloat(getComputedStyle(root).getPropertyValue("--dsh-sidebar-lite-extra")) || 0;
+				// 3. 通用 fallback: 任何插件可设置 --dsh-sidebar-offset
+				const generic = parseFloat(getComputedStyle(root).getPropertyValue("--dsh-sidebar-offset")) || 0;
+				return Math.max(w + extra, generic);
+			};
+
 			const initialWin = () => {
-				const w = clamp(DEFAULT_W, MIN_W, (window.innerWidth || 1280) - 16);
-				const h = clamp((window.innerHeight || 800) - 128, MIN_H, (window.innerHeight || 800) - 16);
-				const left = (window.innerWidth || 1280) - w - 20;
+				const sidebarOffset = getSidebarRightOffset();
+				const vw = window.innerWidth || 1280;
+				const vh = window.innerHeight || 800;
+				const rightPad = sidebarOffset + 20;  // 侧栏占位 + 20px 安全间隙
+				const maxW = vw - rightPad - 16;       // 可用宽度 (右侧留出 rightPad, 左侧 16px)
+				const w = clamp(DEFAULT_W, MIN_W, maxW);
+				const h = clamp(vh - 128, MIN_H, vh - 16);
+				const left = vw - w - rightPad;        // 靠右但让出侧栏
 				const top = 64;
-				return { left, top, width: w, height: h };
+				return { left, top, width: w, height: h, _autoPositioned: true };
 			};
 			const [win, setWin] = react.useState(initialWin);
 			const dragStateRef = react.useRef(null); // { mode, startX, startY, origLeft, origTop, origW, origH }
@@ -231,23 +264,30 @@ window.__ModuleLoader__.load({
 					const dy = ev.clientY - ds.startY;
 					const vw = window.innerWidth || 1280;
 					const vh = window.innerHeight || 800;
+					const sidebarOffset = getSidebarRightOffset();
+					const rightLimit = vw - sidebarOffset;  // 弹窗右边最多到侧栏左边
 					setWin((cur) => {
 						let left = cur.left;
 						let top = cur.top;
 						let width = cur.width;
 						let height = cur.height;
 						if (ds.mode === "move") {
-							left = clamp(ds.origLeft + dx, 8, vw - 60);
+							// 左边不超 8px, 右边留 sidebarOffset + 4px 安全间隙
+							left = clamp(ds.origLeft + dx, 8, rightLimit - 60);
 							top = clamp(ds.origTop + dy, 8, vh - 60);
 						} else if (ds.mode === "r") {
-							width = clamp(ds.origW + dx, MIN_W, vw - 16);
+							// 拉伸右边: 右边界不超侧栏左边
+							const maxRight = rightLimit - cur.left - 4;
+							width = clamp(ds.origW + dx, MIN_W, Math.max(MIN_W, maxRight));
 						} else if (ds.mode === "b") {
 							height = clamp(ds.origH + dy, MIN_H, vh - 16);
 						} else if (ds.mode === "br") {
-							width = clamp(ds.origW + dx, MIN_W, vw - 16);
+							const maxRight = rightLimit - cur.left - 4;
+							width = clamp(ds.origW + dx, MIN_W, Math.max(MIN_W, maxRight));
 							height = clamp(ds.origH + dy, MIN_H, vh - 16);
 						}
-						return { left, top, width, height };
+						// 清除自动定位标记 (用户手动拖过了)
+						return { left, top, width, height, _autoPositioned: false };
 					});
 				};
 				const onUp = () => { dragStateRef.current = null; };
@@ -256,6 +296,40 @@ window.__ModuleLoader__.load({
 				return () => {
 					window.removeEventListener("mousemove", onMove);
 					window.removeEventListener("mouseup", onUp);
+				};
+			}, []);
+
+			// ---- 窗口 resize / 侧栏变化时自动重新定位 (仅当用户没手动拖过) ----
+			react.useEffect(() => {
+				const reposition = () => {
+					setWin((cur) => {
+						if (!cur._autoPositioned) return cur;  // 用户手动拖过, 不再自动调整
+						const sidebarOffset = getSidebarRightOffset();
+						const vw = window.innerWidth || 1280;
+						const vh = window.innerHeight || 800;
+						const rightPad = sidebarOffset + 20;
+						const maxW = vw - rightPad - 16;
+						const w = clamp(Math.min(cur.width, maxW), MIN_W, maxW);
+						const h = clamp(cur.height, MIN_H, vh - 16);
+						const left = vw - w - rightPad;
+						const top = clamp(cur.top, 8, vh - h - 8);
+						return { left, top, width: w, height: h, _autoPositioned: true };
+					});
+				};
+				window.addEventListener("resize", reposition);
+				// 侧栏 class 变化 (dsl-closed <-> 无 closed) 时重新定位
+				const hostObserver = new MutationObserver(reposition);
+				const host = document.getElementById("dsl-host");
+				if (host) {
+					hostObserver.observe(host, { attributes: true, attributeFilter: ["class", "style"] });
+				}
+				// CSS 变量变化 (侧栏宽度拖动时)
+				const cssObserver = new MutationObserver(reposition);
+				cssObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
+				return () => {
+					window.removeEventListener("resize", reposition);
+					hostObserver.disconnect();
+					cssObserver.disconnect();
 				};
 			}, []);
 
