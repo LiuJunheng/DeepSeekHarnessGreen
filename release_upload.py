@@ -25,6 +25,7 @@
 ### 【必须包含】(根目录相对路径)
   DSH_Launcher.exe / DSH_Update.exe       # PyInstaller onefile 产物
   launcher.py / update_agent.py           # Python 启动器源码
+  i18n.py + locales/                      # 多语言模块 (launcher/update_agent 源码模式依赖, 缺了 import i18n 直接崩)
   desktop-shell.py                        # Desktop Shell 窗口源码
   DSH_Launcher.ico                        # 绿色鲸图标
   config.json                             # 默认配置模板
@@ -222,10 +223,12 @@ INCLUDE_ITEMS = [
     "launcher.py",
     "update_agent.py",
     "desktop-shell.py",
+    "i18n.py",
     "build_exe.bat",
     "config.json",
     "start.bat",
     "stop.bat",
+    "locales",
     "plugins",
     "pages",
     "skills",
@@ -692,7 +695,10 @@ def gitee_create_release(token, tag, name, body):
     payload = {
         "access_token": token,
         "tag_name": tag,
-        "target_commitish": tag,
+        # target_commitish 必须是分支名或 commit sha, 不能是尚不存在的 tag 本身。
+        # 传 tag 名会在 Gitee 自动打 tag 时因目标 commit 不存在而报
+        # "创建标签失败：<tag>" (HTTP 400)。传分支名 master 让 Gitee 从最新提交自动建 tag。
+        "target_commitish": "master",
         "name": name,
         "body": body,
     }
@@ -820,11 +826,11 @@ def main():
 
     # 校验 zip 根目录关键项齐全 (包含 build_exe.bat / plugins / skills 等)
     expect_top = [
-        "launcher.py", "update_agent.py", "desktop-shell.py",
+        "launcher.py", "update_agent.py", "desktop-shell.py", "i18n.py",
         "start.bat", "stop.bat", "build_exe.bat",
         "DSH_Launcher.exe", "DSH_Update.exe", "DSH_Launcher.ico",
         "config.json", "README.md", "README_EN.md", "LICENSE",
-        "plugins", "pages", "skills",
+        "locales", "plugins", "pages", "skills",
     ]
     verify_zip(zip_path, expect_top)
 

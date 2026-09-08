@@ -23,11 +23,34 @@ i18n 多语言核心模块 (Python 标准库实现, 无第三方依赖)
 
 打包说明 (PyInstaller --onefile):
     --add-data "locales;locales"
+
+注意 (windowed 模式坑, 2026-09-08):
+    用 PyInstaller --windowed 打出 exe 时, sys.stdout / sys.stderr 会被置为 None,
+    任何直接 sys.stderr.write(...) 都会抛 AttributeError: 'NoneType' object has
+    no attribute 'write'. 因此本模块内所有日志输出必须经下方 _safe_write / _warn
+    兜底 (stream 为 None 时静默丢弃), 绝不直接写 sys.stderr.
 """
 
 import os
 import sys
 import json
+
+
+def _safe_write(stream, text):
+    """向给定 stream 安全写一行: stream 为 None (windowed 无控制台) 时静默丢弃.
+    避免 PyInstaller --windowed 下 sys.stdout/stderr 为 None 导致崩溃."""
+    if stream is None:
+        return
+    try:
+        stream.write(text)
+    except Exception:
+        # 极端情况下 stream 写入失败也不影响主流程
+        pass
+
+
+def _warn(text):
+    """日志输出到 stderr 的兜底封装: windowed 打包时 stderr=None 也不会崩."""
+    _safe_write(sys.stderr, text)
 
 
 def _get_base_dir():
@@ -56,14 +79,14 @@ class Translator:
         self._translations = {}
         if not os.path.isfile(json_path):
             # 文件不存在时保持空字典, t() 会 fallback 返回 key
-            sys.stderr.write("[i18n] Warning: locale file not found: %s\n" % json_path)
+            _warn("[i18n] Warning: locale file not found: %s\n" % json_path)
             return
         try:
             with open(json_path, "r", encoding="utf-8") as file_handle:
                 raw_data = json.load(file_handle)
             self._translations = self._flatten_dict(raw_data)
         except Exception as error:
-            sys.stderr.write("[i18n] Warning: failed to load %s: %s\n" % (json_path, error))
+            _warn("[i18n] Warning: failed to load %s: %s\n" % (json_path, error))
             self._translations = {}
 
     @staticmethod
@@ -108,7 +131,7 @@ class Translator:
             try:
                 callback()
             except Exception as error:
-                sys.stderr.write("[i18n] Warning: change callback error: %s\n" % error)
+                _warn("[i18n] Warning: change callback error: %s\n" % error)
 
     # ---------- 回调注册 ----------
     def on_change(self, callback):
