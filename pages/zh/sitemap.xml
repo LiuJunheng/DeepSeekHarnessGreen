@@ -1,13 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  sitemap.xml: 多语言站点地图
-  每个 <url> 条目都带 xhtml:link 互指所有语言变体 (zh-Hans / zh-Hant / en / x-default),
-  与各页面 <head> 里的 hreflang 标签形成双保险, 帮助 Google 正确识别多语言关系。
--->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
         xmlns:xhtml="http://www.w3.org/1999/xhtml">
-
-  <!-- Root entry (language picker + auto-redirect) -->
   <url>
     <loc>https://dsh-green.website/</loc>
     <xhtml:link rel="alternate" hreflang="zh-Hans"
@@ -21,8 +14,6 @@
     <changefreq>weekly</changefreq>
     <lastmod>2026-09-07</lastmod>
   </url>
-
-  <!-- Simplified Chinese (zh-Hans) versions -->
   <url>
     <loc>https://dsh-green.website/zh/</loc>
     <xhtml:link rel="alternate" hreflang="zh-Hans"
@@ -74,8 +65,6 @@
     <changefreq>weekly</changefreq>
     <lastmod>2026-09-07</lastmod>
   </url>
-
-
   <url>
     <loc>https://dsh-green.website/zh/compare.html</loc>
     <xhtml:link rel="alternate" hreflang="zh-Hans"
@@ -89,8 +78,6 @@
     <changefreq>monthly</changefreq>
     <lastmod>2026-09-07</lastmod>
   </url>
-
-  <!-- Traditional Chinese (zh-Hant) versions -->
   <url>
     <loc>https://dsh-green.website/zh-Hant/</loc>
     <xhtml:link rel="alternate" hreflang="zh-Hans"
@@ -142,8 +129,6 @@
     <changefreq>weekly</changefreq>
     <lastmod>2026-09-07</lastmod>
   </url>
-
-
   <url>
     <loc>https://dsh-green.website/zh-Hant/compare.html</loc>
     <xhtml:link rel="alternate" hreflang="zh-Hans"
@@ -157,8 +142,6 @@
     <changefreq>monthly</changefreq>
     <lastmod>2026-09-07</lastmod>
   </url>
-
-  <!-- English versions -->
   <url>
     <loc>https://dsh-green.website/en/</loc>
     <xhtml:link rel="alternate" hreflang="zh-Hans"
@@ -210,8 +193,6 @@
     <changefreq>weekly</changefreq>
     <lastmod>2026-09-07</lastmod>
   </url>
-
-
   <url>
     <loc>https://dsh-green.website/en/compare.html</loc>
     <xhtml:link rel="alternate" hreflang="zh-Hans"
@@ -225,5 +206,4 @@
     <changefreq>monthly</changefreq>
     <lastmod>2026-09-07</lastmod>
   </url>
-
 </urlset>
