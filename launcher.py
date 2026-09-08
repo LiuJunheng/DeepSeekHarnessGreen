@@ -283,8 +283,8 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # 发布流程: 打 tag v{GREEN_VERSION} + Release 资产 DSH-GreenPortable-v{tag}.zip
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
-GREEN_VERSION = "1.0.34"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
-GREEN_VERSION_DATE = "2026年09月08日"               # 绿色版版本日期 (release_upload.py 会按构建当天回写)
+GREEN_VERSION = "1.0.35"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
+GREEN_VERSION_DATE = "2026年09月09日"               # 绿色版版本日期 (release_upload.py 会按构建当天回写)
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
 GREEN_RELEASE_MIRROR = ("https://mirror.nju.edu.cn/github-release/%s/latest"
@@ -312,7 +312,7 @@ GITEE_RAW_LAUNCHER_URL = ("https://gitee.com/%s/raw/%s/launcher.py"
 GITEE_RELEASES_API = ("https://gitee.com/api/v5/repos/%s/releases"
                       % GITEE_REPO)  # Gitee 发布版列表 (公开读无需令牌)
 GITEE_REPO_PAGE_URL = "https://gitee.com/%s" % GITEE_REPO  # Gitee 仓库主页 (失败手动提示)
-GREEN_HOME_PAGE_URL = "https://liujunheng.github.io/DeepSeekHarnessGreen/"  # 发布主页 (GitHub Pages, About 里跳转)
+GREEN_HOME_PAGE_URL = "https://dsh-green.website/"  # 发布主页 (独立站点, About 里跳转)
 
 # 「加载推荐」一键展示的 dsh 插件列表 (按社区目录站 dsh-plugins.top / awesome-deepseek-harness / 官方 dsh-plugin 话题筛选出的高口碑款, 2026-08 底校准)
 # 字段说明: name=展示名; category=分类(显示在「分类」列); source=来源平台(github/npm, 与搜索项统一, 显示在「来源」列);

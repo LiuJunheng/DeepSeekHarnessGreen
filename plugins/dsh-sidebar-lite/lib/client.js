@@ -60,6 +60,13 @@ window.__ModuleLoader__.load({
 
 		const inject = ["slots", "sessions"];
 
+			// 官方输入机桥接 (独立持有, 不依赖 file-browser 注入的全局变量):
+			// 通过官方 conversation.input.left slot 捕获 ownerProps.inputActions / input
+			// (InputZone 契约, 与 file-browser 同一官方通道), 供右键菜单「插入路径/内容」
+			// 走 inputActions.setDraft() 稳定写入真实会话草稿。
+			let __dslInputActions = null;
+			let __dslInput = null;
+
 		// ---- 常量 ----
 		const API_PREFIX = "/__dsh/sidebar-lite";
 		const GUARD_HEADER = "X-DSH-Sidebar-Lite";
@@ -319,9 +326,8 @@ window.__ModuleLoader__.load({
 		                    let actx = null;
 		                    try { actx = bridge && typeof bridge.scope === "function" ? bridge.scope(sessionId) : null; } catch (e) { actx = null; }
 		                    if (!actx) return "Cannot get session scope";
-		                    let inputState = null;
-		                    try { inputState = (typeof window !== "undefined") ? window.__dshInputState : null; } catch (e) {}
-		                    const draft = (inputState && typeof inputState.draft === "string") ? inputState.draft : "";
+			                    const inputState = __dslInput || null;
+			                    const draft = (inputState && typeof inputState.draft === "string") ? inputState.draft : "";
 		                    const draftRev = (inputState && typeof inputState.draftRev === "number") ? inputState.draftRev : 0;
 		                    const caret = draft.length;
 		                    const reference = {
@@ -565,6 +571,94 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 			return react.createElement("span", { style: { fontSize: 12, flex: "none" } }, kind === "f" ? "📁" : "📄");
 		}
 
+		/** 把任意文本插入当前会话输入框 (与 file-browser 的插入能力对齐)。
+		 *  插入路径优先级 (独立可靠, 与 file-browser 同源但不互相依赖):
+		 *    A) __dslInputActions.setDraft() —— 本插件通过官方 conversation.input.left
+		 *       slot 独立捕获的输入机 React 状态通道, 稳定落在真实会话草稿;
+		 *    B) 官方输入机 slash/input-insert-text (bail, 备用);
+		 *    C) DOM fallback (仅前两者都不可用)。 */
+		function insertIntoInput(text, bridge, sessionId) {
+			// ---- 路径 A: 官方 inputActions.setDraft (本插件独立捕获的 slot 通道) ----
+			try {
+				if (__dslInputActions && typeof __dslInputActions.setDraft === "function") {
+					const current = (__dslInput && typeof __dslInput.draft === "string") ? __dslInput.draft : "";
+					const sep = current !== "" && !/\s$/.test(current) ? "\n" : "";
+					__dslInputActions.setDraft(current + sep + text);
+					return true;
+				}
+			} catch (e) { /* fallthrough */ }
+			// ---- 路径 B: 官方输入机 bail (0.1.2-rc.1) ----
+			try {
+				let actx = null;
+				try { actx = bridge && typeof bridge.scope === "function" ? bridge.scope(sessionId) : null; } catch (e) { actx = null; }
+				if (actx && typeof actx.bail === "function") {
+					const inputState = __dslInput || null;
+					const draft = (inputState && typeof inputState.draft === "string") ? inputState.draft : "";
+					const draftRev = (inputState && typeof inputState.draftRev === "number") ? inputState.draftRev : 0;
+					const caret = draft.length;
+					const span = { start: caret, end: caret, draftRev };
+					// 动态拿 liveRev 避免 CAS 失败
+					try {
+						let conv = null;
+						try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") : null; } catch(e) { conv = null; }
+						const sid = (actx.session && actx.session.id) || sessionId || null;
+						const shell = conv && conv.input && typeof conv.input.shell === "function" ? conv.input.shell(sid) : null;
+						const liveRev = shell && shell.rev !== undefined ? shell.rev : null;
+						if (liveRev !== null && liveRev !== undefined) { span.draftRev = liveRev; }
+					} catch (e) {}
+					const ok = actx.bail(actx, "slash/input-insert-text", { text, span }) === true;
+					if (ok) return true;
+				}
+			} catch (e) { /* fallthrough to DOM fallback */ }
+			// ---- 路径 C: DOM fallback (任何 DSH 版本) ----
+			// React 受控组件里必须同时设 value + dispatch('input') 才会触发 onChange handler。
+			try {
+				const ta = document.querySelector("textarea");
+				if (ta) {
+					const cur = ta.value || "";
+					const sep = cur !== "" && !/\s$/.test(cur) ? " " : "";
+					const next = cur + sep + text;
+					const desc = Object.getOwnPropertyDescriptor(ta.constructor.prototype, "value");
+					if (desc && desc.set) desc.set.call(ta, next);
+					else ta.value = next;
+					ta.dispatchEvent(new Event("input", { bubbles: true }));
+					ta.dispatchEvent(new Event("change", { bubbles: true }));
+					try { ta.selectionStart = ta.selectionEnd = next.length; } catch (e) { /* noop */ }
+					return true;
+				}
+				const ce = document.querySelector("[contenteditable='true']");
+				if (ce) {
+					const cur = (ce.innerText || ce.textContent || "");
+					const sep = cur !== "" && !/\s$/.test(cur) ? " " : "";
+					ce.innerText = cur + sep + text;
+					ce.dispatchEvent(new Event("input", { bubbles: true }));
+					return true;
+				}
+				return false;
+			} catch (e) { return false; }
+		}
+
+		/** 读文件内容并拼成"[文件] 路径\n内容\n[文件内容结束]"插入输入框 (对齐 file-browser ins content)。
+		 *  大文件仅取前部 (host 端 fs.read 已按 READ_LIMIT 截断并标 truncated)。 */
+		async function insertFileContentToInput(scope, path, bridge, sessionId) {
+			try {
+				const data = await postMethod("fs.read", { sessionId: scope.sessionId, ...(scope.cwd ? { cwd: scope.cwd } : {}), path });
+				const file = data && typeof data.file === "object" ? data.file : null;
+				let text;
+				if (!file || file.kind === "binary") {
+					text = "[文件] " + path + "（无法读取文本）";
+				} else {
+					let body = typeof file.content === "string" ? file.content : "";
+					let note = file.truncated ? "（内容过长，已截断为前部）" : "";
+					text = "[文件] " + path + "\n" + body + "\n[文件内容结束]" + note;
+				}
+				const ok = insertIntoInput(text, bridge, sessionId);
+				if (!ok) insertIntoInput("[文件] " + path + "（无法找到输入框）", bridge, sessionId);
+			} catch (e) {
+				insertIntoInput("[文件] " + path + "（读取失败）", bridge, sessionId);
+			}
+		}
+
 		// ---- 右键上下文菜单 (与 better-sidebar 一致: 下载[仅文件] / 复制相对 / 复制绝对) ----
 
 		function ContextMenu({ x, y, entry, onSelect }) {
@@ -576,10 +670,16 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 		}, []);
 			const itemStyle = { padding: "6px 10px", cursor: "pointer", fontSize: 12.5, whiteSpace: "nowrap" };
 			const sepStyle = { height: 1, background: "var(--dsw-alias-border-l1,#eee)", margin: "3px 4px" };
-			// 文件行: 以官方 @ 引用插入 (衔接官方 @+文件 机制) + 另存为; 目录行只提供复制相对/绝对。
+			// 统一右键菜单 (与 file-browser 完全一致):
+			// 文件行: @引用 → 插入路径 → 插入内容 → 另存为 → 复制相对 → 复制绝对
+			// 目录行: 插入路径 → 复制相对 → 复制绝对
 			const items = [];
 			if (!entry.isDir) {
 				items.push(react.createElement("div", { key: "insertref", style: itemStyle, onClick: () => onSelect("insertref") }, _dsht("plugin.sidebar.btn_insert_ref", "以官方 @ 引用插入")));
+			}
+			items.push(react.createElement("div", { key: "insertpath", style: itemStyle, onClick: () => onSelect("insertpath") }, _dsht("plugin.sidebar.btn_insert_path", "插入路径到输入框")));
+			if (!entry.isDir) {
+				items.push(react.createElement("div", { key: "insertcontent", style: itemStyle, onClick: () => onSelect("insertcontent") }, _dsht("plugin.sidebar.btn_insert_content", "插入内容到输入框")));
 				items.push(react.createElement("div", { key: "saveas", style: itemStyle, onClick: () => onSelect("saveas") }, _dsht("plugin.sidebar.btn_save_as", "另存为")));
 			}
 			if (items.length > 0) {
@@ -767,10 +867,20 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 			};
 
 			// 菜单项点击: 'insertref' 走官方 @ 引用插入, 'saveas' 走另存为, 'relative'/'absolute' 走复制。
+			// 统一后 (与 file-browser 对齐): 'insertpath' 插入路径, 'insertcontent' 插入文件内容。
 			const onMenuSelect = (id) => {
 				const menu = rowMenu;
 				if (menu === null) return;
 				setRowMenu(null);
+				if (id === "insertpath") {
+					insertIntoInput(menu.entry.path, bridge, scope.sessionId);
+					return;
+				}
+				if (id === "insertcontent") {
+					if (menu.entry.isDir) return;
+					insertFileContentToInput({ sessionId: scope.sessionId, cwd }, menu.entry.path, bridge, scope.sessionId);
+					return;
+				}
 				if (id === "insertref") {
 					if (menu.entry.isDir) return;
 					// 官方 @ 引用以会话工作目录 (header.cwd) 为根 —— 正是侧栏解析出的 cwd。
@@ -1516,6 +1626,20 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 		// ---- 应用入口 / 挂载 ----
 
 		function apply(ctx) {
+			// 独立捕获官方输入机通道: 注册 conversation.input.left 的隐藏组件
+			// (与 file-browser 同一官方 slot 契约, 但由本插件自己持有, 互不依赖)。
+			// 组件渲染时把 ownerProps.inputActions / input (InputZone 契约快照) 存入
+			// 模块级变量, 供右键菜单插入使用; 渲染 null 不占任何 UI 空间。
+			try {
+				ctx.slots.inject("conversation.input.left", () => ctx.slots.register(
+					{ name: "conversation.input.left", id: "dsh-sidebar-lite-bridge", order: 1 },
+					(ownerProps) => {
+						__dslInputActions = (ownerProps && ownerProps.inputActions) || null;
+						__dslInput = (ownerProps && ownerProps.input) || null;
+						return null;
+					},
+				));
+			} catch (e) { /* slot 不可用时插入退化为 bail / DOM fallback */ }
 			if (!createRootFn) {
 				console.error("[dsh-sidebar-lite] 未找到 createRoot (react-dom 不可用), 侧边栏跳过");
 				return;

@@ -445,7 +445,10 @@
       "err_insert": "插入报错: ",
       "err_no_thumb": "无法生成缩略数据",
       "err_browser_load": "无法载入该页面 (可能拒绝 iframe 嵌入)。",
-      "hint_toolbar": "文件浏览（右键文件可 @ 引用插入 / 插入路径 / 插入内容 / 复制）"
+      "hint_toolbar": "文件浏览（右键文件可 @ 引用插入 / 插入路径 / 插入内容 / 复制）",
+      "btn_save_as": "另存为",
+      "btn_copy_rel": "复制相对路径",
+      "btn_copy_abs": "复制绝对路径"
     },
     "media_background": {
       "tab_label": "观星",
@@ -697,7 +700,9 @@
       "err_no_input": "无法找到输入框 (textarea/contenteditable)",
       "err_dom_fallback": "DOM fallback 异常: ",
       "err_op_fail": "操作失败: ",
-      "tab_label": "侧栏"
+      "tab_label": "侧栏",
+      "btn_insert_path": "插入路径到输入框",
+      "btn_insert_content": "插入内容到输入框"
     },
     "usage_stats": {
       "title": "用量统计",

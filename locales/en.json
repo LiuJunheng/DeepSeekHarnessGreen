@@ -445,7 +445,10 @@
       "err_insert": "Insertion error: ",
       "err_no_thumb": "Could not generate thumbnail data",
       "err_browser_load": "Unable to load this page (may reject iframe embedding).",
-      "hint_toolbar": "File browser (right-click file for @ reference / insert path / insert content / copy)"
+      "hint_toolbar": "File browser (right-click file for @ reference / insert path / insert content / copy)",
+      "btn_save_as": "Save As",
+      "btn_copy_rel": "Copy Relative Path",
+      "btn_copy_abs": "Copy Absolute Path"
     },
     "media_background": {
       "tab_label": "Stargaze",
@@ -697,7 +700,9 @@
       "err_no_input": "Cannot find input box (textarea/contenteditable)",
       "err_dom_fallback": "DOM fallback error: ",
       "err_op_fail": "Operation failed: ",
-      "tab_label": "Sidebar"
+      "tab_label": "Sidebar",
+      "btn_insert_path": "Insert Path to Input",
+      "btn_insert_content": "Insert Content to Input"
     },
     "usage_stats": {
       "title": "Usage Stats",

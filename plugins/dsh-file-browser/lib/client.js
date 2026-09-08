@@ -524,6 +524,56 @@ window.__ModuleLoader__.load({
 				} catch (e) { /* ignore */ }
 			}
 
+			/** 另存为: 通过宿主 /download 路由取完整文件字节, 优先原生「另存为」对话框
+			 *  (File System Access API), 不可用时回退浏览器自动下载。与 sidebar-lite 对齐。 */
+			async function saveAsFile(menuEntry) {
+				try {
+					const fileName = menuEntry.name || (menuEntry.path.split(/[\\/]/).pop()) || "download";
+					let saveHandle = null;
+					if (window.showSaveFilePicker) {
+						try {
+							saveHandle = await window.showSaveFilePicker({ suggestedName: fileName });
+						} catch (pickError) {
+							return; // 用户取消或 API 受限: 直接返回, 不触发下载
+						}
+					}
+					const resp = await fetch(BASE + "/download?path=" + encodeURIComponent(menuEntry.path), {
+						headers: { [GUARD_HEADER]: "1" },
+					});
+					if (!resp.ok) {
+						const data = await resp.json().catch(() => null);
+						showNotice((data && data.error) || ("HTTP " + resp.status));
+						return;
+					}
+					const blob = await resp.blob();
+					if (saveHandle) {
+						const writable = await saveHandle.createWritable();
+						await writable.write(blob);
+						await writable.close();
+						return;
+					}
+					const objectUrl = URL.createObjectURL(blob);
+					const anchor = document.createElement("a");
+					anchor.href = objectUrl;
+					anchor.download = fileName;
+					anchor.style.display = "none";
+					document.body.appendChild(anchor);
+					anchor.click();
+					anchor.remove();
+					window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+				} catch (e) {
+					showNotice("另存为失败: " + String((e && e.message) || e));
+				}
+			}
+
+			/** 复制相对路径 (相对当前浏览目录 cwd, 与 sidebar-lite 语义一致)。 */
+			function copyRelativePath(menuEntry) {
+				try {
+					const rel = relativePosix(cwd, menuEntry.path);
+					copyText(rel !== null ? rel : menuEntry.path);
+				} catch (e) { /* ignore */ }
+			}
+
 			async function insertContent(menuEntry) {
 				try {
 					const res = await postJson(BASE + "/read", { path: menuEntry.path });
@@ -775,8 +825,21 @@ function insertReferenceIntoInputCompat(bridge, sessionId, mention, label, appea
 						onClick: () => { insertContent(menuEntry); setMenu(null); },
 					});
 				}
+				// 统一右键菜单 (与 sidebar-lite 对齐): 另存为[仅文件] / 复制相对 / 复制绝对。
+				if (!isDir) {
+					items.push({
+						label: _dsht("plugin.file_browser.btn_save_as", "另存为"),
+						icon: "\uD83D\uDCBE",
+						onClick: () => { setMenu(null); saveAsFile(menuEntry); },
+					});
+				}
 				items.push({
-					label: _dsht("plugin.file_browser.btn_copy_path", "复制路径"),
+					label: _dsht("plugin.file_browser.btn_copy_rel", "复制相对路径"),
+					icon: "\uD83D\uDCCB",
+					onClick: () => { copyRelativePath(menuEntry); setMenu(null); },
+				});
+				items.push({
+					label: _dsht("plugin.file_browser.btn_copy_abs", "复制绝对路径"),
 					icon: "\uD83D\uDCCB",
 					onClick: () => { copyText(menuEntry.path); setMenu(null); },
 				});
