@@ -448,6 +448,16 @@
 
      * 标记当前已安装版本，让用户清楚自己在哪
 
+* **Gitee 创建 Release 的 `target_commitish` 必须传分支名/commit sha，不能传尚不存在的 tag 名**：release_upload.py 的 `gitee_create_release` 原逻辑 `target_commitish=tag`，首次发新 tag 时 Gitee 自动打 tag 报 `创建标签失败：<tag>`（HTTP 400）——因为该 tag 在远端分支上还不存在，无法作为 commit 目标。改为 `target_commitish="master"` 让 Gitee 从 master 最新提交自动建 tag。**教训**：Gitee 的 tag 引用不像 GitHub 自动创建，发布新 tag 前要么先手动 push tag（`git push <url> vX.Y.Z`），要么 target 指向存在的分支。
+
+* **GitHub API 创建 Release 默认是 draft（草稿）**：release_upload.py 用 `POST /releases` 时若无 `make_latest`/`draft=false`，创建的 release 是草稿态（`draft=True`）→ `GET /releases/tags/<tag>` 查不到（404）、用户也看不到，但 asset 已上传。**必须再 PATCH `draft=false` 才正式发布**。同时 GitHub 创建 release 时若 tag 不存在会自动建 tag（指向 target_commitish 对应 commit），与 Gitee 行为不同。
+
+* **Gitee release 的 name/body 接口用 `application/x-www-form-urlencoded`，不是 JSON**：`http_request`（urllib）把 dict 默认按 JSON 编码发送，Gitee 的 `/releases` PATCH/POST 不解析 JSON body → name 乱码/body 丢失。**Gitee 的 release 接口（含 `access_token`）必须用 `urllib.parse.urlencode(...).encode("utf-8")` 作为表单 body + `Content-Type: application/x-www-form-urlencoded; charset=utf-8`**。GitHub 对应接口则要 JSON。**release 双语 body（`[中文](#cn-...)/[English](#en-...)` + `<a id=cn/en>`）由 load_release_notes 自动生成，依赖 cn + `_en.md` 两个独立文件**（第1行=标题、第2行起=body）；把英文段写进中文文件用 `---` 分隔不会识别出 en 段。
+
+* **release_upload.py 的 write 顺序**：`verify_exe_freshness` 必须在 `sync_launcher_version_date` 之前（sync 回写 launcher.py 会改 mtime 造成误判）。**改 `update_agent.py` 未重打包会以"exe 内嵌版本 != launcher.py"阻断（exit 2）**——`update_agent.py` 里也有独立 `GREEN_VERSION` 常量需与 launcher.py 同步，两处 exe 都要重打。
+
+* **删除旧版 zip 经验（2026-08 实测）**：删除云端 1.0.33 的损坏 zip——GitHub 用 `DELETE /repos/.../releases/assets/<id>`（幂等、返回 204）；Gitee 用 curl.exe `DELETE /releases/<id>/attach_files/<attch_id>`（Invoke-RestMethod Delete 会 404），删后 `attach_files?per_page=100` 复查为空。release 本体/tag 保留即可，用户不再下载到损坏包。
+
 ## 六、维护提醒
 
 * 跨机 / 整包覆盖会吞掉本地未提交改动（实测覆盖过）→ 发布前先 `git diff` / `git log` 核对，或先把改动 commit。
