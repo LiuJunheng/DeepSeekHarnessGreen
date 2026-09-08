@@ -1,11 +1,13 @@
-# Cloudflare Pages custom headers
-# sitemap.xml: force text/xml instead of application/xml
-# (some sitemap fetchers expect text/xml; application/xml is valid per RFC but causes
-#  GSC 'Sitemap could not be read' on certain Cloudflare Pages builds)
+# Sitemap Content-Type fix
 /sitemap.xml
   Content-Type: text/xml
+/zh/sitemap.xml
+  Content-Type: text/xml
+/en/sitemap.xml
+  Content-Type: text/xml
+/zh-Hant/sitemap.xml
+  Content-Type: text/xml
 
-# 防止 *.pages.dev 别名子域名被搜索引擎收录, 避免与自定义域名 dsh-green.website 构成重复内容
-# 只有自定义域名的页面才会被 index
+# Prevent *.pages.dev from being indexed (duplicate content)
 https://deepseek-harness-green.pages.dev/*
   X-Robots-Tag: noindex
