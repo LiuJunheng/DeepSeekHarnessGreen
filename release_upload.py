@@ -516,6 +516,47 @@ def http_request(url, method="GET", data=None, headers=None):
         return e.code, parsed
 
 
+def http_request_form(url, method="GET", data=None):
+    """统一 HTTP 请求 (urllib) - 以 application/x-www-form-urlencoded 编码发送表单。
+
+    背景:
+        Gitee 的 release 接口 (POST/PATCH /releases, /releases/{id}) 只解析
+        "表单 URL 编码" 的 body, 不解析 JSON body。若按 http_request 的 JSON 通道
+        发送, Gitee 会把含中文的 name/body 解析成乱码或直接丢失。
+        GitHub 对应接口则相反, 接受 JSON (所以 GitHub 侧继续用 http_request)。
+
+    用法:
+        data 为 dict, 会被 urlencode 成表单 URL 编码并转成 UTF-8 字节发出。
+        返回 (status, data) 语义与 http_request 完全一致。
+    """
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+    }
+    body = None
+    if data is not None:
+        # 把 dict 编码为 form URL 编码, 并转成 UTF-8 字节, 保证中文/特殊字符正确传输
+        body = urllib.parse.urlencode(data).encode("utf-8")
+
+    req = urllib.request.Request(url, data=body, method=method)
+    for key, value in headers.items():
+        req.add_header(key, value)
+
+    try:
+        with urllib.request.urlopen(req, timeout=600) as resp:
+            raw = resp.read()
+            ctype = resp.headers.get("Content-Type", "")
+            if "application/json" in ctype:
+                return resp.status, json.loads(raw)
+            return resp.status, raw
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode(errors="replace")
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            parsed = raw
+        return e.code, parsed
+
+
 def run_curl_upload(upload_url, token, file_path):
     """Fallback 方案 — 用 curl.exe 上传二进制文件
     踩坑: PowerShell Invoke-RestMethod 构建 multipart/form-data 时
@@ -702,7 +743,8 @@ def gitee_create_release(token, tag, name, body):
         "name": name,
         "body": body,
     }
-    status, data = http_request(url, method="POST", data=payload)
+    # Gitee 建 Release 接口只解析表单, 不解析 JSON; 用 urlencoded 避免中文 name/body 乱码或丢失
+    status, data = http_request_form(url, method="POST", data=payload)
     if status not in (200, 201):
         print("  [Gitee] create release HTTP %d: %s" % (status, str(data)[:300]))
         return None
@@ -722,7 +764,8 @@ def gitee_edit_release(token, release_id, tag, name, body):
         "name": name,
         "body": body,
     }
-    status, data = http_request(url, method="PATCH", data=payload)
+    # Gitee 改 Release 接口只解析表单, 不解析 JSON; 用 urlencoded 避免中文 name/body 乱码或丢失
+    status, data = http_request_form(url, method="PATCH", data=payload)
     if status != 200:
         print("  [Gitee] edit release HTTP %d: %s" % (status, str(data)[:300]))
         return None
