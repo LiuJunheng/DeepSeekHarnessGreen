@@ -1,7 +1,5 @@
 User-agent: *
 Allow: /
 
-# Point crawlers at Cloudflare Pages sitemap (multi-language, xhtml hreflang mutual alternate)
-# robots.txt lives at https://dsh-green.website/robots.txt on Cloudflare Pages
-# (githubPages/ is now a 301 redirect, not crawled directly)
+# Point all crawlers to single root sitemap
 Sitemap: https://dsh-green.website/sitemap.xml
