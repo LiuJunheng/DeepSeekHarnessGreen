@@ -2,13 +2,13 @@
 
 name: dsh-deploy-maintain
 description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护、插件开发与避坑经验。覆盖便携 Node/dsh 安装、环境变量重定向、工作区 ACL 沙箱、更新备份、插件管理与 dsh 插件双端加载/路由注册等全套实操知识。"
-updated: "2026-09-07"
+updated: "2026-09-09"
 ---------------------
 
 # DeepSeek Harness 绿色整合版 · 部署维护与插件开发
 
 > 本 Skill 沉淀自 `DeepSeekHarnessLauncher` 项目（Python tkinter 绿色整合版启动器 + 内置插件）的实测经验，只记录对日后部署/维护/插件开发有复用价值的内容：机制、避坑、约定。不存档开发过程与时间线。
-> 文档分流：README = 使用者文档；根项目 DEV\_NOTES.md = 开发者/发布者文档（本项目现行权威）；本 Skill = 可操作经验速查。改经验相关逻辑时同步更新本 Skill 与 DEV\_NOTES。
+> **本 Skill 及其 `references/` / `checklists/` 自包含、可独立运作**，不依赖也不跳转项目内 `doc/`。凡涉及发版流程 / 网页托管 SEO 的通用模板，已脱敏复制到 `references/release-workflow.md` 与 `references/web-hosting-seo.md`，按需查阅。
 
 ## 一、适用场景
 
@@ -188,7 +188,7 @@ updated: "2026-09-07"
 
 - **zip 打包命令传目录名**：打包 `plugins`/`skills` 要传**目录名**（zip 内保留前缀）；不能传子路径（会把插件目录打在 zip 根、覆盖时错位拷到程序根）。打包后 `tar -tf` 复核。更新侧 `_normalize_update_structure()` 解压后把错位的 `dsh-*` 归位 + 清理根目录残留。
 
-- **在线发布页（GitHub Pages）**：`pages/`（纯静态：`index.html` + `assets/app.js` + `assets/style.css`）+ `.github/workflows/pages.yml` 自动部署到 `https://<owner>.github.io/<repo>/`。机制：`push master (path: pages)` 上传 `upload-pages-artifact` 构建 → `deploy-pages` 发布，可 `workflow_dispatch` 手动触发。经验：发布页动画（如 Canvas 水纹背景）**纯本地渲染、遵循** **`prefers-reduced-motion`**，无 Canvas/被禁用时静默跳过，`pointer-events:none` + `z-index` 归位不拦截交互；读版本号用 `GREEN_VERSION` 正则从 `raw launcher.py` 提取（与 Gitee 整仓快照同源）。日期纪律：发布页/文档里的版本日期必须是制作当天，不预写未来日期。
+- **在线发布页（双托管：主站 + 旧站 301）**：主域（即 `GREEN_HOME_PAGE_URL`）由 **主站静态托管**（常见用 Cloudflare Pages，root_dir=静态目录，CNAME 裸域 → pages.dev）承载；**GitHub Pages** 仅作旧域名 301 跳转（`meta refresh 0s + canonical + JS location.replace` 三重保险）。多语言 hreflang/canonical、sitemap、robots/ads.txt、Cloudflare `_headers`（Content-Type 修正 + pages.dev noindex）、缓存版本号、更新日志页零后端、结构化数据 SoftwareApplication 等**完整可套用模板见 `references/web-hosting-seo.md`**（独立自包含，不跳 doc）。发布页动画（如 Canvas 水纹背景）**纯本地渲染、遵循** **`prefers-reduced-motion`**，无 Canvas/被禁用时静默跳过，`pointer-events:none` + `z-index` 归位不拦截交互；读版本号用 `GREEN_VERSION` 正则从 `raw launcher.py` 提取（与 Gitee 整仓快照同源）。日期纪律：发布页/文档里的版本日期必须是制作当天，不预写未来日期。三语首页 canonical / sitemap / robots 一律用主域 `dsh-green.website`，旧 GitHub Pages 地址是历史遗留（曾致 Google 爬 sitemap 跳旧站）。
 
 ### 3.5 会话回退（dsh-session-rewind 插件）
 
@@ -576,6 +576,19 @@ function _savePersist(patch) { ... }
 - 规避重叠的正解不是"把开关挪开"，而是靠 `#root` 让位：面板展开时 `#root{margin-right:面板宽}` 把**官方 header（含下载按钮）推到面板左侧**，故面板内右上角本就没有官方按钮 → 标题条右端放折叠按钮天然不重叠。收起态若用右上角 cluster，需让官方 header `padding-right` 给 cluster 让位。左缘拖拽调宽条保持窄透明（宽 5px），避免挡内容。
 
 - **多浮动面板并存时的让位累加**（如侧栏 + 独立文件预览框）：额外面板用 `position:fixed; right:主面板宽; width:预览宽` 叠在主面板**左侧**，并把它的宽度也累进 `#root` 的 `margin-right`（`calc(var(--w1)+var(--w2))`）；面板关闭/收起时对应让位变量归零，否则主内容会被后开的浮动面板遮挡（`dsh-sidebar-lite` 已如此实现）。
+
+### 5.12.1 内置文件类插件：右键菜单统一约定 + 跨插件输入机独立桥接（dsh-sidebar-lite / dsh-file-browser）
+
+**右键菜单约定（v1.0.35 统一，两个插件严格一致）：**
+- **文件行 6 项**（顺序固定）：①以官方 @ 引用插入 → ②插入路径到输入框 → ③插入内容到输入框 → ④另存为 → ⑤复制相对路径 → ⑥复制绝对路径。
+- **目录行 3 项**：①插入路径到输入框 → ②复制相对路径 → ③复制绝对路径。
+- 各功能分别承担：①走官方 `slash/input-insert-reference`（mint 成 chip）；②③走输入机 `setDraft`（见下）；④走宿主端 `/download` 路由（文件全量字节，单文件上限 32MB，`showSaveFilePicker` 原生另存为对话框，不可用回退浏览器下载）；⑤⑥复制相对/绝对路径（相对会话工作目录 cwd，跨盘返回绝对路径兜底）。
+
+**跨插件插入输入框必须独立桥接（核心避坑）：**
+- **背景**：侧栏与文件浏览器都想"插入路径/内容到会话输入框"。最初侧栏读 file-browser 注入的全局变量（`window.__dshInputActions`）→ **两个插件互相依赖**；且用 `document.querySelector("[contenteditable='true']")` DOM 兜底会**命中页面第一个可编辑元素（文件查看器）而非会话输入框**，侧栏连续插入后落到查看器。
+- **正解（两个插件各自独立完成）**：每个插件在 `apply(ctx)` 里**自己**注册官方 `conversation.input.left` slot（`ctx.slots.inject("conversation.input.left", () => ctx.slots.register({name, id:"<插件>-bridge", order:1}, (ownerProps)=>{ ...存 inputActions/input 到模块级变量; return null }))`），渲染 null 不占 UI。组件渲染时把 `ownerProps.inputActions` / `ownerProps.input`（InputZone 契约快照）存入**模块级变量**，供菜单插值用。
+- **插入走三级降级**：①`inputActions.setDraft(current + sep + text)`（首选，稳定落在真实会话草稿）；②官方输入机 `actx.bail(actx, "slash/input-insert-text", {text, span})`（bail 拿 liveRev 避免 CAS 失败）；③DOM fallback（`textarea`/`[contenteditable]`，仅前两者都不可用，且**只作用于会话输入框**）。路径 B 从 `bridge.scope(sessionId)` 取 actx，不一定拿到官方通道，故 A 优先。
+- **关键**：官方 `conversation.input.left` 是**每个插件可独立捕获**的通道，别依赖对方注入的全局；两个插件各自持有 `__dslInputActions/__dslInput` 模块变量，互不依赖、互不干扰。
 
 ### 5.13 插件 WebUI 多语言（i18n，10 个插件统一后的规范）
 

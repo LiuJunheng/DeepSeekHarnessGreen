@@ -33,7 +33,7 @@
 - [ ] `GREEN_VERSION` 常量与 GitHub Release tag 一致（tag 带 `v` 前缀，本地去前缀比较）
 - [ ] Release 资产命名 `DSH_Launcher_GreenPortable_Online_<日期>_v<版本>.zip`（`green_find_zip_asset` 按此前缀匹配）
 - [ ] 官方 API 查询失败降级国内镜像（`mirror.nju.edu.cn/github-release/<owner>/<repo>/latest`）
-- [ ] GitHub + 国内镜像都失败自动转 Gitee：**两级策略**——① 先查 Gitee 发布版 `GITEE_RELEASES_API`（公开读），取"最新且带手动 zip 附件"的发布版（过滤：名字 `.zip` 结尾 **且** URL 含 `/releases/download/`，防误选 `archive/refs/tags/...` 挑战页源码包，避坑 #71）→ `source="gitee_release"` 走 zip 直连下载（**手动附件实测直连返回真 zip，不走挑战页**）；② 无发布版才回退 `source="gitee"`：版本号读 `gitee.com/<repo>/raw/master/launcher.py` 的 `GREEN_VERSION`，下载走 **git 智能 HTTP 协议克隆整仓**（`info/refs?service=git-upload-pack` 拿 head sha + `git-upload-pack` 拉 pack + 解析 delta 落盘，`green_gitee_clone_tree`，避坑 #70）；asset `size=0` 时下载跳过大小校验；覆盖时统一跳过 `DEV_NOTES.md`/`.gitignore` 开发侧文件保证与 GitHub 结果一致（避坑 #69）
+- [ ] GitHub + 国内镜像都失败自动转 Gitee：**两级策略**——① 先查 Gitee 发布版 `GITEE_RELEASES_API`（公开读），取"最新且带手动 zip 附件"的发布版（过滤：名字 `.zip` 结尾 **且** URL 含 `/releases/download/`，防误选 `archive/refs/tags/...` 挑战页源码包）→ `source="gitee_release"` 走 zip 直连下载（**手动附件实测直连返回真 zip，不走挑战页**）；② 无发布版才回退 `source="gitee"`：版本号读 `gitee.com/<repo>/raw/master/launcher.py` 的 `GREEN_VERSION`，下载走 **git 智能 HTTP 协议克隆整仓**（`info/refs?service=git-upload-pack` 拿 head sha + `git-upload-pack` 拉 pack + 解析 delta 落盘，`green_gitee_clone_tree`）；asset `size=0` 时下载跳过大小校验；覆盖时统一跳过 `DEV_NOTES.md`/`.gitignore` 开发侧文件保证与 GitHub 结果一致
 - [ ] 每次发版建议用 `runtime/tmp/gitee_upload_release.py` + `upload_gitee_release.bat`（填 GITEE_TOKEN 后拖 zip 运行）同步上传 Gitee 发布版附件，让 Gitee 通道优先走直连下载而非整仓克隆
 - [ ] 更新内容准备拆 `prepare_update_content_root(release_info, target_dir)`：GitHub/Gitee 发布版=下载 zip 解压，Gitee 整仓=git 克隆；`prepare_green_update` 接收 `content_root`（旧 `new_zip_path` 签名已废弃，`test_green_update.py` 需同步）
 - [ ] `launcher.py` 集成 git 解析后确保有 `import zlib`；pack 对象前进位置用 `decompressobj().unused_data` 算消耗；REF/OFS_DELTA 先读未压缩前置字段再解压 delta；sha 匹配用 `bytes.fromhex()`；所有按 source 分流处兼容 `in ("gitee", "gitee_release")`
@@ -44,10 +44,10 @@
 - [ ] **独立更新程序**：打包 `update_agent.py` → `DSH_Update.exe`（build_exe.bat 同时构建两个 exe）；启动器下载解压新版 zip 后写 `runtime/update/update_job.json`（含 `base_dir`/`content_root`/`backup_dir`/`relaunch_mode`/`new_version`/`manual_release_url`/`manual_zip_url`），再以 `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` 启动 `DSH_Update.exe --apply <job>` 并退出本体（旧 `update_apply.bat` 方案已废弃）
 - [ ] DSH_Update.exe 更新流程：自我复制到 `runtime/tmp/DSH_Update_worker.exe` 从副本运行（释放根目录更新程序文件锁，让新版更新程序也能被覆盖）→ 轮询 exe 文件锁等本体退出（不轮询 PID）→ 备份旧文件到 `runtime/update/backup/` → 覆盖（跳过 `config.json` 用户配置与 `runtime/`、`.git`）→ 重启新版
 - [ ] 更新失败**弹窗给出手动下载地址**（GitHub 发布页 + 更新包 zip 直链 + 解压覆盖说明）；全程 tkinter 进度窗口（不依赖 cmd 控制台）
-- [ ] `DSH_Update.exe` 内嵌 python，build_exe.bat 必须带 `VC_BINARIES` 三件套（`vcruntime140*.dll`），否则目标机报 `Failed to load Python DLL`（避坑 #67）
+- [ ] `DSH_Update.exe` 内嵌 python，build_exe.bat 必须带 `VC_BINARIES` 三件套（`vcruntime140*.dll`），否则目标机报 `Failed to load Python DLL`
 - [ ] 兜底路径：根目录无 `DSH_Update.exe` 时用内置 python 跑 `update_agent.py --apply <job>`（同样带自我复制迁移，worker 名 = `update_agent_worker.py`）
 - [ ] 旧文件备份到 `runtime/update/backup/`，供手动回退
-- [ ] 发布 Release 正文含中文时：发布脚本保持纯 ASCII，中文拆到独立 UTF-8 文件用 `[System.IO.File]::ReadAllText(路径, UTF8)` 显式读取（PS 5.1 会把无 BOM 的 UTF-8 .ps1 按 ANSI 读，正文中文变 `?`，见 DEV_NOTES 避坑 #43）；校验用 python 而非 PowerShell 中文 `-match`
+- [ ] 发布 Release 正文含中文时：发布脚本保持纯 ASCII，中文拆到独立 UTF-8 文件用 `[System.IO.File]::ReadAllText(路径, UTF8)` 显式读取（PS 5.1 会把无 BOM 的 UTF-8 .ps1 按 ANSI 读，正文中文变 `?`）；校验用 python 而非 PowerShell 中文 `-match`
 
 ## exe 打包
 
