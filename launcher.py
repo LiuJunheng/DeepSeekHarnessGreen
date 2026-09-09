@@ -832,28 +832,47 @@ class Launcher:
             # verbose 那样刷爆日志框/拖卡 GUI (下载并行, 每秒约几行, 平滑可控)。
             "--loglevel=http",
         ]
-        if npm_cli is not None and node_exe is not None:
-            self.log("使用便携 Node 自带的 npm 进行安装")
-            command = [node_exe, npm_cli, "install"] + install_options + [package_spec]
-        else:
+        # 组装一条 npm install 命令的小辅助 (registry 传 None 表示不带 --registry 参数)
+        def build_install_command(registry=None):
+            registry_args = ["--registry=%s" % registry] if registry else []
+            if npm_cli is not None and node_exe is not None:
+                self.log("使用便携 Node 自带的 npm 进行安装")
+                return [node_exe, npm_cli, "install"] + install_options + registry_args + [package_spec]
             self.log("使用系统 npm 进行安装 (请确保已安装 Node.js)")
-            command = ["npm", "install"] + install_options + [package_spec]
+            return ["npm", "install"] + install_options + registry_args + [package_spec]
 
-        # 根据镜像配置附加 registry 参数
-        mirror, is_auto = self.resolve_mirror()
-        if not is_auto:
-            registry = NPM_REGISTRY[mirror]
-            command.append("--registry=%s" % registry)
-            self.log("使用镜像源: %s" % registry)
+        # 根据镜像配置选择主源注册表 (cn=npmmirror / official=npmjs; auto 默认国内)。
+        # auto 模式同样固定到主源, 保证走的源确定、且能对"国内镜像滞后"做官方源兜底
+        # (与 Python 下载路径"国内源失败就到官方源, 绝不整体失败"同一理念)。
+        mirror, _is_auto = self.resolve_mirror()
+        primary_registry = NPM_REGISTRY[mirror]
+        self.log("使用镜像源: %s" % primary_registry)
+        command = build_install_command(primary_registry)
 
         env = self.build_env()
         self.log("正在安装 dsh (首次安装可能需要几分钟, 请耐心等待; npm 输出会实时显示, 请留意进度) ...")
-        return_code, _output = self._stream_subprocess(
+        return_code, output_text = self._stream_subprocess(
             command, cwd=DSH_DIR, env=env, log_prefix="npm: ",
             # 60s 空闲心跳: npm 抓完元数据后的 reify/安装链接阶段是纯本地 I/O,
             # http 日志无网络输出会长时间静默, 心跳可让用户确认没卡死 (@see 需求 #59)。
             # 默认 60 秒一次即可, 太频繁会刷屏 (2026-08-20 用户: 15s 改 60s)。
             heartbeat_interval=60)
+
+        # ---- 国内镜像滞后兜底 (2026-09-09, 优化源问题) ----
+        # 若主源是 cn 且报"版本不存在 / 域名解析失败"类错误 (ETARGET / E404 /
+        # ENOTFOUND / No matching version), 大概率是 npmmirror 未同步到目标 alpha
+        # (prerelease 走得快, 镜像常滞后, 实测 0.1.5-alpha.2 就缺 dsh-base 版本),
+        # 自动切官方源 https://registry.npmjs.org 重试一次, 再把失败抛给用户。
+        need_fallback = (
+            return_code != 0
+            and primary_registry != NPM_REGISTRY["official"]
+            and any(marker in output_text for marker in (
+                "ETARGET", "E404", "ENOTFOUND", "No matching version")))
+        if need_fallback:
+            self.log("[提示] 主源 %s 未找到目标版本 (疑似镜像未同步, 改用官方源重试一次)" % primary_registry)
+            command = build_install_command(NPM_REGISTRY["official"])
+            return_code, output_text = self._stream_subprocess(
+                command, cwd=DSH_DIR, env=env, log_prefix="npm: ", heartbeat_interval=60)
 
         if return_code != 0 or not self.dsh_installed():
             raise RuntimeError("dsh 安装失败, 请检查网络后重试 (详见上方 npm 输出)")
@@ -1630,6 +1649,18 @@ class Launcher:
             self.strip_bom_from_profile_packages(profile)
             self.auto_allow_git_build(profile, output)
             self.auto_approve_ignored_builds(profile, output)
+            exit_code, output = run_once()
+        # ---- 国内镜像滞后兜底 (2026-09-09, 与 install_dsh 同一策略) ----
+        # pnpm 走的源也可能因镜像未同步到目标版本而报"版本不存在/域名解析失败"
+        # (ETARGET/E404/ENOTFOUND/No matching version), 自动切官方源再试一次。
+        primary_registry = NPM_REGISTRY[mirror]
+        mirror_lag_markers = ("ETARGET", "E404", "ENOTFOUND", "No matching version")
+        if (exit_code != 0
+                and primary_registry != NPM_REGISTRY["official"]
+                and any(marker in output for marker in mirror_lag_markers)):
+            self.log("[提示] 来源 %s 未找到目标版本 (疑似镜像未同步, 改用官方源重试一次)" % primary_registry)
+            command = [self.find_pnpm_exe(), "install", "--force", "--no-frozen-lockfile",
+                       "--registry=%s" % NPM_REGISTRY["official"]]
             exit_code, output = run_once()
         if exit_code != 0:
             raise RuntimeError("重建 profile 依赖树失败, 请检查网络后重试 (详见上方 pnpm 输出)")

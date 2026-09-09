@@ -124,6 +124,8 @@ updated: "2026-09-09"
 
 - 安装主体抽成 `install_dsh(package_spec)`，`prepare_dsh(force, package_spec)` 只做"缺失则装 / 强制重装"分支，首装与更新共用。
 
+- **国内镜像对 dsh alpha 版本滞后（2026-09-09 实测）**：npmmirror 可能先同步了 `@deepseek-ai/dsh` 元包却没同步它的依赖（如 `dsh-base@0.1.5-alpha.2`），导致 npm/pnpm 报 `ETARGET` / `E404` / `No matching version found` 更新失败——**不是网络或代码问题，是镜像未同步**。启动器已在 `install_dsh`（npm 装 dsh 核心）与 `_rebuild_dependency_tree`（pnpm 重建 profile 依赖树）两处加兜底：国内源报 ETARGET/E404/ENOTFOUND/No matching version 时自动切官方源 `https://registry.npmjs.org` 重试一次再报错。遇到该报错优先切 GUI 镜像为「官方源」或稍后重试。
+
 ### 3.2 插件管理（dsh plugin 依赖 pnpm）
 
 - `dsh plugin --profile <name> <pnpm 参数>` 内部转发 pnpm 管理该 profile；**已装清单 = 读 profile 的 package.json**，无需调查询接口。
