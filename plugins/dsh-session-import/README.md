@@ -16,7 +16,7 @@ WebUI「会话导入」插件：把官方「Session log」按钮导出的 ZIP（
   - `DSH_HOME/sessions/<projectKey(cwd)>/<encodeSegment(id)>/session.jsonl.zstd`（默认 zstd：校验和帧(header) + 校验和帧(事件)，与官方 `encodeMaterialization` 逐字节一致；根编码探测为明文时写 `session.jsonl`）。
   - `subagents/*/session.jsonl` → 每个子会话一份 artifact。
   - `media/<attachmentId>.<ext>` → 按内容寻址写回 `DSH_HOME/attachments/v1/objects/<sha256 前两位>/<sha256>`（校验摘要一致）。
-- 校验：首行为合法会话 header（`type:"session"`、版本号匹配 `SESSION_FORMAT_VERSION`、无已退役 policy 字段）、每行均为合法 JSON。
+- 校验：首行为合法会话 header（`type:"session"`、非空 `id`、合法 `createdAt`/`delegationDepth`、无已退役 policy 字段）、每行均为合法 JSON。跨版本容错：不校验 `header.version`（稳定版 v2 与 0.1.5-alpha v3 物理行兼容，v3 实测 version=0，强制校验会拒掉合法日志）。
 - 重复导入：已存在的会话 id 会跳过（不覆盖）。
 - 工作区：按 header.cwd 匹配现有工作区；目录存在且无匹配时自动创建工作区；cwd 目录不存在则留在「未分组」（仍会出现在会话列表）。
 - 会话列表实时可见：`session.list` 会合并冷（持久化）会话，无需重启即可看到数据；会话标题等投影数据由 DSH 自行补齐（导入不写投影缓存）。

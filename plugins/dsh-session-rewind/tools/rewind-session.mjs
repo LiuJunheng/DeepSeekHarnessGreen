@@ -5,7 +5,6 @@
 //   --turns N: 额外回退 N 个已完成的回合(用于清除中毒历史)
 //   --force: 跳过"服务正在运行"检查(不推荐)
 // 安全: 自动备份原文件为 <文件>.rewind-backup-<时间戳>.zstd
-import { decodeStorageRecord, SESSION_FORMAT_VERSION } from "@deepseek-ai/dsh-session";
 import { readFileSync, writeFileSync, copyFileSync, existsSync } from "node:fs";
 import net from "node:net";
 import zlib from "node:zlib";
@@ -66,20 +65,39 @@ if (lines.length === 0) { console.error("空文件"); process.exit(1); }
 
 const header = JSON.parse(lines[0]);
 if (header.type !== "session") { console.error("首行不是 session header"); process.exit(1); }
-if (header.version !== SESSION_FORMAT_VERSION) { console.error("格式版本不兼容: " + header.version); process.exit(1); }
+// 跨版本容错: 不校验 header.version (稳定版 v2 与 0.1.5-alpha v3 物理行结构兼容, v3 实测 version=0)
 
-const rows = [];
+/** 把一条物理日志行收纳进事件表 (跨版本容错解码, 处理 v3 表面替换折叠) */
+function adoptPhysicalRow(parsedRow, eventsBySeq) {
+  if (parsedRow === null || typeof parsedRow !== "object") return;
+  if (typeof parsedRow.type !== "string" || typeof parsedRow.seq !== "number") return;
+  if (parsedRow.ignorable === true) return;
+  const surfaceOperation = parsedRow.surfaceOp;
+  if (surfaceOperation !== void 0 && surfaceOperation !== "append") {
+    if (surfaceOperation !== null && typeof surfaceOperation === "object" && surfaceOperation.op === "replace") {
+      const replaceStartSeq = Number(surfaceOperation.startSeq !== void 0 ? surfaceOperation.startSeq : surfaceOperation.start);
+      const replaceEndSeq = Number(surfaceOperation.endSeq !== void 0 ? surfaceOperation.endSeq : surfaceOperation.end);
+      if (Number.isFinite(replaceStartSeq) && Number.isFinite(replaceEndSeq)) {
+        for (let seq = replaceStartSeq; seq < replaceEndSeq; seq++) {
+          eventsBySeq.delete(seq);
+        }
+      }
+    }
+  }
+  eventsBySeq.set(parsedRow.seq, parsedRow);
+}
+
+const eventsBySeq = new Map();
 let errors = 0;
 for (let i = 1; i < lines.length; i++) {
   let parsed;
   try { parsed = JSON.parse(lines[i]); } catch { errors++; continue; }
-  let decoded;
-  try { decoded = decodeStorageRecord(parsed); } catch { errors++; continue; }
-  rows.push({ lineIndex: i, events: decoded });
+  try { adoptPhysicalRow(parsed, eventsBySeq); } catch { errors++; continue; }
 }
 if (errors > 0) console.warn("警告: " + errors + " 行无法解析,已跳过");
 
-const events = rows.flatMap((r) => r.events);
+const seqs = Array.from(eventsBySeq.keys()).sort((a, b) => a - b);
+const events = seqs.map((seq) => eventsBySeq.get(seq));
 console.log("header: id=" + header.id + " 事件总数=" + events.length);
 
 const turnEndSeqs = [];

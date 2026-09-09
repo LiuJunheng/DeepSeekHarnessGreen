@@ -38,7 +38,7 @@
 
 ## 数据来源（面板）
 
-- 直接扫描 `DSH_HOME/sessions/**/session.jsonl.zstd`（zstd 多帧，`@deepseek-ai/dsh-session` 的 `decodeStorageRecord` 展开事件，与内置 `dsh-session-rewind` 同一套机制）。
+- 直接扫描 `DSH_HOME/sessions/**/session.jsonl.zstd`（zstd 多帧）。解码用自包含的 `adoptPhysicalRow` 跨版本容错处理（忽略 `ignorable`、折叠 v3 的 `surfaceOp.op==="replace"` 旧事件区间、按 seq 收纳），不依赖 `@deepseek-ai/dsh-session` 的内部导出（`decodeStorageRecord` 在 0.1.5-alpha v3 已移除），与 `dsh-session-rewind` 同一套机制。
 - 统计对象是每条 `assistant/message` 事件里的 `usage` 字段：`inputTokens` / `outputTokens` / `cacheReadTokens` / `cacheWriteTokens` / `reasoningTokens`；模型名取 `message.source.model`。
 ## 费用计算口径（对齐 DeepSeek 官方）
 

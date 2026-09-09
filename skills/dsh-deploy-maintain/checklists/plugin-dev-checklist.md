@@ -97,6 +97,8 @@ dsh-rules/
 - [ ] **`entry.id` 已经带 `session-` 前缀**——来自 scanSessionFiles 的 `entry.id = "session-766ef65b-..."` 不是纯 UUID。读 projcache、zstd 目录等需要纯 UUID 的地方，先 `normalizeSessionId()` 去掉前缀
 - [ ] **readSessionTitle 三级 fallback**：新版 projcache 分文件 → 旧版单文件 → session.jsonl.zstd 的 `session/title` 事件（最可靠，覆盖所有版本）
 - [ ] **zstd 多帧文件**：`session.jsonl.zstd` 可能是多帧拼接，按 zstd magic `0x28b52ffd` 切分后逐帧解压再 Buffer.concat
+- [ ] **跨版本会话解码（dsh 0.1.5-alpha v3 兼容）**：`@deepseek-ai/dsh-session` 在 v3 移除了 `decodeStorageRecord` 导出，接入会话日志的插件（dsh-usage-stats / dsh-session-rewind 等）**不得 import 该内部符号**，否则插件加载失败。改用自包含解码：解析物理 JSONL 行，忽略 `ignorable` 空事件，对 v3 表面替换折叠（`surfaceOp.op == "replace"`，字段可能叫 `startSeq`/`endSeq` 或 `start`/`end`）删除被取代的旧 seq 区间，再以 `seq` 为键收纳、升序输出
+- [ ] **不要强校验 `header.version`**：v3 会话 header 的 version 字段实测为 `0`，稳定版 v2 与 0.1.5-alpha v3 物理行结构兼容。导入/解析逻辑一律不校验版本号，否则会拒掉合法日志
 
 ### 持久化 config + enabled 开关（v3 通用模式，参考 dsh-memory / dsh-rules）
 

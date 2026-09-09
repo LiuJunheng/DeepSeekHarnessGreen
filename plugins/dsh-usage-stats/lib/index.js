@@ -1,4 +1,4 @@
-﻿// DeepSeek Harness 插件 (宿主端): dsh-usage-stats
+// DeepSeek Harness 插件 (宿主端): dsh-usage-stats
 // 在 WebUI 设置页提供「用量统计」的数据后端:
 //   直接按磁盘扫描会话日志 (DSH_HOME/sessions/**/session.jsonl.zstd),
 //   解码出每条 assistant/message 事件携带的 usage 数据
@@ -14,8 +14,11 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import zlib from "node:zlib";
-import { decodeStorageRecord, SESSION_FORMAT_VERSION } from "@deepseek-ai/dsh-session";
 
+// 兼容说明 (dsh 0.1.5-alpha.1):
+//   dsh-session 在 v3 移除了 decodeStorageRecord 导出符号, 直接把会话日志按磁盘扫描解码.
+//   lib 底部 decodeLog 用自包含的 adoptPhysicalRow 做跨版本容错解码, 不再依赖任何内部导出,
+//   因此这里不 import @deepseek-ai/dsh-session, 避免旧/新版差异导致插件加载失败.
 const name = "dsh-usage-stats";
 const inject = ["webServer", "workspaceRegistry", "sessionQuery", "sessions"];
 
@@ -91,23 +94,48 @@ function decompressZstdHeader(buf) {
 	return zlib.zstdDecompressSync(frames[0]).toString("utf8");
 }
 
+/** 解析首行会话 header. 跨版本容错: 不校验 header.version (实测 v3 会话物理字段为 0) */
 function parseHeaderLine(firstLine) {
 	const parsed = JSON.parse(firstLine);
 	if (parsed === null || typeof parsed !== "object" || parsed.type !== "session") {
 		throw new Error("first line is not a session header");
 	}
-	if (parsed.version !== SESSION_FORMAT_VERSION) {
-		throw new Error("unsupported session format version " + String(parsed.version));
-	}
 	return parsed;
 }
 
-/** 解析整个日志文本为 { header, events } (事件经官方 decodeStorageRecord 展开) */
+/**
+ * 把一条物理日志行收纳进事件表 (跨版本容错解码)。
+ * dsh 从 v2 升级到 v3 移除了 decodeStorageRecord, 这里不依赖任何内部导出符号, 只做:
+ *   1) 忽略 ignorable 空事件
+ *   2) 表面替换折叠: surfaceOp.op === "replace" 时, 丢弃被取代的旧事件 seq 区间
+ *      (新/旧版本别名为 startSeq/endSeq 与 start/end)
+ *   3) 以 seq 为键收纳, 最终按 seq 升序输出
+ */
+function adoptPhysicalRow(parsedRow, eventsBySeq) {
+	if (parsedRow === null || typeof parsedRow !== "object") return;
+	if (typeof parsedRow.type !== "string" || typeof parsedRow.seq !== "number") return;
+	if (parsedRow.ignorable === true) return;
+	const surfaceOperation = parsedRow.surfaceOp;
+	if (surfaceOperation !== void 0 && surfaceOperation !== "append") {
+		if (surfaceOperation !== null && typeof surfaceOperation === "object" && surfaceOperation.op === "replace") {
+			const replaceStartSeq = Number(surfaceOperation.startSeq !== void 0 ? surfaceOperation.startSeq : surfaceOperation.start);
+			const replaceEndSeq = Number(surfaceOperation.endSeq !== void 0 ? surfaceOperation.endSeq : surfaceOperation.end);
+			if (Number.isFinite(replaceStartSeq) && Number.isFinite(replaceEndSeq)) {
+				for (let seq = replaceStartSeq; seq < replaceEndSeq; seq++) {
+					eventsBySeq.delete(seq);
+				}
+			}
+		}
+	}
+	eventsBySeq.set(parsedRow.seq, parsedRow);
+}
+
+/** 解析整个日志文本为 { header, events } (事件经跨版本容错解码展开) */
 function decodeLog(text) {
 	const lines = text.split("\n").filter((l) => l.length > 0);
 	if (lines.length === 0) throw new Error("empty log");
 	const header = parseHeaderLine(lines[0]);
-	const events = [];
+	const eventsBySeq = new Map();
 	for (let i = 1; i < lines.length; i++) {
 		let parsed;
 		try {
@@ -115,14 +143,14 @@ function decodeLog(text) {
 		} catch {
 			continue;
 		}
-		let decoded;
 		try {
-			decoded = decodeStorageRecord(parsed);
+			adoptPhysicalRow(parsed, eventsBySeq);
 		} catch {
 			continue;
 		}
-		for (const e of decoded) events.push(e);
 	}
+	const seqs = Array.from(eventsBySeq.keys()).sort((a, b) => a - b);
+	const events = seqs.map((seq) => eventsBySeq.get(seq));
 	return { header, events };
 }
 

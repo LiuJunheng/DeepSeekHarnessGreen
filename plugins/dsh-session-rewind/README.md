@@ -35,7 +35,8 @@ git clone https://github.com/LiuJunheng/DeepSeekHarnessGreen.git
 
 在 profile 的 `package.json` dependencies 中加入 `"dsh-session-rewind": "file:<仓库绝对路径>/plugins/dsh-session-rewind"`, 然后 `pnpm install` 并重启服务。
 
-> 注意: 本插件依赖 `@deepseek-ai/dsh-session@0.1.0-rc.6`(pnpm 安装时会自动装进 profile)。
+> 注意: 会话解码改为自包含、跨版本容错的逻辑, 不再依赖 `@deepseek-ai/dsh-session` 的内部导出
+> (`decodeStorageRecord` 在 0.1.5-alpha(v3) 已被移除)。`package.json` 里保留依赖声明仅为兼容旧版安装流程。
 
 ## 配套工具 (tools/)
 
@@ -51,7 +52,7 @@ git clone https://github.com/LiuJunheng/DeepSeekHarnessGreen.git
 
 ## 实现说明
 
-- 宿主端直接按磁盘扫描 `DSH_HOME/sessions/**/session.jsonl.zstd`(zstd 多帧), 用官方 `@deepseek-ai/dsh-session` 的 `decodeStorageRecord` 展开事件(对 chunk-run 打包行布局无关)。
+- 宿主端直接按磁盘扫描 `DSH_HOME/sessions/**/session.jsonl.zstd`(zstd 多帧)。解码用自包含的 `adoptPhysicalRow` 跨版本容错处理: 忽略 `ignorable` 空事件, 对 v3 的表面替换折叠(`surfaceOp.op === "replace"`)丢弃被取代的旧事件 seq 区间, 以 seq 为键收纳(对 chunk-run 打包行布局无关)。
 - 回退动作走官方 `session.fork` + 客户端 `sessions.open`, 与服务端持久化层完全一致。
 
 ## 相关讨论

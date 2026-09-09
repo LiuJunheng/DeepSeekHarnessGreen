@@ -26,7 +26,6 @@ import { homedir } from "node:os";
 import zlib from "node:zlib";
 import { createHash, randomBytes } from "node:crypto";
 import { unzipSync } from "fflate";
-import { SESSION_FORMAT_VERSION } from "@deepseek-ai/dsh-session";
 
 const name = "dsh-session-import";
 const inject = ["webServer", "workspaceRegistry"];
@@ -118,7 +117,8 @@ function parseLogText(text, label) {
 	let header;
 	try { header = JSON.parse(headerLine); } catch { throw new Error(`${label}: 首行不是合法 JSON`); }
 	if (header === null || typeof header !== "object" || header.type !== "session") throw new Error(`${label}: 首行不是会话 header (缺 type: "session")`);
-	if (header.version !== SESSION_FORMAT_VERSION) throw new Error(`${label}: 会话格式版本不支持 (文件 ${JSON.stringify(header.version)}, 当前支持 ${SESSION_FORMAT_VERSION})`);
+	// 跨版本容错: 不校验 header.version。稳定版(v2)与 0.1.5-alpha(v3) 物理行结构兼容,
+	// v3 会话 header 的 version 字段实测为 0, 强制校验会导致合法日志被拒。
 	if (typeof header.id !== "string" || header.id.length === 0) throw new Error(`${label}: header 缺少非空 id`);
 	if (typeof header.createdAt !== "number" || !Number.isSafeInteger(header.createdAt) || header.createdAt < 0) throw new Error(`${label}: header.createdAt 非法`);
 	if (typeof header.delegationDepth !== "number" || !Number.isSafeInteger(header.delegationDepth) || header.delegationDepth < 0) throw new Error(`${label}: header.delegationDepth 非法`);
