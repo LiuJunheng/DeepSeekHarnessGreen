@@ -1,13 +1,3 @@
-# Sitemap Content-Type fix
-/sitemap.xml
-  Content-Type: text/xml
-/zh/sitemap.xml
-  Content-Type: text/xml
-/en/sitemap.xml
-  Content-Type: text/xml
-/zh-Hant/sitemap.xml
-  Content-Type: text/xml
-
 # Prevent *.pages.dev from being indexed (duplicate content)
 https://deepseek-harness-green.pages.dev/*
   X-Robots-Tag: noindex
