@@ -264,7 +264,7 @@
       // **粗体**
       line = line.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
       // code
-      line = line.replace(/([^]+)/g, "<code>$1</code>");
+      line = line.replace(/([^]+)/g, "$1");
       // [text](url)
       line = line.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
       return line;
