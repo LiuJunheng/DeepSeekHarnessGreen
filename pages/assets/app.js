@@ -252,11 +252,13 @@
     } catch (e) { /* no-op */ }
   }
 
-  /* 合并多份 release 数组，按 tag_name 去重，保留先出现的（seed 优先）*/
+  /* 合并多份 release 数组，按 tag_name 去重，之后按 published_at 降序排
+     这样即使 seed 里没有最新发版（忘了更新种子），GitHub 返回的新 release 也会在最上 */
   function mergeReleases(seedList, githubList) {
     var seen = {};
     var out = [];
     var i;
+    // 种子先入（去重基准），GitHub 里 tag_name 不冲突的再追加
     for (i = 0; i < seedList.length; i++) {
       var s = seedList[i];
       var key = s.tag_name || s.name;
@@ -273,6 +275,12 @@
         out.push(g);
       }
     }
+    // 合并后统一按 published_at 降序排（最新在前）
+    out.sort(function (a, b) {
+      var ta = a.published_at ? new Date(a.published_at).getTime() : 0;
+      var tb = b.published_at ? new Date(b.published_at).getTime() : 0;
+      return tb - ta;
+    });
     return out;
   }
 
@@ -404,18 +412,26 @@
     return item;
   }
 
-  /* 渲染从 startIndex 开始的一段 release，追加到容器末尾 */
+  /* 渲染从 startIndex 开始的一段 release，追加到容器末尾。
+     如果已经有"加载更多"按钮，先暂时移走，追加完新卡片后再把按钮重新 append 到最新末尾，
+     这样按钮永远跟着最后一张卡片走，不会卡在中间。*/
   function renderChunk(startIndex) {
     var container = document.getElementById("changelog-list");
     if (!container) return;
+    var btn = document.getElementById("changelog-load-more");
+    // 1. 先把按钮摘下来，避免新卡片 append 到按钮之后
+    if (btn) btn.remove();
+    // 2. 追加这段卡片
     var end = Math.min(startIndex + CHUNK_SIZE, allFilteredReleases.length);
     for (var i = startIndex; i < end; i++) {
       container.appendChild(renderOneReleaseItem(allFilteredReleases[i]));
     }
     visibleCount = end;
+    // 3. 再把按钮放到最后，保持"在最新一段 release 之后"
+    if (btn) container.appendChild(btn);
   }
 
-  /* 管理"加载更多"按钮 */
+  /* 管理"加载更多"按钮：创建一次，永不销毁；全加载完后变 disabled + "没有更多了" */
   function showLoadMoreButton() {
     var container = document.getElementById("changelog-list");
     if (!container) return;
@@ -427,16 +443,21 @@
     btn.textContent = "加载更多 ↓";
     btn.onclick = function () {
       renderChunk(visibleCount);
-      if (visibleCount >= allFilteredReleases.length) hideLoadMoreButton();
+      if (visibleCount >= allFilteredReleases.length) finishLoadMoreButton();
     };
     container.appendChild(btn);
   }
-  function hideLoadMoreButton() {
+  /* 全加载完后把按钮变 disabled + 改文字，给用户一个明确结束的反馈 */
+  function finishLoadMoreButton() {
     var btn = document.getElementById("changelog-load-more");
-    if (btn) btn.remove();
+    if (!btn) return;
+    btn.disabled = true;
+    btn.textContent = "没有更多了 ✓";
+    btn.style.opacity = "0.55";
+    btn.style.cursor = "default";
   }
 
-  /* 全量渲染入口：清空容器 + 首次 10 条 + 显示加载更多 */
+  /* 全量渲染入口：清空容器 + 首次 10 条 + 加载更多按钮（永远显示）*/
   function renderAll() {
     var container = document.getElementById("changelog-list");
     var loading = document.getElementById("changelog-loading");
@@ -453,10 +474,10 @@
 
     visibleCount = 0;
     renderChunk(0);  // 首屏 10 条
-    if (visibleCount < allFilteredReleases.length) {
-      showLoadMoreButton();
-    } else {
-      hideLoadMoreButton();  // 全部一次就能看完（≤10 条时）
+    // 总是创建按钮；如果 ≤10 条（首屏就全加载完），按钮直接变成 disabled 状态
+    showLoadMoreButton();
+    if (visibleCount >= allFilteredReleases.length) {
+      finishLoadMoreButton();
     }
   }
 
