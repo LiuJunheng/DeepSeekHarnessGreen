@@ -17,7 +17,7 @@
   var GH_REPO = "LiuJunheng/DeepSeekHarnessGreen";
   var GITEE_REPO = "liujunheng/DeepSeekHarnessGreen";
   var CACHE_KEY = "dshe-latest-release-v2";
-  var CACHE_TTL_MS = 1 * 60 * 60 * 1000; // 1 小时
+  var CACHE_TTL_MS = 15 * 60 * 1000; // 15 分钟
 
   function readReleaseCache() {
     try {
@@ -234,7 +234,7 @@
   var allFilteredReleases = [];                 // 过滤后的全部 release（剔除 draft/prerelease）
   var releasesLoaded = false;                   // 是否已把全量数据拿到（seed + GitHub 合并完）
   var RELEASES_CACHE_KEY = "dshe-releases-v2";  // 换 key 清掉旧缓存
-  var RELEASES_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
+  var RELEASES_CACHE_TTL_MS = 15 * 60 * 1000;
 
   function fetchReleasesFromCache() {
     try {
