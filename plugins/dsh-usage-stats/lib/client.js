@@ -66,24 +66,35 @@ window.__ModuleLoader__.load({
 		const ROUTE_DETAIL = "/__dsh/usage-stats/detail";
 		const ROUTE_BALANCE = "/__dsh/usage-stats/balance";
 		const GUARD_HEADER = "X-DSH-Usage-Stats";
-		const PRICES_KEY = "dsh.usageStats.prices.v3";
+		// 价格表键名版本 v3 -> v4: 2026-09-10 官方下调 Flash 系列价格, 且主力 id 由
+		// 退役的 deepseek-v4-flash 变为 deepseek-flash。不升版本号的话, 老浏览器
+		// localStorage 里的旧 v3 表会一直盖住新默认值 (loadPrices 优先读 localStorage)。
+		const PRICES_KEY = "dsh.usageStats.prices.v4";
 
 		/**
 		 * 默认价格表 (单位: 元 / 每百万 tokens)。
-		 * 参考 DeepSeek 官方定价 (api-docs.deepseek.com/zh-cn/quick_start/pricing/, 2026-08-17 抓取),
-		 * 默认取【高峰时段】价格 (北京时间 9:00-12:00 / 14:00-18:00, 高峰为低谷 2 倍):
-		 *   deepseek-v4-flash: 输入命中缓存 0.10 / 未命中 3.0 / 输出 9.0
-		 *   deepseek-v4-pro:   输入命中缓存 0.30 / 未命中 9.0 / 输出 27.0
-		 * 注: 官方自 2026-08-17 起改为峰谷定价; 本表默认高峰价, 费用估算偏保守,
+		 * 参考 DeepSeek 官方定价 (api-docs.deepseek.com/zh-cn/quick_start/pricing/, 2026-09-10 抓取),
+		 * 默认取【高峰时段】价格 (北京时间周一至周五 9:00-12:00 / 14:00-18:00, 高峰为低谷 2 倍):
+		 *   deepseek-flash      (DeepSeek-V4.1-Flash):      命中 0.04 / 未命中 2.0 / 输出 8.0
+		 *   deepseek-v4-pro     (DeepSeek-V4-Pro-0813):     命中 0.30 / 未命中 9.0 / 输出 27.0
+		 * 官方口径 (2026-09-10 12:00 北京时间起生效):
+		 *   1) deepseek-flash 是当前唯一在售主力 id; 旧的 deepseek-v4-flash /
+		 *      deepseek-v4-flash-vision-exp 已退役, 请求由 V4.1-Flash 服务并按 Flash 计价,
+		 *      故三者共用同一单价 (历史会话里的旧 id 也能算对)。
+		 *   2) deepseek-v4-pro 自 2026-09-14 12:00 起也整批路由到 V4.1-Flash 并按 Flash
+		 *      计价; 本表先保留其自身单价, 待退役完成后再按实际账单调整。
+		 * 注: 本表默认高峰价, 费用估算偏保守 (空闲时段实际是表中一半),
 		 * 用户可自行按实际价格/时段修改 (前端价格表可编辑并保存)。
 		 * 字段: miss=输入未命中缓存, hit=输入命中缓存, out=输出。
 		 */
 		const DEFAULT_PRICES = {
 			models: {
-				"deepseek-v4-flash": { miss: 3.0, hit: 0.10, out: 9.0 },
+				"deepseek-flash": { miss: 2.0, hit: 0.04, out: 8.0 },
+				"deepseek-v4-flash": { miss: 2.0, hit: 0.04, out: 8.0 },
+				"deepseek-v4-flash-vision-exp": { miss: 2.0, hit: 0.04, out: 8.0 },
 				"deepseek-v4-pro": { miss: 9.0, hit: 0.30, out: 27.0 },
 			},
-			fallback: { miss: 3.0, hit: 0.10, out: 9.0 },
+			fallback: { miss: 2.0, hit: 0.04, out: 8.0 },
 		};
 
 		// ---- 工具 ----

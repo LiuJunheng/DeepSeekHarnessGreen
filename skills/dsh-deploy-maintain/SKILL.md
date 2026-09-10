@@ -563,6 +563,16 @@ function _savePersist(patch) { ... }
 
 - **后台探测型插件要提供「主动重接入」入口**（外部服务比 DSH 晚启动时用户无重试入口）：加独立路由 `POST /<route>/reconnect`（复用 `runDetection(force:true)`），与配置路由**不同 path**（避免同 path 只能注册一次）；`force:true` 全量重写但 `mergeModelParams` 保留手改项；内部只 runDetection，**不写**配置文件（避免点一下清空面板覆盖值）；离线也是正常返回（reconnected:false + lastError）；客户端按钮置忙。
 
+### 5.11.1 官方模型 id / 定价是"活"的：插件里别硬编码（2026-09-10 实证）
+
+- **结论先说**：DeepSeek 官方会在**不升 DSH 版本**的情况下改模型 id 与价格——2026-08-17 改峰谷定价，2026-09-10 12:00（北京时间）再下调 Flash 系列（高峰价：命中 0.10→**0.04** / 未命中 3.0→**2.0** / 输出 9.0→**8.0** 元每百万 tokens），主力 id 同时由 `deepseek-v4-flash` 换成 **`deepseek-flash`**（= DeepSeek-V4.1-Flash，1M 上下文 / 384K 最大输出 / 支持图片）；`deepseek-v4-flash` 与 `deepseek-v4-flash-vision-exp` **退役**（请求仍受理，由 V4.1-Flash 服务并按 Flash 计价），`deepseek-v4-pro` 自 **2026-09-14 12:00** 起也整批路由到 V4.1-Flash 并按 Flash 计费。**任何写死模型 id / 单价的地方都会静默过期**；会话里 `message.source.model` 记的是"当时"的 id，价格表键名对不上就掉进 `fallback` 算错钱，且**无任何报错**。
+
+- **硬编码的正确姿势（四件必须一起做）**：① 单价集中在**唯一一处**常量表；② 键名同时覆盖**当前 id + 退役别名**并并价到同一单价，保证历史会话也算得对；③ **升持久化 key 版本**（如 `dsh.usageStats.prices.v3`→`v4`）——只要默认值被 localStorage / settings 优先读取，改默认值不升 key 就**等于没改**；④ 注释与 README 标**抓取日期 + 官方口径生效时间**，下次核对有基准。
+
+- **DSH 内置目录也是"会过期的官方硬编码"，但一律不手改**：`@deepseek-ai/dsh-llm-deepseek` 的 `DEFAULT_MODELS`、`@deepseek-ai/dsh-acp-app/cordis.patch.yml` 的 `model:` 都在 node_modules 里，**升级重装必被覆盖**（同 5.8 的"改了没生效"，这里是"改了会被没"）。正解＝等官方发版，或用 settings 层（`$DSH_HOME/settings.yaml` 的 `llm-deepseek.models` 显式列表，热重载、随升级保留）覆盖——**但覆盖等于"钉版本"，会一并屏蔽官方未来新增模型，非必要不做**。
+
+- **判断"要不要跟着改"的口径**：① 查 `npm dist-tags`（`latest`/`next`）确认是否已有新版 dsh 携带新目录（2026-09-10 实测 `latest` = `next` = `0.1.5-rc.1`，无新版可升）；② 查官方定价页；③ 默认模型 id 与官方一致就**不动**（`dsh-base/cordis.patch.yml` 的 `agent-default-model` 已是 `deepseek-official` / `deepseek-flash`，`reasoningEffort` 官方默认也是 `high`）。真正需要本仓库自己维护的只有**插件里的价格表**。
+
 ### 5.12 WebUI 悬浮侧栏/浮层的开关按钮：别钉右上角、也别叠内容区
 
 - 官方 WebUI 右上角自带宽操作按钮（下载对话等）；自建侧栏/浮层的**展开收拢开关若** **`position:fixed; top/right`** **固定右上角会盖住官方按钮**（第一处坑）。**把折叠开关垂直居中叠在面板内容区（文件列表）高度上会挡住列表点击**（第二处坑，两面都踩过，`dsh-sidebar-lite`）。

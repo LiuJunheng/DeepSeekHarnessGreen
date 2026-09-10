@@ -124,6 +124,14 @@
 7. node\_modules 内所有官方文件补丁都会被 dsh 升级重装还原 → 一律在 install\_dsh + start\_server 双点幂等重打。
 8. **官方 dsh「npm 与 GitHub 不同步」，只查 npm dist-tags 会漏更新**：官方每个版本发 GitHub（tag `dsh-v<ver>`）但不一定同步 npm；源码 tag 无法直接安装（ETARGET）。检测必须同时拉 GitHub Releases 全 tag + npm 全版本（见第二节）。
 
+9. **DeepSeek 官方模型 id 与定价会"静默换挡"，任何硬编码都会过期（2026-09-10 实证）**：官方 2026-08-17 起改峰谷定价，2026-09-10 12:00（北京时间）起再下调 Flash 系列——命中 0.10→**0.04** / 未命中 3.0→**2.0** / 输出 9.0→**8.0**（元 / 每百万 tokens，均为高峰价；空闲时段为表中一半，V4-Pro 本档未变：0.30 / 9.0 / 27.0）。同时**主力 id 换成 `deepseek-flash`（= DeepSeek-V4.1-Flash，1M 上下文 / 384K 最大输出 / 支持图片）**：`deepseek-v4-flash` 与 `deepseek-v4-flash-vision-exp` **已退役**（请求仍受理，由 V4.1-Flash 服务并按 Flash 计价），`deepseek-v4-pro` 自 **2026-09-14 12:00** 起也整批路由到 V4.1-Flash并按 Flash 计费。三类后果与处置：
+
+   * ① **会话 `message.source.model` 记的是"当时"的 id** → 价格表键名对不上就静默掉进 `fallback` 算错钱。默认表必须把三个 Flash 系 id 并到同一单价、并保留 v4-pro 自身单价到退役完成。
+   * ② **DSH 包内置目录仍公布退役 id**：`@deepseek-ai/dsh-llm-deepseek` 的 `DEFAULT_MODELS` 仍列 4 条（含 3 个退役 id），WebUI 模型选择器照旧展示，其中 v4-pro 的 description 还写着"更强、更贵"，9-14 之后属**误导**（9-10 实测 `latest` = `next` = 已装的 `0.1.5-rc.1`，无新版可升）。
+   * ②的处置：**不要手改 node_modules**（升级重装必被覆盖，见坑 7）。当前默认模型 `deepseek-flash` 与官方一致，**不需要改**；如需屏蔽退役条目，正解是写 `$DSH_HOME/settings.yaml` 的 `llm-deepseek.models` 显式列表（settings 层热重载、随升级保留），但它会一并屏蔽官方未来新增模型，属"钉版本"，非必要不做。
+   * ③ **`@deepseek-ai/dsh-acp-app/cordis.patch.yml` 仍硬编码 `model: deepseek-v4-flash`**（自动化 ACP 入口，非 WebUI）。同为 node_modules 内官方文件 → 只记录、不手改，随官方 dsh 版本跟进。
+   * **内置插件里只允许 `plugins/dsh-usage-stats/lib/client.js` 一处持有价格表**。改价时必须**四件套一起改**：价格值 + 模型键名 + `PRICES_KEY` 版本号（`v3`→`v4`，否则老浏览器 localStorage 里的旧表继续盖住新默认值）+ 插件 README。**教训**：任何"默认值"若被持久化层（localStorage / settings）优先读取，改默认值必须同时升 key 版本，否则改了等于没改。
+
 ### 插件开发坑
 
 1. `package.json` 双入口：`dsh.bundle.patch`(→cordis.patch.yml) + `dsh.client` 才双端加载；`exports` 必须含 `"./package.json"`；`files` 必须含 `cordis.patch.yml`；**纯客户端插件也必须有宿主端** **`lib/index.js`（哪怕空** **`export{}`），否则整个服务起不来**。
@@ -480,6 +488,8 @@
 
 * 插件管理「加载推荐」`RECOMMENDED_PLUGINS`（launcher.py 顶部，约 26 款）：生态情报只记目录站与口径、不逐版本记 star；扩充推荐时 `modlens` 装须**锁版本勿用 @latest**（pnpm 11 拦 <24h 版本），涉及内置插件安装须走插件管理。
 
+* **模型目录时效性待官方发版（2026-09-10）**：官方 dsh 0.1.5-rc.1 内置 `DEFAULT_MODELS` 仍列 3 个退役 id（`deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` / `deepseek-v4-pro`），WebUI 模型选择器照旧展示，v4-pro 的描述（"更强、更贵"）自 2026-09-14 12:00 起失真（官方整批路由到 V4.1-Flash 并按 Flash 计价）。当前默认 `deepseek-flash` 正确、**不需要动**；选择用 settings.yaml 的 `llm-deepseek.models` 覆盖会屏蔽官方未来新增模型，暂不做。发版说明里加一句"选择器只选 `deepseek-flash`"即可，等官方更新目录。
+
 ## 八、GitHub Pages 在线发布页
 
 * **源码位置与托管**：发布页在 `pages/`（`index.html` + `assets/style.css` + `assets/app.js`，零第三方依赖）；托管于 GitHub Pages，URL `https://liujunheng.github.io/DeepSeekHarnessGreen/`；资源用相对路径 `./assets/...`。内容结构：Hero + 快速上手 + 核心特性 + 双平台下载 + 内置插件 + 常见问题 + 页脚协议。
@@ -496,7 +506,7 @@
 
 ## 九、内置插件
 
-全部 9 款内置插件的功能说明、配置、安装方法等已统一在插件自身 README 里维护：`plugins/<插件名>/README.md`。
+全部 10 款内置插件的功能说明、配置、安装方法等已统一在插件自身 README 里维护：`plugins/<插件名>/README.md`。
 
 launcher.py 侧注意事项（插件集成相关）：
 
