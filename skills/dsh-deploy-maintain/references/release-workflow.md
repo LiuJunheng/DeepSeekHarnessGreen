@@ -51,6 +51,18 @@ python -c "import launcher; print(launcher.GREEN_VERSION)"   # 应为新版本�
 
 **为什么不能单独构建一个**：`DSH_Launcher.exe` 和 `DSH_Update.exe` 必须同时重建。若只建一个，另一个还是旧版，发版脚本的新鲜度校验会拦截打包（`exe 构建时间早于 launcher.py`）。
 
+### 构建前必须先解冻根目录 exe（2026-09-10 实测）
+
+**启动器正在运行时，根目录的 `DSH_Launcher.exe` 是当前进程映像：Windows 禁止 delete / overwrite，但允许同目录 rename。** 后果与处置：
+
+- `build_exe.bat` 的 `copy /Y dist\DSH_Launcher.exe .` 会失败并打印
+  `The process cannot access the file because it is being used by another process.`
+- **但脚本末尾用 `if exist DSH_Launcher.exe` 判定，旧文件仍在 → 照样打印 `[OK] Build complete`（假成功）**。必须盯这一行错误，别只看最后的 OK。
+- 处置（两条路任选）：
+  1. **最省事**：发版前让用户关掉启动器，再 `build_exe.bat` → `release_upload.py`。
+  2. **不想关**：build 完成后手工换文件——`Rename-Item DSH_Launcher.exe DSH_Launcher.exe.old` → `Copy-Item dist\DSH_Launcher.exe .` → 把 `.old` **挪出仓库根目录**（如 `runtime\tmp\`）。运行中的映像仍被占用**删不掉**，留在根目录会变成未跟踪文件、可能被误提交；挪到 gitignore 目录最干净。`DSH_Update.exe` 通常没在运行，直接 copy 即可。
+- 换完后用 **root 与 dist 的 `Get-FileHash` 比对**确认是同一份新 exe。
+
 ### 标准流程
 
 ```powershell
@@ -70,6 +82,17 @@ python -c "import subprocess; print(subprocess.run([r'DSH_Update.exe','--print-g
 
 > **坑：windowed (GUI) 子系统 exe 不连控制台**，PowerShell 直接 `.\xxx.exe --print-green-version` 无任何输出，容易误判"没构建成功"。必须用 Python subprocess `capture_output` 读 stdout。发版脚本内部的新鲜度校验也是这么跑的。
 
+> **坑中坑：同一个 exe 在 `dist/` 下能打印版本，在仓库根目录下却返回 `-1` 且输出为空**（2026-09-10 实测，v1.0.35/1.0.36 均如此）。根目录多了 `locales/` 等资源，`dist/` 下反而会打一条 locale 警告后正常输出 `1.0.36`、退出码 0。**后果**：发版脚本 `verify_exe_freshness` 的"次级版本校验"要求 `returncode == 0`，在根目录不成立 → **被静默跳过**，实际只剩 mtime 把关。要真正验版本号，去 `dist/` 跑一遍，或直接比对 root/dist 的 `Get-FileHash`。
+
+### 构建后自查（推荐）
+
+```powershell
+# root 与 dist 必须同一份（换 exe 后尤其要查）
+(Get-FileHash DSH_Launcher.exe).Hash; (Get-FileHash dist\DSH_Launcher.exe).Hash
+# exe mtime 必须晚于 launcher.py / update_agent.py
+Get-Item launcher.py,update_agent.py,DSH_Launcher.exe,DSH_Update.exe | Select-Object Name,LastWriteTime
+```
+
 ### 常见坑
 
 | 症状 | 原因 | 解决 |
@@ -78,6 +101,7 @@ python -c "import subprocess; print(subprocess.run([r'DSH_Update.exe','--print-g
 | `DSH_Update.ico not found` | 手动跑 PyInstaller 而非 bat | 用 `build_exe.bat`，自动用 Launcher 图标 |
 | `exe 新鲜度校验失败: 构建时间早于 launcher.py` | 改了 launcher.py 之后才构建，或中间文件被回写 | 重跑 build_exe.bat，然后**立刻**跑发版脚本 |
 | 旧 exe 残留 | 没删 dist/ 和根目录旧 exe | 每次构建前删干净 |
+| `The process cannot access the file because it is being used by another process.` + 仍打印 `[OK] Build complete` | 启动器正在运行，根目录 exe 被占用（**假成功**） | 关掉启动器再 build，或 rename→copy 换文件（见上）；别信末尾的 OK |
 
 ---
 
@@ -108,6 +132,16 @@ git push github master v<VER>     # 远程2（如 GitHub）
 - token 用环境变量注入：`$env:GITEE_TOKEN=...`、`$env:GITHUB_TOKEN=...`，跑完即弃
 - **中间绝不能再碰任何 Python 源文件**，否则新鲜度校验会拦（见下）
 
+### 必须先设 UTF-8 IO，否则第一步就崩（2026-09-10 实测）
+
+```powershell
+$env:PYTHONIOENCODING='utf-8'; $env:PYTHONUTF8='1'   # 中文 Windows / 管道重定向下必须
+python release_upload.py
+```
+
+`check_python()` 会打印 `[✓]`（U+2713）；在 GBK 控制台或**被管道捕获**的 stdout 下抛
+`UnicodeEncodeError: 'gbk' codec can't encode character '\u2713'` 并立刻退出——**崩在第一步，尚未改动任何文件，可安全重跑**（launcher.py 未被回写，不会污染新鲜度校验）。
+
 ### 高频坑：新鲜度竞态
 
 - **不要先 `--pack-only` 再 `--upload-only`**——`--pack-only` 会回写 `GREEN_VERSION_DATE` 刷新 launcher.py 的 mtime，导致紧接着 `--upload-only` 报"exe 构建时间早于 launcher.py"。脚本实际上不认 pack-only。
@@ -124,8 +158,10 @@ git push github master v<VER>     # 远程2（如 GitHub）
 | **Gitee** | attach_files 字段名写错报 `file is missing` | multipart 里字段名必须是单数 `file`（不是 `files`） |
 | **GitHub** | POST /releases 默认创建 draft，用户看不到 | 必须 `draft:false` |
 | **GitHub** | 传 tag 名需预先存在 | GitHub 行为不同：tag 不存在会自动建 tag 指向 target_commitish，不需要预先 push |
+| **GitHub** | `github.com:443` 完全不可达（`git push github` 报 `Recv failure: Connection was reset` / `Couldn't connect to server`），但 `api.github.com` / `uploads.github.com` 正常 | **发版不必等 GitHub 的 git 通道**：推 Gitee 后 GitHub 的 **master 与 tag 会一起自动镜像同步**（实测几十秒～1 分钟内到位）。**务必先确认同步再发 Release**，否则 GitHub 会按 `target_commitish=master` 在旧提交上建 tag，造成双平台 tag 指向不一致。需要直连时可用本机代理：`git -c http.proxy=http://127.0.0.1:7890 ls-remote github` |
 | 通用 | PowerShell 发含中文的 Release body 乱码 | 用 Python urllib/发版脚本，别用 PowerShell Invoke-RestMethod |
 | 通用 | 发布后本地 launcher.py 显示 modified 但内容无 diff | 发版脚本回写日期只动 mtime，`git diff --numstat` 为空，无需提交 |
+| 通用 | GitHub Release 标题是**中文**，与"GitHub 用英文标题"的直觉不符 | 固有行为：脚本只取中文文件首行当标题（`en_title_tmpl` 解析了但未使用），正文是 cn+en 双语锚点。v1.0.34/35/36 一致，**不要为了"改英文"去动脚本** |
 
 ### token 获取（不重头索要）
 
@@ -135,11 +171,23 @@ git push github master v<VER>     # 远程2（如 GitHub）
 # GitHub：复用现有 GH_TOKEN 映射到 GITHUB_TOKEN
 ```
 
+**先用只读接口验 token 再发版**（省得打包完才发现 401）：`GET https://api.github.com/user`（`Authorization: Bearer <pat>`）与 `GET https://gitee.com/api/v5/user?access_token=<pat>`，返回的 `login` 应与仓库 owner 一致。
+
+### 发版前先探明连通性（30 秒）
+
+```powershell
+foreach ($t in 'https://github.com','https://api.github.com','https://uploads.github.com','https://gitee.com') {
+  "$t -> HTTP " + (curl.exe -s -o NUL -w "%{http_code}" --max-time 15 $t)
+}
+```
+
+判读：`api.github.com` / `uploads.github.com` 通即可发 GitHub Release（创建 Release + 传资产都走这两个域名）；`github.com` 只影响 `git push`，可用 Gitee 镜像同步绕过。
+
 ---
 
 ## 发版后自检
 
-- [ ] 双平台 Release 标题正常（Gitee 中文 / GitHub 英文），正文含双语
+- [ ] 双平台 Release 标题正常（**两边都是中文标题**，正文含 cn+en 双语锚点）
 - [ ] zip 资产已上传（Gitee 可能额外生成 v.major.zip / tar.gz 源码包，属平台自动打包，正常）
 - [ ] GitHub Release **非 draft**（prerelease 按需）
 - [ ] 本地 git 干净（launcher.py 回归化日期 mtime 无 diff 可忽略）

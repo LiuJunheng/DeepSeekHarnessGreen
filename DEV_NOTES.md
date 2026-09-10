@@ -466,6 +466,18 @@
 
 * **删除旧版 zip 经验（2026-08 实测）**：删除云端 1.0.33 的损坏 zip——GitHub 用 `DELETE /repos/.../releases/assets/<id>`（幂等、返回 204）；Gitee 用 curl.exe `DELETE /releases/<id>/attach_files/<attch_id>`（Invoke-RestMethod Delete 会 404），删后 `attach_files?per_page=100` 复查为空。release 本体/tag 保留即可，用户不再下载到损坏包。
 
+* **正在运行的 exe 无法覆盖，但能改名（2026-09-10 实测）**：启动器在跑时 `build_exe.bat` 的 `copy /Y "dist\DSH_Launcher.exe" "DSH_Launcher.exe"` 报 `The process cannot access the file because it is being used by another process.`；而脚本末尾用 `if exist "DSH_Launcher.exe"` 判定，旧文件仍在 → **照样打印 `[OK] Build complete`（假成功！只能靠那行 copy 错误识别）**。Windows 禁止对运行中的 exe delete/overwrite，但**允许同目录 rename**，故可 `Rename-Item → Copy-Item dist\... → 把 .old 挪出仓库根目录`（占用中删不掉，留在根目录会变成未跟踪文件、可能被误提交；挪到 `runtime\tmp\` 最干净）。最省事仍是在 build 前先关掉启动器。换完务必 `Get-FileHash` 比对 root 与 dist 是同一份。
+
+* **`release_upload.py` 跑前必须设 UTF-8 IO**：`check_python()` 打印 `[✓]`(U+2713)，在 GBK 控制台或 stdout 被管道捕获时抛 `UnicodeEncodeError: 'gbk' codec can't encode character '\u2713'`，**第一步即退出**（此时尚未改动任何文件，可安全重跑）。正解：`$env:PYTHONIOENCODING='utf-8'`（可加 `$env:PYTHONUTF8='1'`）再跑。
+
+* **`github.com:443` 被阻断 ≠ 发不了 GitHub Release（2026-09-10 实测）**：`git push/fetch github` 报 `Recv failure: Connection was reset` / `Couldn't connect to server`，但 `api.github.com`(HTTP 200) 与 `uploads.github.com`(HTTP 302) 正常 → Release 创建 + 17.5MB 资产上传全部成功。**推 Gitee 后 GitHub 的 master 与 tag 会自动镜像同步**（实测 1 分钟内到位），所以发版只推 Gitee，**先确认 GitHub 同步完成再发 Release**（否则 GitHub 按 `target_commitish=master` 在旧提交上建 v 标签，双平台 tag 指向不一致）。本机代理 `127.0.0.1:7890` 可用：`git -c http.proxy=http://127.0.0.1:7890 ls-remote github`。
+
+* **`DSH_Launcher.exe --print-green-version` 在仓库根目录返回 -1 且无输出**（同一 exe 在 `dist/` 下正常打印 `1.0.36` 且退出码 0，只多一条 locale 警告）→ `verify_exe_freshness` 的"次级版本校验"要求 `returncode == 0`，在根目录不成立 → **被静默跳过，实际只剩 mtime 把关**。要真正验版本号：去 `dist/` 跑一次，或比对 root/dist 的 `Get-FileHash`。v1.0.35/v1.0.36 均如此，属既有行为。
+
+* **`config.json` 会被启动器按 `DEFAULT_CONFIG` 归一化回写**：实测 `open_method: browser → desktop`（README 明确"默认以独立桌面窗口打开"，desktop 才是正确默认）。该文件既是运行时配置、又是 zip 内的默认配置模板 → 这类回写要跟着一起提交，否则 zip 里的默认模板与代码默认值长期不一致。
+
+* **GitHub Release 标题用中文**：`load_release_notes()` 只返回中文文件首行当标题（`en_title_tmpl` 解析了但从未使用），正文是 cn+en 双语锚点。v1.0.34/35/36 一致，属既有行为，不要去"修"成英文。
+
 ## 六、维护提醒
 
 * 跨机 / 整包覆盖会吞掉本地未提交改动（实测覆盖过）→ 发布前先 `git diff` / `git log` 核对，或先把改动 commit。

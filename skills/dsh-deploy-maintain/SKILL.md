@@ -103,6 +103,8 @@ updated: "2026-09-09"
 
 - **重新打包纪律**：改 `launcher.py`（含 `GREEN_VERSION` 版本号）或 `update_agent.py` 后**必须**重打包 exe（`build_exe.bat`），否则用户跑旧 exe（"界面改了没反应" / "运行时版本比 Release tag 低一级" 十有八九是旧 exe）。发布脚本 `根目录 release_upload.py` v3.0+ 已强制校验 exe 新鲜度：打包前先比 mtime（exe 必须 >= launcher.py），再跑 `DSH_Launcher.exe --print-green-version` 对比源码版本，任一失败直接 exit(2) 阻断打包并提示先重跑 `build_exe.bat`。
 
+- **两条"看起来通过其实没校验"的坑（2026-09-10 实测，详见 `references/release-workflow.md`）**：① **启动器运行时根目录 exe 被占用**，`build_exe.bat` 的 copy 会失败，但脚本末尾用 `if exist` 判定旧文件仍在 → **照样打印 `[OK] Build complete`（假成功）**，必须盯 copy 那行错误；Windows 允许对运行中的 exe 同目录 rename，可 rename→copy 换文件（`.old` 要挪出仓库根目录）。② **上面那条"跑 `--print-green-version` 对比版本"的次级校验在仓库根目录会被静默跳过**——根目录（有 `locales/`）下 `DSH_Launcher.exe --print-green-version` 返回 `-1` 且无输出，脚本只在 `returncode == 0` 时比对，于是实际只剩 mtime 把关；要真验版本去 `dist/` 跑或比对 root/dist 的 `Get-FileHash`。此外**发布脚本必须在 UTF-8 IO 下运行**（`PYTHONIOENCODING=utf-8`），否则 `check_python()` 打印 `[✓]` 就抛 `UnicodeEncodeError` 退出。
+
 ## 三、日常维护
 
 ### 3.1 检查更新（备份优先 / 双数据源动态检测）
