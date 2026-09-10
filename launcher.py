@@ -314,91 +314,161 @@ GITEE_RELEASES_API = ("https://gitee.com/api/v5/repos/%s/releases"
 GITEE_REPO_PAGE_URL = "https://gitee.com/%s" % GITEE_REPO  # Gitee 仓库主页 (失败手动提示)
 GREEN_HOME_PAGE_URL = "https://dsh-green.website/"  # 发布主页 (独立站点, About 里跳转)
 
-# 「加载推荐」一键展示的 dsh 插件列表 (按社区目录站 dsh-plugins.top / awesome-deepseek-harness / 官方 dsh-plugin 话题筛选出的高口碑款, 2026-08 底校准)
+# 「加载推荐」一键展示的 dsh 插件列表 (2026-09-10 精简为只保留"插件市场类"插件:
+# 这类插件本身就是一个可浏览/搜索/一键安装社区插件的「应用商店」入口,
+# 其他工具/界面/视觉类插件全部移除, 由市场插件自己去发现, 避免列表又杂又过时)
 # 字段说明: name=展示名; category=分类(显示在「分类」列); source=来源平台(github/npm, 与搜索项统一, 显示在「来源」列);
 #   description=一句话功能; spec=真实安装标识(以 github: 开头走 GitHub 仓库安装, 否则按 npm 包名装);
 #   version 统一填显示值 "latest", 表示安装时自动取最新版
 # 提示: 第三方插件即以本机身份运行, 装前请先看源码
 RECOMMENDED_PLUGINS = [
-    {"name": "modlens", "category": "视觉", "source": "npm", "version": "latest",
-     "spec": "@liustack/modlens",
-     "description": "首个视觉插件: 图片粘贴进对话即转结构化证据读图识图、理解 UI"},
-    {"name": "dsh-web", "category": "Web UI", "source": "github", "version": "latest",
-     "spec": "github:zhu1090093659/dsh-web",
-     "description": "Web 聚合生态包: 任务看板 / Git 图谱 / 皮肤中心 / 鲸鱼娘宠物等界面全家桶"},
-    {"name": "DSH-better-sidebar", "category": "Web UI", "source": "github", "version": "latest",
-     "spec": "github:omdsh-dev/DSH-better-sidebar",
-     "description": "开放侧边栏工作台: 文件渲染编辑 / 终端 / Git / 侧边对话 / 子智能体"},
-    {"name": "dsh-desktop", "category": "桌面", "source": "github", "version": "latest",
-     "spec": "github:dataelement/dsh-desktop",
-     "description": "把 DSH 封装成原生桌面应用: 系统托盘常驻、独立窗口"},
-    {"name": "deepseek-harness-desktop", "category": "桌面", "source": "github", "version": "latest",
-     "spec": "github:anywhere-labs/deepseek-harness-desktop",
-     "description": "桌面端封装, 生态星标最高: 系统托盘常驻、独立窗口"},
-    {"name": "dsh-TUI", "category": "终端", "source": "github", "version": "latest",
-     "spec": "github:ccch1mneyyy/dsh-TUI",
-     "description": "Claude Code 风全屏终端 TUI: 纯键盘流 / 流式思考 / 上下文进度"},
     {"name": "dsh-market", "category": "商店", "source": "github", "version": "latest",
      "spec": "github:dsh-market/dsh-market",
-     "description": "内置可视化插件市场: 浏览 / 搜索 / 按已装项推荐 / 一键安装 (建议第一个装)"},
-    {"name": "dsh-anchored-standard", "category": "预设", "source": "github", "version": "latest",
-     "spec": "github:xiaobright/dsh-anchored-standard",
-     "description": "两阶段预设: 先最小对齐引导、再挂全量标准工具集"},
-    {"name": "modsearch", "category": i18n.t('plugin.search_btn'), "source": "github", "version": "latest",
-     "spec": "github:liustack/modsearch",
-     "description": "联网实时搜索、引用来源, 与 modlens 同作者配套使用"},
-    {"name": "dsh-agent-teams", "category": "Agent", "source": "github", "version": "latest",
-     "spec": "github:NanmiCoder/dsh-agent-teams",
-     "description": "多智能体并行拆解大任务、协作交付框架"},
-    {"name": "Aegis", "category": "Agent", "source": "github", "version": "latest",
-     "spec": "github:GanyuanRan/Aegis",
-     "description": "架构感知: 基线优先、证据验证、漂移检查, 让 Agent 长任务更稳"},
-    {"name": "DeepSeek-Balance-Whale-Widget", "category": "趣味", "source": "github", "version": "latest",
-     "spec": "github:MeteorNOX/DeepSeek-Balance-Whale-Widget",
-     "description": "界面右下角小鲸鱼娘盯 DeepSeek 账户余额: 数字滚动动画、可拖拽"},
-    {"name": "dsh-safeguard", "category": "安全", "source": "npm", "version": "latest",
-     "spec": "dsh-safeguard",
-     "description": "零配置安全: 危险命令 (rm -rf / push --force) 与密钥泄漏执行前拦截"},
-    {"name": "dsh-handoff", "category": "工具", "source": "npm", "version": "latest",
-     "spec": "dsh-handoff",
-     "description": "零配置: 会话交接一键导出 (决策/已完成/未完成/下一步), 不调模型零成本"},
-    {"name": "dsh-http", "category": "工具", "source": "npm", "version": "latest",
-     "spec": "dsh-http",
-     "description": "零配置: 结构化 HTTP 请求, JSON 自动解析、截断保护"},
-    {"name": "dsh-fmt", "category": "工具", "source": "npm", "version": "latest",
-     "spec": "dsh-fmt",
-     "description": "零配置: JSON/YAML/TOML/SQL 格式化与校验"},
-    {"name": "dsh-clipboard", "category": "工具", "source": "npm", "version": "latest",
-     "spec": "dsh-clipboard",
-     "description": "零配置: 长文本一键进系统剪贴板"},
-    {"name": "dsh-fetch-file", "category": "工具", "source": "npm", "version": "latest",
-     "spec": "dsh-fetch-file",
-     "description": "零配置: URL 下载文件进工作区, 二进制流式落盘、路径围栏"},
-    {"name": "dsh-jwt", "category": "工具", "source": "npm", "version": "latest",
-     "spec": "dsh-jwt",
-     "description": "零配置: JWT 解码调试, payload/过期判断"},
-    {"name": "dsh-cron-parse", "category": "工具", "source": "npm", "version": "latest",
-     "spec": "dsh-cron-parse",
-     "description": "零配置: cron 表达式解析 / 人性化 / 未来 N 次预览"},
-    {"name": "dsh-when", "category": "工具", "source": "npm", "version": "latest",
-     "spec": "dsh-when",
-     "description": "零配置: 自然语言相对时间 转 ISO 时间"},
-    {"name": "dsh-url-tools", "category": "工具", "source": "npm", "version": "latest",
-     "spec": "dsh-url-tools",
-     "description": "零配置: URL 解析 / 去 UTM 跟踪参数 / 编解码 / 短链展开"},
-    {"name": "dsh-password", "category": "工具", "source": "npm", "version": "latest",
-     "spec": "dsh-password",
-     "description": "零配置: 强密码 / diceware 口令生成, 标注熵值"},
-    {"name": "dsh-dead-links", "category": "工具", "source": "npm", "version": "latest",
-     "spec": "dsh-dead-links",
-     "description": "零配置: Markdown 文档死链检查, HEAD 降级 GET、限流并发"},
-    {"name": "dsh-pkg-info", "category": "工具", "source": "npm", "version": "latest",
-     "spec": "dsh-pkg-info",
-     "description": "零配置: npm / PyPI 包版本、依赖、发布时间查询"},
-    {"name": "dsh-case", "category": "工具", "source": "npm", "version": "latest",
-     "spec": "dsh-case",
-     "description": "零配置: 命名大小写转换 (camel/Pascal/snake/kebab 等 8 风格)"},
+     "description": "可视化插件市场(应用商店): 浏览 / 搜索 / 按已装项推荐 / 一键安装 (建议第一个装)"},
+    {"name": "dsh-plugin-hub", "category": "商店", "source": "github", "version": "latest",
+     "spec": "github:dshplugin/dsh-plugin-hub",
+     "description": "DSH Plugin Hub 社区插件市场: 人工精选收录, 一键安装/升级/卸载, 内置「设置→插件市场」 (npm 名 dsh-plugin)"},
 ]
+
+# ---------------------------------------------------------------------------
+# npm 插件「核心兼容」best-effort 判定 (2026-09-10, 用于 npm 搜索结果)
+# ---------------------------------------------------------------------------
+# 语义: 插件 manifest 的 dependencies/peerDependencies 里声明依赖哪些 @deepseek-ai/*
+# 核心子包及版本区间, 与本地已装核心子包版本做区间匹配。兼容性无官方统一字段, 只做启发式:
+# 全部声明区间被满足=_兼容; 有区间不满足=_可能不兼容; 无核心依赖=_一般兼容;
+# 拉取失败/无法解析=_无法验证。
+
+def _version_tuple(version_text):
+    """把 'x.y.z' 或 'x.y.z-pre' 解析成可比较的 (major, minor, patch, prerelease); 失败返回 None。"""
+    if version_text is None:
+        return None
+    text = str(version_text).strip().lstrip("v").strip()
+    if not text:
+        return None
+    parts = [item for item in text.split(".")[:3]]
+    if len(parts) < 2:
+        return None
+    try:
+        major = int(parts[0])
+        minor = int(parts[1])
+        patch = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+    except (ValueError, TypeError):
+        return None
+    prerelease = None
+    if len(parts) > 2 and not parts[2].isdigit():
+        prerelease = parts[2]
+    return (major, minor, patch, prerelease)
+
+def _version_after(ver_tuple, spec_tuple):
+    """判断 (major, minor, patch, pre) 是否 >= 规格的下界元组 (含预发布比较)"""
+    if ver_tuple is None or spec_tuple is None:
+        return False
+    for index in range(3):
+        if ver_tuple[index] != spec_tuple[index]:
+            return ver_tuple[index] > spec_tuple[index]
+    ver_pre = ver_tuple[3]
+    spec_pre = spec_tuple[3]
+    if spec_pre is None:
+        return ver_pre is None
+    if ver_pre is None:
+        return True
+    return ver_pre >= spec_pre
+
+def _satisfies_range(version_text, range_text):
+    """best-effort 判断本地核心包版本是否满足声明区间。支持:
+    精确 x.y.z / ^x.y.z / ~x.y.z / >= < <= > 单比较器 / 多比较器空格 AND。
+    遇到 || 组合或无法解析时返回 None (表示"无法判定", 不据此断言兼容)。"""
+    if version_text is None or not range_text:
+        return None
+    spec = str(range_text).strip()
+    if not spec or "||" in spec:
+        return None
+    ver = _version_tuple(version_text)
+    if ver is None:
+        return None
+    tokens = spec.split()
+    def compare(operator, target):
+        target_tuple = _version_tuple(target)
+        if target_tuple is None:
+            return None
+        if operator in (">=", ">", "<", "<="):
+            if operator == ">=":
+                return _version_after(ver, target_tuple)
+            if operator == ">":
+                return _version_after(ver, target_tuple) and not (ver[:3] == target_tuple[:3])
+            if operator == "<":
+                return not _version_after(ver, target_tuple)
+            if operator == "<=":
+                return ver[:3] <= target_tuple[:3]
+        if operator in ("=", ""):
+            return ver[:3] == target_tuple[:3]
+        if operator == "^":
+            return _version_after(ver, target_tuple) and _before_major_bump(ver, target_tuple)
+        if operator == "~":
+            return _version_after(ver, target_tuple) and ver[0:2] == target_tuple[0:2]
+        return None
+    operators = (">=", "<=", ">", "<", "=", "^", "~", "")
+    result_any_failed = False
+    result_any_unknown = False
+    for token in tokens:
+        chosen_operator = ""
+        rest = token
+        for op in operators:
+            if token.startswith(op) and op != "":
+                chosen_operator = op
+                rest = token[len(op):]
+                break
+        decided = compare(chosen_operator, rest)
+        if decided is None:
+            result_any_unknown = True
+        elif not decided:
+            result_any_failed = True
+    if result_any_failed:
+        return False
+    if result_any_unknown:
+        return None
+    return True
+
+def _before_major_bump(ver, target):
+    """ver < (target.major+1).0.0; target.major==0 时按 <(0.minor+1) 处理 (npm ^ 语义)"""
+    if target[0] > 0:
+        return ver[0] < target[0] + 1
+    return ver[0] == 0 and ver[1] < target[1] + 1
+
+def _classify_core_compat(manifest, host_versions):
+    """根据插件 manifest 声明的 @deepseek-ai/* 依赖区间与本地核心子包版本, 返回兼容状态
+    status: "ok" / "warn" / "no_core_dep" / "unknown"; detail: 人类可读的差异说明"""
+    if manifest is None or not isinstance(manifest, dict):
+        return {"status": "unknown", "detail": ""}
+    declared = dict(manifest.get("dependencies") or {})
+    for key_name, value_range in (manifest.get("peerDependencies") or {}).items():
+        declared.setdefault(key_name, value_range)
+    core_declarations = {
+        key_name: value_range
+        for key_name, value_range in declared.items()
+        if key_name.startswith("@deepseek-ai/") and value_range
+    }
+    if not core_declarations:
+        return {"status": "no_core_dep", "detail": ""}
+    mismatched = []
+    uncheckable = []
+    checked_count = 0
+    for key_name, value_range in core_declarations.items():
+        host_version = host_versions.get(key_name)
+        if host_version is None:
+            uncheckable.append("%s@%s(未随核心安装)" % (key_name, value_range))
+            continue
+        checked_count += 1
+        decided = _satisfies_range(host_version, value_range)
+        if decided is False:
+            mismatched.append("%s: 需%s, 已装%s" % (key_name, value_range, host_version))
+        elif decided is None:
+            uncheckable.append("%s: 区间无法解析(%s)" % (key_name, value_range))
+    if mismatched:
+        return {"status": "warn", "detail": "；".join(mismatched)}
+    if uncheckable and checked_count == 0:
+        return {"status": "unknown", "detail": "；".join(uncheckable)}
+    return {"status": "ok", "detail": "；".join(uncheckable) if uncheckable else ""}
 
 # ---------------------------------------------------------------------------
 # 绿色便携: 所有缓存/配置/临时目录全部重定向到本程序 runtime 下,
@@ -3840,8 +3910,13 @@ class Launcher:
             package = item.get("package", {})
             if not self._is_dsh_plugin_package(package):
                 continue
+            # 排除 DeepSeek 官方自带/内置插件: 它们都是 @deepseek-ai/* 作用域,
+            # 不该作为"可搜索的第三方插件"列出来 (2026-09-10)
+            package_name = package.get("name", "")
+            if package_name.startswith("@deepseek-ai/"):
+                continue
             plugins.append({
-                "name": package.get("name", ""),
+                "name": package_name,
                 "version": package.get("version", ""),
                 "description": (package.get("description") or "").strip(),
                 "url": package.get("links", {}).get("npm", ""),
@@ -3879,6 +3954,61 @@ class Launcher:
             })
         self.log("GitHub 官方话题页抓到 %d 个热门仓库" % len(plugins))
         return plugins
+
+    def fetch_plugin_manifest(self, package_name):
+        """抓取 npm 插件 @latest 的 manifest (dependencies/peerDependencies/version)。
+        走当前镜像源 (与安装一致); 失败返回 None。供 npm 搜索结果兼容判定用 (2026-09-10)。"""
+        mirror, _is_auto = self.resolve_mirror()
+        registry_root = NPM_REGISTRY[mirror]
+        # 作用域包 @xxx/yyy 里的 @ 必须保留原样: quote 默认会把 @ 编成 %40,
+        # npmmirror 等镜像对 /%40xxx/yyy/latest 返回 404, 导致 scoped 插件拉不到
+        # manifest (2026-09-10 实测)。safe="@/" 让 @ 与 / 都不编码。
+        url = "%s/%s/latest" % (registry_root, urllib.parse.quote(package_name, safe="@/"))
+        try:
+            ssl_context = ssl.create_default_context()
+            request = urllib.request.Request(
+                url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            with urllib.request.urlopen(request, context=ssl_context, timeout=8) as response:
+                data = json.load(response)
+            return data if isinstance(data, dict) else None
+        except Exception as error:
+            self.log("拉取插件 manifest 失败 (%s): %s" % (package_name, error))
+            return None
+
+    def enrich_npm_plugins(self, plugins, max_check=30):
+        """为 **npm 源** 插件列表补齐"核心兼容状态" (2026-09-10, 用于搜索)。
+        兼容判定需逐项额外抓 manifest (网络), 很难一次覆盖上百条, 故只实测前 max_check 个;
+        其余(超量未测)与实测失败(拉取不到 manifest)统一标注"不明", 不再留空版本号。
+        return 新的列表 (每项复制一份, 不改入参)。"""
+        host_versions = self._host_core_versions()
+        enriched = []
+        checked = 0
+        status_label = {
+            "ok": i18n.t('plugin.compat_ok'),
+            "warn": i18n.t('plugin.compat_warn'),
+            "no_core_dep": i18n.t('plugin.compat_nocore'),
+            "unknown": i18n.t('plugin.compat_unknown'),
+        }
+        for plugin in plugins:
+            item = dict(plugin)
+            if item.get("source") == "npm":
+                status_key = "unknown"
+                detail = ""
+                if checked < max_check:
+                    checked += 1
+                    manifest = self.fetch_plugin_manifest(item["name"])
+                    if manifest is not None:
+                        result = _classify_core_compat(manifest, host_versions)
+                        status_key = result["status"]
+                        detail = result.get("detail", "")
+                base_version = str(item.get("version") or "").lstrip("v")
+                version_text = ("v%s" % base_version) if base_version else "latest"
+                item["version"] = "%s [%s]" % (
+                    version_text, status_label.get(status_key, status_label["unknown"]))
+                if detail:
+                    item["_compat_detail"] = detail
+            enriched.append(item)
+        return enriched
 
     def seed_default_workspace(self):
         """把自动解析出的安全默认工作区预置为 dsh 工作区 (绿色便携, 不写死)。
@@ -7306,8 +7436,9 @@ def run_gui():
         所有耗时操作都在后台线程执行, 通过 root.after 回主线程更新界面"""
         top = tk.Toplevel(root)
         top.title(i18n.t('plugin.title'))
-        top.geometry("900x600")
-        top.minsize(760, 520)
+        # 宽度与主启动器一致 (1160) 让右侧搜索结果列/版本列有足够空间 (2026-09-10)
+        top.geometry("1160x680")
+        top.minsize(1000, 580)
 
         profile = DEFAULT_PROFILE
         plugin_busy = [False]   # 本窗口忙碌标志, 防止重复操作
@@ -7353,21 +7484,21 @@ def run_gui():
             search_tree.delete(*search_tree.get_children())
             search_item_urls.clear()
             if not plugins:
-                search_tree.insert("", "end", text=i18n.t('plugin.search_no_result'), values=("", default_source, "", ""))
+                # 分类列已去掉, values 只剩 (source, version, description) 三列 (2026-09-10)
+                search_tree.insert("", "end", text=i18n.t('plugin.search_no_result'), values=(default_source, "", ""))
                 plugin_status.set("没有搜索到结果")
                 return
             for plugin in plugins:
-                item_category = plugin.get("category", "")
                 item_source = plugin.get("source", default_source)
                 item_id = search_tree.insert("", "end",
                                              text=plugin["name"],
-                                             values=(item_category, item_source,
+                                             values=(item_source,
                                                      plugin.get("version", ""),
                                                      plugin.get("description", "")))
                 # 记录每个条目对应的网址, 供右键菜单打开页面使用; spec 为显式安装标识 (推荐项才有)
                 search_item_urls[item_id] = {
                     "name": plugin["name"],
-                    "category": item_category,
+                    "category": plugin.get("category", ""),
                     "source": item_source,
                     "url": plugin.get("url", ""),
                     "spec": plugin.get("spec", ""),
@@ -7384,7 +7515,9 @@ def run_gui():
             def worker():
                 try:
                     plugins = app.search_npm_plugins(keyword)
-                    root.after(0, lambda: show_search_results(plugins, "npm"))
+                    # 纯 npm 结果: 后台再补前若干个的"核心兼容"标记 (其余保持版本号原样)
+                    enriched = app.enrich_npm_plugins(plugins)
+                    root.after(0, lambda: show_search_results(enriched, "npm"))
                 except Exception as error:
                     root.after(0, lambda: (messagebox.showerror(i18n.t('plugin.search_fail'), str(error), parent=top),
                                            plugin_status.set("搜索失败")))
@@ -7736,6 +7869,7 @@ def run_gui():
         # 左侧: 已安装插件
         installed_frame = ttk.LabelFrame(middle, text=i18n.t('plugin.installed_tab', profile=profile))
         _i18n_widgets.append((installed_frame, 'text', 'plugin.installed_tab'))
+        # 左:右 = 1:2, 右侧看到更多结果且版本列有空间; 窗口已加宽到 1160, 权重无需过于悬殊 (2026-09-10)
         middle.add(installed_frame, weight=1)
         # 列表区: 左 Treeview + 右垂直滚动条 (方便上下滑动)
         installed_body = ttk.Frame(installed_frame)
@@ -7746,9 +7880,10 @@ def run_gui():
         installed_tree.heading("#0", text=i18n.t('plugin.column_name'))
         installed_tree.heading("version", text=i18n.t('plugin.column_version'))
         installed_tree.heading("state", text=i18n.t('plugin.column_status'))
-        installed_tree.column("#0", width=240)
-        installed_tree.column("version", width=80, anchor="center")
-        installed_tree.column("state", width=56, anchor="center")
+        # 左侧已安装面板收窄 (配合右侧权重加大, 2026-09-10): 名称列相应缩小, 长名超宽自动省略号
+        installed_tree.column("#0", width=120)
+        installed_tree.column("version", width=74, anchor="center")
+        installed_tree.column("state", width=52, anchor="center")
         installed_scrollbar = ttk.Scrollbar(installed_body, orient="vertical",
                                             command=installed_tree.yview)
         installed_tree.configure(yscrollcommand=installed_scrollbar.set)
@@ -7780,18 +7915,17 @@ def run_gui():
         # 列表区: 左 Treeview + 右垂直滚动条 (方便上下滑动)
         search_body = ttk.Frame(search_frame)
         search_body.pack(fill="both", expand=True, padx=6, pady=6)
-        search_tree = ttk.Treeview(search_body, columns=("category", "source", "version", "description"), show="tree headings")
+        search_tree = ttk.Treeview(search_body, columns=("source", "version", "description"), show="tree headings")
         search_tree.heading("#0", text=i18n.t('plugin.column_name'))
-        search_tree.heading("category", text=i18n.t('plugin.column_category'))
         search_tree.heading("source", text=i18n.t('plugin.column_source'))
         search_tree.heading("version", text=i18n.t('version_select.version_column'))
         search_tree.heading("description", text=i18n.t('plugin.column_desc'))
-        # 列宽留足余量: 总和需明显小于面板宽度, 否则 pack 会把右侧滚动条压缩成 1x1
+        # 列宽留足余量: 总和需明显小于面板宽度, 否则 pack 会把右侧滚动条压缩成 1x1.
+        # 版本列会显示 "v0.48.0 [预估兼容]" 这类较长文本, 需要显著加宽 (2026-09-10 去掉分类列后调整).
         search_tree.column("#0", width=150)
-        search_tree.column("category", width=56, anchor="center")
-        search_tree.column("source", width=48, anchor="center")
-        search_tree.column("version", width=54, anchor="center")
-        search_tree.column("description", width=170, stretch=True)
+        search_tree.column("source", width=52, anchor="center")
+        search_tree.column("version", width=160, anchor="center")
+        search_tree.column("description", width=190, stretch=True)
         search_scrollbar = ttk.Scrollbar(search_body, orient="vertical",
                                          command=search_tree.yview)
         search_tree.configure(yscrollcommand=search_scrollbar.set)

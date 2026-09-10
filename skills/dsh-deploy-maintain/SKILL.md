@@ -2,7 +2,7 @@
 
 name: dsh-deploy-maintain
 description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护、插件开发与避坑经验。覆盖便携 Node/dsh 安装、环境变量重定向、工作区 ACL 沙箱、更新备份、插件管理与 dsh 插件双端加载/路由注册等全套实操知识。"
-updated: "2026-09-09"
+updated: "2026-09-10"
 ---------------------
 
 # DeepSeek Harness 绿色整合版 · 部署维护与插件开发
@@ -140,6 +140,10 @@ updated: "2026-09-09"
 
 - **搜索源**：npm 注册表 `/-/v1/search?text=dsh-plugin` + GitHub topic 页。`keywords:dsh-plugin` 在 npmmirror 返回 0，用 `text=<关键词>` + 本地过滤最稳。
 
+- **搜索结果 base：排除官方内置 + 核心兼容判定（2026-09-10 搜索入口优化）**：npm 搜索会混入大量 `@deepseek-ai/*` 官方自带插件（本机已装/内置，不该作为"可搜索的第三方"列出）——**必须在** `search_npm_plugins` 里 `if package_name.startswith("@deepseek-ai/"): continue` 过滤。**搜索入口是纯 npm 源**，可复用安装侧的"核心版本兼容"启发式：`fetch_plugin_manifest(pkg)`（走当前镜像 `/pkg/latest`，8s 超时，失败返回 None）拉 manifest，`_classify_core_compat(manifest, _host_core_versions())` 比对插件 `dependencies`/`peerDependencies` 里的 `@deepseek-ai/*` 区间与本地核心子包版本 —— 全满足=预估兼容(ok)/有区间不满足=可能不兼容(warn)/无核心依赖=可能兼容(no_core_dep)/拉取失败或版本无法解析=不明(unknown)。**一个插件一个 manifest 是额外网络请求，只能给前 30 条后台实测**（`enrich_npm_plugins(max_check=30)`），超量未测的也**统一标"不明"**（不留裸版本号）。 状态列文案：兼容→**预估兼容**（别再写死"兼容"，核心是活的会过期）、一般兼容→**可能兼容**（无核心依赖，暂无核心冲突面，概率偏高）、无法验证→**不明**；i18n 键 `compat_ok/compat_warn/compat_nocore/compat_unknown` 必须 **zh.json 与 en.json 同时补**——漏 en 会在英文界面 `i18n.t` 掉回键名。搜索按钮文案「搜索npm插件」（英文 Search npm Plugins）与「加载 GitHub 热门」分开，二者语义明确。版本号解析用 `_version_tuple`（支持 `x.y.z`/`x.y.z-pre`，失败返回 None 走 unknown），区间用 `_satisfies_range` best-effort（遇 `||` 组合或无法解析返回 None，**不做否定断言**，宁可 unknown 也不误报兼容）。
+
+  - **【高发】作用域包 `@xxx/yyy` 拉 manifest 必 404 的根因 = `@` 被 quote 编码**：`urllib.parse.quote(package_name)` 默认把 `@` 编成 `%40`，而 npmmirror 等镜像对 `/…/%40linxin666/dsh-pet/latest` 返回 404（scoped 插件全静默跳过、状态列空）。**修法**：`urllib.parse.quote(package_name, safe="@/")`，让 `@` 与 `/` 都不编码（实测 `raw @scope/name` 与 `slug%2F...` 均可 200，唯独 `%40scope/name` 404）。搜索文本参数 `text=` 走 query 不受影响。
+
 - **GUI 线程安全**：耗时操作在 `threading.Thread`，结果 `root.after(0, ...)` 回主线程；忙时禁用按钮防重入。`ttk.Panedwindow` 必须 `.add(child, weight=N)` 显式注册（否则空白）。
 
 - **"包装上了但没生效"根因：pnpm 非 0 退出码跳过官方 reconcile**：pnpm 遇到 `ERR_PNPM_IGNORED_BUILDS`（含原生模块/构建脚本依赖：ssh2/node-pty/cloudflared 等）以退出码 1 结束（包已写 dependencies），而官方 reconcile（把声明 `dsh.bundle.patch` 的包写进 `dsh.profile.bundles`）**只在 exitCode===0 运行** → 被打断 → 编排层没有它。**排查顺序**：① 看 `dsh.profile.bundles` 是否含该包（不是 dependencies/node\_modules）；② 设 DSH\_HOME 后 dump-config 看插件层；③ 有则重装/手动 reconcile。
@@ -221,6 +225,8 @@ updated: "2026-09-09"
 - **"待保存"设置 vs 已落盘 config 脱节**：tkinter 下拉/条目是内存"待保存"值。启动类动作（如点启动服务）前，先把界面当前值同步进 config 并 `save_config()` 落盘（转换规则与「保存设置」一致、静默）。收敛到单一 `sync_gui(silent=False)` 函数，保存/on\_start/on\_install 三处共用，防三处逻辑漂移。
 
 - **语言提示**：`.bat` 保持 ASCII 全英文；desktop-shell 相关提示语用英文（中文乱码）。
+
+- **插件管理搜索列表去"分类"列 + 版本列加宽（2026-09-10）**：搜索源全是 npm（来源=github 的是"加载 GitHub 热门"，推荐项=推荐），"分类"列没有独立信息量，删掉省 ~56px；版本列因要显示 `v0.48.0 [预估兼容]` 这类长文本，从 width=54 **加到 160**。改动要点：`search_tree` 的 `columns` 从 5 列缩到 `("source","version","description")`（+ #0 名称），**同步改 `show_search_results` 的 `values` 元组（去第一个 category 值，空结果 `values=(default_source,"","")`）**，并把 `search_item_urls` 里 `category` 改成 `plugin.get("category","")` 取值（否则报未定义变量）。已安装面板 `#0` 名称列 240→210 腾位。`ttk.Treeview` 改 columns 后插入的 values 列数必须在定义时同步对齐，漏一处就错位。**窗口宽度的取舍（2026-09-10 实测教训）**：插件管理窗口宽度直接决定左右面板够不够。把 `top.geometry("900x600")` 加宽到 **`1160x680`**（与主启动器 `1160x780` 同宽）、`minsize` 提到 `1000x580`——**只在窄窗口里调 Panedwindow 权重很难把右侧撑宽**（窄窗口下权重对额外空间分配有限，用户试 2:5 反而更挤、1:1 才合理），根源是窗口本身太窄。宽窗口下左右权重回到 1:2 即可让右侧充足。
 
 - 涉及图标/托盘/单实例的通用经验可另参考 `python-tkinter-desktop-dev` Skill。
 
