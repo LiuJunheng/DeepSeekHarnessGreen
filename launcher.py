@@ -328,6 +328,9 @@ RECOMMENDED_PLUGINS = [
     {"name": "dsh-plugin-hub", "category": "商店", "source": "github", "version": "latest",
      "spec": "github:dshplugin/dsh-plugin-hub",
      "description": "DSH Plugin Hub 社区插件市场: 人工精选收录, 一键安装/升级/卸载, 内置「设置→插件市场」 (npm 名 dsh-plugin)"},
+    {"name": "dsh-usage-stats", "category": "统计", "source": "npm", "version": "latest",
+     "spec": "dsh-usage-stats",
+     "description": "WebUI 用量统计: 扫描会话日志按模型汇总 token 用量与费用估算, 消息行常驻显示本次 token (价格表可编辑)"},
 ]
 
 # ---------------------------------------------------------------------------
@@ -7606,8 +7609,8 @@ def run_gui():
             item_spec = search_item_urls.get(selection[0], {}).get("spec", "")
             if item_spec:
                 return item_spec, package_name
-            # 搜索来源: 依来源列判断 (位于 values 第 1 项, 前面是分类列), GitHub 用仓库形式, 其余按 npm 包名
-            item_source = search_tree.item(selection[0], "values")[1]
+            # 搜索来源: 依来源列判断 (values 首项即 source; 分类列已去掉, 勿用 [1]) (2026-09-10)
+            item_source = search_tree.item(selection[0], "values")[0]
             if item_source == "github":
                 return "github:%s" % package_name, package_name
             return package_name, package_name
@@ -7787,7 +7790,8 @@ def run_gui():
                 summary_text = "\n".join(summary_parts) if summary_parts else "(没有需要移除的插件)"
                 root.after(0, lambda: (refresh_installed(),
                                        messagebox.showinfo(i18n.t('plugin.remove_title'), summary_text, parent=top),
-                                       plugin_status.set("移除完成: %s" % summary_text.split("\n")[0])))
+                                       plugin_status.set("移除完成: %s" % summary_text.split("\n")[0]),
+                                       set_plugin_busy(False)))  # 复用开关: 结束后必须恢复正常按钮, 否则一直禁用
             threading.Thread(target=worker, daemon=True).start()
 
         def on_toggle(enable):
@@ -7934,12 +7938,13 @@ def run_gui():
 
         search_buttons = ttk.Frame(search_frame)
         search_buttons.pack(fill="x", padx=6, pady=(0, 6))
-        search_btn = ttk.Button(search_buttons, text=i18n.t('plugin.search_btn'), command=do_search)
-        _i18n_widgets.append((search_btn, 'text', 'plugin.search_btn'))
-        search_btn.pack(side="left")
+        # 按钮顺序: 「加载推荐」在前,「搜索npm插件」在后 (2026-09-10 用户要求对调)
         load_rec_btn = ttk.Button(search_buttons, text=i18n.t('plugin.load_recommended'), command=do_load_recommended)
         _i18n_widgets.append((load_rec_btn, 'text', 'plugin.load_recommended'))
-        load_rec_btn.pack(side="left", padx=(6, 0))
+        load_rec_btn.pack(side="left")
+        search_btn = ttk.Button(search_buttons, text=i18n.t('plugin.search_btn'), command=do_search)
+        _i18n_widgets.append((search_btn, 'text', 'plugin.search_btn'))
+        search_btn.pack(side="left", padx=(6, 0))
         load_github_btn = ttk.Button(search_buttons, text=i18n.t('plugin.load_github_hot'), command=do_load_github)
         _i18n_widgets.append((load_github_btn, 'text', 'plugin.load_github_hot'))
         load_github_btn.pack(side="left", padx=(6, 0))

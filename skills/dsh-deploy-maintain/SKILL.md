@@ -146,6 +146,8 @@ updated: "2026-09-10"
 
 - **GUI 线程安全**：耗时操作在 `threading.Thread`，结果 `root.after(0, ...)` 回主线程；忙时禁用按钮防重入。`ttk.Panedwindow` 必须 `.add(child, weight=N)` 显式注册（否则空白）。
 
+- **【高发】后台任务结束后忘了恢复忙碌按钮 = 界面死在半禁用**：凡 `set_plugin_busy(True)` 的地方后效回调里**必须**补 `set_plugin_busy(False)`。搜索/加载用 `try/finally` 兜底；而 `on_remove` 的 worker 原本只在 `root.after` 里做了刷新+弹窗+状态栏、**漏了恢复按钮** → 移除成功后所有按钮持续禁用（`plugin_busy[0]` 恒 True）。修法：后效 lambda 元组末尾追加 `set_plugin_busy(False)`。对照找同类遗漏：grep 所有 `set_plugin_busy(True)`，逐一确认有对应的 `False` 且在 `finally` 或回调末尾可达。
+
 - **"包装上了但没生效"根因：pnpm 非 0 退出码跳过官方 reconcile**：pnpm 遇到 `ERR_PNPM_IGNORED_BUILDS`（含原生模块/构建脚本依赖：ssh2/node-pty/cloudflared 等）以退出码 1 结束（包已写 dependencies），而官方 reconcile（把声明 `dsh.bundle.patch` 的包写进 `dsh.profile.bundles`）**只在 exitCode===0 运行** → 被打断 → 编排层没有它。**排查顺序**：① 看 `dsh.profile.bundles` 是否含该包（不是 dependencies/node\_modules）；② 设 DSH\_HOME 后 dump-config 看插件层；③ 有则重装/手动 reconcile。
 
 - **启动器兜底** **`reconcile_bundles()`**：任何插件安装/移除/启停后扫描 dependencies 把声明 bundle 且未停用的写进 bundles，清除不再声明的；**内置 bundle（dsh-base/dsh-web-app）不在 dependencies 里，永不触碰**。`run_plugin_command` 每次命令后兜底。
@@ -226,7 +228,7 @@ updated: "2026-09-10"
 
 - **语言提示**：`.bat` 保持 ASCII 全英文；desktop-shell 相关提示语用英文（中文乱码）。
 
-- **插件管理搜索列表去"分类"列 + 版本列加宽（2026-09-10）**：搜索源全是 npm（来源=github 的是"加载 GitHub 热门"，推荐项=推荐），"分类"列没有独立信息量，删掉省 ~56px；版本列因要显示 `v0.48.0 [预估兼容]` 这类长文本，从 width=54 **加到 160**。改动要点：`search_tree` 的 `columns` 从 5 列缩到 `("source","version","description")`（+ #0 名称），**同步改 `show_search_results` 的 `values` 元组（去第一个 category 值，空结果 `values=(default_source,"","")`）**，并把 `search_item_urls` 里 `category` 改成 `plugin.get("category","")` 取值（否则报未定义变量）。已安装面板 `#0` 名称列 240→210 腾位。`ttk.Treeview` 改 columns 后插入的 values 列数必须在定义时同步对齐，漏一处就错位。**窗口宽度的取舍（2026-09-10 实测教训）**：插件管理窗口宽度直接决定左右面板够不够。把 `top.geometry("900x600")` 加宽到 **`1160x680`**（与主启动器 `1160x780` 同宽）、`minsize` 提到 `1000x580`——**只在窄窗口里调 Panedwindow 权重很难把右侧撑宽**（窄窗口下权重对额外空间分配有限，用户试 2:5 反而更挤、1:1 才合理），根源是窗口本身太窄。宽窗口下左右权重回到 1:2 即可让右侧充足。
+- **插件管理搜索列表去"分类"列 + 版本列加宽（2026-09-10）**：搜索源全是 npm（来源=github 的是"加载 GitHub 热门"，推荐项=推荐），"分类"列没有独立信息量，删掉省 ~56px；版本列因要显示 `v0.48.0 [预估兼容]` 这类长文本，从 width=54 **加到 160**。改动要点：`search_tree` 的 `columns` 从 5 列缩到 `("source","version","description")`（+ #0 名称），**同步改 `show_search_results` 的 `values` 元组（去第一个 category 值，空结果 `values=(default_source,"","")`）**，并把 `search_item_urls` 里 `category` 改成 `plugin.get("category","")` 取值（否则报未定义变量）。已安装面板 `#0` 名称列 240→210 腾位。`ttk.Treeview` 改 columns 后插入的 values 列数必须在定义时同步对齐，漏一处就错位。**去掉列后必须全局检查所有 `values[i]` 下标读取——这是最易漏的连带坑**：`resolve_selected_spec` 里 `search_tree.item(sel,"values")[1]` 原本取来源列，分类列删掉后 `values` 变成 `(source,version,description)`，下标 [1] 读到的变成版本号 → github 搜索结果会被误判成按 npm 包名安装。改 `[0]`。**窗口宽度的取舍（2026-09-10 实测教训）**：插件管理窗口宽度直接决定左右面板够不够。把 `top.geometry("900x600")` 加宽到 **`1160x680`**（与主启动器 `1160x780` 同宽）、`minsize` 提到 `1000x580`——**只在窄窗口里调 Panedwindow 权重很难把右侧撑宽**（窄窗口下权重对额外空间分配有限，用户试 2:5 反而更挤、1:1 才合理），根源是窗口本身太窄。宽窗口下左右权重回到 1:2 即可让右侧充足。
 
 - 涉及图标/托盘/单实例的通用经验可另参考 `python-tkinter-desktop-dev` Skill。
 
