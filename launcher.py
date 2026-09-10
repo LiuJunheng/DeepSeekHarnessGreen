@@ -5848,10 +5848,18 @@ class SysTrayIcon:
         # 标志位 (2026-08-16): WndProc 回调里只允许做纯 Python 赋值,
         # 绝不能直接调用 Tk 的 after/withdraw 等 — 那会让 Tcl 在消息派发中途
         # 被重入, 触发 "PyEval_RestoreThread: GIL is released" 崩溃。
-        # 由 run_gui 里的 poll_tray() 定时轮询这两个标志, 再在正常的
+        # 由 run_gui 里的 poll_tray() 定时轮询这些标志, 再在正常的
         # Tk 事件上下文里执行最小化/恢复。
         self._minimize_pending = False
         self._restore_pending = False
+        # 右键菜单待办 (2026-09-10): WndProc 里只记录鼠标屏幕坐标 + 置标志,
+        # 由 poll() 在正常的 Tk 事件上下文里弹出菜单。
+        self._menu_pending = False
+        self._menu_x = 0
+        self._menu_y = 0
+        # 右键菜单构建器 (延迟注入): run_gui 里 on_start/on_stop/on_plugin_manager/
+        # on_close 都定义在托盘创建之后, 故不能构造时引用, 只能晚注入 builder。
+        self._menu_builder = None
         # 关键避坑 (2026-08-16): winfo_id() 返回的是 Tk 内部子窗口 HWND,
         # 不是真实顶层窗口。WM_SYSCOMMAND / 托盘回调消息都发到顶层窗口,
         # 若把钩子挂在子窗口上, 最小化消息永远收不到 (窗口会正常最小化到任务栏)。
@@ -5956,6 +5964,12 @@ class SysTrayIcon:
             self._nid = None
         self._icon_added = False
 
+    def set_menu_builder(self, builder):
+        """延迟注入右键菜单构建器 (2026-09-10):
+        builder 是 () -> tk.Menu 或 None 的可调用对象, 由 run_gui 在 on_close 等
+        闭包全部定义后注入, 因为托盘构造时这些闭包还不存在。"""
+        self._menu_builder = builder
+
     def poll(self):
         """由 run_gui 的 poll_tray_loop() 定时轮询 (2026-08-16):
         处理 WndProc 里置位的待办标志, 在正常的 Tk 事件上下文里执行
@@ -5969,6 +5983,17 @@ class SysTrayIcon:
             self._restore_pending = False
             if self.on_click_restore:
                 self.on_click_restore()
+        # 右键菜单待办 (2026-09-10): 在正常 Tk 上下文里弹出菜单。
+        if self._menu_pending:
+            self._menu_pending = False
+            if self._menu_builder:
+                menu = self._menu_builder()
+                if menu is not None:
+                    menu.tk_popup(self._menu_x, self._menu_y, 0)
+                    try:
+                        menu.grab_release()
+                    except Exception:
+                        pass   # 弹窗异常不阻断轮询
 
     def dispose(self):
         """退出前调用: 移除托盘图标 + 恢复原始窗口过程, 避免窗口销毁后回调悬空"""
@@ -6002,10 +6027,18 @@ class SysTrayIcon:
                     return 0
                 # 拦截托盘图标回调消息
                 if msg == self.WM_TRAY_CALLBACK:
-                    if lparam == 0x0202:        # WM_LBUTTONUP → 左键单击恢复
+                    if lparam == 0x0202:        # WM_LBUTTONUP → 左键单击: 恢复界面窗口
+                        # (2026-09-10) 左键只置标志, 由 poll() 调用 on_click_restore,
+                        # 而 restore_from_tray 已是"优先呼出运行中的桌面/网页窗口"。
                         self._restore_pending = True
-                    elif lparam == 0x0205:      # WM_RBUTTONUP → 右键单击恢复
-                        self._restore_pending = True
+                    elif lparam == 0x0205:      # WM_RBUTTONUP → 右键单击: 弹出上下文菜单
+                        # 记录鼠标屏幕坐标, 由 poll() 在正常 Tk 上下文里弹出的菜单定位。
+                        # GetCursorPos 是纯 ctypes Win32 调用, 不碰 Tk, 在 WndProc 里安全。
+                        cursor_point = ctypes.wintypes.POINT()
+                        ctypes.windll.user32.GetCursorPos(ctypes.byref(cursor_point))
+                        self._menu_x = cursor_point.x
+                        self._menu_y = cursor_point.y
+                        self._menu_pending = True   # 不再置 _restore_pending
                     return 0
             except Exception:
                 pass   # 回调异常一律放行给旧窗口过程, 不吞消息
@@ -6381,7 +6414,21 @@ def run_gui():
         root.iconify()    # 最小化到任务栏, 不隐藏窗口 (任务栏图标不消失)
 
     def restore_from_tray():
-        """点击托盘图标时: 恢复显示主窗口 (托盘图标保持常驻, 不删除)"""
+        """托盘左键(2026-09-10): 优先呼出运行中的桌面/网页窗口; 否则恢复启动器主窗口"""
+        try:
+            if app._desktop_shell_alive():
+                if app._focus_desktop_window():
+                    return   # 已聚焦桌面窗口
+                app.open_ui(force=True, method="desktop")   # 进程在但窗口丢失 → 重新打开
+                return
+            if app.ui_is_open():
+                url = app._web_auth_url("http://127.0.0.1:%d"
+                                        % int(app.config.get("dsh_port", 3080)))
+                webbrowser.open(url)   # 同地址自动复用/聚焦已开标签
+                return
+        except Exception:
+            pass
+        # 无界面窗口在运行 → 恢复启动器主窗口
         root.deiconify()
         root.lift()
         root.focus_force()
@@ -6396,6 +6443,9 @@ def run_gui():
             return None
 
         def poll(self):
+            return None
+
+        def set_menu_builder(self, builder):
             return None
 
         def dispose(self):
@@ -8186,6 +8236,33 @@ def run_gui():
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_close)
+
+    # ---------- 托盘右键菜单 (2026-09-10) ----------
+    # 懒构建: 每次右键时重建, 以便反映最新的服务/界面状态 (如"启动/停止服务"
+    # 的可用性)。因 on_start/on_stop/on_plugin_manager/on_close 均已定义,
+    # 在此注入给托盘; 同时闭包在正常 Tk 上下文通过 poll() 触发, 无 GIL 问题。
+    def build_tray_menu():
+        """托盘右键菜单构建器: 每次右键重建, 反映服务/界面当前状态"""
+        menu = tk.Menu(root, tearoff=0)
+        server_running = app.is_server_running()
+        menu.add_command(label=i18n.t('tray.menu.start_service'),
+                         command=on_start,
+                         state="disabled" if server_running else "normal")
+        menu.add_command(label=i18n.t('tray.menu.stop_service'),
+                         command=on_stop,
+                         state="normal" if server_running else "disabled")
+        menu.add_separator()
+        menu.add_command(label=i18n.t('tray.menu.open_desktop'),
+                         command=lambda: app.open_ui(force=True, method="desktop"))
+        menu.add_command(label=i18n.t('tray.menu.open_web'),
+                         command=lambda: app.open_ui(force=True, method="browser"))
+        menu.add_separator()
+        menu.add_command(label=i18n.t('tray.menu.plugin_manager'), command=on_plugin_manager)
+        menu.add_command(label=i18n.t('tray.menu.restore_launcher'), command=restore_from_tray)
+        menu.add_command(label=i18n.t('tray.menu.exit'), command=lambda: on_close(confirm=False))
+        return menu
+
+    tray_icon.set_menu_builder(build_tray_menu)
 
     # ---------- 托盘标志轮询 ----------
     def poll_tray_loop():

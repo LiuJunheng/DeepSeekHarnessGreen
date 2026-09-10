@@ -10,7 +10,16 @@
   "tray": {
     "tooltip": "DeepSeek Harness Green Edition Launcher",
     "log_initialized": "Tray icon is now persistent. Use [Exit] or click X to close the app properly.",
-    "log_init_failed": "System tray initialization failed, falling back to normal minimize: {error}"
+    "log_init_failed": "System tray initialization failed, falling back to normal minimize: {error}",
+    "menu": {
+      "start_service": "Start service",
+      "stop_service": "Stop service",
+      "open_desktop": "Open desktop window",
+      "open_web": "Open web window",
+      "plugin_manager": "Plugins",
+      "restore_launcher": "Show launcher",
+      "exit": "Exit"
+    }
   },
   "status": {
     "ready": "Ready",

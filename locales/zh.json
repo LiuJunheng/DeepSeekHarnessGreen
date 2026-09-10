@@ -10,7 +10,16 @@
   "tray": {
     "tooltip": "DeepSeek Harness 绿色整合版启动器",
     "log_initialized": "托盘图标已常驻, 关闭窗口时请点 [退出] 或点 X 确认。",
-    "log_init_failed": "系统托盘初始化失败, 已退回普通最小化: {error}"
+    "log_init_failed": "系统托盘初始化失败, 已退回普通最小化: {error}",
+    "menu": {
+      "start_service": "启动服务",
+      "stop_service": "停止服务",
+      "open_desktop": "打开桌面窗口",
+      "open_web": "打开网页窗口",
+      "plugin_manager": "插件管理",
+      "restore_launcher": "显示启动器",
+      "exit": "退出"
+    }
   },
   "status": {
     "ready": "就绪",
