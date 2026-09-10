@@ -264,6 +264,7 @@
     "column_category": "Category",
     "column_source": "Source",
     "column_version": "Version",
+    "column_compat": "Compat",
     "column_desc": "Description",
     "search_fail": "Search failed",
     "load_fail": "Load failed",

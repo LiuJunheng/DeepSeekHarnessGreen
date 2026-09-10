@@ -283,7 +283,7 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # 发布流程: 打 tag v{GREEN_VERSION} + Release 资产 DSH-GreenPortable-v{tag}.zip
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
-GREEN_VERSION = "1.0.36"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
+GREEN_VERSION = "1.0.37"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
 GREEN_VERSION_DATE = "2026年09月10日"               # 绿色版版本日期 (release_upload.py 会按构建当天回写)
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
@@ -322,8 +322,9 @@ GREEN_HOME_PAGE_URL = "https://dsh-green.website/"  # 发布主页 (独立站点
 #   version 统一填显示值 "latest", 表示安装时自动取最新版
 # 提示: 第三方插件即以本机身份运行, 装前请先看源码
 RECOMMENDED_PLUGINS = [
-    {"name": "dsh-market", "category": "商店", "source": "github", "version": "latest",
-     "spec": "github:dsh-market/dsh-market",
+    # 推荐项优先给 dsh market 的 npm 版 (包名 dshmarket), 装起来更快更稳 (2026-09-10)
+    {"name": "dsh-market", "category": "商店", "source": "npm", "version": "latest",
+     "spec": "dshmarket",
      "description": "可视化插件市场(应用商店): 浏览 / 搜索 / 按已装项推荐 / 一键安装 (建议第一个装)"},
     {"name": "dsh-plugin-hub", "category": "商店", "source": "github", "version": "latest",
      "spec": "github:dshplugin/dsh-plugin-hub",
@@ -440,7 +441,9 @@ def _before_major_bump(ver, target):
 
 def _classify_core_compat(manifest, host_versions):
     """根据插件 manifest 声明的 @deepseek-ai/* 依赖区间与本地核心子包版本, 返回兼容状态
-    status: "ok" / "warn" / "no_core_dep" / "unknown"; detail: 人类可读的差异说明"""
+    status: "ok" / "warn" / "unknown"; detail: 人类可读的差异说明
+    无核心依赖(=empty) 也判为 "ok": 插件不依赖任何 @deepseek-ai/* 核心包,
+    天然不受官方核心版本变化影响, 兼容性更稳, 语义上等同"预估兼容" (2026-09-10)"""
     if manifest is None or not isinstance(manifest, dict):
         return {"status": "unknown", "detail": ""}
     declared = dict(manifest.get("dependencies") or {})
@@ -452,7 +455,8 @@ def _classify_core_compat(manifest, host_versions):
         if key_name.startswith("@deepseek-ai/") and value_range
     }
     if not core_declarations:
-        return {"status": "no_core_dep", "detail": ""}
+        # 无核心依赖: 与核心无版本冲突面, 等同 null(空) 安全, 判为 ok/预估兼容
+        return {"status": "ok", "detail": "无核心依赖, 不受核心版本变化影响"}
     mismatched = []
     uncheckable = []
     checked_count = 0
@@ -3878,6 +3882,24 @@ class Launcher:
             except Exception as error:
                 self.log("读取 profile 插件清单失败: %s" % error)
         return dependencies
+
+    def classify_installed_plugin_compat(self, package_name, host_versions, profile=DEFAULT_PROFILE):
+        """读取已安装插件在本地产物里的 package.json, best-effort 判定其与当前核心的兼容状态。
+        纯本地读取、无网络; 返回 _classify_core_compat 的 result dict (status/detail)。
+        作用域包 @deepseek-ai/... 的产物在 node_modules/@deepseek-ai/<子名>/package.json,
+        其余在 node_modules/<包名>/package.json; 找不到产物或读取失败视为 unknown (2026-09-10)。"""
+        # 作用域包 @scope/name 的目录形态是 node_modules/@scope/name
+        manifest_path = os.path.join(
+            DSH_HOME_DIR, "profiles", profile, "node_modules", *(package_name.split("/")))
+        manifest_path = os.path.join(manifest_path, "package.json")
+        manifest = None
+        if os.path.isfile(manifest_path):
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as file_handle:
+                    manifest = json.load(file_handle)
+            except Exception as error:
+                self.log("读取已安装插件产物 manifest 失败 (%s): %s" % (package_name, error))
+        return _classify_core_compat(manifest, host_versions)
 
     @staticmethod
     def _is_dsh_plugin_package(package):
@@ -7462,19 +7484,28 @@ def run_gui():
                 plugin_status.set("就绪")
 
         def refresh_installed():
-            """读取已安装插件并刷新左侧列表"""
+            """读取已安装插件并刷新左侧列表 (兼容状态用本地产物判定, 无网络)"""
             installed_tree.delete(*installed_tree.get_children())
             installed_item_urls.clear()
             dependencies = app.list_installed_plugins(profile)
+            compat_label = {
+                "ok": i18n.t('plugin.compat_ok'),
+                "warn": i18n.t('plugin.compat_warn'),
+                "no_core_dep": i18n.t('plugin.compat_nocore'),
+                "unknown": i18n.t('plugin.compat_unknown'),
+            }
             if not dependencies:
                 installed_tree.insert("", "end", text=i18n.t('plugin.no_installed'), values=("", "", ""))
                 return
+            host_versions = app._host_core_versions()
             for package_name, version in sorted(dependencies.items()):
                 state = app.get_plugin_state(package_name, profile)
                 state_label = {"enabled": "启用", "disabled": "停用",
                                "plain": "—", "missing": "—"}.get(state, "—")
+                result = app.classify_installed_plugin_compat(package_name, host_versions, profile)
+                compat_text = compat_label.get(result["status"], compat_label["unknown"])
                 item_id = installed_tree.insert("", "end", text=package_name,
-                                                values=(version, state_label))
+                                                values=(version, compat_text, state_label))
                 # 记录每个条目对应的网址, 供右键菜单打开页面使用
                 installed_item_urls[item_id] = package_name
 
@@ -7546,11 +7577,48 @@ def run_gui():
             threading.Thread(target=worker, daemon=True).start()
 
         def do_load_recommended():
-            """加载内置推荐插件列表 (本地内置, 无需网络搜索, 即使断网也能看到可装项)"""
+            """加载内置推荐插件列表。npm 源推荐项后台拉真实版本 + 兼容状态 (与搜索结果一致);
+            github 源无法本地比对核心版本, 版本列显示"不明" (2026-09-10)"""
             if plugin_busy[0]:
                 return
-            show_search_results(list(RECOMMENDED_PLUGINS), "推荐")
-            plugin_status.set("已加载 %d 个社区精选推荐插件" % len(RECOMMENDED_PLUGINS))
+            items = [dict(item) for item in RECOMMENDED_PLUGINS]
+            set_plugin_busy(True)
+            plugin_status.set("正在加载推荐插件 ...")
+            def worker():
+                try:
+                    host_versions = app._host_core_versions()
+                    unknown_text = i18n.t('plugin.compat_unknown')
+                    status_label = {
+                        "ok": i18n.t('plugin.compat_ok'),
+                        "warn": i18n.t('plugin.compat_warn'),
+                        "unknown": unknown_text,
+                    }
+                    for item in items:
+                        if item.get("source") == "npm":
+                            # npm 源: 用真实的 npm 包名拉版本 + 兼容 (spec 即包名, 可能与显示名不同, 如 dshmarket)
+                            package_name = item.get("spec") or item.get("name")
+                            manifest = app.fetch_plugin_manifest(package_name)
+                            if manifest is not None:
+                                result = _classify_core_compat(manifest, host_versions)
+                                label = status_label.get(result["status"], unknown_text)
+                                base_version = str(manifest.get("version") or "").lstrip("v")
+                                version_text = ("v%s" % base_version) if base_version else "latest"
+                                item["version"] = "%s [%s]" % (version_text, label)
+                                if result.get("detail"):
+                                    item["_compat_detail"] = result["detail"]
+                            else:
+                                item["version"] = unknown_text
+                        else:
+                            # github 源: 无法本地比对核心版本, 显示"不明"
+                            item["version"] = unknown_text
+                    root.after(0, lambda: (show_search_results(items, "推荐"),
+                                           plugin_status.set("已加载 %d 个社区精选推荐插件" % len(items))))
+                except Exception as error:
+                    root.after(0, lambda: (show_search_results(items, "推荐"),
+                                           plugin_status.set("已加载 %d 个 (兼容解析失败仍显示): %s" % (len(items), error))))
+                finally:
+                    root.after(0, lambda: set_plugin_busy(False))
+            threading.Thread(target=worker, daemon=True).start()
 
         def do_open_github_topic():
             """在浏览器打开 GitHub 官方话题页 (完整入口, 可翻页浏览更多)"""
@@ -7879,14 +7947,16 @@ def run_gui():
         installed_body = ttk.Frame(installed_frame)
         installed_body.pack(fill="both", expand=True, padx=6, pady=6)
         # selectmode="extended": 允许多选 (Ctrl+点击 逐个选, Shift+点击 连选)
-        installed_tree = ttk.Treeview(installed_body, columns=("version", "state"),
+        installed_tree = ttk.Treeview(installed_body, columns=("version", "compat", "state"),
                                       show="tree headings", selectmode="extended")
         installed_tree.heading("#0", text=i18n.t('plugin.column_name'))
         installed_tree.heading("version", text=i18n.t('plugin.column_version'))
+        installed_tree.heading("compat", text=i18n.t('plugin.column_compat'))
         installed_tree.heading("state", text=i18n.t('plugin.column_status'))
-        # 左侧已安装面板收窄 (配合右侧权重加大, 2026-09-10): 名称列相应缩小, 长名超宽自动省略号
+        # 已安装列表增加"兼容"列 (本地产物判定, 无网络, 2026-09-10)
         installed_tree.column("#0", width=120)
-        installed_tree.column("version", width=74, anchor="center")
+        installed_tree.column("version", width=66, anchor="center")
+        installed_tree.column("compat", width=88, anchor="center")
         installed_tree.column("state", width=52, anchor="center")
         installed_scrollbar = ttk.Scrollbar(installed_body, orient="vertical",
                                             command=installed_tree.yview)

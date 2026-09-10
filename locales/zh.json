@@ -264,6 +264,7 @@
     "column_category": "分类",
     "column_source": "来源",
     "column_version": "版本",
+    "column_compat": "兼容",
     "column_desc": "功能描述",
     "search_fail": "搜索失败",
     "load_fail": "加载失败",
