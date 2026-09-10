@@ -1,0 +1,522 @@
+{
+  "meta": {
+    "seedGeneratedAt": "2026-09-10",
+    "totalReleases": 37,
+    "repo": "LiuJunheng/DeepSeekHarnessGreen"
+  },
+  "releases": [
+    {
+      "tag_name": "v1.0.37",
+      "name": "v1.0.37 — 插件管理：核心兼容判定 + 界面显示优化",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.37",
+      "published_at": "2026-09-10T08:59:33Z",
+      "body": "[中文](#cn-1.0.37) | [English](#en-1.0.37)\n\n<a id=\"cn-1.0.37\"></a>\n\n\n## 新增功能\n\n- 插件管理「搜索」改为纯 npm 来源，并排除 `@deepseek-ai/*` 官方内置插件（只列第三方可装项）\n- npm 搜索结果为前 30 条补充「核心兼容」判定：预估兼容 / 可能不兼容 / 不明\n- 已安装插件列表新增「兼容」列（读本地产物判定，无需联网）\n- 无核心依赖的插件视为「预估兼容」（不依赖官方核心包，不受核心版本变化影响）\n- 推荐列表：npm 源项显示真实版本号 + 兼容状态；GitHub 源项显示「不明」\n- 固定作用域包 `@xxx/yyy` 拉取 manifest 的 404 问题\n\n## 修复\n\n- 移除插件后按钮持续禁用的卡死问题（补回忙碌状态复位）\n- 去除搜索结果「分类」列后，来源列读取错位导致 GitHub 插件误装为 npm 的问题\n- 推荐列表支持 npm 版 dsh market（包名 dshmarket），安装更快更稳\n\n## 界面调整\n\n- 插件管理窗口加宽至与主启动器同宽（1160），右侧搜索结果列更宽裕\n- 搜索结果去掉「分类」列，版本列加宽以容纳兼容状态文本\n- 按钮顺序：「加载推荐」在前，「搜索npm插件」在后\n\n## 版本更新\n\n- GREEN_VERSION: 1.0.36 → 1.0.37\n\n## 升级建议\n\n- 绿色版覆盖安装即可\n\n\n<a id=\"en-1.0.37\"></a>\n\n\n## New Features\n\n- Plugin management \"Search\" now uses pure npm source and excludes `@deepseek-ai/*` built-in official plugins (only third-party installs are listed)\n- npm search results (first 30) are tagged with a \"core compatibility\" estimate: Estimated Compatible / May Be Incompatible / Unknown\n- Installed plugins list gains a \"Compat\" column (evaluated from the local install, no network needed)\n- Plugins with no core dependency are treated as \"Estimated Compatible\" (not bound to official core version changes)\n- Recommended list: npm-sourced items show the real version + compatibility status; GitHub-sourced items show \"Unknown\"\n- Fixed 404 when fetching manifests for scoped packages `@xxx/yyy`\n\n## Bug Fixes\n\n- Fixed buttons staying disabled after removing a plugin (busy state not reset)\n- Fixed source-column index regression after removing the \"Category\" column, which caused GitHub plugins to be misinstalled as npm\n- Recommended list prefers the npm build of dsh market (package `dshmarket`), faster and more reliable to install\n\n## UI Adjustments\n\n- Plugin manager window widened to match the main launcher width (1160), giving the search results column more room\n- Removed the \"Category\" column from search results; widened the version column to fit compatibility tags\n- Button order: \"Load Recommended\" first, \"Search npm Plugins\" after\n\n## Version Bump\n\n- GREEN_VERSION: 1.0.36 → 1.0.37\n\n## Upgrade Notes\n\n- Green edition: overwrite install is sufficient\n",
+      "assets": [
+        {
+          "name": "DSH-GreenPortable-v1.0.37.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.37/DSH-GreenPortable-v1.0.37.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.36",
+      "name": "v1.0.36 — 用量统计价格表跟进 DeepSeek 9·10 调价 + 会话格式 v3 适配",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.36",
+      "published_at": "2026-09-10T06:16:06Z",
+      "body": "[中文](#cn-1.0.36) | [English](#en-1.0.36)\n\n<a id=\"cn-1.0.36\"></a>\n\n\n## 重要更新\n\n### 用量统计：价格表跟进官方最新调价与模型改名\n- DeepSeek 官方自 2026-09-10 12:00（北京时间）起下调 Flash 系列价格：输入缓存命中 0.10 → 0.04、未命中 3.0 → 2.0、输出 9.0 → 8.0（元 / 每百万 tokens，均为高峰时段价；空闲时段为半价）\n- 当前在售主力模型 id 是 `deepseek-flash`（= DeepSeek-V4.1-Flash，1M 上下文 / 384K 最大输出 / 支持图片）；旧的 `deepseek-v4-flash` 与 `deepseek-v4-flash-vision-exp` 已退役，请求仍受理但由 V4.1-Flash 服务、按 Flash 价计费\n- `deepseek-v4-pro` 自 2026-09-14 12:00（北京时间）起也整批路由到 V4.1-Flash 并按 Flash 价计费\n- 修复费用估算偏高：旧价格表的键名是已退役的 id，真实会话使用的 `deepseek-flash` 查不到单价、一直落到兜底价（比新价高：未命中 +50%、命中 +150%、输出 +12.5%）\n- 价格表存储键升级（`prices.v3` → `prices.v4`），确保浏览器里缓存下来的旧价格表不会盖住新默认值；「设置 → 用量统计」内仍可手工改价并「恢复默认」\n\n### 会话回退 / 会话导入：适配 dsh 0.1.5 会话格式 v3\n- 会话回退（dsh-session-rewind）、会话导入（dsh-session-import）、用量统计（dsh-usage-stats）统一适配新版 dsh 的 v3 会话存储格式，并对旧格式保持跨版本容错\n\n### 启动器：dsh 更新通道增加镜像滞后兜底\n- 国内镜像版本落后于官方时自动回退官方源，官方源失败自动重试，避免\"镜像还没同步就更新不了\"\n\n## 修复\n- 用量统计费用估算取不到当前模型单价而系统性偏高（见上）\n- 发布页 SEO：hreflang 对齐 ISO 3166-1 Alpha 2（zh-CN / zh-TW）、各语言子目录 robots.txt 指向各自 sitemap、新增 sitemap.txt 纯文本兜底\n- 更新日志页面纯文本行被多余 `<code>` 包裹\n\n## 版本更新\n- GREEN_VERSION: 1.0.35 → 1.0.36\n\n## 升级建议\n- 绿色版覆盖安装即可；覆盖后到「设置 → 用量统计」确认价格表已是新版（默认即最新，无需手动修改）\n\n\n<a id=\"en-1.0.36\"></a>\n\n\n## Highlights\n\n### Usage stats: price table updated for the latest official pricing and model rename\n- DeepSeek cut Flash-series prices effective 2026-09-10 12:00 (Beijing time): cache-hit input 0.10 → 0.04, cache-miss input 3.0 → 2.0, output 9.0 → 8.0 (CNY per 1M tokens, all peak-hour rates; off-peak is half)\n- The current flagship model id is `deepseek-flash` (= DeepSeek-V4.1-Flash, 1M context / 384K max output / vision capable); the legacy ids `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` are retired — requests are still accepted but served by V4.1-Flash and billed at the Flash price\n- From 2026-09-14 12:00 (Beijing time), `deepseek-v4-pro` is also routed entirely to V4.1-Flash and billed at the Flash price\n- Fixed systematically overestimated cost: the old price table was keyed by retired ids, so the model actually used (`deepseek-flash`) never matched and silently fell back to the default row (higher than the new price: miss +50%, hit +150%, output +12.5%)\n- The price-table storage key is bumped (`prices.v3` → `prices.v4`) so a stale table cached in the browser can no longer shadow the new defaults; the table is still editable with a \"restore defaults\" button under Settings → Usage Stats\n\n### Session rewind / session import: adapted to dsh 0.1.5 session format v3\n- Session Rewind (dsh-session-rewind), Session Import (dsh-session-import) and Usage Stats now read the new v3 session storage format, while staying tolerant of the older formats\n\n### Launcher: mirror-lag fallback for the dsh update channel\n- When the domestic mirror lags behind the official release, the launcher now falls back to the official source and retries, so an unsynced mirror no longer blocks updates\n\n## Bug Fixes\n- Usage-stats cost estimate was systematically too high because the current model id had no price row\n- Site SEO: hreflang aligned to ISO 3166-1 Alpha 2 (zh-CN / zh-TW), each language subdirectory's robots.txt points to its own sitemap, and a plain-text sitemap.txt fallback was added\n- Changelog page wrapped plain-text lines in a redundant `<code>` tag\n\n## Version Bump\n- GREEN_VERSION: 1.0.35 → 1.0.36\n\n## Upgrade Notes\n- Green edition: overwrite install is sufficient. After overwriting, open Settings → Usage Stats to confirm the new price table is in place (defaults are already current; no manual edit needed)\n",
+      "assets": [
+        {
+          "name": "DSH-GreenPortable-v1.0.36.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.36/DSH-GreenPortable-v1.0.36.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.35",
+      "name": "v1.0.35 — 右键菜单全面统一 + 侧栏插入稳定化",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.35",
+      "published_at": "2026-09-08T17:02:46Z",
+      "body": "[中文](#cn-1.0.35) | [English](#en-1.0.35)\n\n<a id=\"cn-1.0.35\"></a>\n\n\n## 新增功能\n\n### 右键菜单功能与排序统一\n- 侧栏文件右键菜单与文件浏览器的右键菜单功能、排序完全对齐\n- 文件行菜单（6 项）：以官方 @ 引用插入 → 插入路径 → 插入内容 → 另存为 → 复制相对路径 → 复制绝对路径\n- 目录行菜单（3 项）：插入路径 → 复制相对路径 → 复制绝对路径\n\n### 文件浏览器新增\n- 另存为：调用宿主端新增 /download 路由取完整文件（单文件上限 32MB），优先原生「另存为」对话框，不支持时回退浏览器下载\n- 复制相对路径 / 复制绝对路径（原「复制路径」更名为「复制绝对路径」）\n\n### 侧栏插入能力补齐\n- 新增「插入路径到输入框」「插入内容到输入框」菜单项，与文件浏览器一致\n- 主页域名更新为独立站点 https://dsh-green.website/\n\n## 修复\n- 侧栏连续插入路径/内容时，偶发插入到文件预览器（而非会话输入框）的问题\n- 侧栏与文件浏览器右键菜单功能不一致\n\n## 技术架构\n- 侧栏插件独立注册官方 conversation.input.left slot 捕获输入机通道（inputActions/input），不再依赖文件浏览器注入的全局变量，两插件互不依赖\n- 插入走三级降级：inputActions.setDraft → 官方输入机 bail → DOM fallback\n\n## 版本更新\n- GREEN_VERSION: 1.0.34 → 1.0.35\n\n## 升级建议\n- 绿色版覆盖安装即可\n\n\n<a id=\"en-1.0.35\"></a>\n\n\n## New Features\n\n### Unified right-click menus (sidebar & file browser)\n- The sidebar file list and the file browser now share identical right-click menu actions and ordering\n- File row (6 items): official @ reference → insert path → insert content → save as → copy relative path → copy absolute path\n- Directory row (3 items): insert path → copy relative path → copy absolute path\n\n### File browser additions\n- Save As: new host /download route streams the full file (32MB per-file limit); uses the native \"Save As\" dialog when available, falls back to browser download\n- Copy Relative Path / Copy Absolute Path (the old \"Copy Path\" is renamed \"Copy Absolute Path\")\n\n### Sidebar insertion capabilities\n- Added \"Insert Path to Input\" and \"Insert Content to Input\" menu items, aligned with the file browser\n- Homepage URL updated to the standalone site https://dsh-green.website/\n\n## Bug Fixes\n- Fixed sidebar insertion occasionally landing in the file previewer instead of the conversation input after repeated inserts\n- Fixed menu inconsistency between sidebar and file browser\n\n## Technical Architecture\n- The sidebar plugin now registers the official conversation.input.left slot by itself to capture the input machinery (inputActions/input), no longer relying on globals injected by the file browser — the two plugins are fully independent\n- Insertion uses a 3-level fallback: inputActions.setDraft → official input bail → DOM fallback\n\n## Version Bump\n- GREEN_VERSION: 1.0.34 → 1.0.35\n\n## Upgrade Notes\n- Green edition: overwrite install is sufficient\n",
+      "assets": [
+        {
+          "name": "DSH-GreenPortable-v1.0.35.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.35/DSH-GreenPortable-v1.0.35.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.34",
+      "name": "v1.0.34 — 修复绿色版打包缺文件与桌面端启动崩溃",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.34",
+      "published_at": "2026-09-08T03:38:04Z",
+      "body": "[中文](#cn-1.0.34) | [English](#en-1.0.34)\n\n<a id=\"cn-1.0.34\"></a>\n\n\n# v1.0.34 — 修复绿色版打包缺文件与桌面端启动崩溃\n\n## 功能修复\n\n### 修复绿色版打包遗漏 i18n 相关文件\n- 上一次（1.0.33）打包清单遗漏了 `i18n.py` 与 `locales/` 多语言资源，导致部分用户更新后启动即报 `import i18n` 失败 / 中文界面异常\n- 本次已把 `i18n.py`、`locales/`（中英语言表）加回绿色版打包清单，并在打包脚本中加入 zip 根目录校验，确保关键文件不再遗漏\n\n### 修复桌面端 Windowed 模式启动崩溃\n- 修复打包为无控制台（windowed）的 exe 时，多语言模块在 `sys.stderr` 为空（None）情况下直接写入导致 `AttributeError: 'NoneType' object has no attribute 'write'` 崩溃的问题\n- 日志写入统一走安全兜底，无控制台环境下静默丢弃而非崩溃\n\n## 版本更新\n- GREEN_VERSION: 1.0.33 → 1.0.34\n\n## 升级建议\n- 本次为打包修复，旧版损坏的绿色版请用本新包覆盖安装；若此前已装坏 1.0.33，直接覆盖为新版即可恢复\n\n\n<a id=\"en-1.0.34\"></a>\n\n\n# v1.0.34 — Fix Missing Packaged Files & Desktop Startup Crash\n\n## Fixes\n\n### Fix green package missing i18n files\n- The previous release (1.0.33) omitted `i18n.py` and `locales/` (i18n language tables) from the package list, causing some users to crash on launch (`import i18n` failure) / abnormal Chinese UI after updating\n- `i18n.py` and `locales/` (cn/en locales) are now added back to the green package list, and a zip root-level verification is added to the packaging script so key files can no longer be missed\n\n### Fix desktop Windowed-mode startup crash\n- Fixed a crash in the i18n module when packaged as a console-less (windowed) exe: writing directly to `sys.stderr` when it is `None` caused `AttributeError: 'NoneType' object has no attribute 'write'`\n- Log writes now go through a safe fallback that silently discards output in console-less environments instead of crashing\n\n## Version Update\n- GREEN_VERSION: 1.0.33 → 1.0.34\n\n## Upgrade Note\n- This is a packaging fix. For users whose 1.0.33 package was broken, just overwrite with the new package; if you already installed a broken 1.0.33, overwrite with the new one to restore.\n",
+      "assets": [
+        {
+          "name": "DSH-GreenPortable-v1.0.34.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.34/DSH-GreenPortable-v1.0.34.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.33",
+      "name": "v1.0.33 Release",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.33",
+      "published_at": "2026-09-07T10:03:50Z",
+      "body": "[中文](#cn-1.0.33) | [English](#en-1.0.33)\n\n---\n\n<a id=\"cn-1.0.33\"></a>\n# v1.0.33 — 插件多语言与桌面体验升级\n\nv1.0.33 — 插件多语言与桌面体验升级\n\n## 新增功能\n\n### 插件设置页 Tab 名实时切换语言\n- 修复插件设置页（设置 → 各插件入口 Tab 名）语言切换不同步、滞后/错位的问题\n- 改为现场解析当前语言（读 `<html lang>`），与启动器/网页端官方语言完全同步，切换即生效\n- 涉及 7 个插件：祖宗记忆库 / Ollama / 规则 / 用量统计 / 清理归档 / 导入会话 / 会话回退\n\n### 桌面端 WebView2 数据持久化\n- 桌面窗口（独立 WebView2）改为关闭私密模式 + 指定固定 user data 目录\n- 观星插件播放清单等 localStorage 数据，桌面端重启后不再丢失（与网页端行为一致）\n\n### 面板窗口交互增强\n- 观星面板支持标题栏拖拽 + 右/下/右下三手柄拉伸\n- 观星面板 / 文件浏览弹窗自动避让右侧侧栏（侧栏展开时不遮挡）\n\n### 清理与规范化\n- 废弃 i18n bridge 的静态副本生成（避免启动生成 114KB 孤儿文件），改用心跳 server 与桌面壳注入双通道\n- 补全 5 个插件缺失的 displayName，插件清单显示更友好\n- 会话导入 Tab 标题统一格式（去掉图标符号）\n\n## 修复\n- 插件设置页 Tab 名在语言切换时中英文错位/滞后\n- 桌面端 localStorage 每次启动清空（WebView2 私密模式导致）\n- 侧栏展开时遮挡观星面板与文件浏览弹窗\n- 插件 i18n bridge 冗余静态副本资源浪费\n\n## 技术架构\n- 插件 settings.section 的 label 改为函数形式（官方同款 `() => t(key)`），配合宿主 locale 订阅实现实时刷新\n- WebView2 storage_path 固定到 `runtime/webview2_data`，实现桌面端持久化\n\n## 版本更新\n- GREEN_VERSION: 1.0.32 → 1.0.33\n\n## 升级建议\n- 绿色版覆盖安装即可；桌面窗口若需清缓存可删 `runtime/webview2_data` 后重开\n\n---\n<a id=\"en-1.0.33\"></a>\n# v1.0.33 — Plugin i18n & Desktop Experience Upgrade\n\nv1.0.33 — Plugin i18n & Desktop Experience Upgrade\n\n## New Features\n\n### Plugin Settings Tab Follows Language Switch Instantly\n- Fixed plugin settings tab (Settings → plugin entry labels) not syncing / lagging / swapped when switching language\n- Labels now resolve the current language live (reading `<html lang>`), fully in sync with the launcher / web UI official language, applies immediately\n- Touches 7 plugins: Memory / Ollama / Rules / Usage Stats / Archive Purge / Import Sessions / Session Rewind\n\n### Desktop WebView2 Persistence\n- Desktop window (standalone WebView2) now disables private mode and uses a fixed user-data directory\n- Star-gazing plugin playlists and other localStorage data survive desktop restarts (consistent with web UI)\n\n### Panel Window Interaction Enhancements\n- Star-gazing panel: draggable title bar + right / bottom / corner resize handles\n- Star-gazing panel & file-browser popup auto-avoid the right-side sidebar (not covered when expanded)\n\n### Cleanup & Normalization\n- Deprecated generation of i18n bridge static copy (avoids a 114KB orphan file at startup); now served via heartbeat server + desktop-shell injection dual channels\n- Filled missing displayName for 5 plugins; plugin inventory more readable\n- Unified session-import tab title format (removed emoji)\n\n## Bug Fixes\n- Plugin settings tab labels wrong / lagging after language switch\n- Desktop localStorage cleared on every launch (caused by WebView2 private mode)\n- Sidebar covering star-gazing panel & file-browser popup when expanded\n- Redundant i18n bridge static-copy resource waste\n\n## Technical Architecture\n- Plugin `settings.section` labels changed to function form (same as official `() => t(key)`), refreshed via host locale subscription\n- WebView2 `storage_path` fixed to `runtime/webview2_data` for desktop persistence\n\n## Version Bump\n- GREEN_VERSION: 1.0.32 -> 1.0.33\n\n## Upgrade Notes\n- Green edition: overwrite install is sufficient; to clear desktop cache, delete `runtime/webview2_data` and reopen the window\n",
+      "assets": [],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.31",
+      "name": "v1.0.31 — Chinese/English Bilingual Interface",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.31",
+      "published_at": "2026-09-06T10:27:50Z",
+      "body": "[中文](#cn-1.0.31) | [English](#en-1.0.31)\n\n<a id=\"cn-1.0.31\"></a>\n\n\n## 新增功能\n\n- 完整中英文双语界面：所有 GUI 控件、下拉框、弹窗、对话框都支持实时语言切换\n- 右上角语言切换按钮组：当前语言按钮亮起、另一语言按钮暗色，点击即可切换\n- 语言偏好持久化：config.json 保存 language 字段，下次启动自动恢复\n- 零额外依赖：i18n.py 只用标准库 json，不引入 gettext 等第三方包\n- 324 个语言 key 全部覆盖，zh/en 完全对齐\n\n## 技术架构\n\n- i18n.py：Translator 类 + t() 单例 + on_change() 回调机制\n- locales/zh.json + locales/en.json：嵌套 JSON 结构，dot-path 访问\n- 所有 ttk.Button / ttk.Label / ttk.Labelframe / ttk.Combobox 等控件均注册到 _i18n_widgets\n- Combobox 特殊处理：internal 值 + key_map 分离，values 和显示值独立刷新\n\n## 修复\n\n- refresh_all_text() 覆盖 Combobox values 刷新（之前只覆盖静态控件）\n- __pycache__ 缓存导致改代码后运行旧版的坑\n\n## 版本更新\n\n- GREEN_VERSION: 1.0.30 → 1.0.31\n\n## 升级建议\n\n- 绿色版覆盖安装即可\n- 切换语言后设置自动保存，下次启动记得你的偏好\n\n\n<a id=\"en-1.0.31\"></a>\n\n\n## New Features\n\n- Complete bilingual GUI: all widgets, dropdowns, dialogs, messageboxes switch languages in real time\n- Language toggle buttons in top-right corner: active language highlighted (bright), inactive language dimmed\n- Language preference persisted in config.json, restored on next launch\n- Zero external dependencies — i18n.py uses only the standard `json` module (no gettext)\n- 324 translation keys, fully aligned between zh and en locales\n\n## Technical Architecture\n\n- i18n.py: Translator class + `t()` singleton + `on_change()` callback hook\n- locales/zh.json + locales/en.json: nested JSON with dot-path access\n- All ttk.Button / ttk.Label / ttk.Labelframe / ttk.Combobox registered to `_i18n_widgets` for refresh\n- Combobox special handling: internal value + key_map separated, values and display value refreshed independently\n\n## Bug Fixes\n\n- `refresh_all_text()` now covers Combobox values (previously only refreshed static widgets)\n- `__pycache__` stale bytecode issue — always clear after changing Python source\n\n## Version Update\n\n- GREEN_VERSION: 1.0.30 → 1.0.31\n\n## Upgrade Notes\n\n- Green edition: overwrite install is sufficient\n- Language preference auto-saved on switch, remembered across launches\n",
+      "assets": [],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.30",
+      "name": "v1.0.30 — 祖宗记忆库 v3 会话隔离 + 批量清理",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.30",
+      "published_at": "2026-09-05T18:38:47Z",
+      "body": "## 新增功能\n\n### 祖宗记忆库 v3 会话隔离 (dsh-memory)\n- ✅ **会话分组**：自动记忆带 session_id + cwd，WebUI 按会话分组显示\n- ✅ **有意义的会话标题**：从 projcache / 实时快照 / session.jsonl.zstd 三层 fallback 读取\n- ✅ **批量清理**：按会话清理 / 按时间戳清理（二次确认弹窗）\n- ✅ **跨会话加载开关**：默认关闭 = 只读当前会话记忆；勾选 = 全局记忆也注入\n- ✅ **实时生效**：跨会话开关 / 自动记录 / 自动注入 改了立即生效，不用重启\n\n### 架构升级\n- SQLite 增量迁移：自动给旧库加 session_id / cwd 列 + 索引\n- 默认加载 6 条记忆（上限 10，可通过 autoRecallLimit 调）\n- timeline 工具新增 cross_session 参数\n\n## 打包命名简化\n- 旧：DSH_Launcher_GreenPortable_Online_YYYYMMDD_v1.0.30.zip（太长）\n- 新：**DSH-GreenPortable-v1.0.30.zip**\n\n## 版本更新\n- GREEN_VERSION: 1.0.29 → 1.0.30\n- GREEN_ZIP_PREFIX: \"DSH_Launcher_GreenPortable_Online_\" → \"DSH-GreenPortable-v\"\n\n## 已知问题\n- WebUI 跨会话开关需要先勾「自动注入」才亮（灰态表示依赖自动注入开启）\n- 首次启动旧库自动 ALTER TABLE 加列，安全但会看到迁移日志\n\n## 升级建议\n- 绿色版覆盖安装即可，自动会做旧库迁移\n- 如果遇到 DSH 起不来，杀 DSH_Launcher.exe 后重新打开\n",
+      "assets": [
+        {
+          "name": "DSH-GreenPortable-v1.0.30.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.30/DSH-GreenPortable-v1.0.30.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.29",
+      "name": "v1.0.29 — DSH 0.1.2-rc.1 全量适配",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.29",
+      "published_at": "2026-09-04T14:10:17Z",
+      "body": "## 核心更新\r\n\r\nDSH 升级到 **0.1.2-rc.1** 后，底层 session 存储结构、API 行为、ESM 约束都变了，本次是全量适配。\r\n\r\n### 🐛 会话标题获取 — 三级 fallback\r\n- projcache 从单文件改成按 session 分文件 `storages/session_projcache/sessions/session-{uuid}.json`\r\n- 修复 `entry.id` 已带 `session-` 前缀导致文件名拼错\r\n- 三级策略: 新 projcache → 旧 projcache → session.jsonl.zstd 的 session/title 事件\r\n\r\n### 💥 sessionQuery.readSurface 不再返回 turn 事件\r\n- usage-stats 改用 `loadSession(file, \"zstd\")` 直接解析磁盘 JSONL.zstd\r\n- `foldEvents()` 回合折叠后 turnCount/turns/messages/models 全部正确\r\n\r\n### ❌ ESM 插件里不能写 require()\r\n- 删掉 3 个插件里非法的 inline `require(\"zlib\")` (ReferenceError 被 catch 吞掉永不报错)\r\n- 用顶部 `import zlib from \"node:zlib\"`\r\n\r\n### 📦 inject 依赖声明补全\r\n- session-rewind / archive-purge 加 `\"sessions\"` 到 inject 数组\r\n\r\n### ⌨️ @引用插入 resolveAgentScope fallback\r\n- 改用 `sessions.resolveAgentScope()` + DOM `execCommand('insertText')` 兜底\r\n\r\n### 📚 Skill / DEV_NOTES 全面更新\r\n- data-directories.md / plugin-dev-checklist.md / plugin-skeleton.md 同步更新\r\n- DEV_NOTES.md 新增 8.7-8.10 + 附录 Checklist\r\n- 旧 projcache 引用全局清理\r\n\r\n## 升级说明\r\n- 绿色版用户: 启动器「检查绿色版更新」自动拉 Release 附件\r\n- 手动升级: 下载 zip 覆盖根目录 (跳过 config.json 和 runtime/)\r\n- 插件不用重装，纯代码变更",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260905_v1.0.29.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.29/DSH_Launcher_GreenPortable_Online_20260905_v1.0.29.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.28",
+      "name": "v1.0.28: 版本比较 semver 修复 + 更新检查界面重构",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.28",
+      "published_at": "2026-09-02T16:31:41Z",
+      "body": "## 本次更新\r\n\r\n### 🔧 核心修复\r\n\r\n**版本比较的 semver 陷阱**\r\n\r\n- _green_version_tuple() 原实现用正则 [^\\d]+ 纯拆数字, 丢掉了 pre-release 标签语义\r\n- 导致 �.1.2-rc.1 被判为比 �.1.2-alpha.5 旧 → 更新检查提示\"已是最新\"\r\n- 修复: 正确 semver 五元组 (major, minor, patch, pre_rank, pre_number)\r\n- pre_rank 映射: alpha=0, beta=1, rc=2, 无标记(正式版)=3\r\n\r\n**更新检查界面重构**\r\n\r\n- 旧版只保留\"比当前新的\"候选 → 反模式, 替用户过滤降级/切通道需求\r\n- 新版不过滤新旧, 按 npm dist-tag 通道分组:\r\n  - ① **stable** (npm latest) = 稳定正式版\r\n  - ② **prerelease** (npm next + GitHub prerelease) = alpha/beta/rc\r\n  - ③ **history** (GitHub 正式历史版) = 可降级\r\n- 标记当前已安装版本 + 灰色标记未发布到 npm 的版本\r\n- 按钮文案从「确认升级」改为「安装选中版本」\r\n\r\n### 📚 详细变更\r\n\r\n- launcher.py: +172/-66\r\n- DEV_NOTES.md: 新增坑 16 (版本比较 semver 陷阱 + 更新检查反模式)\r\n- SKILL.md 3.1 + 3.4: 同步更新版本管理经验\r\n\r\n### ✅ 兼容性验证\r\n\r\n- 10 个内置插件全部兼容 DSH 0.1.2-alpha.4 / alpha.5\r\n- 自愈体系 3 层防护 (core bundles + peer 依赖 + 冒烟框架级诊断) 工作正常\r\n\r\n---\r\n踩坑记录: https://github.com/deepseek-ai/deepseek-harness/discussions/5300",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260903_v1.0.28.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.28/DSH_Launcher_GreenPortable_Online_20260903_v1.0.28.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.27",
+      "name": "v1.0.27: 插件 WebUI 主题适配 + 祖宗记忆库双开关",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.27",
+      "published_at": "2026-09-03T10:40:29Z",
+      "body": "## 本次更新\n\n### 🎨 插件 WebUI 主题适配（全量 CSS 变量化）\n\n- **dsh-ollama**: 全量替换硬编码颜色 → DSH CSS 变量, 深浅主题自动切换\n- **dsh-memory**: 替换硬编码紫色 → DSH CSS 变量, 深浅主题自动切换\n- **dsh-usage-stats**: 17 处硬编码颜色 → CSS 变量, 深浅主题自动切换\n\n### ✅ 同色系糊片修复（5 处）\n\n- badge/tags 仅保留文字色（state-xxx-primary）, 不加 background\n- 按钮用深彩底 + 白字（state-xxx-primary 做背景, #fff 做文字）\n- 修正 status-success / status-error / status-warn 的语义误用\n- 祖宗记忆库、会话回退、归档清理三个插件状态色同步修正\n\n### 🧠 祖宗记忆库 + 用户规则优化\n\n- **dsh-memory 双开关**: autoRemember（自动记录）+ autoRecall（自动注入）\n- 两个开关各自独立, 默认全部关闭（省 token）\n- 用户规则插件新增「打开规则目录」按钮\n\n### 📚 Skill 文档更新\n\n- SKILL.md §5.7 完整颜色对比度铁律 + 变量速查表\n- 反模式示例: primary 文字 + secondary 背景 = 同色系糊片\n",
+      "assets": [],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.26",
+      "name": "v1.0.26 — 插件 WebUI 设置面板大升级",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.26",
+      "published_at": "2026-09-01T16:50:47Z",
+      "body": "## 核心更新\n\n### 🧠 dsh-memory v3 — 祖宗记忆库\n- **默认关闭** (enabled: false)，省 token\n- WebUI 设置面板加 **【测试】标签** + 启用开关\n- 开关持久化到 runtime/dsh-home/memory/memory-config.json，重启后生效\n- ruleSummarize 第四轮调优：列举词清理、长句逗号拆分、评分阈值过滤\n\n### 📜 dsh-rules v3→v4 — 用户规则\n- **Type B→Type A 升级**：从纯 hook 插件升级成双端插件\n- 新增 **WebUI 设置面板**：启用开关 + 文件状态 + 字符数统计\n- 新增 **规则内容预览** (只读 Markdown 源码)\n- 新增 **WebUI 内编辑** (textarea + 保存/取消)，autoReload 下下次对话自动生效\n- 新增 **下载 .md 按钮** (浏览器安全限制无法直接打开本地文件)\n- **默认关闭** (enabled: false)\n\n### 📚 Skill 文档补全\n- plugin-skeleton.md 补 **Type B→A 升级路径** 完整章节\n- plugin-skeleton.md 补 **持久化 config + WebUI 开关** 完整骨架代码\n- plugin-dev-checklist.md 补 9 条升级检查项 + 8 条持久化 config 检查项 + 6 条排查速查\n- SKILL.md 补 5.9.1 升级路径章节\n\n### 🔒 安全\n- config.json dsh_host 默认 0.0.0.0 → 127.0.0.1 (更安全)\n\n## 升级说明\n- 绿色版用户：启动器「检查绿色版更新」自动拉 Release 附件\n- 手动升级：下载 zip 覆盖根目录（跳过 config.json 和 runtime/）\n- 插件改了 package.json 后需重装：dsh plugin remove dsh-memory dsh-rules && dsh plugin add file:<插件绝对路径> && 重启服务\n- dsh-rules 升级后会自动创建 runtime/dsh-home/rules/user-rules.md\n",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260902_v1.0.26.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.26/DSH_Launcher_GreenPortable_Online_20260902_v1.0.26.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.25",
+      "name": "v1.0.25: 自愈系统全面升级",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.25",
+      "published_at": "2026-09-01T04:45:40Z",
+      "body": "## v1.0.25 - 自愈系统全面升级\n\n### 核心修复\n\n**框架契约自适应** — DSH 0.1.2-alpha.3+ 不再自动注入 core bundles（dsh-base / dsh-web-app），profile 的 dsh.profile.bundles 必须显式声明。launcher 升级自愈体系：\n\n- 🧠 **框架级故障诊断**：_diagnose_framework_failure() 识别 plugin tree failed to load + waiting for services 日志特征，优先于单个插件不兼容处理\n- 📡 **自适应 core bundle 探测**：_detect_runtime_profile_core_bundles() 扫描 runtime @deepseek-ai/ 包自动识别 profile 级 core bundle，探测失败才用硬编码兜底\n- 🔄 **冒烟自愈流程重写**：_smoke_verify_core_upgrade() 框架诊断优先，最多 3 轮自动修复重试\n- ✅ **双处集成**：\neconcile_bundles() 和 \u000berify_environment_integrity() 都前置 core bundle 检查\n\n**profile 依赖污染根因修复** — 旧版 _host_peer_dependencies() 扫描范围过广，把 runtime 内部 peer 当作 profile 需补的写入 dependencies，导致 package.json 膨胀到 100+ 依赖：\n\n- 🚫 加 2 条过滤规则：跳过 @deepseek-ai/* 内部 peer、跳过 runtime node_modules 已存在的 peer\n- 🧹 新增 _clean_profile_manifest() 清洗污染依赖（黑名单前缀 + cordis 例外名单）\n- 📦 _heal_profile_dependencies() 和 _rebuild_dependency_tree() 前置调用清洗\n\n### 关键认知\n\ncore bundles 只需要在 dsh.profile.bundles 数组里出现即可，**不需要写入 dependencies** — 它们在 runtime 里已预装，DSH 框架加载 bundle 时直接按名字在 runtime/@deepseek-ai/ 下找。\n\n### 端到端验证\n\n坏状态还原 → 冒烟自愈 4.5s 自动补回 core bundles → 启动成功 ✅\n",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260901_v1.0.25.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.25/DSH_Launcher_GreenPortable_Online_20260901_v1.0.25.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.24",
+      "name": "v1.0.24: DSH Web Token 认证开关 + 侧栏大升级",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.24",
+      "published_at": "2026-08-31T17:23:53Z",
+      "body": "## 新功能\n\n### 🔐 启动器新增 Web Token 认证开关\n- `dsh_require_auth` 配置项（默认 True），允许用户通过 GUI 开关 DSH 0.1.2 的 Web Token 认证\n- `patch_auth()` 动态 patch `dsh-client-connection` 源码，启动/安装时自动应用\n- GUI 网络设置区新增复选框 + 动态安全警告（0.0.0.0 + 关闭认证时红框提示）\n\n### 📁 dsh-sidebar-lite 插件大升级\n- **Rail 开关移到全局右上角**：fixed 定位独立于侧栏，不再嵌在面板内部\n- **Right 值自适应**：跟随 `panelWidth + previewWidth` 动态计算，展开时贴侧栏左边缘外\n- **顶部对齐**：`top:48px` 与官方 header 顶部线条对齐\n- **初始宽度最小化**：默认 200px，用户按需拖拽放大\n- **隐藏侧栏内部 collapse 按钮**：统一用 rail 做 toggle\n- **HTML 文件默认 iframe 渲染**：之前被 EDITABLE_EXTS 强制走 text 分支只显示源码，现在默认渲染网页，头部加「📄 源码 / 🌐 预览」切换按钮\n- **预览框适配**：预览文件打开时 rail 自动额外让出 previewWidth 空间\n\n## 下载\n- **绿色版**（含启动器 exe + 插件，双击 DSH_Launcher.exe 首次运行会自动下载 DSH 核心）: 见下方 assets\n- **注意**: 本 release 不包含 runtime 目录（Node.js + DSH 核心），首次运行后启动器会自动下载",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260901_v1.0.24.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.24/DSH_Launcher_GreenPortable_Online_20260901_v1.0.24.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.23",
+      "name": "DSH Green v1.0.23 — Ollama接入全面兼容新版 + 垃圾模型漏洞修复",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.23",
+      "published_at": "2026-08-31T15:36:01Z",
+      "body": "## DSH Green v1.0.23 — Ollama 接入全面兼容新版 + 垃圾模型漏洞修复\n\n发布日期: 2026-08-31\n\n### 🔥 核心修复\n\n| 严重度 | 问题 | 影响 | 修复 |\n|--------|------|------|------|\n| **P0** | dsh-ollama 插件变体识别正则漏洞 | 每 60 秒探测循环递归拼接 `-62.5k` 后缀，几十轮后 Ollama 堆出 11 层叠加垃圾模型（9.6GB/个，占几十 GB 磁盘） | 三层防御：源头过滤多层后缀 + 正则支持小数后缀 + 创建前校验 |\n| **P1** | dsh 0.1.2 客户端 useChat 快照重构 | 消息行 token 显示失效 | 适配新快照结构 |\n| **P2** | SidebarShell TDZ 报错 | scope 在 useCallback 之后定义触发 TDZ | 变量定义上移 |\n\n### 📦 下载说明\n\n- 绿色便携版 (唯一资产, 包含插件 + 技能 + launcher + updater):\n  `DSH_Launcher_GreenPortable_Online_20260831_v1.0.23.zip`\n- 解压后双击 `DSH_Launcher.exe` 即可运行, 无需安装。\n\n### 🔧 变更摘要\n\n- **plugins/dsh-ollama/lib/index.js**: 修复 3 处正则 + 新增 2 处防御逻辑\n- **launcher.py**: GREEN_VERSION 1.0.22 → 1.0.23, 版本日期 2026-08-31\n- **DEV_NOTES.md**: 新增坑 #35 记录正则漏洞, 后续编号顺延至 48",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260831_v1.0.23.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.23/DSH_Launcher_GreenPortable_Online_20260831_v1.0.23.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.22",
+      "name": "DSH Green v1.0.22",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.22",
+      "published_at": "2026-08-29T14:13:46Z",
+      "body": "v1.0.22: 修复 desktop-shell.py 打进绿色 zip 的问题, 新机桌面窗口(WebView2)不再因缺脚本回退浏览器。外部变更由 Gitee 源自动同步, 此 Release 资产单独上传。",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260829_v1.0.22.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.22/DSH_Launcher_GreenPortable_Online_20260829_v1.0.22.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.21",
+      "name": "DSH Green v1.0.21",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.21",
+      "published_at": "2026-08-29T07:18:34Z",
+      "body": "v1.0.21: pnpm 11 git 源插件构建脚本自动放行 (allowBuilds 自愈), 新电脑安装 git 源插件免手改配置。",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260829_v1.0.21.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.21/DSH_Launcher_GreenPortable_Online_20260829_v1.0.21.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.20",
+      "name": "DSH Launcher 绿色版 v1.0.20",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.20",
+      "published_at": "2026-08-27T15:22:48Z",
+      "body": "本次更新如下：\n\n## dsh-ollama 一键接入按钮\n- WebUI「设置 → Ollama 设置」面板新增「一键接入」按钮：当自动探测没能在启动/更新后把 Ollama 模型配置好时，点一下即强制重新探测并按当前配置接入，无需保存表单、不改动已持久化的面板配置。\n- 修复「一键接入」点击报错：sctx.settings.mutate 只认 set/unset、不认 remove（坑 42）。\n\n## 发布流程调整\n- 发布源平台改回 Gitee：代码与 tag 提交推送 Gitee 后，GitHub 自动同步；Release 双平台分别上传播发 zip。",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260827_v1.0.20.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.20/DSH_Launcher_GreenPortable_Online_20260827_v1.0.20.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.19",
+      "name": "v1.0.19",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.19",
+      "published_at": "2026-08-27T11:02:02Z",
+      "body": "v1.0.19（2026-08-27）\n\n## dsh-ollama 全面修复：Ollama 模型终于会调 DSH 工具了\n- 修复接入后模型从不调用工具/网络搜索的根因：补齐 OpenAI 兼容开关 compat（system 角色、max_tokens 字段、工具不带 strict），工具 schema 才能真正送达模型——缺它时工具到不了模型，纵有千军万马也无从调度。\n- 思考控制：qwen3/gemma 等 thinking 模型默认关思考（reasoning_effort=none），token 全部留给工具调用，不再“深思熟虑”烧光输出、还没轮到动手就被截断。\n- 自动上下文容量修复：探测到容量不足自动用 Modelfile 固化 num_ctx 并创建 -32k 变体，DSH 工具定义不再被截断。\n- WebUI「Ollama 设置」面板字段修正：改绑 target* 生效字段，改「默认上下文/输出」不再无效；周期同步保留你在 Models 页手改的模型参数。\n\n绿色版：DSH_Launcher_GreenPortable_Online_20260827_v1.0.19.zip（已含 plugins/ 与 skills/）",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260827_v1.0.19.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.19/DSH_Launcher_GreenPortable_Online_20260827_v1.0.19.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.18",
+      "name": "v1.0.18",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.18",
+      "published_at": "2026-08-27T03:36:43Z",
+      "body": "v1.0.18（2026-08-27）\n\n## 内置插件全自动同步 · 桌面窗口入口收敛\n- 插件管理全面自动同步，三个入口无需再手动点更新：\n  ① 打开插件管理窗口即自动同步一次；\n  ② 「一键安装内置插件」升级为安装+更新（未装补装、已装增量更新）；\n  ③ 绿色版更新后首次启动自动同步。\n- 解决“源码更新了、已装副本不同步”的老问题——正是粮草已动，三军自随，不再出现旧副本一直 404 的窘境。\n- 桌面窗口入口收敛：移除 desktop-shell.bat 独立双击入口，桌面窗口统一从启动器GUI「桌面窗口」按钮进入（功能一致且无黑窗闪烁）。\n\n## 官方 @ 引用插入\n- 文件浏览/侧边栏右键新增「以官方 @ 引用插入」，衔接新版 DSH 官方 @+文件机制，草稿内即可 @ 会话工作目录文件，发送时自动序列化为相对路径。\n\n绿色版：DSH_Launcher_GreenPortable_Online_20260827_v1.0.18.zip（已含 plugins/ 与 skills/）",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260827_v1.0.18.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.18/DSH_Launcher_GreenPortable_Online_20260827_v1.0.18.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.17",
+      "name": "v1.0.17",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.17",
+      "published_at": "2026-08-26T08:12:06Z",
+      "body": "??? v1.0.17\n\n- ??:??????? Gitee /releases ?????????????,??? created_at ?? + per_page=100(???????????????)?",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260826_v1.0.17.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.17/DSH_Launcher_GreenPortable_Online_20260826_v1.0.17.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.16",
+      "name": "v1.0.16",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.16",
+      "published_at": "2026-08-25T14:27:34Z",
+      "body": "## v1.0.16 更新内容\n\n- **用量统计接入 DeepSeek 真实余额 (#109)**：设置页顶部新增余额卡（总余额/充值余额/赠金余额/API 可用），每条对话消息行末尾显示当前余额与预估消耗，支持一键刷新。\n- **兼容非 DeepSeek 账户不报错**：未配置 API Key 或非 DeepSeek 账户时，余额区显示平和提示，其余功能完全不受影响。API Key 优先从环境变量 `DEEPSEEK_API_KEY` 读取，其次从 `DSH_HOME/.credentials.yaml` 解析，仅服务端使用不暴露前端。\n- **内置插件深浅主题适配收口 (#106/#108)**：用量统计等插件固定浅框深字配色，页面级文字保持主题自适应，深色主题可读性修复。\n- **观星插件选目录弹窗置顶 (#104)**：Windows 交互弹窗模态置顶，避免被遮挡。\n- 重打 DSH_Launcher.exe / DSH_Update.exe。\n\n绿色便携整零整合版，开箱即用。",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260825_v1.0.16.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.16/DSH_Launcher_GreenPortable_Online_20260825_v1.0.16.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.15",
+      "name": "v1.0.15 内置背景影画插件「观星」",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.15",
+      "published_at": "2026-08-24T11:15:29Z",
+      "body": "## v1.0.15 内置背景影画插件「观星」\n\n> 军师夜观天象，见七星聚於紫微，乃成「观星」之阵，令此阁自此有影有声。\n\n### 内置插件 · 背景影画（观星，dsh-media-background）\n- 选定目录自动列出视频，加入播放清单循环播放画面与配乐作为背景。\n- **Windows 原生目录选择**优先：点击「选目录」调用系统文件夹选择框；不可用或取消时回退网页分层浏览。\n- **视频层级置底**：视频插到页面最底层，工作区文字清楚浮於影画之上。\n- **动态背景**：启动视频时背景全透明、只留影画镶衬；尚未启动视频时回归原生纯色壁纸兜底。\n- **浓度调整只改影像透明度**，不影响工具面板与字体；设置界面保持不透明、操作如常。\n- 目录递归扫描（深度 6）+ 播放清单自动接续循环。\n\n### 其他\n- 提升绿色版更新源、端口自清理、桌面版去重分等既有能力稳定性。\n\n> 架构如星河，观星可佐战局 —— 尽在《DeepSeek Harness 绿色整合版》。",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260824_v1.0.15.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.15/DSH_Launcher_GreenPortable_Online_20260824_v1.0.15.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.14",
+      "name": "v1.0.14",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.14",
+      "published_at": "2026-08-20T15:31:37Z",
+      "body": "v1.0.14（2026-08-20）\n\n## 桌面版「开窗」更顺、图标归位\n- 打开去重改「分机制」：手动点按钮不再被“已存在”挡住，点一下即见窗口；只有自动打开才排重——正如出师须传调令，手下不再误报“军情已达”。\n- 桌面版在线判定改为「进程身份」（记录 pid + 探测进程存活），不再依赖网页心跳，更稳更准。\n- 修复桌面窗口沿用默认图标：改由 WebView2 窗体直接加载绿色鲸鱼图标。\n- 服务未启动时桌面窗口先显示“请先启动服务器”提示页，服务就绪后自动载入界面。\n\n绿色版：DSH_Launcher_GreenPortable_Online_20260820_v1.0.14.zip（已含 plugins/ 与 skills/）",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260821_v1.0.14.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.14/DSH_Launcher_GreenPortable_Online_20260821_v1.0.14.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.13",
+      "name": "v1.0.13",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.13",
+      "published_at": "2026-08-20T10:51:13Z",
+      "body": "v1.0.13（2026-08-20）\n\n## 侧边栏「任务」页升级 AI 状态卡\n- 明确展示 AI 当前任务目标（会话标题）、执行状态与工作目录。\n- 状态徽标：执行中=蓝点呼吸动画／已完成=绿点／空闲=灰点。\n- 无会话 / 无后台任务时给出清晰的中文提示，不再“看着像没绑定到东西”。\n\n## 更新\n- 默认绑定地址 dsh_host 改回 127.0.0.1（仅本机访问，更安全；局域网可在设置里切换）。\n- DSH_Launcher.exe / DSH_Update.exe 重打包（About 显示 v1.0.13）。\n\n绿色版：DSH_Launcher_GreenPortable_Online_20260820_v1.0.13.zip（已含 plugins/ 与 skills/）",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260820_v1.0.13.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.13/DSH_Launcher_GreenPortable_Online_20260820_v1.0.13.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.12",
+      "name": "v1.0.12",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.12",
+      "published_at": "2026-08-20T09:18:40Z",
+      "body": "v1.0.12（2026-08-20）\n\n## dsh 核心更新逻辑优化\n- 检查更新改走 npm：一次读取官方 `latest` / `next` 两个版本标签，都可选装。\n- 只提示比当前已装版本更新的版本（修复“已是 stable 却仍提示再次覆盖”的误报）。\n- 点选版本后两段式确认：先展示该版本官方发布说明（GitHub Release note），确认后才开始升级。\n- 升级前自动备份当前版本，可随时在“数据维护”里清理。\n\n## 更新\n- DSH_Launcher.exe / DSH_Update.exe 重打包（About 显示 v1.0.12）。\n\n绿色版：DSH_Launcher_GreenPortable_Online_20260820_v1.0.12.zip（已含 plugins/ 与 skills/）",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260820_v1.0.12.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.12/DSH_Launcher_GreenPortable_Online_20260820_v1.0.12.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.11",
+      "name": "v1.0.11",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.11",
+      "published_at": "2026-08-19T14:08:54Z",
+      "body": "## v1.0.11 绿色版\n\n### 更新内容\n- 🌱 **Gitee 下载双级兜底**：GitHub 绿色版更新下载失败时，自动切换到 Gitee 镜像源重试同版本（查询与下载两级兜底），并带版本防降级判断，最多避免\"卡在更新\"。\n- 📘 **README 营销化优化**：新增\"亮点速览\"、内置 6 款插件一览表、插件/会话管理章节整合、常见问题精简；删除\"专属图标\"等自夸式表述；开源许可统一为 Apache License 2.0。\n- 📦 **统一发布约定**：自本版本起，Release 仅发布单个绿色 zip（插件与技能已内置其中）。\n\n### 内置 6 款插件（随绿色版分发）\n- **dsh-file-browser**：WebUI 文件浏览 / 预览 / 发送进对话\n- **dsh-archive-purge**：\"清理归档\"页只读查看已归档会话\n- **dsh-session-rewind**：会话回退，一键派生干净续聊\n- **dsh-session-import**：会话 ZIP / JSONL 导回本机\n- **dsh-usage-stats**：用量统计 + 每条消息 token / 预估费用\n- **dsh-sidebar-lite**：WebUI 右侧边栏（文件 / 预览 / 浏览器 / 终端 / 任务）\n\n所有插件均为纯插件（不修改官方文件），与绿色版一起以 Apache License 2.0 开源。\n\n---\n\n**下载使用**：下载本 Release 的绿色 zip，解压后双击 `DSH_Launcher.exe`（或 `start.bat`），首次启动点\"安装环境\"即可一键部署。绿色便携、不装系统、不写注册表，整目录可直接拷贝携带。",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260820_v1.0.11.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.11/DSH_Launcher_GreenPortable_Online_20260820_v1.0.11.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.10",
+      "name": "v1.0.10",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.10",
+      "published_at": "2026-08-19T09:35:16Z",
+      "body": "v1.0.10 (2026-08-19)\n\n## 新增\n- 内置插件 dsh-session-import（会话导入）：支持将旧会话批量导入新库。\n- launcher 启动时按 node.exe 自动放行 3080 端口防火墙规则（需求 #54），解决局域网手机连不上。\n\n## 修复\n- 局域网 http 访问下工作区/会话记录异常的 crypto.randomUUID polyfill。\n\n## 更新\n- DSH_Launcher.exe / DSH_Update.exe 重打包（About 显示 v1.0.10）。\n\n绿色版：DSH_Launcher_GreenPortable_Online_20260819_v1.0.10.zip",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260819_v1.0.10.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.10/DSH_Launcher_GreenPortable_Online_20260819_v1.0.10.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.9",
+      "name": "DeepSeek Harness Green v1.0.9",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.9",
+      "published_at": "2026-08-18T10:32:56Z",
+      "body": "## v1.0.9 发布说明\r\n\r\n本次更新（2026-08-18）：\r\n\r\n### 新增\r\n- 关于对话框新增 **Gitee 仓库地址** 与「打开 Gitee 仓库」跳转按钮，国内访问 GitHub 不便时可一键直达 Gitee 仓库页\r\n- 绿色版更新通道新增 **Gitee 发布版附件** 直连下载（Gitee 仓库已建 Release，不再只靠整仓快照兜底）\r\n\r\n### 修复\r\n- 修复目标机缺 VC++ 运行库时报 `Failed to load Python DLL`：exe 已内嵌全部 VC 运行库三件套\r\n- 绿色版自更新改为**独立更新程序**（DSH_Update.exe），运行中的 exe 无法原地覆盖问题已解决（自我复制迁移）\r\n\r\n### 说明\r\n- 绿色整合版：双击即用，所有运行时依赖（便携 Node / 内置 Python / dsh 本体）全部本地化在程序目录，不写用户主目录、不占 C 盘\r\n- 更新只更新启动器自身，不覆盖 config.json（你的设置）与你的会话数据\r\n- 分发 zip：DSH_Launcher_GreenPortable_Online_20260818_v1.0.9.zip（约 17MB，新机联网自动补全环境）\r\n\r\n### 下载\r\n- GitHub：https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/latest\r\n- Gitee 镜像：https://gitee.com/liujunheng/DeepSeekHarnessGreen/releases\r\n",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260818_v1.0.9.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.9/DSH_Launcher_GreenPortable_Online_20260818_v1.0.9.zip"
+        },
+        {
+          "name": "DSH_Skill_dsh-deploy-maintain_20260818.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.9/DSH_Skill_dsh-deploy-maintain_20260818.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.8",
+      "name": "v1.0.8",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.8",
+      "published_at": "2026-08-17T17:02:24Z",
+      "body": "## v1.0.8（2026-08-18）\n\n### 新增\n- **启动前自动清理占用端口的孤儿 dsh 进程**（需求 #46）：手动点「启动服务」时自动检测并清理残留的 dsh 进程，避免 `EADDRINUSE` 导致新进程启动即退出。严格校验 dsh 特征（node + bin.js + web + --port）才清理，不误杀其它程序。\n- 内置插件 `dsh-file-browser` 更新：\n  - **v0.3.0**：浏览弹窗**可自由拖动 + 三路拉伸**（标题栏拖动移动，右边缘 / 下边缘 / 右下角拉伸；最小 520×380）；大文件改为「前部预览 + 再看后面一段」分批加载，不再直接报错；图片预览上限放宽到 32MB；二进制文件给 hex/ASCII 嗅探网格。\n  - **v0.3.1**：弹窗**默认路径改为当前会话工作目录优先**（会话 header.cwd → 工作区注册表根 → 显式 workspaceRoot），不再落到 dsh 程序目录 `runtime\\dsh`。\n\n### 修复\n- 服务端口被残留进程占用时，启动器现在会自动清理后再启动，不会出现「服务已就绪但进程立刻退出」。\n\n### 其它\n- 文档同步：DEV_NOTES 需求 #44 / #45 / #46；SKILL.md 新增 3.11 小节；README / README_EN 版本引用更新。\n\n---\n**打包内容与 GitHub 仓库 main 分支一致**（仅排除开发侧文件 `DEV_NOTES.md`、`.gitignore`）：`launcher.py`、`DSH_Launcher.exe`、`start.bat`、`stop.bat`、`build_exe.bat`、`config.json`、`README.md`、`README_EN.md`、`LICENSE`、`plugins/`、`skills/dsh-deploy-maintain/`。\n\n绿色版更新通道：启动器 GUI「检查绿色版更新」即可在线升级到 v1.0.8。\n",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260818_v1.0.8.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.8/DSH_Launcher_GreenPortable_Online_20260818_v1.0.8.zip"
+        },
+        {
+          "name": "DSH_Skill_dsh-deploy-maintain_20260818.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.8/DSH_Skill_dsh-deploy-maintain_20260818.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.7",
+      "name": "v1.0.7",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.7",
+      "published_at": "2026-08-17T04:58:04Z",
+      "body": "# DeepSeek Harness 绿色整合版启动器 v1.0.7\n\n**绿色整合 · 双击即用 · 整目录拷走即用**（Node / dsh / 会话数据全部本地化，不写用户主目录、不装系统环境）。\n\n## 本版更新（v1.0.7）\n- **修复本机模式 /api 403「城门失守」**：Chrome 150 起同源请求的 Origin 头不再带端口，官方按\"带端口精确比较\"误判本机 /api 请求来自外地 → `host.pickDirectory`、`host.describe` 等特权/普通 API 全部 403。本版改按 **hostname 比较（忽略端口）**，本机模式恢复通畅；跨站伪造 Origin 依旧拒之门外（\"关隘不失，防线如故\"）。\n- **用量管理价格更新为官方【高峰时段】默认价**：DeepSeek 官方 2026-08-17 起改为峰谷定价（高峰北京时间 9:00-12:00 / 14:00-18:00，为低谷 2 倍），本版默认取高峰价（估算偏保守）：v4-flash 命中 0.10 / 未命中 3.0 / 输出 9.0；v4-pro 命中 0.30 / 未命中 9.0 / 输出 27.0（元/百万 tokens）。价格表仍可在「设置 → 用量统计」按实际价格修改。\n- **build_exe.bat 注释修复**：损坏注释改为纯 ASCII 英文；脚本实测不闪退、增量构建正常。\n- **发布默认 config.json 恢复本机模式**：新用户开箱默认仅本机访问，需要局域网请在 GUI「网络设置」自行开启。\n\n## 资产说明\n- **绿色分发 zip**（精简在线版，新机联网自动下载 Node / Python / dsh；含中文 README + 英文 README + DSH 部署维护 Skill 目录）\n- 本版起**不再单独打包 Skill zip**，`skills/dsh-deploy-maintain/` 目录随绿色 zip 一并分发。\n\n## 历史版本\n- v1.0.6：局域网受信任主机精确语义 + 任务栏/托盘双常驻 + 专属图标放大 + 英文 README\n- v1.0.5：启动器单实例检测（防重复启动，命名互斥量 + 旧窗口激活）\n- v1.0.4：绿色版自更新三项修复（本地版本号恒 1.0.1 / ping 弹窗闪退 / 插件被覆盖错位）\n- v1.0.3：会话管理支持恢复（取消归档）+ 会话回退插件\n- v1.0.2：绿色版自更新双通道 + 文件浏览插件\n",
+      "assets": [
+        {
+          "name": "DSH_Launcher_GreenPortable_Online_20260817_v1.0.7.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.7/DSH_Launcher_GreenPortable_Online_20260817_v1.0.7.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.6",
+      "name": "v1.0.6",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.6",
+      "published_at": "2026-08-16T15:57:24Z",
+      "body": "# DeepSeek Harness 绿色整合版启动器 v1.0.6\n\n**绿色整合 · 双击即用 · 整目录拷走即用**（Node / dsh / 会话数据全部本地化，不写用户主目录、不装系统环境）。\n\n本次发布新增英文说明文档 **README_EN.md**（随版本翻译一次，供国际用户参考，中文版为准）。\n\n## 本版更新（v1.0.6）\n- **局域网受信任主机精确语义**：不填 = 绑定局域网时自动信任全部局域网 IP；填了任意一个 = 只信任填写的地址，不再自动全局域网放行（\"画地为牢，非请莫入\"）。\n- **任务栏 + 托盘图标双常驻**：最小化只进任务栏（任务栏图标保留），托盘图标从启动起常驻，不再出现\"任务栏没了、托盘也没了\"的误解。\n- **专属图标优化**：绿色小鲸鱼放大铺满、去掉外围绿色圈，识别度更高。\n- **产品名统一**：「绿色便携版」→「绿色整合版」；「一键启动器」→「绿色整合版启动器」。\n- **安装进度实时显示**：首次安装环境时 npm/pnpm/插件命令逐行实时输出，不再像\"卡死\"。\n- **.bat 全部统一 ASCII + CRLF**，避免 Windows cmd 编码问题。\n\n## 使用\n解压 → 双击 `start.bat` 或 `DSH_Launcher.exe` → 首次点【安装环境】→【启动服务】→ 网页填 API Key、选工作区即可。\n\n## 资产说明\n- **绿色分发 zip**（精简在线版，新机联网自动下载 Node / Python / dsh；含中文 README + 英文 README）\n- **DSH 经验 Skill 打包**（部署 / 维护 / 插件开发经验）\n\n## 历史版本\n- v1.0.5：启动器单实例检测（防重复启动，命名互斥量 + 旧窗口激活）\n- v1.0.4：绿色版自更新三项修复（本地版本号恒 1.0.1 / ping 弹窗闪退 / 插件被覆盖错位）\n- v1.0.3：会话管理支持恢复（取消归档）+ 会话回退插件\n- v1.0.2：绿色版自更新双通道 + 文件浏览插件\n",
+      "assets": [],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.5",
+      "name": "v1.0.5",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.5",
+      "published_at": "2026-08-16T10:56:12Z",
+      "body": "## v1.0.5（2026-08-16）\n\n### 新增功能\n- **启动器单实例检测（防重复启动）**：已有一个启动器在运行时（含最小化到任务栏 / 隐藏到系统托盘），再次打开不会重复启动服务、不占用额外资源，而是直接把已运行的窗口调到前台并恢复显示。\n- 实现方式：Windows 命名互斥量 + 旧窗口激活（FindWindowW / ShowWindow SW_RESTORE / SetForegroundWindow / BringWindowToTop），纯 Win32，零第三方依赖。\n\n### 内置插件（随绿色版同步分发）\n- `dsh-archive-purge`：会话清理管理\n- `dsh-file-browser`：WebUI 文件浏览\n- `dsh-session-rewind`：会话回退\n- `dsh-usage-stats`：用量统计\n\n### 说明\n- 绿色版更新为双通道：官方核心（dsh 本体）走「检查更新」，绿色版外围（本启动器/插件/文档）走「检查绿色版更新」。\n- 覆盖安装不替换 `config.json` 与 `runtime/`，旧文件自动备份到 `runtime/update/backup/`。\n\n### 资产\n- `DSH_Launcher_GreenPortable_Online_20260816_v1.0.5.zip`：绿色便携版（免安装，双击 `DSH_Launcher.exe` 即可）\n- `DSH_Skill_dsh-deploy-maintain_20260816.zip`：部署维护与插件开发经验 Skill\n",
+      "assets": [],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.4",
+      "name": "v1.0.4",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.4",
+      "published_at": "2026-08-15T17:05:19Z",
+      "body": "# DeepSeek Harness 一键启动器 绿色便携版 v1.0.4\n\n修复三项重要的自动更新问题（需求 #19 / #20 / #21）。\n\n## 本次修复\n\n1. **本地版本号恒为 1.0.1、反复提示更新（需求 #20）**\n   - 根因：`DEFAULT_CONFIG` 残留 `green_version: \"1.0.1\"` 默认值，`green_local_version()` 优先读合并后 config，导致版本号始终显示 1.0.1。\n   - 修复：删除 DEFAULT_CONFIG 中的 green_version 默认值（`GREEN_VERSION` 常量成为版本号唯一来源）；`green_local_version()` 改为直接读取原始 config.json，仅当用户显式覆盖时才生效。\n\n2. **更新时不断弹出 ping 窗口、闪退、无法完成安装（需求 #19）**\n   - 根因：update_apply.bat 用 `ping -n` 做延迟。分离进程（无控制台）调用控制台程序 ping.exe 会新建控制台窗口闪烁；且系统 ping.exe 损坏时报 0xc0000142 错误弹窗。\n   - 修复：新增 `sleep_helper.vbs`，改用 `wscript.exe`（GUI 子系统，无窗口）执行 VBScript 实现延迟，彻底替代 ping/timeout/choice。\n\n3. **自动更新后插件被覆盖到 plugins 外面（需求 #21）**\n   - 根因：发布侧 Compress-Archive 传插件子路径，PowerShell 把目录直接打在 zip 根、丢掉 plugins/ / skills/ 前缀，覆盖时错位拷到程序根目录。\n   - 修复（双保险）：① 发布侧打包命令改传目录名 `\"plugins\"` / `\"skills\"`，zip 内保留前缀；② 更新侧新增 `_normalize_update_structure()` 解压后归位错位目录，update_apply.bat 新增第 2.5 步清理程序根目录的错位残留（只删已知旧目录，不碰用户数据/config/runtime）。\n\n## 资产\n- 绿色便携版安装包：`DSH_Launcher_GreenPortable_Online_20260816_v1.0.4.zip`\n- 经验 Skill 包：`DSH_Skill_dsh-deploy-maintain_20260816.zip`\n\n## 升级方式\n双击 DSH_Launcher.exe → 点「检查绿色版更新」即可自动下载覆盖安装；新装用户直接解压绿色 zip 使用。\n",
+      "assets": [],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.3",
+      "name": "v1.0.3",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.3",
+      "published_at": "2026-08-15T15:27:14Z",
+      "body": "DeepSeek Harness 一键启动器（绿色便携版）v1.0.3\n\n### 更新内容\n- **会话管理支持「恢复（取消归档）」**：GUI「数据维护 → 会话管理」弹窗新增「恢复选中」按钮——勾选已归档（隐藏）会话后，可选择**恢复**（取消归档、不删任何数据、日志与工作区归属完整保留）或**永久删除**；并新增 CLI `--restore-session <ID>`（与 `--purge-session` 对称）\n- **WebUI「清理归档」改只读引导**：明确提示归档会话的删除/恢复请前往本机启动器 GUI 操作（先停止服务 → 数据维护 → 会话管理），WebUI 不再提供删除入口\n- **新增内置插件 dsh-session-rewind（会话回退）**：解决 dsh 会话被工具运行时失效（`Cannot read properties of undefined (reading 'prepare')`）**永久毒化**的问题——崩溃回合在日志里留下孤儿 tool_calls，之后每轮都被 API 400 拒绝。WebUI「设置 → 会话回退」可列出全部会话 →「分析」逐回合（用户问题/步骤数/工具调用数/错误码统计/是否完成）→ 在任意**已完成**回合点「回退到此」，走官方 session.fork 派生一个干净的续接会话并自动打开（原会话保留，可再交「会话管理」清理）；配套 tools/ 提供服务停止时的离线原地回退 rewind-session.mjs 与诊断守卫补丁 apply-agentloop-guard.mjs\n- **经验 Skill 更新**：SKILL.md 新增「3.5 会话回退」小节 + 速查表 + 部署检查清单，同步会话恢复/会话回退全套经验\n- 版本号升至 v1.0.3\n\n### 分发资产\n- DSH_Launcher_GreenPortable_Online_20260815_v1.0.3.zip：绿色版分发包（新机联网后由启动器自动装环境，约 8.9MB）\n- DSH_Skill_dsh-deploy-maintain_20260815.zip：DSH 部署/维护/插件开发经验 Skill（TRAE 可安装）\n",
+      "assets": [],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.2",
+      "name": "v1.0.2",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.2",
+      "published_at": "2026-08-15T12:18:30Z",
+      "body": "DeepSeek Harness 一键启动器（绿色便携版）v1.0.2\n\n### 更新内容\n- **新增内置插件 dsh-file-browser**：WebUI 文件列表 + 选中预览 + 右键「添加到输入框」（插入路径/内容/复制路径）\n- **绿色版自更新（双通道）**：官方核心（dsh npm 包）与外围（启动器/插件/文档）两条完全独立的更新通道；外围覆盖时跳过 config.json 与 runtime/，旧文件自动备份到 runtime/update/backup/ 可回退\n- **dsh-archive-purge 改版**：WebUI「清理归档」改只读展示，永久删除统一走 GUI「数据维护」区（可勾选会话）\n- **经验 Skill 更新**：同步 dsh-file-browser 双端加载、useInput 条件调用等避坑（#39-#42）\n- 版本号升至 v1.0.2\n\n### 分发资产\n- DSH_Launcher_GreenPortable_Online_20260815_v1.0.2.zip：绿色版分发包（新机联网后由启动器自动装环境，约 8.9MB）\n- DSH_Skill_dsh-deploy-maintain_20260815.zip：DSH 部署/维护/插件开发经验 Skill（TRAE 可安装）\n",
+      "assets": [],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.1",
+      "name": "v1.0.1 绿色便携版 dsh 一键启动器",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.1",
+      "published_at": "2026-08-15T09:37:22Z",
+      "body": "## v1.0.1 更新内容\n\n- 清理归档支持选择会话：WebUI 设置清理归档从一键清空全部升级为列表勾选+选择清理\n- 修复 HTTP 405：插件路由注册后立即被注销的 bug（ctx.effect 误用）\n- 新增 dsh-deploy-maintain 经验 Skill：部署/维护/插件开发全套经验\n- README / DEV_NOTES 同步更新\n\n## 资产\n\n- DSH_Launcher_GreenPortable_Online_20260815_v1.0.1.zip：轻量分发版（不含 runtime，新机联网自动下载环境）\n- DSH_Skill_dsh-deploy-maintain_20260815.zip：TRAE 经验 Skill 打包",
+      "assets": [],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.0",
+      "name": "v1.0.0 绿色便携版 dsh 一键启动器",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.0",
+      "published_at": "2026-08-15T06:43:16Z",
+      "body": "卧龙出山，一键部署 —— DeepSeek Harness 绿色便携启动器 v1.0.0\n\n本版如诸葛锦囊：解压即用，无需安装任何环境。绿色便携：Node/dsh/缓存/会话全在程序目录 runtime 内，不写用户主目录。\n\n【本次更新要点】\n- 工作区自动解析：不再写死目录，自动检测工作区与临时目录冲突，解决 Windows ACL 报错 'Windows ACL temp root must be outside the workspace'，冲突时自动用程序目录内 workspace 子目录，config.json 的 default_workspace 可自定义\n- 内置会话删除插件 dsh-archive-purge：网页「设置→清理归档」永久删除已归档会话，启动器侧配套数据维护（清理归档/删除会话）\n- 插件安装自动修复：自动清除 package.json 的 UTF-8 BOM，避免 dsh JSON 解析崩溃\n- 本地插件一键安装：插件管理支持「选择本地插件文件夹安装…」\n- 检查更新：GUI 一键查询 dsh 最新版并备份升级\n\n【快速上手】\n1. 解压到任意目录，双击 start.bat 或 DSH_Launcher.exe\n2. 点【安装环境】自动下载便携 Node/Python/dsh（需联网）\n3. 点【启动服务】，浏览器打开 127.0.0.1:3080，填 DeepSeek API Key，选工作区即可\n\n更多详见 README.md",
+      "assets": [],
+      "draft": false,
+      "prerelease": false
+    }
+  ]
+}

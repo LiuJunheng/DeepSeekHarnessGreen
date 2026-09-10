@@ -198,6 +198,8 @@ updated: "2026-09-10"
 
 - **发布 Release 中文编码坑**：Windows PowerShell 5.1 会把"无 BOM 的 UTF-8 .ps1"按系统 ANSI(GBK) 读取——脚本里写的中文字面量在内存已乱码，后面怎么编码都救不回。**正确做法**：发布脚本保持**纯 ASCII**，中文正文单独放 UTF-8 文件用 `[IO.File]::ReadAllText(path, UTF8)` 显式读取；校验用 python 而非 PS `-match "中文"`。
 
+- **发版 token 优先从插件/系统凭证找，找不到才问用户（2026-09-10）**：Gitee PAT 走 Windows 凭据管理器 `("protocol=https`nhost=gitee.com`n`n" | git credential fill)` 取 `password` 行；GitHub 连接器是 OAuth（IDE 凭证库，明文难取）→ 用 GitHub MCP 或向用户要 `ghp_` PAT。全程不要重复向用户索要已有凭证，拿到哪份用哪份。**注意 `release_upload.py` 跑过一次会回写版本日期刷新 mtime，之后别再整跑（撞新鲜度校验）**；补发单平台直接用该平台 API/MCP 建 Release+传 zip 即可（详细见 `references/release-workflow.md`）。
+
 - **绿色 zip 顶层清单要维护两处（打包** **`GREEN_TOP_FILES`** **+ verify 期望** **`expect_top`）**：漏一处会导致新机对应文件缺失但本地不报错（曾漏 desktop-shell.py）。新增/同步顶层文件必须两处都改；**建议收敛 verify 从 GREEN\_TOP\_FILES/GREEN\_TOP\_DIRS 派生期望**，从根上消灭清单不一致。
 
 - **zip 打包命令传目录名**：打包 `plugins`/`skills` 要传**目录名**（zip 内保留前缀）；不能传子路径（会把插件目录打在 zip 根、覆盖时错位拷到程序根）。打包后 `tar -tf` 复核。更新侧 `_normalize_update_structure()` 解压后把错位的 `dsh-*` 归位 + 清理根目录残留。

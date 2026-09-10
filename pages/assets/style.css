@@ -808,6 +808,28 @@ main, .footer { position: relative; z-index: 5; }
   padding: 40px 0;
 }
 
+.changelog-load-more {
+  display: block;
+  margin: 28px auto 12px;
+  padding: 12px 36px;
+  background: linear-gradient(135deg, #3dd3ff, #2ab4ff);
+  color: #000000;
+  border: none;
+  border-radius: 30px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: 0 4px 16px rgba(61, 211, 255, 0.3);
+}
+.changelog-load-more:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(61, 211, 255, 0.45);
+}
+.changelog-load-more:active {
+  transform: translateY(0);
+}
+
 .changelog-item {
   background: linear-gradient(180deg, rgba(14, 28, 65, 0.82), rgba(8, 17, 42, 0.9));
   border: 1px solid rgba(57, 211, 255, 0.18);

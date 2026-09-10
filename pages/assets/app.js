@@ -225,10 +225,16 @@
   }
 
   fetchLatestVersion();
-  /* 3.5 Changelog 页面：自动从 GitHub Releases 拉取最新 10 条 release
-       独立 localStorage 缓存，TTL 2h；fetchLatestRelease 用同一 GH_REPO 变量 */
-  var RELEASES_CACHE_KEY = "dshe-releases-v1";
-  var RELEASES_CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 小时
+  /* 3.5 Changelog 页面：静态种子优先 + GitHub API 补充 + 加载更多分页
+       - pages/assets/changelog-seed.json: 全量历史 release（离线保底 + 爬虫可见）
+       - GitHub API: 补充种子发布后才出的新 release
+       - 去重按 tag_name；首屏 10 条，"加载更多"每次追加 10 条 */
+  var CHUNK_SIZE = 10;                          // 每屏显示条数
+  var visibleCount = 0;                         // 当前已渲染条数
+  var allFilteredReleases = [];                 // 过滤后的全部 release（剔除 draft/prerelease）
+  var releasesLoaded = false;                   // 是否已把全量数据拿到（seed + GitHub 合并完）
+  var RELEASES_CACHE_KEY = "dshe-releases-v2";  // 换 key 清掉旧缓存
+  var RELEASES_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 
   function fetchReleasesFromCache() {
     try {
@@ -244,6 +250,39 @@
     try {
       localStorage.setItem(RELEASES_CACHE_KEY, JSON.stringify({ fetchedAt: Date.now(), releases: releases }));
     } catch (e) { /* no-op */ }
+  }
+
+  /* 合并多份 release 数组，按 tag_name 去重，保留先出现的（seed 优先）*/
+  function mergeReleases(seedList, githubList) {
+    var seen = {};
+    var out = [];
+    var i;
+    for (i = 0; i < seedList.length; i++) {
+      var s = seedList[i];
+      var key = s.tag_name || s.name;
+      if (key && !seen[key]) {
+        seen[key] = true;
+        out.push(s);
+      }
+    }
+    for (i = 0; i < githubList.length; i++) {
+      var g = githubList[i];
+      var key2 = g.tag_name || g.name;
+      if (key2 && !seen[key2]) {
+        seen[key2] = true;
+        out.push(g);
+      }
+    }
+    return out;
+  }
+
+  /* 统一过滤掉 draft / prerelease */
+  function filterReleases(list) {
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      if (!list[i].draft && !list[i].prerelease) out.push(list[i]);
+    }
+    return out;
   }
 
   /* 极简 markdown → HTML 渲染器，只处理 release body 常见格式：
@@ -327,104 +366,180 @@
     return y + "-" + mo + "-" + da;
   }
 
-  function renderChangelogList(releases) {
+  /* 渲染单个 release 为 <section class="changelog-item"> DOM 节点 */
+  function renderOneReleaseItem(r) {
+    var item = document.createElement("section");
+    item.className = "changelog-item";
+    // header: version tag + date + GitHub link
+    var header = document.createElement("header");
+    header.className = "changelog-header";
+    header.innerHTML =
+      '<a href="' + r.html_url + '" target="_blank" rel="noopener" class="changelog-tag">' +
+      (r.tag_name || r.name || "") + '</a>' +
+      '<span class="changelog-date">' + formatReleaseDate(r.published_at) + '</span>';
+    item.appendChild(header);
+
+    // body: rendered markdown
+    var body = document.createElement("div");
+    body.className = "changelog-body";
+    body.innerHTML = renderSimpleMarkdown(r.body || "");
+    item.appendChild(body);
+
+    // quick download link (if has assets)
+    if (r.assets && r.assets.length > 0) {
+      var zipAsset = null;
+      for (var j = 0; j < r.assets.length; j++) {
+        if (/\.zip$/i.test(r.assets[j].name) && r.assets[j].name.indexOf("GreenPortable") !== -1) {
+          zipAsset = r.assets[j]; break;
+        }
+      }
+      if (zipAsset) {
+        var dl = document.createElement("div");
+        dl.className = "changelog-download";
+        dl.innerHTML = '<a href="' + zipAsset.browser_download_url + '" target="_blank" rel="noopener" class="btn btn-primary">' +
+          (zipAsset.name || "下载") + '</a>';
+        item.appendChild(dl);
+      }
+    }
+    return item;
+  }
+
+  /* 渲染从 startIndex 开始的一段 release，追加到容器末尾 */
+  function renderChunk(startIndex) {
+    var container = document.getElementById("changelog-list");
+    if (!container) return;
+    var end = Math.min(startIndex + CHUNK_SIZE, allFilteredReleases.length);
+    for (var i = startIndex; i < end; i++) {
+      container.appendChild(renderOneReleaseItem(allFilteredReleases[i]));
+    }
+    visibleCount = end;
+  }
+
+  /* 管理"加载更多"按钮 */
+  function showLoadMoreButton() {
+    var container = document.getElementById("changelog-list");
+    if (!container) return;
+    // 避免重复添加
+    if (document.getElementById("changelog-load-more")) return;
+    var btn = document.createElement("button");
+    btn.id = "changelog-load-more";
+    btn.className = "changelog-load-more";
+    btn.textContent = "加载更多 ↓";
+    btn.onclick = function () {
+      renderChunk(visibleCount);
+      if (visibleCount >= allFilteredReleases.length) hideLoadMoreButton();
+    };
+    container.appendChild(btn);
+  }
+  function hideLoadMoreButton() {
+    var btn = document.getElementById("changelog-load-more");
+    if (btn) btn.remove();
+  }
+
+  /* 全量渲染入口：清空容器 + 首次 10 条 + 显示加载更多 */
+  function renderAll() {
     var container = document.getElementById("changelog-list");
     var loading = document.getElementById("changelog-loading");
     var errorBox = document.getElementById("changelog-error");
     if (!container) return;
-    container.innerHTML = "";
+    container.innerHTML = "";  // 清掉 HTML 里的静态种子
     if (loading) loading.hidden = true;
     if (errorBox) errorBox.hidden = true;
 
-    if (!releases || releases.length === 0) {
+    if (!allFilteredReleases || allFilteredReleases.length === 0) {
       container.innerHTML = '<p class="changelog-empty">暂无发布记录。</p>';
       return;
     }
 
-    for (var i = 0; i < releases.length; i++) {
-      var r = releases[i];
-      if (r.draft || r.prerelease) continue;
-
-      var item = document.createElement("section");
-      item.className = "changelog-item";
-
-      // header: version tag + date + GitHub link
-      var header = document.createElement("header");
-      header.className = "changelog-header";
-      header.innerHTML =
-        '<a href="' + r.html_url + '" target="_blank" rel="noopener" class="changelog-tag">' +
-        (r.tag_name || r.name || "") + '</a>' +
-        '<span class="changelog-date">' + formatReleaseDate(r.published_at) + '</span>';
-      item.appendChild(header);
-
-      // body: rendered markdown
-      var body = document.createElement("div");
-      body.className = "changelog-body";
-      body.innerHTML = renderSimpleMarkdown(r.body || "");
-      item.appendChild(body);
-
-      // quick download link (if has assets)
-      if (r.assets && r.assets.length > 0) {
-        var zipAsset = null;
-        for (var j = 0; j < r.assets.length; j++) {
-          if (/\.zip$/i.test(r.assets[j].name) && r.assets[j].name.indexOf("GreenPortable") !== -1) {
-            zipAsset = r.assets[j]; break;
-          }
-        }
-        if (zipAsset) {
-          var dl = document.createElement("div");
-          dl.className = "changelog-download";
-          dl.innerHTML = '<a href="' + zipAsset.browser_download_url + '" target="_blank" rel="noopener" class="btn btn-primary">' +
-            (zipAsset.name || "下载") + '</a>';
-          item.appendChild(dl);
-        }
-      }
-
-      container.appendChild(item);
-    }
-
-    if (container.children.length === 0) {
-      container.innerHTML = '<p class="changelog-empty">暂无正式发布版本。</p>';
+    visibleCount = 0;
+    renderChunk(0);  // 首屏 10 条
+    if (visibleCount < allFilteredReleases.length) {
+      showLoadMoreButton();
+    } else {
+      hideLoadMoreButton();  // 全部一次就能看完（≤10 条时）
     }
   }
 
-  function fetchAndRenderChangelog() {
-    // 只在 changelog 页面（有 #changelog-list）运行
-    if (!document.getElementById("changelog-list")) return;
+  /* 种子 JSON 加载 */
+  function fetchSeedJSON(onDone) {
+    var req = new XMLHttpRequest();
+    req.open("GET", "./assets/changelog-seed.json", true);
+    req.onload = function () {
+      if (req.status === 200) {
+        try {
+          var parsed = JSON.parse(req.responseText);
+          // 兼容两种格式：{ meta, releases: [...] } 或直接数组
+          var seedList = Array.isArray(parsed) ? parsed : (parsed.releases || []);
+          onDone(seedList);
+        } catch (e) { onDone([]); }
+      } else {
+        onDone([]);
+      }
+    };
+    req.onerror = function () { onDone([]); };
+    req.send();
+  }
 
-    var releases = fetchReleasesFromCache();
-    if (releases) {
-      renderChangelogList(releases);
-      return;
-    }
+  /* GitHub API 加载补充 */
+  function fetchGitHubReleases(onDone) {
+    var req = new XMLHttpRequest();
+    req.open("GET", "https://api.github.com/repos/" + GH_REPO + "/releases?per_page=30", true);
+    req.setRequestHeader("Accept", "application/vnd.github+json");
+    req.onload = function () {
+      if (req.status === 200) {
+        try {
+          onDone(JSON.parse(req.responseText));
+        } catch (e) { onDone([]); }
+      } else {
+        onDone([]);
+      }
+    };
+    req.onerror = function () { onDone([]); };
+    req.send();
+  }
+
+  function fetchAndRenderChangelog() {
+    if (!document.getElementById("changelog-list")) return;
 
     var loading = document.getElementById("changelog-loading");
     var errorBox = document.getElementById("changelog-error");
     if (loading) loading.hidden = false;
 
-    var req = new XMLHttpRequest();
-    req.open("GET", "https://api.github.com/repos/" + GH_REPO + "/releases?per_page=10");
-    req.setRequestHeader("Accept", "application/vnd.github+json");
-    req.onload = function () {
-      if (req.status !== 200) {
-        if (loading) loading.hidden = true;
-        if (errorBox) errorBox.hidden = false;
-        return;
-      }
-      try {
-        var payload = JSON.parse(req.responseText);
-        writeReleasesCache(payload);
-        renderChangelogList(payload);
-      } catch (e) {
-        if (loading) loading.hidden = true;
-        if (errorBox) errorBox.hidden = false;
-      }
+    // 1. 先看缓存
+    var cached = fetchReleasesFromCache();
+    if (cached && cached.length > 0) {
+      allFilteredReleases = cached;
+      releasesLoaded = true;
+      renderAll();
+      // 后台静默 fetch 一次 GitHub，更新缓存（如果发了新版本）
+      fetchGitHubReleases(function (githubList) {
+        if (!githubList || githubList.length === 0) return;
+        var merged = mergeReleases(cached, githubList);
+        merged = filterReleases(merged);
+        if (merged.length !== allFilteredReleases.length) {
+          // GitHub 返回了更多（有新发布），刷新缓存但不强制重新渲染
+          writeReleasesCache(merged);
+        }
+      });
+      return;
+    }
+
+    // 2. 缓存没有：种子 JSON + GitHub API 并发
+    var seedList = null;
+    var githubList = null;
+    var done = function () {
+      if (seedList === null || githubList === null) return;  // 还没都回来
+      // 合并 + 过滤
+      var merged = mergeReleases(seedList || [], githubList || []);
+      merged = filterReleases(merged);
+      allFilteredReleases = merged;
+      releasesLoaded = true;
+      writeReleasesCache(merged);
+      renderAll();
     };
-    req.onerror = function () {
-      if (loading) loading.hidden = true;
-      if (errorBox) errorBox.hidden = false;
-    };
-    req.send();
+
+    fetchSeedJSON(function (data) { seedList = data; done(); });
+    fetchGitHubReleases(function (data) { githubList = data; done(); });
   }
 
   fetchAndRenderChangelog();
