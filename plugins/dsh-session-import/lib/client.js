@@ -229,15 +229,23 @@ window.__ModuleLoader__.load({
 						react.createElement("input", {
 							ref: fileRef, type: "file", accept: ".zip,.jsonl,.json,.txt",
 							disabled: busy, onChange: onPick,
-							style: theme.fileInput
+							style: { display: "none" }
 						}),
+						react.createElement("button", {
+							type: "button", disabled: busy,
+							onClick: function() { if (fileRef.current) fileRef.current.click(); },
+							style: theme.btnGhost
+						}, _dsht("plugin.session_import.pick_file_btn", "选择文件")),
 						react.createElement("button", {
 							type: "button", disabled: busy || fileName === "",
 							onClick: doImport,
 							style: { ...theme.btn, cursor: busy || fileName === "" ? "default" : "pointer", opacity: busy || fileName === "" ? 0.5 : 1 }
 						}, busy ? _dsht("plugin.session_import.uploading", "导入中…") : _dsht("plugin.session_import.upload_btn", "开始导入"))
 					),
-					fileName !== "" && react.createElement("p", { style: { ...theme.hint, marginTop: 8, marginBottom: 0 } }, _dsht("plugin.session_import.selected_file", "已选择") + ": " + fileName)
+					react.createElement("p", { style: { ...theme.hint, marginTop: 8, marginBottom: 0 } },
+						fileName !== ""
+							? _dsht("plugin.session_import.selected_file", "已选择") + ": " + fileName
+							: _dsht("plugin.session_import.no_file_selected", "未选择文件"))
 				),
 				error !== null && react.createElement("p", { style: theme.err }, error),
 				result !== null && react.createElement("div", { style: { ...theme.box, background: "var(--dsw-alias-bg-layer-2)", borderColor: "var(--dsw-alias-state-success-primary)", borderLeft: "3px solid var(--dsw-alias-state-success-primary)" } },

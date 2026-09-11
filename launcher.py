@@ -7031,7 +7031,8 @@ def run_gui():
         threading.Thread(target=worker, daemon=True).start()
 
     def on_cleanup_update():
-        """清空绿色版更新暂存目录 (runtime/update): 暂存 zip / 解压内容 / 覆盖前旧文件备份 / 任务文件"""
+        """清空绿色版更新暂存目录 (runtime/update): 暂存 zip / 解压内容 / 覆盖前旧文件备份 / 任务文件
+        注: 文件删除可能涉及大目录递归, 用后台线程异步执行避免 UI 冻结"""
         if is_busy[0]:
             return
         choose = messagebox.askyesno(
@@ -7041,12 +7042,26 @@ def run_gui():
         if not choose:
             append_log(i18n.t('cleanup.cancelled_update'))
             return
-        removed_count = app.cleanup_update_files()
-        messagebox.showinfo(i18n.t('cleanup.update_done_title'), i18n.t('cleanup.update_done_detail', count=removed_count))
-        append_log("已清理更新目录, 删除 %d 项" % removed_count)
+        set_busy(True)
+        def worker():
+            try:
+                removed_count = app.cleanup_update_files()
+                root.after(0, lambda: messagebox.showinfo(
+                    i18n.t('cleanup.update_done_title'),
+                    i18n.t('cleanup.update_done_detail', count=removed_count)))
+                root.after(0, lambda: append_log(
+                    "已清理更新目录, 删除 %d 项" % removed_count))
+            except Exception as error:
+                root.after(0, lambda: messagebox.showerror(
+                    i18n.t('cleanup.update_done_title'),
+                    "清理更新目录失败: %s" % error))
+            finally:
+                root.after(0, lambda: set_busy(False))
+        threading.Thread(target=worker, daemon=True).start()
 
     def on_cleanup_backup():
-        """清空统一备份目录 (runtime/backup) 与旧版散落的 dsh-backup-* 目录"""
+        """清空统一备份目录 (runtime/backup) 与旧版散落的 dsh-backup-* 目录
+        注: 备份目录可能很大 (旧版 dsh 完整拷贝), 用后台线程异步执行避免 UI 冻结"""
         if is_busy[0]:
             return
         choose = messagebox.askyesno(
@@ -7056,9 +7071,22 @@ def run_gui():
         if not choose:
             append_log(i18n.t('cleanup.cancelled_backup'))
             return
-        removed_count = app.cleanup_backup_files()
-        messagebox.showinfo(i18n.t('cleanup.backup_done_title'), i18n.t('cleanup.backup_done_detail', count=removed_count))
-        append_log("已清理备份目录, 删除 %d 项" % removed_count)
+        set_busy(True)
+        def worker():
+            try:
+                removed_count = app.cleanup_backup_files()
+                root.after(0, lambda: messagebox.showinfo(
+                    i18n.t('cleanup.backup_done_title'),
+                    i18n.t('cleanup.backup_done_detail', count=removed_count)))
+                root.after(0, lambda: append_log(
+                    "已清理备份目录, 删除 %d 项" % removed_count))
+            except Exception as error:
+                root.after(0, lambda: messagebox.showerror(
+                    i18n.t('cleanup.backup_done_title'),
+                    "清理备份目录失败: %s" % error))
+            finally:
+                root.after(0, lambda: set_busy(False))
+        threading.Thread(target=worker, daemon=True).start()
 
     def start_update_to(target_version):
         """按用户选择的目标版本, 后台执行 备份 + 重装"""

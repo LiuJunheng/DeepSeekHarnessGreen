@@ -665,7 +665,8 @@ function _savePersist(patch) { ... }
 | 模型选择器无 Ollama/报 No API key                                 | 查 `llm-pi-ai.providers.<id>` 已写（重启服务持久）；免鉴权服务带占位 `headers.Authorization`；thinking 模型等待式思考正常                                                       |
 | Ollama 能对话从不调工具                                            | **compat 缺失**（OpenAI 兼容端点不认官方方言）→ 配置带 `compat:{...}`；查 settings.yaml 的 providers.<id>.compat                                                      |
 | 对话停"Deep diving…"很久                                        | thinking 模型先思考后出正文（本地冷启动+思考十几秒\~几十秒）；`GET /api/ps` 确认已加载                                                                                          |
-| bat 双击闪退但代码看着没问题                                           | 抓行为用 `subprocess.run(["cmd","/c",bat], capture_output=True)`（别用 PS Start-Process 重定向，与 pause 交互冲突）；字节级检查 ASCII 无 BOM CRLF                         |
+| bat 双击闪退但代码看着没问题                                           | 抓行为用 `subprocess.run(["cmd","/c",bat], capture_output=True)`（别用 PS Start-Process 重定向，与 pause 交互冲突）；字节级检查 ASCII 无 BOM CRLF
+| 清理更新/备份时 UI 冻结                                            | tkinter 主线程跑了 `shutil.rmtree` 大目录 → 包进 `threading.Thread(daemon=True)`，UI 更新用 `root.after(0, lambda: ...)` 回主线程，与 `start_update_to` 同款异步模式                         |
 
 ## 七、工作流建议（开发顺序）
 

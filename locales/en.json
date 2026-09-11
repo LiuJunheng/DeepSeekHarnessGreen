@@ -356,7 +356,9 @@
       "detail_exists": "already exists",
       "export_hint": "💡 Export: click the Session Log button in top-right — hooked by this plugin to open system Save As dialog.",
       "desc": "Import ZIP (or single .jsonl log) exported by the official 'Session Log ↓' button back to your machine. After import, files are written to the persistent directory based on cwd in the log header, and auto-attached to the corresponding workspace. Restart DSH service after import to refresh the session list (loaded from persistent directory at startup). Duplicate imports of the same session are skipped.",
-      "tip_export": "💡 Export: click the 'Session Log' button at the top-right of a session — this plugin has hooked it into the system 'Save As' dialog."
+      "tip_export": "💡 Export: click the 'Session Log' button at the top-right of a session — this plugin has hooked it into the system 'Save As' dialog.",
+      "pick_file_btn": "Choose File",
+      "no_file_selected": "No file selected"
     },
     "session_rewind": {
       "no_title": "(Untitled)",
