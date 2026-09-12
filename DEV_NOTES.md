@@ -981,3 +981,84 @@ DSH 0.1.2-rc.1 的 sessionQuery.readSurface() 返回的 events 里不包含 turn
 3. **读实时 session 状态**：`ctx.sessions`（必须 inject 声明）
 4. **ESM 里绝对不能写** **`require()`**：顶部 import 好所有依赖再用
 
+## 十、绿色版多源 Release 合并机制（2026-09-12 新增 + 修复）
+
+### 背景
+
+绿色版更新通道需要同时查询 GitHub Releases + Gitee Releases，按版本号合并后统一展示，同一版本的 GitHub 和 Gitee 作为并列安装源让用户选择。
+
+### 数据结构
+
+`launcher.Launcher.green_all_releases()` 返回 `list[dict]`，每项结构：
+
+```python
+{
+    "version": "1.0.37",                     # 语义版本号 (str)
+    "prerelease": False,                     # 是否预发布
+    "published_at": "2026-09-10 12:00",      # 发布时间 (ISO)
+    "sources": {                             # 按源分组的 release 信息
+        "github": { ... release dict ... },
+        "gitee_release": { ... release dict ... },
+    },
+    "tag_name": "v1.0.37",                   # 主源 tag (优先 github)
+    "name": "DSH-GreenPortable-v1.0.37",
+    "body": "...",                           # 发布说明 (4000 字截断)
+    "assets": [ ... ],                       # 主源 assets
+    "source": "github",                      # 主源标识
+}
+```
+
+### 合并流程
+
+1. GitHub releases (API 37 条) → `_github_to_item()` 转换（保留所有 assets）
+2. Gitee releases (API 29 条) → `_gitee_to_item()` 转换（**只保留 `/releases/download/` 直链 zip**，过滤自动生成的 archive）
+3. 按 `version` 字段用 `bucket[ver][source] = item` 分桶
+4. 构建 merged 列表，每项取 GitHub 为主源（无 GitHub 则 Gitee 兜底），sources dict 保留所有源
+5. 按版本号降序排序返回
+
+### 避坑经验
+
+**坑 1: "查询完 Release 但界面卡住" —— 后台线程异常静默吞噬**
+
+- **现象**: 日志显示 `GitHub Releases 拉到 37 条` + `Gitee Releases 拉到 29 条`，之后没有 "按版本分桶" 也没有弹窗，UI 永远卡在"正在检查"
+- **根因**: `green_all_releases()` 函数中间的 **合并逻辑块缺失**（`bucket` 初始化、`_add()` 调用、`merged` 构建），直接从 `_github_to_item` / `_gitee_to_item` 两个转换函数跳到 `merged.sort()`，导致 `UnboundLocalError: local variable 'merged' referenced before assignment`
+- **为什么不崩**: 调用方 `on_check_green_update()` 的 worker 线程是 `try-finally`（没有 `except`），Python 编译阶段只检查语法不检查变量赋值 → 运行时异常在 daemon 线程里抛到顶层被静默吞掉 → finally 恢复 busy 状态但没有弹窗
+- **修复**: 补全合并逻辑 + 给 worker 加 `except Exception` 捕获异常并弹窗报错
+
+**坑 2: Gitee 自动 archive zip 无法下载**
+
+- Gitee `/releases` API 返回的 assets 里包含两种 zip：手动上传的（`browser_download_url` 含 `/releases/download/`）和自动生成的 archive（URL 是 JS 挑战页）
+- `_gitee_to_item()` 必须过滤只保留 `/releases/download/` 路径的 zip，否则 green_find_zip_asset 虽能匹配到但实际下载会 403
+
+**坑 3: 代码编辑时中间块丢失**
+
+- 本次修复就是因为之前某次 Edit 操作在替换代码块时范围覆盖不当，把中间几十行合并逻辑删掉了
+- **验证方法**: 改完函数后用 `inspect.getsource()` 打印完整源码确认变量赋值链完整，或用测试脚本跑真实 API 数据验证
+
+### 测试命令
+
+```bash
+# 验证合并逻辑（真实 GitHub + Gitee API 数据）
+python -c "
+import launcher
+app = launcher.Launcher.__new__(launcher.Launcher)
+app.log = lambda m: None
+app.resolve_mirror = lambda: ('auto', True)
+result = app.green_all_releases()
+print(len(result), 'releases')
+for r in result[:5]:
+    print(r['version'], list(r['sources'].keys()))
+"
+```
+
+### 已发布版本的源覆盖情况（2026-09-12 实测）
+
+| 版本范围 | GitHub zip | Gitee zip |
+|---------|-----------|----------|
+| v1.0.37 - v1.0.34 | ✅ | ✅ |
+| v1.0.33 | ✅ | ❌ (未上传) |
+| v1.0.31 - v1.0.30 | ✅ | 部分 |
+| v1.0.29 及更早 | 多数无 zip | 部分有 |
+
+→ 用户选择更新时，对话框会自动根据 sources 显示可用源标签和安装按钮
+

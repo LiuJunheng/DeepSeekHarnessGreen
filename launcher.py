@@ -283,8 +283,8 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # 发布流程: 打 tag v{GREEN_VERSION} + Release 资产 DSH-GreenPortable-v{tag}.zip
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
-GREEN_VERSION = "1.0.37"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
-GREEN_VERSION_DATE = "2026年09月10日"               # 绿色版版本日期 (release_upload.py 会按构建当天回写)
+GREEN_VERSION = "1.0.38"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
+GREEN_VERSION_DATE = "2026年09月12日"               # 绿色版版本日期 (release_upload.py 会按构建当天回写)
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
 GREEN_RELEASE_MIRROR = ("https://mirror.nju.edu.cn/github-release/%s/latest"
@@ -2291,6 +2291,42 @@ class Launcher:
                     "source": "gitee_release",
                     "version": version,
                 }
+
+            # ---- 合并: 按 version 分桶, 同版本多源合并 ----
+            bucket = {}
+            def _add(rel_list, to_item_fn):
+                for rel in rel_list:
+                    item = to_item_fn(rel)
+                    if item is None:
+                        continue
+                    ver = item["version"]
+                    src = item["source"]
+                    if src in bucket.setdefault(ver, {}):
+                        continue
+                    bucket[ver][src] = item
+
+            _add(github_list, _github_to_item)
+            _add(gitee_list, _gitee_to_item)
+            self.log("GitHub + Gitee Release 按版本分桶后 %d 个版本" % len(bucket))
+
+            merged = []
+            for ver, sources in bucket.items():
+                primary = (sources.get("github")
+                           or sources.get("gitee_release")
+                           or sources.get("gitee"))
+                if primary is None:
+                    continue
+                merged.append({
+                    "version": ver,
+                    "prerelease": primary.get("prerelease", False),
+                    "published_at": primary.get("published_at") or "",
+                    "sources": sources,
+                    "tag_name": primary.get("tag_name"),
+                    "name": primary.get("name"),
+                    "body": primary.get("body"),
+                    "assets": primary.get("assets"),
+                    "source": primary.get("source"),
+                })
 
             def _sort_key(item):
                 t = self._green_version_tuple(item["version"])
@@ -7523,6 +7559,13 @@ def run_gui():
                         break
                 root.after(0, lambda: ask_green_update(
                     local_version, candidates, latest_stable))
+            except Exception as error:
+                import traceback
+                traceback.print_exc()
+                append_log("检查绿色版更新异常: %s" % error)
+                root.after(0, lambda: messagebox.showerror(
+                    i18n.t('green_update.title'),
+                    "检查更新时发生异常:\n%s" % error))
             finally:
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=worker, daemon=True).start()
