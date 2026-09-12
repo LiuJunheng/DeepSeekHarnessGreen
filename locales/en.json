@@ -898,7 +898,7 @@
   "update.failed_title": "Update Failed",
   "green_version_select": {
     "title": "Select Green Portable Version",
-    "header_summary": "Current: {current}  |  Latest stable: {latest}\n\n{version_count} candidate versions in {channel_count} channels.",
+    "header_summary": "Current: {current}  |  Latest stable: {latest}\n\n{version_count} candidates in {channel_count} channels.\nIf both GitHub and Gitee have the same version, both are listed; pick the source you prefer.",
     "version_column": "Version",
     "channel_column": "Channel / Source",
     "published_column": "Published",
@@ -926,6 +926,7 @@
     "cancel": "Cancel",
     "notes_unavailable": "(No release notes for version {version})",
     "network_fail": "Could not fetch any release list from GitHub or Gitee. Check your network.",
-    "no_candidate": "No release candidates found (both GitHub and Gitee unreachable)."
+    "no_candidate": "No release candidates found (both GitHub and Gitee unreachable).",
+    "source_row": "Download source: {source}"
   }
 }

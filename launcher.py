@@ -2285,28 +2285,38 @@ class Launcher:
                 }
 
             merged = []
-            seen_versions = set()
-            # GitHub 优先 (版本相同时 GitHub 胜出, Gitee 作为补齐)
+            # 按 (version, source) 二元组去重: 同版本 GitHub 与 Gitee 各自保留一条,
+            # 让用户在 ask_green_update 里自行选择下载源 (同一版本多 zip 可并存)。
+            seen_keys = set()
             for rel in github_list:
                 item = _github_to_item(rel)
-                if item and item["version"] not in seen_versions:
-                    seen_versions.add(item["version"])
-                    merged.append(item)
+                if not item:
+                    continue
+                key = (item["version"], item["source"])
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                merged.append(item)
             for rel in gitee_list:
                 item = _gitee_to_item(rel)
-                if item and item["version"] not in seen_versions:
-                    seen_versions.add(item["version"])
-                    merged.append(item)
+                if not item:
+                    continue
+                key = (item["version"], item["source"])
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                merged.append(item)
 
-            # 按版本从新到旧排序 (复用 _green_version_tuple 做比较, 倒序)
+            # 排序: 版本新 → 旧 (复用 _green_version_tuple 倒序),
+            #        同版本 GitHub 排在 Gitee 前面 (source_order  github=0 < gitee_release=1 < gitee=2)。
+            source_order = {"github": 0, "gitee_release": 1, "gitee": 2}
             def _sort_key(item):
                 t = self._green_version_tuple(item["version"])
                 if t is None:
-                    return (0, 0, 0, 0)
-                # -major, -minor, -patch, prerelease (None > 值, 因为正式版排在预发前面)
+                    t = (0, 0, 0, 0)
                 return (-t[0], -t[1], -t[2],
                         0 if t[3] is None else 1,
-                        -(hash(str(t[3])) % 10000))
+                        source_order.get(item.get("source") or "", 99))
             merged.sort(key=_sort_key)
             self.log("绿色版全量 Release 合并后 %d 条, 最新: %s"
                      % (len(merged), merged[0]["version"] if merged else "无"))
@@ -7697,12 +7707,18 @@ def run_gui():
         _iw_install_btn.pack(side="right", padx=6)
         _i18n_widgets.append((_iw_install_btn, 'text', 'green_version_select.install_selected'))
 
-        # 默认选中最新稳定版 (若存在)
+        # 默认选中最新稳定版 (若存在): 同版本多源时优先选 GitHub 那条
+        def _source_rank(item):
+            src = item.get("release_info", {}).get("source") or ""
+            return 0 if src == "github" else 1
+        default_iid = None
         for iid, item in selected_items.items():
             if latest_stable and item["channel"] == "stable" and item["version"] == latest_stable:
-                tree.selection_set(iid)
-                tree.see(iid)
-                break
+                if default_iid is None or _source_rank(item) < _source_rank(selected_items[default_iid]):
+                    default_iid = iid
+        if default_iid is not None:
+            tree.selection_set(default_iid)
+            tree.see(default_iid)
         # 居中
         dialog.update_idletasks()
         pos_x = root.winfo_x() + (root.winfo_width() - dialog.winfo_reqwidth()) // 2
@@ -7735,6 +7751,17 @@ def run_gui():
                         current=local_version, target=target_version))
         _iw_confirm_header.pack(anchor="w")
         _i18n_widgets.append((_iw_confirm_header, 'text', 'green_version_select.confirm_header'))
+        # 下载源提示行 (蓝色, 清晰展示用户选了哪条)
+        source = release_info.get("source") or "github"
+        source_label = (i18n.t('green_version_select.source_github')
+                        if source == "github"
+                        else i18n.t('green_version_select.source_gitee'))
+        _iw_source_row = ttk.Label(
+            header_frame, justify="left", foreground="#2563eb",
+            text=i18n.t('green_version_select.source_row',
+                        source=source_label))
+        _iw_source_row.pack(anchor="w", pady=(4, 0))
+        _i18n_widgets.append((_iw_source_row, 'text', 'green_version_select.source_row'))
 
         notes_text = tk.Text(detail_dialog, height=14, width=72, wrap="word",
                              state="disabled")
