@@ -2195,6 +2195,122 @@ class Launcher:
         self.log("GitHub Release 通道全部不可达, 自动切换 Gitee 镜像源 ...")
         return self.green_gitee_latest()
 
+    def green_all_releases(self):
+            """拉取本绿色版 **所有** GitHub Releases + Gitee Releases 列表
+            (优先 GitHub, Gitee 作为兜底补充, 不重复收录)。
+            返回 list[dict] (按版本从新到旧排序), 每项结构兼容 green_latest_release():
+              {tag_name, name, body, published_at, assets, source, prerelease, version}
+            整体失败 (GitHub + Gitee 都不可达) 返回 None。
+            设计原则 (对齐官方 dsh ask_update):
+              - 不过滤新旧, 用户可以降级;
+              - installable (green_find_zip_asset 是否找到 zip) 在 UI 层判定,
+                这里只负责把所有 tag 拉回来。"""
+            ssl_context = ssl.create_default_context()
+            mirror, _is_auto = self.resolve_mirror()
+            prefer_gitee = (mirror == "cn")
+            # ---- GitHub Releases 优先 ----
+            github_list = []
+            try:
+                url = ("https://api.github.com/repos/%s/releases"
+                       "?per_page=100" % GITHUB_REPO)
+                self.log("正在查询绿色版全部 Release: %s" % url)
+                request = urllib.request.Request(
+                    url, headers={"User-Agent": "DSH-Launcher/%s" % GREEN_VERSION})
+                with urllib.request.urlopen(request, context=ssl_context, timeout=30) as resp:
+                    github_list = json.loads(resp.read().decode("utf-8"))
+                self.log("GitHub Releases 拉到 %d 条" % len(github_list))
+            except Exception as error:
+                self.log("GitHub 全量 Release 查询失败: %s" % error)
+            # ---- Gitee 兜底 (GitHub 部分拿到或全拿不到都补一下) ----
+            gitee_list = []
+            try:
+                self.log("正在查询 Gitee 全部 Release: %s" % GITEE_RELEASES_API)
+                request = urllib.request.Request(
+                    GITEE_RELEASES_API + "?per_page=100",
+                    headers={"User-Agent": "DSH-Launcher/%s" % GREEN_VERSION})
+                with urllib.request.urlopen(request, context=ssl_context, timeout=30) as resp:
+                    raw = json.loads(resp.read().decode("utf-8"))
+                if isinstance(raw, list):
+                    gitee_list = raw
+                    self.log("Gitee Releases 拉到 %d 条" % len(gitee_list))
+            except Exception as error:
+                self.log("Gitee 全量 Release 查询失败: %s" % error)
+            if not github_list and not gitee_list:
+                self.log("GitHub 与 Gitee Releases 全量查询均失败")
+                return None
+
+            def _github_to_item(rel):
+                version = self.green_release_version(rel)
+                if not version:
+                    return None
+                body = (rel.get("body") or "").strip()
+                if len(body) > 4000:
+                    body = body[:4000] + "\n...(发布说明过长已省略)"
+                # GitHub release 自带 assets, 不用再补; published_at 已是 ISO
+                return {
+                    "tag_name": rel.get("tag_name") or ("v" + version),
+                    "name": rel.get("name") or ("v" + version),
+                    "body": body,
+                    "published_at": (rel.get("published_at") or "").replace("T", " ")[:16],
+                    "assets": rel.get("assets") or [],
+                    "prerelease": bool(rel.get("prerelease")),
+                    "source": "github",
+                    "version": version,
+                }
+
+            def _gitee_to_item(rel):
+                version = self.green_release_version(rel)
+                if not version:
+                    return None
+                body = (rel.get("body") or "").strip()
+                if len(body) > 4000:
+                    body = body[:4000] + "\n...(发布说明过长已省略)"
+                # Gitee release assets 字段名叫 assets, 其中每个 item 的 name/browser_download_url 同上
+                gitee_assets = []
+                for att in (rel.get("assets") or rel.get("attachments") or []):
+                    gitee_assets.append({
+                        "name": att.get("name") or "",
+                        "browser_download_url": att.get("browser_download_url") or att.get("url") or "",
+                        "size": att.get("size") or 0,
+                    })
+                return {
+                    "tag_name": rel.get("tag_name") or ("v" + version),
+                    "name": rel.get("name") or ("v" + version),
+                    "body": body,
+                    "published_at": (rel.get("created_at") or rel.get("published_at") or "").replace("T", " ")[:16],
+                    "assets": gitee_assets,
+                    "prerelease": bool(rel.get("prerelease")),
+                    "source": "gitee_release",
+                    "version": version,
+                }
+
+            merged = []
+            seen_versions = set()
+            # GitHub 优先 (版本相同时 GitHub 胜出, Gitee 作为补齐)
+            for rel in github_list:
+                item = _github_to_item(rel)
+                if item and item["version"] not in seen_versions:
+                    seen_versions.add(item["version"])
+                    merged.append(item)
+            for rel in gitee_list:
+                item = _gitee_to_item(rel)
+                if item and item["version"] not in seen_versions:
+                    seen_versions.add(item["version"])
+                    merged.append(item)
+
+            # 按版本从新到旧排序 (复用 _green_version_tuple 做比较, 倒序)
+            def _sort_key(item):
+                t = self._green_version_tuple(item["version"])
+                if t is None:
+                    return (0, 0, 0, 0)
+                # -major, -minor, -patch, prerelease (None > 值, 因为正式版排在预发前面)
+                return (-t[0], -t[1], -t[2],
+                        0 if t[3] is None else 1,
+                        -(hash(str(t[3])) % 10000))
+            merged.sort(key=_sort_key)
+            self.log("绿色版全量 Release 合并后 %d 条, 最新: %s"
+                     % (len(merged), merged[0]["version"] if merged else "无"))
+            return merged
     def green_gitee_latest(self):
         """Gitee 兜底通道, 两级策略:
         1. Gitee Release 优先: GET GITEE_RELEASES_API (公开读无需令牌), 取最新带 .zip
@@ -7359,98 +7475,345 @@ def run_gui():
     # 绝不触碰 runtime/ 与用户自定义的 config.json, 保证与官方核心更新互不干扰。
     # -------------------------------------------------------------------------
     def on_check_green_update():
-        """检查绿色版是否有新版本 (查询本项目 GitHub Release)"""
+        """检查绿色版是否有新版本 (全量 Release 列表 + 用户挑选, 与官方 dsh 更新流程对齐)"""
         if is_busy[0]:
             return
         if app.is_server_running():
             messagebox.showinfo(i18n.t('green_update.title'), i18n.t('green_update.need_stop'))
             return
         set_busy(True)
-        status_text.set("正在检查绿色版更新 ...")
+        status_text.set(i18n.t('green_update.checking'))
         status_indicator.itemconfig(dot, fill="#f59e0b")
         append_log("--- 开始检查绿色版更新 ---")
         def worker():
             try:
-                release_info = app.green_latest_release()
-                root.after(0, lambda: confirm_green_update(release_info))
-            except Exception as error:
-                root.after(0, lambda: messagebox.showerror(i18n.t('green_update.title'), str(error)))
+                all_releases = app.green_all_releases()
+                if all_releases is None:
+                    root.after(0, lambda: messagebox.showerror(
+                        i18n.t('green_update.title'),
+                        i18n.t('green_version_select.network_fail')))
+                    return
+                local_version = app.green_local_version()
+                # 构造 candidate 列表 (对齐 ask_update 的字典结构)
+                candidates = []
+                seen = set()
+                for rel in all_releases:
+                    version = rel.get("version") or app.green_release_version(rel)
+                    if not version or version in seen:
+                        continue
+                    seen.add(version)
+                    is_current = (version == local_version)
+                    # 判断是否可自动安装: 必须能匹配到 DSH-GreenPortable-v*.zip 资产
+                    installable = (app.green_find_zip_asset(rel) is not None)
+                    channel = "prerelease" if rel.get("prerelease") else "stable"
+                    source_label = rel.get("source") or "github"
+                    candidates.append({
+                        "version": version,
+                        "tag_name": rel.get("tag_name") or ("v" + version),
+                        "name": rel.get("name") or ("v" + version),
+                        "channel": channel,           # stable / prerelease
+                        "installable": installable,
+                        "is_current": is_current,
+                        "latest_version": version,    # 方便后续统一取 key
+                        "release_info": rel,          # 完整 release dict, 下载时直接用
+                    })
+                # 排序: stable 在前, 各自内部按版本从新到旧 (green_all_releases 已排好)
+                channel_order = {"stable": 0, "prerelease": 1}
+                candidates.sort(key=lambda c: (
+                    channel_order.get(c["channel"], 99),
+                    tuple(-num for num in app._green_version_tuple(c["version"]) or (0, 0, 0, 0))
+                ))
+                if not candidates:
+                    root.after(0, lambda: messagebox.showinfo(
+                        i18n.t('green_update.title'),
+                        i18n.t('green_version_select.no_candidate')))
+                    return
+                # 找最新版本 (首个 stable)
+                latest_stable = None
+                for c in candidates:
+                    if c["channel"] == "stable":
+                        latest_stable = c["version"]
+                        break
+                root.after(0, lambda: ask_green_update(
+                    local_version, candidates, latest_stable))
+            finally:
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=worker, daemon=True).start()
 
-    def confirm_green_update(release_info):
-        """绿色版查询结果处理: 无 Release / 已是最新 / 发现新版 -> 确认是否下载"""
-        if release_info is None:
-            set_busy(False)
-            messagebox.showerror(i18n.t('green_update.title'), "无法获取最新版本, 请检查网络后重试。")
-            return
+    def ask_green_update(current_version, candidates, latest_stable=None):
+        """版本列表弹窗 (仿 ask_update, 但绿色版专用文案):
+        stable / prerelease 两个通道, Treeview 展示所有可挑版本,
+        当前版高亮, 最新稳定版用 (最新) 标记, 无 zip 资产用灰色 (不可自动安装)。
+        用户选一个版本 -> 点确认 -> confirm_green_upgrade 详情弹窗。"""
+        channel_title = {
+            "stable": (i18n.t('green_version_select.channel_stable_title'),
+                       i18n.t('green_version_select.channel_stable_desc')),
+            "prerelease": (i18n.t('green_version_select.channel_prerelease_title'),
+                           i18n.t('green_version_select.channel_prerelease_desc')),
+        }
+        groups = {}
+        for c in candidates:
+            groups.setdefault(c["channel"], []).append(c)
+
+        dialog = tk.Toplevel(root)
+        dialog.title(i18n.t('green_version_select.title'))
+        dialog.transient(root)
+        dialog.grab_set()
+        dialog.geometry("760x520")
+
+        header = ttk.Frame(dialog, padding=12)
+        header.pack(fill="x")
+        channel_count = len(groups)
+        version_count = len(candidates)
+        _iw_green_header = ttk.Label(
+            header, justify="left",
+            text=i18n.t('green_version_select.header_summary',
+                        current=current_version,
+                        latest=latest_stable or "?",
+                        version_count=version_count,
+                        channel_count=channel_count))
+        _iw_green_header.pack(anchor="w")
+        _i18n_widgets.append((_iw_green_header, 'text', 'green_version_select.header_summary'))
+
+        body = ttk.Frame(dialog)
+        body.pack(fill="both", expand=True, padx=12, pady=(0, 6))
+        tree = ttk.Treeview(body, columns=("source", "time", "installable"),
+                            show="tree headings", height=12)
+        tree.heading("#0", text=i18n.t('green_version_select.version_column'))
+        tree.heading("source", text=i18n.t('green_version_select.channel_column'))
+        tree.heading("time", text=i18n.t('green_version_select.published_column'))
+        tree.heading("installable", text=i18n.t('green_version_select.status_column'))
+        tree.column("#0", width=220, anchor="w")
+        tree.column("source", width=180, anchor="w")
+        tree.column("time", width=140, anchor="center")
+        tree.column("installable", width=130, anchor="center")
+        tree.tag_configure("current", foreground="#16a34a")
+        tree.tag_configure("latest", foreground="#2563eb", font=("", 9, "bold"))
+        tree.tag_configure("disabled", foreground="#999999")
+        tree.tag_configure("current_latest", foreground="#008080", font=("", 9, "bold"))
+
+        tree_scrollbar = ttk.Scrollbar(body, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=tree_scrollbar.set)
+        tree.pack(side="left", fill="both", expand=True)
+        tree_scrollbar.pack(side="right", fill="y")
+
+        selected_items = {}
+        iid_counter = [0]
+
+        def add_item(parent_iid, item, row_tags):
+            iid = str(iid_counter[0])
+            iid_counter[0] += 1
+            version_text = item["version"]
+            if item["is_current"]:
+                version_text += "  (%s)" % i18n.t('green_version_select.current_mark')
+            if latest_stable and item["channel"] == "stable" and item["version"] == latest_stable:
+                version_text += "  (%s)" % i18n.t('green_version_select.latest_mark')
+            installable_text = (
+                i18n.t('green_version_select.status_installable')
+                if item["installable"]
+                else i18n.t('green_version_select.status_not_installable'))
+            source_label = item["release_info"].get("source", "github")
+            if source_label == "github":
+                source_label = i18n.t('green_version_select.source_github')
+            elif source_label in ("gitee", "gitee_release"):
+                source_label = i18n.t('green_version_select.source_gitee')
+            tree.insert(parent_iid, "end", iid=iid, text=version_text,
+                        values=(source_label,
+                                item["release_info"].get("published_at") or "",
+                                installable_text),
+                        tags=row_tags)
+            selected_items[iid] = item
+            return iid
+
+        for channel_key in ("stable", "prerelease"):
+            if channel_key not in groups:
+                continue
+            title, desc = channel_title[channel_key]
+            parent_iid = str(iid_counter[0])
+            iid_counter[0] += 1
+            tree.insert("", "end", iid=parent_iid, text=title,
+                        values=(desc, "", ""), open=True)
+            for item in groups[channel_key]:
+                row_tags = []
+                if item["is_current"] and latest_stable and item["version"] == latest_stable:
+                    row_tags.append("current_latest")
+                elif item["is_current"]:
+                    row_tags.append("current")
+                elif latest_stable and item["channel"] == "stable" and item["version"] == latest_stable:
+                    row_tags.append("latest")
+                if not item["installable"]:
+                    row_tags.append("disabled")
+                add_item(parent_iid, item, tuple(row_tags))
+
+        def get_selected():
+            selection = tree.selection()
+            if not selection:
+                messagebox.showwarning(i18n.t('green_version_select.title'),
+                                       i18n.t('green_version_select.select_first'),
+                                       parent=dialog)
+                return None
+            iid = selection[0]
+            if iid not in selected_items:
+                messagebox.showwarning(i18n.t('green_version_select.title'),
+                                       i18n.t('green_version_select.pick_channel_not_version'),
+                                       parent=dialog)
+                return None
+            return selected_items[iid]
+
+        def on_confirm():
+            item = get_selected()
+            if item is None:
+                return
+            if item["is_current"]:
+                messagebox.showinfo(i18n.t('green_version_select.title'),
+                                    i18n.t('green_version_select.already_current',
+                                           version=item["version"]),
+                                    parent=dialog)
+                return
+            if not item["installable"]:
+                messagebox.showwarning(
+                    i18n.t('green_version_select.title'),
+                    i18n.t('green_version_select.not_installable_detail',
+                           version=item["version"]),
+                    parent=dialog)
+                return
+            dialog.destroy()
+            confirm_green_upgrade(item["release_info"], item["version"])
+
+        footer = ttk.Frame(dialog, padding=12)
+        footer.pack(fill="x")
+        _iw_green_footer = ttk.Label(footer, justify="left", foreground="#888888",
+                                       text=i18n.t('green_version_select.footer_hint'))
+        _iw_green_footer.pack(anchor="w")
+        _i18n_widgets.append((_iw_green_footer, 'text', 'green_version_select.footer_hint'))
+        button_row = ttk.Frame(footer)
+        button_row.pack(side="right")
+        _iw_close_btn = ttk.Button(button_row, text=i18n.t('green_version_select.close'),
+                                    command=dialog.destroy)
+        _iw_close_btn.pack(side="right")
+        _i18n_widgets.append((_iw_close_btn, 'text', 'green_version_select.close'))
+        _iw_install_btn = ttk.Button(button_row, text=i18n.t('green_version_select.install_selected'),
+                                      command=on_confirm)
+        _iw_install_btn.pack(side="right", padx=6)
+        _i18n_widgets.append((_iw_install_btn, 'text', 'green_version_select.install_selected'))
+
+        # 默认选中最新稳定版 (若存在)
+        for iid, item in selected_items.items():
+            if latest_stable and item["channel"] == "stable" and item["version"] == latest_stable:
+                tree.selection_set(iid)
+                tree.see(iid)
+                break
+        # 居中
+        dialog.update_idletasks()
+        pos_x = root.winfo_x() + (root.winfo_width() - dialog.winfo_reqwidth()) // 2
+        pos_y = root.winfo_y() + (root.winfo_height() - dialog.winfo_reqheight()) // 2
+        dialog.geometry("+%d+%d" % (pos_x, pos_y))
+
+    def confirm_green_upgrade(release_info, target_version):
+        """点击某个目标绿色版后弹出「确认升级」: 先展示该版本的更新说明,
+        用户点「确认升级」才真正执行; 点「取消」或关闭则回到版本选择弹窗。
+        下载完成后调用 ask_apply_green_update 进入"准备 → 退出启动器"流程 (不动)。"""
         local_version = app.green_local_version()
-        latest_version = app.green_release_version(release_info)
-        if not latest_version:
-            set_busy(False)
-            messagebox.showwarning(i18n.t('green_update.title'),
-                                   "当前版本尚未发布正式 Release, 请稍后再试。")
+        # 若选的版本就是当前, 直接回到列表 (正常 ask_green_update.on_confirm 已拦截,
+        # 这是第二层防御)
+        if target_version == local_version:
+            messagebox.showinfo(i18n.t('green_version_select.title'),
+                                i18n.t('green_version_select.already_current',
+                                       version=target_version))
             return
-        if not app._green_version_greater(latest_version, local_version):
-            set_busy(False)
-            messagebox.showinfo(i18n.t('green_update.title'), "已是最新绿色版 v%s" % local_version)
-            return
+        # 确认弹窗
+        detail_dialog = tk.Toplevel(root)
+        detail_dialog.title(i18n.t('green_update.title'))
+        detail_dialog.transient(root)
+        detail_dialog.grab_set()
+
+        header_frame = ttk.Frame(detail_dialog, padding=12)
+        header_frame.pack(fill="x")
+        _iw_confirm_header = ttk.Label(
+            header_frame, justify="left",
+            text=i18n.t('green_version_select.confirm_header',
+                        current=local_version, target=target_version))
+        _iw_confirm_header.pack(anchor="w")
+        _i18n_widgets.append((_iw_confirm_header, 'text', 'green_version_select.confirm_header'))
+
+        notes_text = tk.Text(detail_dialog, height=14, width=72, wrap="word",
+                             state="disabled")
+        notes_text.pack(fill="both", expand=True, padx=12)
+        scrollbar = ttk.Scrollbar(detail_dialog, command=notes_text.yview)
+        scrollbar.pack(side="right", fill="y")
+        notes_text.configure(yscrollcommand=scrollbar.set)
+
+        notes = (release_info.get("body") or "").strip()
+        if not notes:
+            notes = i18n.t('green_version_select.notes_unavailable', version=target_version)
+        notes_text.configure(state="normal")
+        notes_text.insert("1.0", notes)
+        notes_text.configure(state="disabled")
+
+        footer_frame = ttk.Frame(detail_dialog, padding=12)
+        footer_frame.pack(fill="x")
+        _iw_confirm_footer = ttk.Label(footer_frame, justify="left", foreground="#888888",
+                                        text=i18n.t('green_version_select.confirm_footer'))
+        _iw_confirm_footer.pack(anchor="w")
+        _i18n_widgets.append((_iw_confirm_footer, 'text', 'green_version_select.confirm_footer'))
+        button_row = ttk.Frame(footer_frame)
+        button_row.pack(side="right")
+        _iw_cancel_btn = ttk.Button(button_row, text=i18n.t('green_version_select.cancel'),
+                                    command=detail_dialog.destroy)
+        _iw_cancel_btn.pack(side="right")
+        _i18n_widgets.append((_iw_cancel_btn, 'text', 'green_version_select.cancel'))
+        def _start_download():
+            detail_dialog.destroy()
+            _do_start_green_download(release_info, target_version)
+        _iw_ok_btn = ttk.Button(button_row, text=i18n.t('green_version_select.confirm'),
+                                 command=_start_download)
+        _iw_ok_btn.pack(side="right", padx=6)
+        _i18n_widgets.append((_iw_ok_btn, 'text', 'green_version_select.confirm'))
+
+        detail_dialog.update_idletasks()
+        pos_x = root.winfo_x() + (root.winfo_width() - detail_dialog.winfo_reqwidth()) // 2
+        pos_y = root.winfo_y() + (root.winfo_height() - detail_dialog.winfo_reqheight()) // 2
+        detail_dialog.geometry("+%d+%d" % (pos_x, pos_y))
+
+    def _do_start_green_download(release_info, target_version):
+        """confirm_green_upgrade 用户点确认后: 后台下载 + 准备 + 进入 ask_apply_green_update。
+        原 confirm_green_update.download_worker 升级到此, 额外加了 source_hint 展示。"""
         asset = app.green_find_zip_asset(release_info)
         if asset is None:
-            set_busy(False)
             messagebox.showwarning(
-                "检查绿色版更新",
-                "已发现新版 v%s, 但 Release 里未找到匹配的下载文件 (需含 %s*.zip),\n"
-                "请到 GitHub 手动下载。" % (latest_version, GREEN_ZIP_PREFIX))
+                i18n.t('green_update.title'),
+                i18n.t('green_version_select.not_installable_detail',
+                       version=target_version))
             return
         asset_name, download_url, asset_size = asset
-        release_note = (release_info.get("body") or "").strip() or "(无更新说明)"
-        if len(release_note) > 400:
-            release_note = release_note[:400] + " ..."
         is_gitee_source = (release_info.get("source") or "") in ("gitee", "gitee_release")
-        # 提示文案按"下载源设置 + 实际来源"区分语义 (用户需求 2026-08-20):
-        # 国内源/自动: 主动优先走 Gitee, 文案用"国内源优先"而非"GitHub 连不通";
-        # 官方源    : 仅在 Gitee 兜底时提示"GitHub 通道连不通"。
         prefer_gitee = (app.resolve_mirror()[0] == "cn")
+        source_hint = ""
         if is_gitee_source:
-            if prefer_gitee:
-                source_hint = i18n.t('source_hint.gitee_preferred')
-            else:
-                source_hint = i18n.t('source_hint.gitee_fallback')
-        else:
-            source_hint = ""
-        choose = messagebox.askyesno(
-            i18n.t('green_update.detected_title'),
-            i18n.t('green_update.detected_msg',
-                    current=local_version, latest=latest_version,
-                    note=release_note, source_hint=source_hint),
-            icon="question")
-        if not choose:
-            append_log("用户选择暂不更新绿色版")
-            set_busy(False)
-            return
-        # 用户确认下载, 后台执行 (按来源准备内容根目录 + 生成更新任务)
+            source_hint = (i18n.t('source_hint.gitee_preferred')
+                           if prefer_gitee
+                           else i18n.t('source_hint.gitee_fallback'))
+            if source_hint:
+                append_log(source_hint)
         set_busy(True)
-        status_text.set("正在下载绿色版更新 ...")
+        status_text.set(i18n.t('green_update.downloading'))
         append_log("--- 开始下载绿色版更新: %s ---" % asset_name)
         def download_worker():
             try:
-                # 按来源准备内容根目录: GitHub=下载zip解压, Gitee=git协议克隆整仓。
-                # prepare_update_content_root 内部若发生"GitHub 下载失败自动切 Gitee",
-                # 会改写 release_info["source"], 因此 source 必须在调用后再取,
-                # 保证后续失败提示/覆盖来源与真实下载源一致。
                 extracted_dir = os.path.join(GREEN_UPDATE_DIR, "extracted")
                 content_root = app.prepare_update_content_root(
                     release_info, extracted_dir)
                 source = release_info.get("source") or "github"
                 content_root, job_path = app.prepare_green_update(
-                    content_root, latest_version, download_url, source)
+                    content_root, target_version, download_url, source)
                 root.after(0, lambda: ask_apply_green_update(
                     content_root, job_path))
             except Exception as error:
-                root.after(0, lambda: messagebox.showerror(i18n.t('green_update.download_fail'), str(error)))
+                root.after(0, lambda: messagebox.showerror(
+                    i18n.t('green_update.download_fail'), str(error)))
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=download_worker, daemon=True).start()
+
 
     def ask_apply_green_update(content_root, job_path):
         """下载与准备完成: 提示用户将退出启动器并覆盖安装, 确认后启动独立更新程序并退出"""

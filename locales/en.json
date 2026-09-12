@@ -232,7 +232,9 @@
     "download_confirm": "Will download launcher update to {path}. Continue?",
     "download_fail": "Launcher update download failed",
     "apply_confirm": "Update package ready ({size}). Apply update now?\n\nNote: The launcher will close during update and auto-restart with the new version after completion.",
-    "start_script_fail": "Failed to launch update script"
+    "start_script_fail": "Failed to launch update script",
+    "checking": "Checking green portable updates ...",
+    "downloading": "Downloading green portable update ..."
   },
   "close_dialog": {
     "title": "Confirm Close",
@@ -893,5 +895,37 @@
   "green_update.detected_title": "New Green Edition Found",
   "green_update.detected_msg": "Current: v{current}\nLatest: v{latest}\n\nRelease Notes:\n{note}{source_hint}\n\nDownload and update?\n\nProcess: Download to runtime/update -> Quit launcher -> Auto overlay -> Restart.\nConfig.json (your settings) and runtime/ (your data) will NOT be replaced.",
   "green_update.failed_title": "Update Failed",
-  "update.failed_title": "Update Failed"
+  "update.failed_title": "Update Failed",
+  "green_version_select": {
+    "title": "Select Green Portable Version",
+    "header_summary": "Current: {current}  |  Latest stable: {latest}\n\n{version_count} candidate versions in {channel_count} channels.",
+    "version_column": "Version",
+    "channel_column": "Channel / Source",
+    "published_column": "Published",
+    "status_column": "Status",
+    "channel_stable_title": "1. Stable Release",
+    "channel_stable_desc": "Well-tested release versions",
+    "channel_prerelease_title": "2. Pre-release",
+    "channel_prerelease_desc": "alpha / beta / rc, not production-ready",
+    "current_mark": "current",
+    "latest_mark": "latest",
+    "source_github": "GitHub",
+    "source_gitee": "Gitee",
+    "status_installable": "Ready to download",
+    "status_not_installable": "No zip asset",
+    "select_first": "Please select a version from the list.",
+    "pick_channel_not_version": "Please select a specific version, not the channel header.",
+    "already_current": "Version {version} is already installed.",
+    "not_installable_detail": "Release {version} has no DSH-GreenPortable-v*.zip asset,\\nso it cannot be auto-installed.\\nYou may download it manually from the GitHub page.",
+    "close": "Close",
+    "install_selected": "Install Selected",
+    "footer_hint": "Tip: green = current; blue bold = latest stable; gray = no zip asset for auto-install.\\nYou can pick any version (including older ones) for rollback or testing.",
+    "confirm_header": "Current green version: {current}  |  Target: {target}\\n\nReview the release notes below, then confirm to upgrade.",
+    "confirm_footer": "Confirming will: download zip → extract → exit launcher → separate updater replaces files",
+    "confirm": "Update",
+    "cancel": "Cancel",
+    "notes_unavailable": "(No release notes for version {version})",
+    "network_fail": "Could not fetch any release list from GitHub or Gitee. Check your network.",
+    "no_candidate": "No release candidates found (both GitHub and Gitee unreachable)."
+  }
 }
