@@ -898,7 +898,7 @@
   "update.failed_title": "更新失败",
   "green_version_select": {
     "title": "选择绿色版版本",
-    "header_summary": "当前绿色版: {current}  |  最新稳定版: {latest}\n\n检测到 {version_count} 个版本候选, 分布在 {channel_count} 个通道;\n同一版本 GitHub 与 Gitee 如均可用会各显示一行, 可按需挑选下载源。",
+    "header_summary": "当前绿色版: {current}  |  最新稳定版: {latest}\n\n检测到 {version_count} 个版本候选, 分布在 {channel_count} 个通道;\n同版本 GitHub 与 Gitee 如均可用会合并为一行, 确认弹窗里再选下载源。",
     "version_column": "版本号",
     "channel_column": "通道 / 来源",
     "published_column": "发布时间",
@@ -919,7 +919,7 @@
     "not_installable_detail": "版本 {version} 的 Release 里未找到 DSH-GreenPortable-v*.zip 资产,\\n暂不支持自动下载安装。\\n可手动到 GitHub 页面下载。",
     "close": "关闭",
     "install_selected": "安装选中版本",
-    "footer_hint": "提示: 绿色 = 当前版本; 蓝粗 = 最新稳定版; 灰色 = 该 Release 无 zip, 无法自动安装;\\n可以选择任何版本 (包括更旧的), 用于降级或测试。",
+    "footer_hint": "提示: 绿色 = 当前版本; 蓝粗 = 最新稳定版; 灰色 = 该版本无 zip 可自动下载;\n同一版本 GitHub / Gitee 若都有 zip 会自动合并, 确认弹窗里选哪个源下载。",
     "confirm_header": "当前绿色版: {current}  |  目标版本: {target}\\n\n即将更新绿色版, 请确认下方发布说明。",
     "confirm_footer": "确认后将下载 zip -> 解压 -> 退出启动器 -> 独立更新程序覆盖安装",
     "confirm": "确认更新",
@@ -927,6 +927,14 @@
     "notes_unavailable": "(版本 {version} 暂无发布说明)",
     "network_fail": "无法获取任何 Release 列表。请检查网络 (GitHub + Gitee) 后重试。",
     "no_candidate": "未找到任何 Release 候选 (可能 GitHub/Gitee 均不可达)。",
-    "source_row": "下载源: {source}"
+    "source_row": "下载源: {source}",
+    "source_both": "GitHub + Gitee",
+    "source_github_only": "仅 GitHub",
+    "source_gitee_only": "仅 Gitee",
+    "source_none": "无",
+    "install_github": "从 GitHub 安装",
+    "install_gitee": "从 Gitee 安装",
+    "source_row_only": "下载源: {source}",
+    "source_row_choose": "当前: {source}   (可用: {available}, 点按钮切换)"
   }
 }

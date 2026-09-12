@@ -2262,61 +2262,41 @@ class Launcher:
                 version = self.green_release_version(rel)
                 if not version:
                     return None
+                # 只认手动上传 zip (browser_download_url 含 /releases/download/),
+                # 自动生成的 archive zip 走 JS 挑战页拿不到真实二进制 —— 与 _gitee_release_latest 对齐
+                raw_assets = rel.get("assets") or rel.get("attachments") or []
+                real_zip_assets = []
+                for att in raw_assets:
+                    a_name = att.get("name") or ""
+                    dl_url = att.get("browser_download_url") or att.get("url") or ""
+                    if (a_name.lower().endswith(".zip")
+                            and dl_url and "/releases/download/" in dl_url):
+                        real_zip_assets.append({
+                            "name": a_name,
+                            "browser_download_url": dl_url,
+                            "size": att.get("size") or 0,
+                        })
+                if not real_zip_assets:
+                    return None
                 body = (rel.get("body") or "").strip()
                 if len(body) > 4000:
-                    body = body[:4000] + "\n...(发布说明过长已省略)"
-                # Gitee release assets 字段名叫 assets, 其中每个 item 的 name/browser_download_url 同上
-                gitee_assets = []
-                for att in (rel.get("assets") or rel.get("attachments") or []):
-                    gitee_assets.append({
-                        "name": att.get("name") or "",
-                        "browser_download_url": att.get("browser_download_url") or att.get("url") or "",
-                        "size": att.get("size") or 0,
-                    })
+                    body = body[:4000] + "\\n...(发布说明过长已省略)"
                 return {
                     "tag_name": rel.get("tag_name") or ("v" + version),
                     "name": rel.get("name") or ("v" + version),
                     "body": body,
                     "published_at": (rel.get("created_at") or rel.get("published_at") or "").replace("T", " ")[:16],
-                    "assets": gitee_assets,
+                    "assets": real_zip_assets,
                     "prerelease": bool(rel.get("prerelease")),
                     "source": "gitee_release",
                     "version": version,
                 }
 
-            merged = []
-            # 按 (version, source) 二元组去重: 同版本 GitHub 与 Gitee 各自保留一条,
-            # 让用户在 ask_green_update 里自行选择下载源 (同一版本多 zip 可并存)。
-            seen_keys = set()
-            for rel in github_list:
-                item = _github_to_item(rel)
-                if not item:
-                    continue
-                key = (item["version"], item["source"])
-                if key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                merged.append(item)
-            for rel in gitee_list:
-                item = _gitee_to_item(rel)
-                if not item:
-                    continue
-                key = (item["version"], item["source"])
-                if key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                merged.append(item)
-
-            # 排序: 版本新 → 旧 (复用 _green_version_tuple 倒序),
-            #        同版本 GitHub 排在 Gitee 前面 (source_order  github=0 < gitee_release=1 < gitee=2)。
-            source_order = {"github": 0, "gitee_release": 1, "gitee": 2}
             def _sort_key(item):
                 t = self._green_version_tuple(item["version"])
                 if t is None:
                     t = (0, 0, 0, 0)
-                return (-t[0], -t[1], -t[2],
-                        0 if t[3] is None else 1,
-                        source_order.get(item.get("source") or "", 99))
+                return (-t[0], -t[1], -t[2], 0 if t[3] is None else 1)
             merged.sort(key=_sort_key)
             self.log("绿色版全量 Release 合并后 %d 条, 最新: %s"
                      % (len(merged), merged[0]["version"] if merged else "无"))
@@ -7485,7 +7465,7 @@ def run_gui():
     # 绝不触碰 runtime/ 与用户自定义的 config.json, 保证与官方核心更新互不干扰。
     # -------------------------------------------------------------------------
     def on_check_green_update():
-        """检查绿色版是否有新版本 (全量 Release 列表 + 用户挑选, 与官方 dsh 更新流程对齐)"""
+        # 检查绿色版是否有新版本 (全量 Release + 同版本多源合并)
         if is_busy[0]:
             return
         if app.is_server_running():
@@ -7504,30 +7484,28 @@ def run_gui():
                         i18n.t('green_version_select.network_fail')))
                     return
                 local_version = app.green_local_version()
-                # 构造 candidate 列表 (对齐 ask_update 的字典结构)
                 candidates = []
-                seen = set()
-                for rel in all_releases:
-                    version = rel.get("version") or app.green_release_version(rel)
-                    if not version or version in seen:
+                for grouped in all_releases:
+                    version = grouped.get("version")
+                    if not version:
                         continue
-                    seen.add(version)
                     is_current = (version == local_version)
-                    # 判断是否可自动安装: 必须能匹配到 DSH-GreenPortable-v*.zip 资产
-                    installable = (app.green_find_zip_asset(rel) is not None)
-                    channel = "prerelease" if rel.get("prerelease") else "stable"
-                    source_label = rel.get("source") or "github"
+                    channel = "prerelease" if grouped.get("prerelease") else "stable"
+                    sources_dict = grouped.get("sources") or {}
+                    any_zip = False
+                    for src, info in sources_dict.items():
+                        tmp = {"source": src, "assets": info.get("assets") or []}
+                        if app.green_find_zip_asset(tmp) is not None:
+                            any_zip = True
+                            break
                     candidates.append({
                         "version": version,
-                        "tag_name": rel.get("tag_name") or ("v" + version),
-                        "name": rel.get("name") or ("v" + version),
-                        "channel": channel,           # stable / prerelease
-                        "installable": installable,
+                        "channel": channel,
                         "is_current": is_current,
-                        "latest_version": version,    # 方便后续统一取 key
-                        "release_info": rel,          # 完整 release dict, 下载时直接用
+                        "installable": any_zip,
+                        "sources": sources_dict,
+                        "release_info": grouped,
                     })
-                # 排序: stable 在前, 各自内部按版本从新到旧 (green_all_releases 已排好)
                 channel_order = {"stable": 0, "prerelease": 1}
                 candidates.sort(key=lambda c: (
                     channel_order.get(c["channel"], 99),
@@ -7538,7 +7516,6 @@ def run_gui():
                         i18n.t('green_update.title'),
                         i18n.t('green_version_select.no_candidate')))
                     return
-                # 找最新版本 (首个 stable)
                 latest_stable = None
                 for c in candidates:
                     if c["channel"] == "stable":
@@ -7549,12 +7526,8 @@ def run_gui():
             finally:
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=worker, daemon=True).start()
-
     def ask_green_update(current_version, candidates, latest_stable=None):
-        """版本列表弹窗 (仿 ask_update, 但绿色版专用文案):
-        stable / prerelease 两个通道, Treeview 展示所有可挑版本,
-        当前版高亮, 最新稳定版用 (最新) 标记, 无 zip 资产用灰色 (不可自动安装)。
-        用户选一个版本 -> 点确认 -> confirm_green_upgrade 详情弹窗。"""
+        # 每行一个版本; "来源"列显示 GitHub / Gitee / 两者都有
         channel_title = {
             "stable": (i18n.t('green_version_select.channel_stable_title'),
                        i18n.t('green_version_select.channel_stable_desc')),
@@ -7569,7 +7542,7 @@ def run_gui():
         dialog.title(i18n.t('green_version_select.title'))
         dialog.transient(root)
         dialog.grab_set()
-        dialog.geometry("760x520")
+        dialog.geometry("780x540")
 
         header = ttk.Frame(dialog, padding=12)
         header.pack(fill="x")
@@ -7578,25 +7551,23 @@ def run_gui():
         _iw_green_header = ttk.Label(
             header, justify="left",
             text=i18n.t('green_version_select.header_summary',
-                        current=current_version,
-                        latest=latest_stable or "?",
-                        version_count=version_count,
-                        channel_count=channel_count))
+                        current=current_version, latest=latest_stable or "?",
+                        version_count=version_count, channel_count=channel_count))
         _iw_green_header.pack(anchor="w")
         _i18n_widgets.append((_iw_green_header, 'text', 'green_version_select.header_summary'))
 
         body = ttk.Frame(dialog)
         body.pack(fill="both", expand=True, padx=12, pady=(0, 6))
-        tree = ttk.Treeview(body, columns=("source", "time", "installable"),
+        tree = ttk.Treeview(body, columns=("source", "time", "status"),
                             show="tree headings", height=12)
         tree.heading("#0", text=i18n.t('green_version_select.version_column'))
         tree.heading("source", text=i18n.t('green_version_select.channel_column'))
         tree.heading("time", text=i18n.t('green_version_select.published_column'))
-        tree.heading("installable", text=i18n.t('green_version_select.status_column'))
-        tree.column("#0", width=220, anchor="w")
-        tree.column("source", width=180, anchor="w")
+        tree.heading("status", text=i18n.t('green_version_select.status_column'))
+        tree.column("#0", width=200, anchor="w")
+        tree.column("source", width=180, anchor="center")
         tree.column("time", width=140, anchor="center")
-        tree.column("installable", width=130, anchor="center")
+        tree.column("status", width=130, anchor="center")
         tree.tag_configure("current", foreground="#16a34a")
         tree.tag_configure("latest", foreground="#2563eb", font=("", 9, "bold"))
         tree.tag_configure("disabled", foreground="#999999")
@@ -7610,6 +7581,38 @@ def run_gui():
         selected_items = {}
         iid_counter = [0]
 
+        def _source_tag(sources_dict):
+            has_gh = "github" in sources_dict
+            has_gi = any(k.startswith("gitee") for k in sources_dict.keys())
+            if has_gh and has_gi:
+                return i18n.t('green_version_select.source_both')
+            if has_gh:
+                return i18n.t('green_version_select.source_github_only')
+            if has_gi:
+                return i18n.t('green_version_select.source_gitee_only')
+            return i18n.t('green_version_select.source_none')
+
+        def _has_zip(sources_dict):
+            for src, info in sources_dict.items():
+                tmp = {"source": src, "assets": info.get("assets") or []}
+                if app.green_find_zip_asset(tmp) is not None:
+                    return True
+            return False
+
+        def _pick_default_source(sources_dict):
+            if "github" in sources_dict:
+                info = sources_dict["github"]
+                if app.green_find_zip_asset({"source": "github",
+                                             "assets": info.get("assets") or []}) is not None:
+                    return "github"
+            for k in sources_dict.keys():
+                if k.startswith("gitee"):
+                    info = sources_dict[k]
+                    if app.green_find_zip_asset({"source": k,
+                                                 "assets": info.get("assets") or []}) is not None:
+                        return k
+            return None
+
         def add_item(parent_iid, item, row_tags):
             iid = str(iid_counter[0])
             iid_counter[0] += 1
@@ -7618,18 +7621,22 @@ def run_gui():
                 version_text += "  (%s)" % i18n.t('green_version_select.current_mark')
             if latest_stable and item["channel"] == "stable" and item["version"] == latest_stable:
                 version_text += "  (%s)" % i18n.t('green_version_select.latest_mark')
+            sources_dict = item.get("sources") or {}
+            source_label = _source_tag(sources_dict)
+            installable = _has_zip(sources_dict)
             installable_text = (
                 i18n.t('green_version_select.status_installable')
-                if item["installable"]
+                if installable
                 else i18n.t('green_version_select.status_not_installable'))
-            source_label = item["release_info"].get("source", "github")
-            if source_label == "github":
-                source_label = i18n.t('green_version_select.source_github')
-            elif source_label in ("gitee", "gitee_release"):
-                source_label = i18n.t('green_version_select.source_gitee')
+            primary = sources_dict.get("github")
+            if primary is None:
+                for k in sources_dict.keys():
+                    if k.startswith("gitee"):
+                        primary = sources_dict[k]
+                        break
             tree.insert(parent_iid, "end", iid=iid, text=version_text,
                         values=(source_label,
-                                item["release_info"].get("published_at") or "",
+                                primary.get("published_at") if primary else "",
                                 installable_text),
                         tags=row_tags)
             selected_items[iid] = item
@@ -7651,7 +7658,7 @@ def run_gui():
                     row_tags.append("current")
                 elif latest_stable and item["channel"] == "stable" and item["version"] == latest_stable:
                     row_tags.append("latest")
-                if not item["installable"]:
+                if not _has_zip(item.get("sources") or {}):
                     row_tags.append("disabled")
                 add_item(parent_iid, item, tuple(row_tags))
 
@@ -7680,15 +7687,28 @@ def run_gui():
                                            version=item["version"]),
                                     parent=dialog)
                 return
-            if not item["installable"]:
+            sources_dict = item.get("sources") or {}
+            if not _has_zip(sources_dict):
                 messagebox.showwarning(
                     i18n.t('green_version_select.title'),
                     i18n.t('green_version_select.not_installable_detail',
                            version=item["version"]),
                     parent=dialog)
                 return
+            preferred = _pick_default_source(sources_dict)
             dialog.destroy()
-            confirm_green_upgrade(item["release_info"], item["version"])
+            confirm_green_upgrade(item, preferred)
+
+        default_iid = None
+        for iid, item in selected_items.items():
+            if (latest_stable and item["channel"] == "stable"
+                    and item["version"] == latest_stable
+                    and _pick_default_source(item.get("sources") or {})):
+                default_iid = iid
+                break
+        if default_iid is not None:
+            tree.selection_set(default_iid)
+            tree.see(default_iid)
 
         footer = ttk.Frame(dialog, padding=12)
         footer.pack(fill="x")
@@ -7707,37 +7727,18 @@ def run_gui():
         _iw_install_btn.pack(side="right", padx=6)
         _i18n_widgets.append((_iw_install_btn, 'text', 'green_version_select.install_selected'))
 
-        # 默认选中最新稳定版 (若存在): 同版本多源时优先选 GitHub 那条
-        def _source_rank(item):
-            src = item.get("release_info", {}).get("source") or ""
-            return 0 if src == "github" else 1
-        default_iid = None
-        for iid, item in selected_items.items():
-            if latest_stable and item["channel"] == "stable" and item["version"] == latest_stable:
-                if default_iid is None or _source_rank(item) < _source_rank(selected_items[default_iid]):
-                    default_iid = iid
-        if default_iid is not None:
-            tree.selection_set(default_iid)
-            tree.see(default_iid)
-        # 居中
         dialog.update_idletasks()
         pos_x = root.winfo_x() + (root.winfo_width() - dialog.winfo_reqwidth()) // 2
         pos_y = root.winfo_y() + (root.winfo_height() - dialog.winfo_reqheight()) // 2
         dialog.geometry("+%d+%d" % (pos_x, pos_y))
-
-    def confirm_green_upgrade(release_info, target_version):
-        """点击某个目标绿色版后弹出「确认升级」: 先展示该版本的更新说明,
-        用户点「确认升级」才真正执行; 点「取消」或关闭则回到版本选择弹窗。
-        下载完成后调用 ask_apply_green_update 进入"准备 → 退出启动器"流程 (不动)。"""
+    def confirm_green_upgrade(candidate, preferred_source=None):
+        sources_dict = candidate.get("sources") or {}
         local_version = app.green_local_version()
-        # 若选的版本就是当前, 直接回到列表 (正常 ask_green_update.on_confirm 已拦截,
-        # 这是第二层防御)
-        if target_version == local_version:
-            messagebox.showinfo(i18n.t('green_version_select.title'),
-                                i18n.t('green_version_select.already_current',
-                                       version=target_version))
-            return
-        # 确认弹窗
+        target_version = candidate["version"]
+        if preferred_source is None or preferred_source not in sources_dict:
+            preferred_source = "github" if "github" in sources_dict else next(iter(sources_dict))
+        release_info = sources_dict[preferred_source]
+
         detail_dialog = tk.Toplevel(root)
         detail_dialog.title(i18n.t('green_update.title'))
         detail_dialog.transient(root)
@@ -7751,20 +7752,40 @@ def run_gui():
                         current=local_version, target=target_version))
         _iw_confirm_header.pack(anchor="w")
         _i18n_widgets.append((_iw_confirm_header, 'text', 'green_version_select.confirm_header'))
-        # 下载源提示行 (蓝色, 清晰展示用户选了哪条)
-        source = release_info.get("source") or "github"
-        source_label = (i18n.t('green_version_select.source_github')
-                        if source == "github"
-                        else i18n.t('green_version_select.source_gitee'))
-        _iw_source_row = ttk.Label(
-            header_frame, justify="left", foreground="#2563eb",
-            text=i18n.t('green_version_select.source_row',
-                        source=source_label))
-        _iw_source_row.pack(anchor="w", pady=(4, 0))
-        _i18n_widgets.append((_iw_source_row, 'text', 'green_version_select.source_row'))
 
-        notes_text = tk.Text(detail_dialog, height=14, width=72, wrap="word",
-                             state="disabled")
+        def _has_zip_for(src_key):
+            info = sources_dict.get(src_key)
+            if not info:
+                return False
+            return app.green_find_zip_asset({"source": src_key,
+                                              "assets": info.get("assets") or []}) is not None
+        def _src_label(src_key):
+            return (i18n.t('green_version_select.source_github')
+                    if src_key == "github"
+                    else i18n.t('green_version_select.source_gitee'))
+        def _all_installable():
+            res = []
+            if "github" in sources_dict and _has_zip_for("github"):
+                res.append("github")
+            for k in sources_dict.keys():
+                if k.startswith("gitee") and _has_zip_for(k):
+                    res.append(k)
+            return res
+        def _source_line(cur_key):
+            cur_label = _src_label(cur_key)
+            avail = _all_installable()
+            if len(avail) >= 2:
+                return i18n.t('green_version_select.source_row_choose',
+                              source=cur_label,
+                              available=" / ".join(_src_label(k) for k in avail))
+            return i18n.t('green_version_select.source_row_only', source=cur_label)
+
+        _iw_source_line = ttk.Label(
+            header_frame, justify="left", foreground="#2563eb",
+            text=_source_line(preferred_source))
+        _iw_source_line.pack(anchor="w", pady=(4, 0))
+
+        notes_text = tk.Text(detail_dialog, height=14, width=72, wrap="word", state="disabled")
         notes_text.pack(fill="both", expand=True, padx=12)
         scrollbar = ttk.Scrollbar(detail_dialog, command=notes_text.yview)
         scrollbar.pack(side="right", fill="y")
@@ -7777,32 +7798,67 @@ def run_gui():
         notes_text.insert("1.0", notes)
         notes_text.configure(state="disabled")
 
+        def switch_src(new_key):
+            nonlocal release_info, preferred_source
+            if new_key not in sources_dict:
+                return
+            preferred_source = new_key
+            release_info = sources_dict[new_key]
+            n = (release_info.get("body") or "").strip()
+            if not n:
+                n = i18n.t('green_version_select.notes_unavailable', version=target_version)
+            notes_text.configure(state="normal")
+            notes_text.delete("1.0", "end")
+            notes_text.insert("1.0", n)
+            notes_text.configure(state="disabled")
+            _iw_source_line.configure(text=_source_line(preferred_source))
+
         footer_frame = ttk.Frame(detail_dialog, padding=12)
         footer_frame.pack(fill="x")
         _iw_confirm_footer = ttk.Label(footer_frame, justify="left", foreground="#888888",
                                         text=i18n.t('green_version_select.confirm_footer'))
         _iw_confirm_footer.pack(anchor="w")
         _i18n_widgets.append((_iw_confirm_footer, 'text', 'green_version_select.confirm_footer'))
+
         button_row = ttk.Frame(footer_frame)
         button_row.pack(side="right")
+
+        gh_key = "github"
+        has_gh = _has_zip_for(gh_key)
+        def _install_github():
+            detail_dialog.destroy()
+            _do_start_green_download(sources_dict[gh_key], target_version, gh_key)
+        _iw_gh_btn = ttk.Button(button_row, text=i18n.t('green_version_select.install_github'),
+                                  command=_install_github,
+                                  state=("normal" if has_gh else "disabled"))
+        _iw_gh_btn.pack(side="right", padx=4)
+        _i18n_widgets.append((_iw_gh_btn, 'text', 'green_version_select.install_github'))
+
+        gi_key = None
+        for k in sources_dict.keys():
+            if k.startswith("gitee"):
+                gi_key = k
+                break
+        has_gi = _has_zip_for(gi_key) if gi_key else False
+        def _install_gitee():
+            detail_dialog.destroy()
+            _do_start_green_download(sources_dict[gi_key], target_version, gi_key)
+        _iw_gi_btn = ttk.Button(button_row, text=i18n.t('green_version_select.install_gitee'),
+                                  command=_install_gitee,
+                                  state=("normal" if has_gi else "disabled"))
+        _iw_gi_btn.pack(side="right", padx=4)
+        _i18n_widgets.append((_iw_gi_btn, 'text', 'green_version_select.install_gitee'))
+
         _iw_cancel_btn = ttk.Button(button_row, text=i18n.t('green_version_select.cancel'),
                                     command=detail_dialog.destroy)
         _iw_cancel_btn.pack(side="right")
         _i18n_widgets.append((_iw_cancel_btn, 'text', 'green_version_select.cancel'))
-        def _start_download():
-            detail_dialog.destroy()
-            _do_start_green_download(release_info, target_version)
-        _iw_ok_btn = ttk.Button(button_row, text=i18n.t('green_version_select.confirm'),
-                                 command=_start_download)
-        _iw_ok_btn.pack(side="right", padx=6)
-        _i18n_widgets.append((_iw_ok_btn, 'text', 'green_version_select.confirm'))
 
         detail_dialog.update_idletasks()
         pos_x = root.winfo_x() + (root.winfo_width() - detail_dialog.winfo_reqwidth()) // 2
         pos_y = root.winfo_y() + (root.winfo_height() - detail_dialog.winfo_reqheight()) // 2
         detail_dialog.geometry("+%d+%d" % (pos_x, pos_y))
-
-    def _do_start_green_download(release_info, target_version):
+    def _do_start_green_download(release_info, target_version, preferred_source=None):
         """confirm_green_upgrade 用户点确认后: 后台下载 + 准备 + 进入 ask_apply_green_update。
         原 confirm_green_update.download_worker 升级到此, 额外加了 source_hint 展示。"""
         asset = app.green_find_zip_asset(release_info)

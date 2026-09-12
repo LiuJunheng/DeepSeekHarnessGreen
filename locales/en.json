@@ -898,7 +898,7 @@
   "update.failed_title": "Update Failed",
   "green_version_select": {
     "title": "Select Green Portable Version",
-    "header_summary": "Current: {current}  |  Latest stable: {latest}\n\n{version_count} candidates in {channel_count} channels.\nIf both GitHub and Gitee have the same version, both are listed; pick the source you prefer.",
+    "header_summary": "Current green version: {current}  |  Latest stable: {latest}\n\n{version_count} candidates in {channel_count} channels.\nSame version from both GitHub and Gitee merges into one row; pick source in the confirmation dialog.",
     "version_column": "Version",
     "channel_column": "Channel / Source",
     "published_column": "Published",
@@ -919,7 +919,7 @@
     "not_installable_detail": "Release {version} has no DSH-GreenPortable-v*.zip asset,\\nso it cannot be auto-installed.\\nYou may download it manually from the GitHub page.",
     "close": "Close",
     "install_selected": "Install Selected",
-    "footer_hint": "Tip: green = current; blue bold = latest stable; gray = no zip asset for auto-install.\\nYou can pick any version (including older ones) for rollback or testing.",
+    "footer_hint": "Tip: green = current; blue bold = latest stable; gray = no zip for auto-install.\nIf both GitHub and Gitee have the same version, they merge into one row; pick source in the confirmation dialog.",
     "confirm_header": "Current green version: {current}  |  Target: {target}\\n\nReview the release notes below, then confirm to upgrade.",
     "confirm_footer": "Confirming will: download zip → extract → exit launcher → separate updater replaces files",
     "confirm": "Update",
@@ -927,6 +927,14 @@
     "notes_unavailable": "(No release notes for version {version})",
     "network_fail": "Could not fetch any release list from GitHub or Gitee. Check your network.",
     "no_candidate": "No release candidates found (both GitHub and Gitee unreachable).",
-    "source_row": "Download source: {source}"
+    "source_row": "Download source: {source}",
+    "source_both": "GitHub + Gitee",
+    "source_github_only": "GitHub only",
+    "source_gitee_only": "Gitee only",
+    "source_none": "None",
+    "install_github": "Install from GitHub",
+    "install_gitee": "Install from Gitee",
+    "source_row_only": "Source: {source}",
+    "source_row_choose": "Current: {source}   (available: {available}, click button to switch)"
   }
 }
