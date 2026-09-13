@@ -279,6 +279,8 @@ if ($env:GITEE_TOKEN) { python release_upload.py }
 2. **`release_upload.py` 会把 launcher.py 的 GREEN_VERSION_DATE 回写成构建当天日期** → 如果你在 pack 完之后又回头改 release notes 并 amend commit，**exe 新鲜度校验会被阻断**（exe 构建时间早于 launcher.py 的日期回写）。**正确做法**：先写好完整的 release notes → commit 源码 → build_exe → commit exe → tag → push → release_upload.py（一口气）。如果 notes 写完了才发现漏了内容要改，改完 notes 要 **amend 源码 commit + 重新 build_exe** 才能保证新鲜度。
 3. **Gitee PATCH Release body 时必须带 `tag_name` 和 `name` 字段**，只传 `body` 会报 `{"messages":["tag_name is missing","name is missing"]}`。GitHub 只传 `body` 即可。两个平台 PATCH 前都应该先 GET 当前 Release 拿到现有 `name` 和 `tag_name` 一起带回去。
 4. **如果 commit 被 amend 过，tag 仍然指向旧 commit（amend 之前的），但这不影响 Release**：tag 在 push 时指向的是 push 那一刻的 HEAD，之后 amend commit 只改了 master 的 HEAD，tag 不动。zip 是用 build_exe 时的文件打包的，不受影响。但 **amend 过之后必须 `git push --force origin master`**，否则 Gitee/GitHub 上的 master 还是旧 commit。
+5. **绝不能绕过 `release_upload.load_release_notes()` 手动拼 body 直接 PATCH**：`load_release_notes()` 会自动把中文 + 英文 notes 文件合并成带 anchor 的双语格式（`[中文](#cn-{tag}) | [English](#en-{tag})` + `<a id="cn-{tag}">` / `<a id="en-{tag}">`）。本次用临时脚本直接读 `release_notes_v1.0.38_en.md` 单文件 PATCH 了 GitHub，又用中文文件单文件 PATCH 了 Gitee，导致 GitHub 只有英文（5720 字符）、Gitee 只有中文（3409 字符）。**正确做法**：哪怕是事后 PATCH 补 body，也先 `import release_upload as ru; title, body = ru.load_release_notes('.', tag)` 拿正确的合并 body，再分别发双平台。
+6. **GitHub PAT 可能过期失效（返回 401 Bad credentials）**：git credential fill 拿到的 token 不一定有效（可能已过期/被撤销）。遇到 401 重新跑 credential fill 拿新 token。**安全提醒**：PAT 用完后要及时撤销（尤其是贴到命令行/日志里的），避免泄露。
 
 ### v1.0.37 踩过的
 
