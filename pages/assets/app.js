@@ -295,8 +295,15 @@
   }
 
   /* 极简 markdown → HTML 渲染器，只处理 release body 常见格式：
-     ## 标题 / ### 小标题 / - 列表项 / ` 代码块 / **粗体** / code / [链接](url)
-     不追求通用，只够我们自己的 release notes 用 */
+     ## 标题 / ### 小标题 / - 列表项 / ``` 代码块 / `行内code` / **粗体** / [链接](url)
+     关键：所有文本内容必须先做 HTML escape，否则 markdown 里的 `<title>` / `<meta>` 等
+     会被浏览器当成真实标签，导致 DOM 错乱。行内 code 和代码块内部的 `<` `>` 也必须 escape。 */
+  function htmlEscape(text) {
+    var div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
   function renderSimpleMarkdown(text) {
     if (!text) return "";
     var lines = text.split(/\r?\n/);
@@ -308,13 +315,35 @@
     function closeList() {
       if (listOpen) { out.push("</ul>"); listOpen = false; }
     }
+
+    /* 行内渲染：处理 `行内code` / **粗体** / [链接]。
+       顺序很关键：先抽出行内 code 并对其内部 escape，再对剩余文本做 escape，
+       然后恢复 code 占位符，最后处理粗体和链接。这样避免 markdown 里的
+       `` `<title>` `` 被当成真实 HTML 标签。*/
     function renderInline(line) {
-      // **粗体**
+      // Step 1: 把行内 code（`xxx`）摘出来，内部单独做 HTML escape
+      var codePieces = [];
+      line = line.replace(/`([^`]+)`/g, function (m, codeContent) {
+        codePieces.push(htmlEscape(codeContent));
+        return "\u0000CODE" + codePieces.length + "\u0000";  // 占位符
+      });
+
+      // Step 2: 对剩余普通文本做 HTML escape（& < > "）
+      line = htmlEscape(line);
+
+      // Step 3: 恢复行内 code 占位符（此时内部已经 escape 过了）
+      for (var i = 0; i < codePieces.length; i++) {
+        line = line.replace("\u0000CODE" + (i + 1) + "\u0000", "<code>" + codePieces[i] + "</code>");
+      }
+
+      // Step 4: **粗体**（此时 * 号周围的文本已经 escape 过，安全）
       line = line.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-      // code
-      line = line.replace(/([^]+)/g, "$1");
-      // [text](url)
-      line = line.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+      // Step 5: [text](url) → <a>（url 也 escape 一下防止 javascript: 注入）
+      line = line.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function (m, text, url) {
+        return '<a href="' + htmlEscape(url) + '" target="_blank" rel="noopener">' + text + "</a>";
+      });
+
       return line;
     }
 
@@ -322,11 +351,11 @@
       var raw = lines[i];
       var stripped = raw.trim();
 
-      // 代码块 `
-      if (/^`/.test(stripped)) {
+      // 代码块 ```
+      if (/^```/.test(stripped)) {
         if (inCodeBlock) {
           closeList();
-          out.push("<pre><code>" + codeLines.join("\n") + "</code></pre>");
+          out.push("<pre><code>" + htmlEscape(codeLines.join("\n")) + "</code></pre>");
           codeLines = [];
           inCodeBlock = false;
         } else {
@@ -360,7 +389,7 @@
     }
     closeList();
     if (inCodeBlock && codeLines.length > 0) {
-      out.push("<pre><code>" + codeLines.join("\n") + "</code></pre>");
+      out.push("<pre><code>" + htmlEscape(codeLines.join("\n")) + "</code></pre>");
     }
     return out.join("\n");
   }
