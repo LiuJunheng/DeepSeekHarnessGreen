@@ -31,7 +31,8 @@
 ## 绿色版自更新（双通道）
 
 - [ ] `GREEN_VERSION` 常量与 GitHub Release tag 一致（tag 带 `v` 前缀，本地去前缀比较）
-- [ ] Release 资产命名 `DSH_Launcher_GreenPortable_Online_<日期>_v<版本>.zip`（`green_find_zip_asset` 按此前缀匹配）
+- [ ] **核实"本机版本"只认代码常量**：`launcher.py` 与 `update_agent.py` 的 `GREEN_VERSION`（两处必须一致，发版脚本新鲜度校验会拦截不一致）。**禁止用目录里的历史发布物推断本机版本**——`DSH-GreenPortable-v*.zip`、旧命名 `DSH_Launcher_GreenPortable_Online_*.zip`、`doc/release_notes/release_notes_v*.md` 都只是历史产物，把它们当版本依据会得出"本机落后 N 个版本"的错误结论（2026-09-13 调研报告即踩此坑）
+- [ ] Release 资产命名 **`DSH-GreenPortable-v<版本>.zip`**（`GREEN_ZIP_PREFIX = "DSH-GreenPortable-v"`，v1.0.30 起）；`green_find_zip_asset` 用 `startswith()` 匹配，旧前缀 `DSH_Launcher_GreenPortable_Online_` 的存量版本仍可匹配
 - [ ] 官方 API 查询失败降级国内镜像（`mirror.nju.edu.cn/github-release/<owner>/<repo>/latest`）
 - [ ] GitHub + 国内镜像都失败自动转 Gitee：**两级策略**——① 先查 Gitee 发布版 `GITEE_RELEASES_API`（公开读），取"最新且带手动 zip 附件"的发布版（过滤：名字 `.zip` 结尾 **且** URL 含 `/releases/download/`，防误选 `archive/refs/tags/...` 挑战页源码包）→ `source="gitee_release"` 走 zip 直连下载（**手动附件实测直连返回真 zip，不走挑战页**）；② 无发布版才回退 `source="gitee"`：版本号读 `gitee.com/<repo>/raw/master/launcher.py` 的 `GREEN_VERSION`，下载走 **git 智能 HTTP 协议克隆整仓**（`info/refs?service=git-upload-pack` 拿 head sha + `git-upload-pack` 拉 pack + 解析 delta 落盘，`green_gitee_clone_tree`）；asset `size=0` 时下载跳过大小校验；覆盖时统一跳过 `DEV_NOTES.md`/`.gitignore` 开发侧文件保证与 GitHub 结果一致
 - [ ] 每次发版建议用 `runtime/tmp/gitee_upload_release.py` + `upload_gitee_release.bat`（填 GITEE_TOKEN 后拖 zip 运行）同步上传 Gitee 发布版附件，让 Gitee 通道优先走直连下载而非整仓克隆

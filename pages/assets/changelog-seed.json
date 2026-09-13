@@ -1,10 +1,57 @@
 {
   "meta": {
-    "seedGeneratedAt": "2026-09-10",
-    "totalReleases": 37,
+    "seedGeneratedAt": "2026-09-13",
+    "totalReleases": 38,
     "repo": "LiuJunheng/DeepSeekHarnessGreen"
   },
   "releases": [
+    {
+      "tag_name": "v1.0.38",
+      "name": "v1.0.38 — 绿色版更新通道修复 Release 合并逻辑缺失导致界面卡住",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.38",
+      "published_at": "2026-09-12T09:49:27Z",
+      "body": "[中文](#cn-1.0.38) | [English](#en-1.0.38)\n\n<a id=\"cn-1.0.38\"></a>\n\n\n> 本版本覆盖 **11 个 commit / 34 个文件 / +2592 -241 行**，是自 v1.0.31 以来改动量最大的一次，主要集中在三大方向：绿色版更新通道彻底重构、官网 changelog 增强、以及 SEO/多语言杂项优化。\n\n## 🌟 核心特性：绿色版更新通道彻底重构（Launcher GUI）\n\n原来的「检查绿色版更新」是一个同步请求 + 单一弹窗，无法展示历史版本、无法让用户在 GitHub/Gitee 之间选择下载源。本次完整重写，对齐官方 dsh 的 ask_update 交互模式。\n\n### 新增功能\n\n- **版本列表弹窗（Treeview + 双分组）**：所有 Release 按 stable / prerelease 分组展示，带滚动条\n- **同版本多源合并**：GitHub Release + Gitee Release 按 version 号分桶合并，同一版本只占一行；来源列显示 `GitHub + Gitee` / `仅 GitHub` / `仅 Gitee`\n- **安装弹窗双按钮**：选择版本后弹出确认窗口，底部两个安装按钮 —— 「从 GitHub 安装」+「从 Gitee 安装」，缺失的来源自动禁用\n- **来源切换同步更新**：切换 GitHub / Gitee 时，发布说明正文自动切换为对应来源的内容\n- **来源标签自动判定**：Gitee 过滤只认 `/releases/download/` 直链 zip（过滤自动生成的 archive，避免下载时 403）\n\n### 修复\n\n- **严重 bug：查询完 Release 后界面永久卡住**：`green_all_releases()` 函数缺失 bucket 分桶 + 双源合并的核心代码块，`merged` 变量从未初始化 → 运行时抛 `UnboundLocalError` → 后台 daemon 线程静默吞噬异常（worker 只有 `try-finally` 没有 `except`）→ 界面永远卡在「正在检查」且无任何弹窗。已补全完整合并逻辑 + 给 worker 加 `except Exception` 防止静默崩溃\n- 异步清理 / 备份任务的耗时操作（插件移除、版本备份）改为后台 daemon 线程执行，UI 不再卡顿\n\n### 改动文件\n\n- `launcher.py` — **+647 / -241 行**，绿色版更新通道全链路重写（`green_all_releases`、`green_find_zip_asset`、`ask_green_update`、`confirm_green_upgrade` 等）\n- `locales/zh.json` + `locales/en.json` — 新增 53 条 `green_version_select.*` i18n 键\n- `update_agent.py` — 版本号同步\n\n## 🌐 官网增强：changelog 分页 + SEO（dsh-green.website）\n\n官网是三语静态站（zh / en / zh-Hant），所有 changelog / compare / index / about / privacy 五个页面 + 公共 CSS + 公共 app.js 都有改动。\n\n### Changelog 分页架构（**+1690 行**，本次最大单一组件）\n\n- **load-more 分页**：默认只嵌入最新 3 条 Release 进 HTML（利于爬虫收录），点「加载更多」每次追加 10 条\n- **seed.json 静态兜底**：新增 `changelog-seed.json`（预生成的完整 Release 列表）+ `changelog-seed.html`（独立测试页），GitHub API 不可达时自动 fallback 到本地 JSON\n- **加载状态与边界处理**：每次 `renderChunk` 后保留底部 load-more 按钮；`mergeReleases` 按 `published_at` 降序而非 seed 文件顺序\n- **localStorage 缓存 TTL 从 1h/2h 统一降到 15min**，让新版本更快在官网显示\n\n### SEO 优化\n\n- 所有 **17 个页面** 的 `<title>` / `<meta name=\"description\">` / `<meta property=\"og:title\">` 统一加上 `(DSH)` 关键词，提升搜索引擎发现率\n- 所有 **4 个 index.html**（zh / en / zh-Hant + 根）新增搜狗站点验证 `<meta name=\"sogou_site_verification\">`\n\n### 改动文件（官网）\n\n| 文件 | 改动 |\n|------|------|\n| `pages/assets/app.js` | 分页逻辑 + 缓存 TTL + 排序修复 |\n| `pages/assets/changelog-seed.json` | **+522 行**，预生成的 Release 数据 |\n| `pages/assets/changelog-seed.html` | **+232 行**，独立测试页 |\n| `pages/assets/style.css` | +22 行，分页 load-more 按钮样式 |\n| 3× changelog.html | 加分页骨架 + 内嵌最新 3 条 |\n| 4× index.html | 加 sogou 验证 meta + SEO title |\n| 3× compare.html / 3× about.html / 3× privacy.html | SEO title 补齐 |\n\n## 🔧 杂项修复\n\n- **session_import 插件**：移除原生 `<input type='file'>` 硬编码中文，改为自定义 UI + i18n 翻译（`plugin.session_import.pick_file_btn` / `no_file_selected`）\n- **插件 package.json 同步**：启动器启动时把 `@deepseek-ai/*` 依赖自动同步到宿主版本（本次 `dsh-session-rewind` 的 `dsh-session` 由 0.1.5-alpha.1 → 0.1.5-rc.1，`dsh-memory` 同步更新）\n\n## 📊 改动总览\n\n```\n34 files changed, +2592 -241 lines\n\n├── launcher.py              +647  绿色版更新通道重构 + bugfix\n├── locales/zh.json / en.json +53   新 i18n 键\n├── pages/assets/app.js       +296  changelog 分页 + 缓存 + 排序\n├── pages/assets/changelog-seed.json  +522  静态兜底数据\n├── pages/assets/changelog-seed.html  +232  测试页\n├── 17 个官网页面            +100+ SEO + 分页骨架\n├── DEV_NOTES.md              +81  绿色版多源合并避坑经验\n├── 插件 package.json         +8   启动器自愈同步\n└── update_agent.py           +2   版本号同步\n```\n\n## 版本更新\n\n- GREEN_VERSION: 1.0.37 → 1.0.38\n\n## 升级建议\n\n- 绿色版覆盖安装即可\n- 首次点「检查绿色版更新」应该能看到完整版本列表 + GitHub / Gitee 双源选择\n\n\n<a id=\"en-1.0.38\"></a>\n\n\n> This release covers **11 commits across 34 files (+2592 / -241 lines)** — the largest single rollout since v1.0.31. Three major themes: a full redesign of the green-edition update channel, a redesigned changelog with pagination on the website, and SEO/misc polish.\n\n## 🌟 Highlight: Green Edition Update Channel Redesign (Launcher GUI)\n\nThe old \"Check for green updates\" action used a single synchronous request and one dialog — no version history, no source switching between GitHub/Gitee. This release rewrites the whole flow to match the official dsh `ask_update` UX.\n\n### New Features\n\n- **Version list dialog (Treeview, grouped by channel)**: All releases grouped under \"Stable\" / \"Prerelease\" headers with a scrollable list\n- **Same-version multi-source merge**: GitHub + Gitee releases are bucketed by version number so each version appears in a single row; the Source column shows `GitHub + Gitee` / `GitHub only` / `Gitee only`\n- **Install confirmation with two buttons**: After picking a version, a confirmation dialog offers both \"Install from GitHub\" and \"Install from Gitee\" — missing sources are automatically disabled\n- **Source-aware release notes**: Switching GitHub / Gitee in the confirmation dialog updates the release notes body to show the right source\n- **Smart Gitee asset filtering**: Only zips with a `/releases/download/` direct link are kept (auto-generated archive zips that return 403 are filtered out)\n\n### Bug Fixes\n\n- **Critical: UI freezes forever after fetching releases**: `green_all_releases()` was missing the core bucket-and-merge block. The `merged` variable was never initialized → runtime `UnboundLocalError` → the daemon worker thread silently swallowed the exception (the worker was `try-finally` only, no `except`) → the UI stayed stuck at \"Checking for updates\" with no dialog or error. Both issues are fixed: the full bucket merge logic is restored, and the worker now wraps the body in `try-except-finally` with traceback + error dialog\n- **Async backup / cleanup**: Slow operations (plugin removal, version backup) that used to block the UI thread now run in background daemon threads\n\n### Key Files\n\n- `launcher.py` — **+647 / -241 lines**, full rewrite of the green update channel (`green_all_releases`, `green_find_zip_asset`, `ask_green_update`, `confirm_green_upgrade`, ...)\n- `locales/zh.json` + `locales/en.json` — 53 new `green_version_select.*` i18n keys\n- `update_agent.py` — version sync\n\n## 🌐 Website: Changelog Pagination + SEO (dsh-green.website)\n\nThe website is a three-language static site (zh / en / zh-Hant). All five page types (changelog / compare / index / about / privacy) plus the shared CSS and app.js are touched.\n\n### Changelog Pagination Architecture (**+1690 lines**, the biggest single component here)\n\n- **Load-more pagination**: Only the latest 3 releases are embedded directly into the HTML (good for crawlers). Clicking \"Load more\" appends 10 at a time\n- **seed.json static fallback**: New `changelog-seed.json` (pre-generated full release list) + `changelog-seed.html` (standalone test page). When the GitHub API is unreachable, the site silently falls back to the local JSON\n- **Load state & edge cases**: The load-more button stays anchored at the bottom of each chunk; `mergeReleases` now sorts by `published_at` desc instead of seed-file order\n- **localStorage cache TTL lowered from 1h/2h to 15min** so new versions show up on the site faster\n\n### SEO Boost\n\n- All **17 pages** get `(DSH)` appended to `<title>`, `<meta name=\"description\">`, and `<meta property=\"og:title\">` to improve search engine discoverability\n- All **4 index.html files** (zh / en / zh-Hant + root) get a Sogou site verification `<meta name=\"sogou_site_verification\">`\n\n### Website Files Changed\n\n| File | Change |\n|------|--------|\n| `pages/assets/app.js` | Pagination logic + cache TTL + sort fix |\n| `pages/assets/changelog-seed.json` | **+522 lines**, pre-generated release data |\n| `pages/assets/changelog-seed.html` | **+232 lines**, standalone test page |\n| `pages/assets/style.css` | +22 lines, load-more button styles |\n| 3× changelog.html | Pagination skeleton + latest 3 embedded |\n| 4× index.html | Sogou verification meta + SEO title |\n| 3× compare.html / 3× about.html / 3× privacy.html | SEO titles aligned |\n\n## 🔧 Misc Fixes\n\n- **session_import plugin**: Hardcoded Chinese in the native `<input type='file'>` element replaced with a custom UI driven by i18n keys (`plugin.session_import.pick_file_btn` / `no_file_selected`)\n- **Plugin package.json auto-sync**: On startup the launcher pushes `@deepseek-ai/*` dependency versions into installed plugins. This session saw `dsh-session` in `dsh-session-rewind` bump from `0.1.5-alpha.1` to `0.1.5-rc.1`, and `dsh-memory` sync as well\n\n## 📊 Change Summary\n\n```\n34 files changed, +2592 -241 lines\n\n├── launcher.py              +647  green update channel redesign + bugfix\n├── locales/zh.json / en.json  +53  new i18n keys\n├── pages/assets/app.js       +296  changelog pagination + cache + sort\n├── pages/assets/changelog-seed.json  +522  static fallback data\n├── pages/assets/changelog-seed.html  +232  standalone test page\n├── 17 website pages          +100+  SEO + pagination skeleton\n├── DEV_NOTES.md              +81   multi-source merge pitfalls\n├── plugin package.json files  +8   launcher self-heal sync\n└── update_agent.py            +2   version sync\n```\n\n## Version Bump\n\n- GREEN_VERSION: 1.0.37 → 1.0.38\n\n## Upgrade Notes\n\n- Green edition: overwrite install is sufficient\n- On first launch click \"Check for green updates\" — you should now see the full version list with GitHub / Gitee source selection\n",
+      "assets": [
+        {
+          "url": "https://api.github.com/repos/LiuJunheng/DeepSeekHarnessGreen/releases/assets/559022810",
+          "id": 559022810,
+          "node_id": "RA_kwDOT4acfM4hUgLa",
+          "name": "DSH-GreenPortable-v1.0.38.zip",
+          "label": "",
+          "uploader": {
+            "login": "LiuJunheng",
+            "id": 36152022,
+            "node_id": "MDQ6VXNlcjM2MTUyMDIy",
+            "avatar_url": "https://avatars.githubusercontent.com/u/36152022?v=4",
+            "gravatar_id": "",
+            "url": "https://api.github.com/users/LiuJunheng",
+            "html_url": "https://github.com/LiuJunheng",
+            "followers_url": "https://api.github.com/users/LiuJunheng/followers",
+            "following_url": "https://api.github.com/users/LiuJunheng/following{/other_user}",
+            "gists_url": "https://api.github.com/users/LiuJunheng/gists{/gist_id}",
+            "starred_url": "https://api.github.com/users/LiuJunheng/starred{/owner}{/repo}",
+            "subscriptions_url": "https://api.github.com/users/LiuJunheng/subscriptions",
+            "organizations_url": "https://api.github.com/users/LiuJunheng/orgs",
+            "repos_url": "https://api.github.com/users/LiuJunheng/repos",
+            "events_url": "https://api.github.com/users/LiuJunheng/events{/privacy}",
+            "received_events_url": "https://api.github.com/users/LiuJunheng/received_events",
+            "type": "User",
+            "user_view_type": "public",
+            "site_admin": false
+          },
+          "content_type": "application/zip",
+          "state": "uploaded",
+          "size": 18475201,
+          "digest": "sha256:fe92205eb9aca6ed2b2dcaf5146b1db2aeabfedba8660322ddfabeb21d88dd3a",
+          "download_count": 21,
+          "created_at": "2026-09-12T09:49:29Z",
+          "updated_at": "2026-09-12T09:49:32Z",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.38/DSH-GreenPortable-v1.0.38.zip"
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
     {
       "tag_name": "v1.0.37",
       "name": "v1.0.37 — 插件管理：核心兼容判定 + 界面显示优化",

@@ -2,7 +2,7 @@
 
 name: dsh-deploy-maintain
 description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护、插件开发与避坑经验。覆盖便携 Node/dsh 安装、环境变量重定向、工作区 ACL 沙箱、更新备份、插件管理与 dsh 插件双端加载/路由注册等全套实操知识。"
-updated: "2026-09-10"
+updated: "2026-09-13"
 ---------------------
 
 # DeepSeek Harness 绿色整合版 · 部署维护与插件开发
@@ -183,6 +183,8 @@ updated: "2026-09-10"
 - **版本追踪**：`GREEN_VERSION` 常量为**唯一来源**；`green_local_version()` 只在用户 `config.json` **显式写了** **`green_version`** **字段**时才覆盖（读原始配置文件，不走合并默认值）。版本号对比用**正确的 semver 五元组**（`_green_version_tuple()`），见 3.1。
 
   > **坑**：版本默认值**绝不能**写进 `DEFAULT_CONFIG`（曾导致本地恒显示旧版、反复提示更新）。版本相关默认值单点放 GREEN\_VERSION。
+
+  > **坑（版本核实口径）**：判断"本机版本"**只读代码常量**——`launcher.py` 与 `update_agent.py` 的 `GREEN_VERSION`（两处必须一致）。**不要用根目录的历史发布物推断**：`DSH-GreenPortable-v*.zip`、旧命名 `DSH_Launcher_GreenPortable_Online_*.zip`、`doc/release_notes/release_notes_v*.md` 都只是产物，据此判断会得到"本机落后 N 个版本"的错误结论（2026-09-13 生态调研报告即踩此坑：把 v1.0.29 的 zip 与说明当成本机版本，实际本机 `GREEN_VERSION = "1.0.38"`）。
 
 - **查询与下载跟随下载源分流**：`config.mirror` 为 `cn`（含 auto）时**先走 Gitee**，失败回退 GitHub→国内镜像；为 `official` 时 GitHub 优先、Gitee 兜底。返回值带 `source`（github/gitee/gitee\_release）。
 
@@ -655,7 +657,7 @@ function _savePersist(patch) { ... }
 | 会话突然全部 400（孤儿 tool\_calls 毒化）                              | 「会话回退」插件分析 → 在崩溃回合前已完成回合「回退到此」派生续接                                                                                                                |
 | 界面空白（GUI）                                                  | `ttk.Panedwindow` 漏 `.add()`；滚动条被列宽挤成 1x1                                                                                                         |
 | 多次重启累积 WebUI 标签页                                           | `dist/index.html` 无 `dsh-launcher-ui-beacon`（patch\_frontend 没跑/旧 exe）；有心跳仍开新页查 3081 占用/token                                                     |
-| 「检查绿色版更新」查不到                                               | 网络 api.github.com / 镜像；Release tag 带 v 前缀；资产名以 `DSH_Launcher_GreenPortable_Online_` 开头                                                            |
+| 「检查绿色版更新」查不到                                               | 网络 api.github.com / 镜像；Release tag 带 v 前缀；资产名以 `DSH-GreenPortable-v` 开头（v1.0.30 起新命名；`green_find_zip_asset` 用 `startswith()`，旧前缀 `DSH_Launcher_GreenPortable_Online_` 的存量版本仍可匹配）                                                            |
 | 更新后启动器没被替换                                                 | 独立更新程序 `DSH_Update.exe --apply`：查 `runtime/update/backup/`、`update_job.json`、server.log                                                           |
 | 桌面窗口起不来显示"连接失败"                                            | 避免 `start()` 前 `load_url()` 致 Main window failed 后回退浏览器 → 提示页放 create\_window 初始地址，导航放 `start(func)` 回调；用控制台 python 跑看 traceback                  |
 | 桌面窗口图标是默认                                                  | 往 `webview.start(icon=路径)` 传 icon（WinForms 支持，`self.Icon=Icon(icon)`）；别信"仅 GTK/QT"文档；`WM_SETICON` 依赖 FindWindowW 而 WebView2 用页面 title 覆盖窗体标题，常失效  |

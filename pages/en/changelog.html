@@ -53,73 +53,231 @@
     <p class="changelog-note">This page auto-syncs from GitHub Releases within 1 hour of each new release (local cache).</p>
     <div id="changelog-loading" class="changelog-state">Loading release history...</div>
     <div id="changelog-error" class="changelog-state changelog-state-error" hidden>Failed to load. Please try again later, or visit the <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases" target="_blank" rel="noopener">GitHub Releases page</a> directly.</div>
-    <div id="changelog-list" class="changelog-list"><section class="changelog-item" data-tag="v1.0.37">
+    <div id="changelog-list" class="changelog-list"><section class="changelog-item" data-tag="v1.0.38">
+  <header class="changelog-header">
+    <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.38" target="_blank" rel="noopener" class="changelog-tag">v1.0.38</a>
+    <span class="changelog-date">2026-09-12</span>
+  </header>
+  <div class="changelog-body">
+    <p><a href="#cn-1.0.38" target="_blank" rel="noopener">中文</a> | <a href="#en-1.0.38" target="_blank" rel="noopener">English</a></p>
+    <p><a id="cn-1.0.38"></a></p>
+    <p>> 本版本覆盖 <strong>11 个 commit / 34 个文件 / +2592 -241 行</strong>，是自 v1.0.31 以来改动量最大的一次，主要集中在三大方向：绿色版更新通道彻底重构、官网 changelog 增强、以及 SEO/多语言杂项优化。</p>
+    <h3>🌟 核心特性：绿色版更新通道彻底重构（Launcher GUI）</h3>
+    <p>原来的「检查绿色版更新」是一个同步请求 + 单一弹窗，无法展示历史版本、无法让用户在 GitHub/Gitee 之间选择下载源。本次完整重写，对齐官方 dsh 的 ask_update 交互模式。</p>
+    <h4>新增功能</h4>
+    <ul>
+    <li><strong>版本列表弹窗（Treeview + 双分组）</strong>：所有 Release 按 stable / prerelease 分组展示，带滚动条</li>
+    <li><strong>同版本多源合并</strong>：GitHub Release + Gitee Release 按 version 号分桶合并，同一版本只占一行；来源列显示 `GitHub + Gitee` / `仅 GitHub` / `仅 Gitee`</li>
+    <li><strong>安装弹窗双按钮</strong>：选择版本后弹出确认窗口，底部两个安装按钮 —— 「从 GitHub 安装」+「从 Gitee 安装」，缺失的来源自动禁用</li>
+    <li><strong>来源切换同步更新</strong>：切换 GitHub / Gitee 时，发布说明正文自动切换为对应来源的内容</li>
+    <li><strong>来源标签自动判定</strong>：Gitee 过滤只认 `/releases/download/` 直链 zip（过滤自动生成的 archive，避免下载时 403）</li>
+    </ul>
+    <h4>修复</h4>
+    <ul>
+    <li><strong>严重 bug：查询完 Release 后界面永久卡住</strong>：`green_all_releases()` 函数缺失 bucket 分桶 + 双源合并的核心代码块，`merged` 变量从未初始化 → 运行时抛 `UnboundLocalError` → 后台 daemon 线程静默吞噬异常（worker 只有 `try-finally` 没有 `except`）→ 界面永远卡在「正在检查」且无任何弹窗。已补全完整合并逻辑 + 给 worker 加 `except Exception` 防止静默崩溃</li>
+    <li>异步清理 / 备份任务的耗时操作（插件移除、版本备份）改为后台 daemon 线程执行，UI 不再卡顿</li>
+    </ul>
+    <h4>改动文件</h4>
+    <ul>
+    <li>`launcher.py` — <strong>+647 / -241 行</strong>，绿色版更新通道全链路重写（`green_all_releases`、`green_find_zip_asset`、`ask_green_update`、`confirm_green_upgrade` 等）</li>
+    <li>`locales/zh.json` + `locales/en.json` — 新增 53 条 `green_version_select.*` i18n 键</li>
+    <li>`update_agent.py` — 版本号同步</li>
+    </ul>
+    <h3>🌐 官网增强：changelog 分页 + SEO（dsh-green.website）</h3>
+    <p>官网是三语静态站（zh / en / zh-Hant），所有 changelog / compare / index / about / privacy 五个页面 + 公共 CSS + 公共 app.js 都有改动。</p>
+    <h4>Changelog 分页架构（<strong>+1690 行</strong>，本次最大单一组件）</h4>
+    <ul>
+    <li><strong>load-more 分页</strong>：默认只嵌入最新 3 条 Release 进 HTML（利于爬虫收录），点「加载更多」每次追加 10 条</li>
+    <li><strong>seed.json 静态兜底</strong>：新增 `changelog-seed.json`（预生成的完整 Release 列表）+ `changelog-seed.html`（独立测试页），GitHub API 不可达时自动 fallback 到本地 JSON</li>
+    <li><strong>加载状态与边界处理</strong>：每次 `renderChunk` 后保留底部 load-more 按钮；`mergeReleases` 按 `published_at` 降序而非 seed 文件顺序</li>
+    <li><strong>localStorage 缓存 TTL 从 1h/2h 统一降到 15min</strong>，让新版本更快在官网显示</li>
+    </ul>
+    <h4>SEO 优化</h4>
+    <ul>
+    <li>所有 <strong>17 个页面</strong> 的 `<title>` / `<meta name="description">` / `<meta property="og:title">` 统一加上 `(DSH)` 关键词，提升搜索引擎发现率</li>
+    <li>所有 <strong>4 个 index.html</strong>（zh / en / zh-Hant + 根）新增搜狗站点验证 `<meta name="sogou_site_verification">`</li>
+    </ul>
+    <h4>改动文件（官网）</h4>
+    <p>| 文件 | 改动 |</p>
+    <p>|------|------|</p>
+    <p>| `pages/assets/app.js` | 分页逻辑 + 缓存 TTL + 排序修复 |</p>
+    <p>| `pages/assets/changelog-seed.json` | <strong>+522 行</strong>，预生成的 Release 数据 |</p>
+    <p>| `pages/assets/changelog-seed.html` | <strong>+232 行</strong>，独立测试页 |</p>
+    <p>| `pages/assets/style.css` | +22 行，分页 load-more 按钮样式 |</p>
+    <p>| 3× changelog.html | 加分页骨架 + 内嵌最新 3 条 |</p>
+    <p>| 4× index.html | 加 sogou 验证 meta + SEO title |</p>
+    <p>| 3× compare.html / 3× about.html / 3× privacy.html | SEO title 补齐 |</p>
+    <h3>🔧 杂项修复</h3>
+    <ul>
+    <li><strong>session_import 插件</strong>：移除原生 `<input type='file'>` 硬编码中文，改为自定义 UI + i18n 翻译（`plugin.session_import.pick_file_btn` / `no_file_selected`）</li>
+    <li><strong>插件 package.json 同步</strong>：启动器启动时把 `@deepseek-ai/*` 依赖自动同步到宿主版本（本次 `dsh-session-rewind` 的 `dsh-session` 由 0.1.5-alpha.1 → 0.1.5-rc.1，`dsh-memory` 同步更新）</li>
+    </ul>
+    <h3>📊 改动总览</h3>
+    <pre><code>34 files changed, +2592 -241 lines
+
+    ├── launcher.py              +647  绿色版更新通道重构 + bugfix
+    ├── locales/zh.json / en.json +53   新 i18n 键
+    ├── pages/assets/app.js       +296  changelog 分页 + 缓存 + 排序
+    ├── pages/assets/changelog-seed.json  +522  静态兜底数据
+    ├── pages/assets/changelog-seed.html  +232  测试页
+    ├── 17 个官网页面            +100+ SEO + 分页骨架
+    ├── DEV_NOTES.md              +81  绿色版多源合并避坑经验
+    ├── 插件 package.json         +8   启动器自愈同步
+    └── update_agent.py           +2   版本号同步</code></pre>
+    <h3>版本更新</h3>
+    <ul>
+    <li>GREEN_VERSION: 1.0.37 → 1.0.38</li>
+    </ul>
+    <h3>升级建议</h3>
+    <ul>
+    <li>绿色版覆盖安装即可</li>
+    <li>首次点「检查绿色版更新」应该能看到完整版本列表 + GitHub / Gitee 双源选择</li>
+    </ul>
+    <p><a id="en-1.0.38"></a></p>
+    <p>> This release covers <strong>11 commits across 34 files (+2592 / -241 lines)</strong> — the largest single rollout since v1.0.31. Three major themes: a full redesign of the green-edition update channel, a redesigned changelog with pagination on the website, and SEO/misc polish.</p>
+    <h3>🌟 Highlight: Green Edition Update Channel Redesign (Launcher GUI)</h3>
+    <p>The old "Check for green updates" action used a single synchronous request and one dialog — no version history, no source switching between GitHub/Gitee. This release rewrites the whole flow to match the official dsh `ask_update` UX.</p>
+    <h4>New Features</h4>
+    <ul>
+    <li><strong>Version list dialog (Treeview, grouped by channel)</strong>: All releases grouped under "Stable" / "Prerelease" headers with a scrollable list</li>
+    <li><strong>Same-version multi-source merge</strong>: GitHub + Gitee releases are bucketed by version number so each version appears in a single row; the Source column shows `GitHub + Gitee` / `GitHub only` / `Gitee only`</li>
+    <li><strong>Install confirmation with two buttons</strong>: After picking a version, a confirmation dialog offers both "Install from GitHub" and "Install from Gitee" — missing sources are automatically disabled</li>
+    <li><strong>Source-aware release notes</strong>: Switching GitHub / Gitee in the confirmation dialog updates the release notes body to show the right source</li>
+    <li><strong>Smart Gitee asset filtering</strong>: Only zips with a `/releases/download/` direct link are kept (auto-generated archive zips that return 403 are filtered out)</li>
+    </ul>
+    <h4>Bug Fixes</h4>
+    <ul>
+    <li><strong>Critical: UI freezes forever after fetching releases</strong>: `green_all_releases()` was missing the core bucket-and-merge block. The `merged` variable was never initialized → runtime `UnboundLocalError` → the daemon worker thread silently swallowed the exception (the worker was `try-finally` only, no `except`) → the UI stayed stuck at "Checking for updates" with no dialog or error. Both issues are fixed: the full bucket merge logic is restored, and the worker now wraps the body in `try-except-finally` with traceback + error dialog</li>
+    <li><strong>Async backup / cleanup</strong>: Slow operations (plugin removal, version backup) that used to block the UI thread now run in background daemon threads</li>
+    </ul>
+    <h4>Key Files</h4>
+    <ul>
+    <li>`launcher.py` — <strong>+647 / -241 lines</strong>, full rewrite of the green update channel (`green_all_releases`, `green_find_zip_asset`, `ask_green_update`, `confirm_green_upgrade`, ...)</li>
+    <li>`locales/zh.json` + `locales/en.json` — 53 new `green_version_select.*` i18n keys</li>
+    <li>`update_agent.py` — version sync</li>
+    </ul>
+    <h3>🌐 Website: Changelog Pagination + SEO (dsh-green.website)</h3>
+    <p>The website is a three-language static site (zh / en / zh-Hant). All five page types (changelog / compare / index / about / privacy) plus the shared CSS and app.js are touched.</p>
+    <h4>Changelog Pagination Architecture (<strong>+1690 lines</strong>, the biggest single component here)</h4>
+    <ul>
+    <li><strong>Load-more pagination</strong>: Only the latest 3 releases are embedded directly into the HTML (good for crawlers). Clicking "Load more" appends 10 at a time</li>
+    <li><strong>seed.json static fallback</strong>: New `changelog-seed.json` (pre-generated full release list) + `changelog-seed.html` (standalone test page). When the GitHub API is unreachable, the site silently falls back to the local JSON</li>
+    <li><strong>Load state & edge cases</strong>: The load-more button stays anchored at the bottom of each chunk; `mergeReleases` now sorts by `published_at` desc instead of seed-file order</li>
+    <li><strong>localStorage cache TTL lowered from 1h/2h to 15min</strong> so new versions show up on the site faster</li>
+    </ul>
+    <h4>SEO Boost</h4>
+    <ul>
+    <li>All <strong>17 pages</strong> get `(DSH)` appended to `<title>`, `<meta name="description">`, and `<meta property="og:title">` to improve search engine discoverability</li>
+    <li>All <strong>4 index.html files</strong> (zh / en / zh-Hant + root) get a Sogou site verification `<meta name="sogou_site_verification">`</li>
+    </ul>
+    <h4>Website Files Changed</h4>
+    <p>| File | Change |</p>
+    <p>|------|--------|</p>
+    <p>| `pages/assets/app.js` | Pagination logic + cache TTL + sort fix |</p>
+    <p>| `pages/assets/changelog-seed.json` | <strong>+522 lines</strong>, pre-generated release data |</p>
+    <p>| `pages/assets/changelog-seed.html` | <strong>+232 lines</strong>, standalone test page |</p>
+    <p>| `pages/assets/style.css` | +22 lines, load-more button styles |</p>
+    <p>| 3× changelog.html | Pagination skeleton + latest 3 embedded |</p>
+    <p>| 4× index.html | Sogou verification meta + SEO title |</p>
+    <p>| 3× compare.html / 3× about.html / 3× privacy.html | SEO titles aligned |</p>
+    <h3>🔧 Misc Fixes</h3>
+    <ul>
+    <li><strong>session_import plugin</strong>: Hardcoded Chinese in the native `<input type='file'>` element replaced with a custom UI driven by i18n keys (`plugin.session_import.pick_file_btn` / `no_file_selected`)</li>
+    <li><strong>Plugin package.json auto-sync</strong>: On startup the launcher pushes `@deepseek-ai/*` dependency versions into installed plugins. This session saw `dsh-session` in `dsh-session-rewind` bump from `0.1.5-alpha.1` to `0.1.5-rc.1`, and `dsh-memory` sync as well</li>
+    </ul>
+    <h3>📊 Change Summary</h3>
+    <pre><code>34 files changed, +2592 -241 lines
+
+    ├── launcher.py              +647  green update channel redesign + bugfix
+    ├── locales/zh.json / en.json  +53  new i18n keys
+    ├── pages/assets/app.js       +296  changelog pagination + cache + sort
+    ├── pages/assets/changelog-seed.json  +522  static fallback data
+    ├── pages/assets/changelog-seed.html  +232  standalone test page
+    ├── 17 website pages          +100+  SEO + pagination skeleton
+    ├── DEV_NOTES.md              +81   multi-source merge pitfalls
+    ├── plugin package.json files  +8   launcher self-heal sync
+    └── update_agent.py            +2   version sync</code></pre>
+    <h3>Version Bump</h3>
+    <ul>
+    <li>GREEN_VERSION: 1.0.37 → 1.0.38</li>
+    </ul>
+    <h3>Upgrade Notes</h3>
+    <ul>
+    <li>Green edition: overwrite install is sufficient</li>
+    <li>On first launch click "Check for green updates" — you should now see the full version list with GitHub / Gitee source selection</li>
+    </ul>
+  </div>
+  <div class="changelog-download">
+    <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.38/DSH-GreenPortable-v1.0.38.zip" target="_blank" rel="noopener" class="btn btn-primary">DSH-GreenPortable-v1.0.38.zip</a>
+  </div>
+</section>
+<section class="changelog-item" data-tag="v1.0.37">
   <header class="changelog-header">
     <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.37" target="_blank" rel="noopener" class="changelog-tag">v1.0.37</a>
     <span class="changelog-date">2026-09-10</span>
   </header>
   <div class="changelog-body">
     <p><a href="#cn-1.0.37" target="_blank" rel="noopener">中文</a> | <a href="#en-1.0.37" target="_blank" rel="noopener">English</a></p>
-<p><a id="cn-1.0.37"></a></p>
-<h3>新增功能</h3>
-<ul>
-<li>插件管理「搜索」改为纯 npm 来源，并排除 `@deepseek-ai/*` 官方内置插件（只列第三方可装项）</li>
-<li>npm 搜索结果为前 30 条补充「核心兼容」判定：预估兼容 / 可能不兼容 / 不明</li>
-<li>已安装插件列表新增「兼容」列（读本地产物判定，无需联网）</li>
-<li>无核心依赖的插件视为「预估兼容」（不依赖官方核心包，不受核心版本变化影响）</li>
-<li>推荐列表：npm 源项显示真实版本号 + 兼容状态；GitHub 源项显示「不明」</li>
-<li>固定作用域包 `@xxx/yyy` 拉取 manifest 的 404 问题</li>
-</ul>
-<h3>修复</h3>
-<ul>
-<li>移除插件后按钮持续禁用的卡死问题（补回忙碌状态复位）</li>
-<li>去除搜索结果「分类」列后，来源列读取错位导致 GitHub 插件误装为 npm 的问题</li>
-<li>推荐列表支持 npm 版 dsh market（包名 dshmarket），安装更快更稳</li>
-</ul>
-<h3>界面调整</h3>
-<ul>
-<li>插件管理窗口加宽至与主启动器同宽（1160），右侧搜索结果列更宽裕</li>
-<li>搜索结果去掉「分类」列，版本列加宽以容纳兼容状态文本</li>
-<li>按钮顺序：「加载推荐」在前，「搜索npm插件」在后</li>
-</ul>
-<h3>版本更新</h3>
-<ul>
-<li>GREEN_VERSION: 1.0.36 → 1.0.37</li>
-</ul>
-<h3>升级建议</h3>
-<ul>
-<li>绿色版覆盖安装即可</li>
-</ul>
-<p><a id="en-1.0.37"></a></p>
-<h3>New Features</h3>
-<ul>
-<li>Plugin management "Search" now uses pure npm source and excludes `@deepseek-ai/*` built-in official plugins (only third-party installs are listed)</li>
-<li>npm search results (first 30) are tagged with a "core compatibility" estimate: Estimated Compatible / May Be Incompatible / Unknown</li>
-<li>Installed plugins list gains a "Compat" column (evaluated from the local install, no network needed)</li>
-<li>Plugins with no core dependency are treated as "Estimated Compatible" (not bound to official core version changes)</li>
-<li>Recommended list: npm-sourced items show the real version + compatibility status; GitHub-sourced items show "Unknown"</li>
-<li>Fixed 404 when fetching manifests for scoped packages `@xxx/yyy`</li>
-</ul>
-<h3>Bug Fixes</h3>
-<ul>
-<li>Fixed buttons staying disabled after removing a plugin (busy state not reset)</li>
-<li>Fixed source-column index regression after removing the "Category" column, which caused GitHub plugins to be misinstalled as npm</li>
-<li>Recommended list prefers the npm build of dsh market (package `dshmarket`), faster and more reliable to install</li>
-</ul>
-<h3>UI Adjustments</h3>
-<ul>
-<li>Plugin manager window widened to match the main launcher width (1160), giving the search results column more room</li>
-<li>Removed the "Category" column from search results; widened the version column to fit compatibility tags</li>
-<li>Button order: "Load Recommended" first, "Search npm Plugins" after</li>
-</ul>
-<h3>Version Bump</h3>
-<ul>
-<li>GREEN_VERSION: 1.0.36 → 1.0.37</li>
-</ul>
-<h3>Upgrade Notes</h3>
-<ul>
-<li>Green edition: overwrite install is sufficient</li>
-</ul>
+    <p><a id="cn-1.0.37"></a></p>
+    <h3>新增功能</h3>
+    <ul>
+    <li>插件管理「搜索」改为纯 npm 来源，并排除 `@deepseek-ai/*` 官方内置插件（只列第三方可装项）</li>
+    <li>npm 搜索结果为前 30 条补充「核心兼容」判定：预估兼容 / 可能不兼容 / 不明</li>
+    <li>已安装插件列表新增「兼容」列（读本地产物判定，无需联网）</li>
+    <li>无核心依赖的插件视为「预估兼容」（不依赖官方核心包，不受核心版本变化影响）</li>
+    <li>推荐列表：npm 源项显示真实版本号 + 兼容状态；GitHub 源项显示「不明」</li>
+    <li>固定作用域包 `@xxx/yyy` 拉取 manifest 的 404 问题</li>
+    </ul>
+    <h3>修复</h3>
+    <ul>
+    <li>移除插件后按钮持续禁用的卡死问题（补回忙碌状态复位）</li>
+    <li>去除搜索结果「分类」列后，来源列读取错位导致 GitHub 插件误装为 npm 的问题</li>
+    <li>推荐列表支持 npm 版 dsh market（包名 dshmarket），安装更快更稳</li>
+    </ul>
+    <h3>界面调整</h3>
+    <ul>
+    <li>插件管理窗口加宽至与主启动器同宽（1160），右侧搜索结果列更宽裕</li>
+    <li>搜索结果去掉「分类」列，版本列加宽以容纳兼容状态文本</li>
+    <li>按钮顺序：「加载推荐」在前，「搜索npm插件」在后</li>
+    </ul>
+    <h3>版本更新</h3>
+    <ul>
+    <li>GREEN_VERSION: 1.0.36 → 1.0.37</li>
+    </ul>
+    <h3>升级建议</h3>
+    <ul>
+    <li>绿色版覆盖安装即可</li>
+    </ul>
+    <p><a id="en-1.0.37"></a></p>
+    <h3>New Features</h3>
+    <ul>
+    <li>Plugin management "Search" now uses pure npm source and excludes `@deepseek-ai/*` built-in official plugins (only third-party installs are listed)</li>
+    <li>npm search results (first 30) are tagged with a "core compatibility" estimate: Estimated Compatible / May Be Incompatible / Unknown</li>
+    <li>Installed plugins list gains a "Compat" column (evaluated from the local install, no network needed)</li>
+    <li>Plugins with no core dependency are treated as "Estimated Compatible" (not bound to official core version changes)</li>
+    <li>Recommended list: npm-sourced items show the real version + compatibility status; GitHub-sourced items show "Unknown"</li>
+    <li>Fixed 404 when fetching manifests for scoped packages `@xxx/yyy`</li>
+    </ul>
+    <h3>Bug Fixes</h3>
+    <ul>
+    <li>Fixed buttons staying disabled after removing a plugin (busy state not reset)</li>
+    <li>Fixed source-column index regression after removing the "Category" column, which caused GitHub plugins to be misinstalled as npm</li>
+    <li>Recommended list prefers the npm build of dsh market (package `dshmarket`), faster and more reliable to install</li>
+    </ul>
+    <h3>UI Adjustments</h3>
+    <ul>
+    <li>Plugin manager window widened to match the main launcher width (1160), giving the search results column more room</li>
+    <li>Removed the "Category" column from search results; widened the version column to fit compatibility tags</li>
+    <li>Button order: "Load Recommended" first, "Search npm Plugins" after</li>
+    </ul>
+    <h3>Version Bump</h3>
+    <ul>
+    <li>GREEN_VERSION: 1.0.36 → 1.0.37</li>
+    </ul>
+    <h3>Upgrade Notes</h3>
+    <ul>
+    <li>Green edition: overwrite install is sufficient</li>
+    </ul>
   </div>
   <div class="changelog-download">
     <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.37/DSH-GreenPortable-v1.0.37.zip" target="_blank" rel="noopener" class="btn btn-primary">DSH-GreenPortable-v1.0.37.zip</a>
@@ -132,157 +290,73 @@
   </header>
   <div class="changelog-body">
     <p><a href="#cn-1.0.36" target="_blank" rel="noopener">中文</a> | <a href="#en-1.0.36" target="_blank" rel="noopener">English</a></p>
-<p><a id="cn-1.0.36"></a></p>
-<h3>重要更新</h3>
-<h4>用量统计：价格表跟进官方最新调价与模型改名</h4>
-<ul>
-<li>DeepSeek 官方自 2026-09-10 12:00（北京时间）起下调 Flash 系列价格：输入缓存命中 0.10 → 0.04、未命中 3.0 → 2.0、输出 9.0 → 8.0（元 / 每百万 tokens，均为高峰时段价；空闲时段为半价）</li>
-<li>当前在售主力模型 id 是 `deepseek-flash`（= DeepSeek-V4.1-Flash，1M 上下文 / 384K 最大输出 / 支持图片）；旧的 `deepseek-v4-flash` 与 `deepseek-v4-flash-vision-exp` 已退役，请求仍受理但由 V4.1-Flash 服务、按 Flash 价计费</li>
-<li>`deepseek-v4-pro` 自 2026-09-14 12:00（北京时间）起也整批路由到 V4.1-Flash 并按 Flash 价计费</li>
-<li>修复费用估算偏高：旧价格表的键名是已退役的 id，真实会话使用的 `deepseek-flash` 查不到单价、一直落到兜底价（比新价高：未命中 +50%、命中 +150%、输出 +12.5%）</li>
-<li>价格表存储键升级（`prices.v3` → `prices.v4`），确保浏览器里缓存下来的旧价格表不会盖住新默认值；「设置 → 用量统计」内仍可手工改价并「恢复默认」</li>
-</ul>
-<h4>会话回退 / 会话导入：适配 dsh 0.1.5 会话格式 v3</h4>
-<ul>
-<li>会话回退（dsh-session-rewind）、会话导入（dsh-session-import）、用量统计（dsh-usage-stats）统一适配新版 dsh 的 v3 会话存储格式，并对旧格式保持跨版本容错</li>
-</ul>
-<h4>启动器：dsh 更新通道增加镜像滞后兜底</h4>
-<ul>
-<li>国内镜像版本落后于官方时自动回退官方源，官方源失败自动重试，避免"镜像还没同步就更新不了"</li>
-</ul>
-<h3>修复</h3>
-<ul>
-<li>用量统计费用估算取不到当前模型单价而系统性偏高（见上）</li>
-<li>发布页 SEO：hreflang 对齐 ISO 3166-1 Alpha 2（zh-CN / zh-TW）、各语言子目录 robots.txt 指向各自 sitemap、新增 sitemap.txt 纯文本兜底</li>
-<li>更新日志页面纯文本行被多余 `<code>` 包裹</li>
-</ul>
-<h3>版本更新</h3>
-<ul>
-<li>GREEN_VERSION: 1.0.35 → 1.0.36</li>
-</ul>
-<h3>升级建议</h3>
-<ul>
-<li>绿色版覆盖安装即可；覆盖后到「设置 → 用量统计」确认价格表已是新版（默认即最新，无需手动修改）</li>
-</ul>
-<p><a id="en-1.0.36"></a></p>
-<h3>Highlights</h3>
-<h4>Usage stats: price table updated for the latest official pricing and model rename</h4>
-<ul>
-<li>DeepSeek cut Flash-series prices effective 2026-09-10 12:00 (Beijing time): cache-hit input 0.10 → 0.04, cache-miss input 3.0 → 2.0, output 9.0 → 8.0 (CNY per 1M tokens, all peak-hour rates; off-peak is half)</li>
-<li>The current flagship model id is `deepseek-flash` (= DeepSeek-V4.1-Flash, 1M context / 384K max output / vision capable); the legacy ids `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` are retired — requests are still accepted but served by V4.1-Flash and billed at the Flash price</li>
-<li>From 2026-09-14 12:00 (Beijing time), `deepseek-v4-pro` is also routed entirely to V4.1-Flash and billed at the Flash price</li>
-<li>Fixed systematically overestimated cost: the old price table was keyed by retired ids, so the model actually used (`deepseek-flash`) never matched and silently fell back to the default row (higher than the new price: miss +50%, hit +150%, output +12.5%)</li>
-<li>The price-table storage key is bumped (`prices.v3` → `prices.v4`) so a stale table cached in the browser can no longer shadow the new defaults; the table is still editable with a "restore defaults" button under Settings → Usage Stats</li>
-</ul>
-<h4>Session rewind / session import: adapted to dsh 0.1.5 session format v3</h4>
-<ul>
-<li>Session Rewind (dsh-session-rewind), Session Import (dsh-session-import) and Usage Stats now read the new v3 session storage format, while staying tolerant of the older formats</li>
-</ul>
-<h4>Launcher: mirror-lag fallback for the dsh update channel</h4>
-<ul>
-<li>When the domestic mirror lags behind the official release, the launcher now falls back to the official source and retries, so an unsynced mirror no longer blocks updates</li>
-</ul>
-<h3>Bug Fixes</h3>
-<ul>
-<li>Usage-stats cost estimate was systematically too high because the current model id had no price row</li>
-<li>Site SEO: hreflang aligned to ISO 3166-1 Alpha 2 (zh-CN / zh-TW), each language subdirectory's robots.txt points to its own sitemap, and a plain-text sitemap.txt fallback was added</li>
-<li>Changelog page wrapped plain-text lines in a redundant `<code>` tag</li>
-</ul>
-<h3>Version Bump</h3>
-<ul>
-<li>GREEN_VERSION: 1.0.35 → 1.0.36</li>
-</ul>
-<h3>Upgrade Notes</h3>
-<ul>
-<li>Green edition: overwrite install is sufficient. After overwriting, open Settings → Usage Stats to confirm the new price table is in place (defaults are already current; no manual edit needed)</li>
-</ul>
+    <p><a id="cn-1.0.36"></a></p>
+    <h3>重要更新</h3>
+    <h4>用量统计：价格表跟进官方最新调价与模型改名</h4>
+    <ul>
+    <li>DeepSeek 官方自 2026-09-10 12:00（北京时间）起下调 Flash 系列价格：输入缓存命中 0.10 → 0.04、未命中 3.0 → 2.0、输出 9.0 → 8.0（元 / 每百万 tokens，均为高峰时段价；空闲时段为半价）</li>
+    <li>当前在售主力模型 id 是 `deepseek-flash`（= DeepSeek-V4.1-Flash，1M 上下文 / 384K 最大输出 / 支持图片）；旧的 `deepseek-v4-flash` 与 `deepseek-v4-flash-vision-exp` 已退役，请求仍受理但由 V4.1-Flash 服务、按 Flash 价计费</li>
+    <li>`deepseek-v4-pro` 自 2026-09-14 12:00（北京时间）起也整批路由到 V4.1-Flash 并按 Flash 价计费</li>
+    <li>修复费用估算偏高：旧价格表的键名是已退役的 id，真实会话使用的 `deepseek-flash` 查不到单价、一直落到兜底价（比新价高：未命中 +50%、命中 +150%、输出 +12.5%）</li>
+    <li>价格表存储键升级（`prices.v3` → `prices.v4`），确保浏览器里缓存下来的旧价格表不会盖住新默认值；「设置 → 用量统计」内仍可手工改价并「恢复默认」</li>
+    </ul>
+    <h4>会话回退 / 会话导入：适配 dsh 0.1.5 会话格式 v3</h4>
+    <ul>
+    <li>会话回退（dsh-session-rewind）、会话导入（dsh-session-import）、用量统计（dsh-usage-stats）统一适配新版 dsh 的 v3 会话存储格式，并对旧格式保持跨版本容错</li>
+    </ul>
+    <h4>启动器：dsh 更新通道增加镜像滞后兜底</h4>
+    <ul>
+    <li>国内镜像版本落后于官方时自动回退官方源，官方源失败自动重试，避免"镜像还没同步就更新不了"</li>
+    </ul>
+    <h3>修复</h3>
+    <ul>
+    <li>用量统计费用估算取不到当前模型单价而系统性偏高（见上）</li>
+    <li>发布页 SEO：hreflang 对齐 ISO 3166-1 Alpha 2（zh-CN / zh-TW）、各语言子目录 robots.txt 指向各自 sitemap、新增 sitemap.txt 纯文本兜底</li>
+    <li>更新日志页面纯文本行被多余 `<code>` 包裹</li>
+    </ul>
+    <h3>版本更新</h3>
+    <ul>
+    <li>GREEN_VERSION: 1.0.35 → 1.0.36</li>
+    </ul>
+    <h3>升级建议</h3>
+    <ul>
+    <li>绿色版覆盖安装即可；覆盖后到「设置 → 用量统计」确认价格表已是新版（默认即最新，无需手动修改）</li>
+    </ul>
+    <p><a id="en-1.0.36"></a></p>
+    <h3>Highlights</h3>
+    <h4>Usage stats: price table updated for the latest official pricing and model rename</h4>
+    <ul>
+    <li>DeepSeek cut Flash-series prices effective 2026-09-10 12:00 (Beijing time): cache-hit input 0.10 → 0.04, cache-miss input 3.0 → 2.0, output 9.0 → 8.0 (CNY per 1M tokens, all peak-hour rates; off-peak is half)</li>
+    <li>The current flagship model id is `deepseek-flash` (= DeepSeek-V4.1-Flash, 1M context / 384K max output / vision capable); the legacy ids `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` are retired — requests are still accepted but served by V4.1-Flash and billed at the Flash price</li>
+    <li>From 2026-09-14 12:00 (Beijing time), `deepseek-v4-pro` is also routed entirely to V4.1-Flash and billed at the Flash price</li>
+    <li>Fixed systematically overestimated cost: the old price table was keyed by retired ids, so the model actually used (`deepseek-flash`) never matched and silently fell back to the default row (higher than the new price: miss +50%, hit +150%, output +12.5%)</li>
+    <li>The price-table storage key is bumped (`prices.v3` → `prices.v4`) so a stale table cached in the browser can no longer shadow the new defaults; the table is still editable with a "restore defaults" button under Settings → Usage Stats</li>
+    </ul>
+    <h4>Session rewind / session import: adapted to dsh 0.1.5 session format v3</h4>
+    <ul>
+    <li>Session Rewind (dsh-session-rewind), Session Import (dsh-session-import) and Usage Stats now read the new v3 session storage format, while staying tolerant of the older formats</li>
+    </ul>
+    <h4>Launcher: mirror-lag fallback for the dsh update channel</h4>
+    <ul>
+    <li>When the domestic mirror lags behind the official release, the launcher now falls back to the official source and retries, so an unsynced mirror no longer blocks updates</li>
+    </ul>
+    <h3>Bug Fixes</h3>
+    <ul>
+    <li>Usage-stats cost estimate was systematically too high because the current model id had no price row</li>
+    <li>Site SEO: hreflang aligned to ISO 3166-1 Alpha 2 (zh-CN / zh-TW), each language subdirectory's robots.txt points to its own sitemap, and a plain-text sitemap.txt fallback was added</li>
+    <li>Changelog page wrapped plain-text lines in a redundant `<code>` tag</li>
+    </ul>
+    <h3>Version Bump</h3>
+    <ul>
+    <li>GREEN_VERSION: 1.0.35 → 1.0.36</li>
+    </ul>
+    <h3>Upgrade Notes</h3>
+    <ul>
+    <li>Green edition: overwrite install is sufficient. After overwriting, open Settings → Usage Stats to confirm the new price table is in place (defaults are already current; no manual edit needed)</li>
+    </ul>
   </div>
   <div class="changelog-download">
     <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.36/DSH-GreenPortable-v1.0.36.zip" target="_blank" rel="noopener" class="btn btn-primary">DSH-GreenPortable-v1.0.36.zip</a>
-  </div>
-</section>
-<section class="changelog-item" data-tag="v1.0.35">
-  <header class="changelog-header">
-    <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.35" target="_blank" rel="noopener" class="changelog-tag">v1.0.35</a>
-    <span class="changelog-date">2026-09-08</span>
-  </header>
-  <div class="changelog-body">
-    <p><a href="#cn-1.0.35" target="_blank" rel="noopener">中文</a> | <a href="#en-1.0.35" target="_blank" rel="noopener">English</a></p>
-<p><a id="cn-1.0.35"></a></p>
-<h3>新增功能</h3>
-<h4>右键菜单功能与排序统一</h4>
-<ul>
-<li>侧栏文件右键菜单与文件浏览器的右键菜单功能、排序完全对齐</li>
-<li>文件行菜单（6 项）：以官方 @ 引用插入 → 插入路径 → 插入内容 → 另存为 → 复制相对路径 → 复制绝对路径</li>
-<li>目录行菜单（3 项）：插入路径 → 复制相对路径 → 复制绝对路径</li>
-</ul>
-<h4>文件浏览器新增</h4>
-<ul>
-<li>另存为：调用宿主端新增 /download 路由取完整文件（单文件上限 32MB），优先原生「另存为」对话框，不支持时回退浏览器下载</li>
-<li>复制相对路径 / 复制绝对路径（原「复制路径」更名为「复制绝对路径」）</li>
-</ul>
-<h4>侧栏插入能力补齐</h4>
-<ul>
-<li>新增「插入路径到输入框」「插入内容到输入框」菜单项，与文件浏览器一致</li>
-<li>主页域名更新为独立站点 https://dsh-green.website/</li>
-</ul>
-<h3>修复</h3>
-<ul>
-<li>侧栏连续插入路径/内容时，偶发插入到文件预览器（而非会话输入框）的问题</li>
-<li>侧栏与文件浏览器右键菜单功能不一致</li>
-</ul>
-<h3>技术架构</h3>
-<ul>
-<li>侧栏插件独立注册官方 conversation.input.left slot 捕获输入机通道（inputActions/input），不再依赖文件浏览器注入的全局变量，两插件互不依赖</li>
-<li>插入走三级降级：inputActions.setDraft → 官方输入机 bail → DOM fallback</li>
-</ul>
-<h3>版本更新</h3>
-<ul>
-<li>GREEN_VERSION: 1.0.34 → 1.0.35</li>
-</ul>
-<h3>升级建议</h3>
-<ul>
-<li>绿色版覆盖安装即可</li>
-</ul>
-<p><a id="en-1.0.35"></a></p>
-<h3>New Features</h3>
-<h4>Unified right-click menus (sidebar & file browser)</h4>
-<ul>
-<li>The sidebar file list and the file browser now share identical right-click menu actions and ordering</li>
-<li>File row (6 items): official @ reference → insert path → insert content → save as → copy relative path → copy absolute path</li>
-<li>Directory row (3 items): insert path → copy relative path → copy absolute path</li>
-</ul>
-<h4>File browser additions</h4>
-<ul>
-<li>Save As: new host /download route streams the full file (32MB per-file limit); uses the native "Save As" dialog when available, falls back to browser download</li>
-<li>Copy Relative Path / Copy Absolute Path (the old "Copy Path" is renamed "Copy Absolute Path")</li>
-</ul>
-<h4>Sidebar insertion capabilities</h4>
-<ul>
-<li>Added "Insert Path to Input" and "Insert Content to Input" menu items, aligned with the file browser</li>
-<li>Homepage URL updated to the standalone site https://dsh-green.website/</li>
-</ul>
-<h3>Bug Fixes</h3>
-<ul>
-<li>Fixed sidebar insertion occasionally landing in the file previewer instead of the conversation input after repeated inserts</li>
-<li>Fixed menu inconsistency between sidebar and file browser</li>
-</ul>
-<h3>Technical Architecture</h3>
-<ul>
-<li>The sidebar plugin now registers the official conversation.input.left slot by itself to capture the input machinery (inputActions/input), no longer relying on globals injected by the file browser — the two plugins are fully independent</li>
-<li>Insertion uses a 3-level fallback: inputActions.setDraft → official input bail → DOM fallback</li>
-</ul>
-<h3>Version Bump</h3>
-<ul>
-<li>GREEN_VERSION: 1.0.34 → 1.0.35</li>
-</ul>
-<h3>Upgrade Notes</h3>
-<ul>
-<li>Green edition: overwrite install is sufficient</li>
-</ul>
-  </div>
-  <div class="changelog-download">
-    <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.35/DSH-GreenPortable-v1.0.35.zip" target="_blank" rel="noopener" class="btn btn-primary">DSH-GreenPortable-v1.0.35.zip</a>
   </div>
 </section></div>
   </main>
