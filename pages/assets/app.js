@@ -230,9 +230,10 @@
        - GitHub API: 补充种子发布后才出的新 release
        - 去重按 tag_name；首屏 10 条，"加载更多"每次追加 10 条 */
   var CHUNK_SIZE = 10;                          // 每屏显示条数
-  var visibleCount = 0;                         // 当前已渲染条数
+  var visibleCount = 0;                         // 当前已渲染条数（指 allFilteredReleases 中已渲染的索引位置）
   var allFilteredReleases = [];                 // 过滤后的全部 release（剔除 draft/prerelease）
   var releasesLoaded = false;                   // 是否已把全量数据拿到（seed + GitHub 合并完）
+  var existingTagsFromHTML = {};                // HTML 内嵌静态种子已有的 tag_name -> 不重复渲染
   var RELEASES_CACHE_KEY = "dshe-releases-v2";  // 换 key 清掉旧缓存
   var RELEASES_CACHE_TTL_MS = 15 * 60 * 1000;
 
@@ -413,20 +414,25 @@
   }
 
   /* 渲染从 startIndex 开始的一段 release，追加到容器末尾。
-     如果已经有"加载更多"按钮，先暂时移走，追加完新卡片后再把按钮重新 append 到最新末尾，
-     这样按钮永远跟着最后一张卡片走，不会卡在中间。*/
+     - 如果已经有"加载更多"按钮，先暂时移走，追加完新卡片后再把按钮重新 append 到最新末尾，
+       这样按钮永远跟着最后一张卡片走，不会卡在中间。
+     - 跳过 HTML 内嵌静态种子已有的 tag（existingTagsFromHTML），避免重复卡片。*/
   function renderChunk(startIndex) {
     var container = document.getElementById("changelog-list");
     if (!container) return;
     var btn = document.getElementById("changelog-load-more");
     // 1. 先把按钮摘下来，避免新卡片 append 到按钮之后
     if (btn) btn.remove();
-    // 2. 追加这段卡片
-    var end = Math.min(startIndex + CHUNK_SIZE, allFilteredReleases.length);
-    for (var i = startIndex; i < end; i++) {
+    // 2. 从 startIndex 开始往后找，跳过 HTML 里已有的 tag，凑够 CHUNK_SIZE 条新卡片
+    var appended = 0;
+    var i = startIndex;
+    for (; i < allFilteredReleases.length && appended < CHUNK_SIZE; i++) {
+      var tag = allFilteredReleases[i].tag_name;
+      if (existingTagsFromHTML[tag]) continue;  // HTML 里已有这张卡片，跳过
       container.appendChild(renderOneReleaseItem(allFilteredReleases[i]));
+      appended++;
     }
-    visibleCount = end;
+    visibleCount = i;  // 下次从这个位置继续（包含已跳过的索引）
     // 3. 再把按钮放到最后，保持"在最新一段 release 之后"
     if (btn) container.appendChild(btn);
   }
@@ -457,24 +463,48 @@
     btn.style.cursor = "default";
   }
 
-  /* 全量渲染入口：清空容器 + 首次 10 条 + 加载更多按钮（永远显示）*/
+  /* 全量渲染入口：
+     - 不做 container.innerHTML = ""，保留 HTML 内嵌的静态种子卡片（给爬虫保底，即使 JS 中断也有内容）
+     - 收集 HTML 里已有的 data-tag，renderChunk 跳过这些 tag，避免重复
+     - 首屏追加 CHUNK_SIZE 条新卡片；如果 HTML 里已经有足够多条，首屏可能不追加任何新卡片 */
   function renderAll() {
     var container = document.getElementById("changelog-list");
     var loading = document.getElementById("changelog-loading");
     var errorBox = document.getElementById("changelog-error");
     if (!container) return;
-    container.innerHTML = "";  // 清掉 HTML 里的静态种子
+
+    // === 关键：不清空容器，保留 HTML 内嵌的静态卡片给爬虫 ===
+    // container.innerHTML = "";  ← 旧逻辑，已删除
+
     if (loading) loading.hidden = true;
     if (errorBox) errorBox.hidden = true;
 
     if (!allFilteredReleases || allFilteredReleases.length === 0) {
+      // 只有在真的没数据时才清空（否则会删掉爬虫保底的静态卡片）
       container.innerHTML = '<p class="changelog-empty">暂无发布记录。</p>';
       return;
     }
 
+    // 1. 收集 HTML 内嵌卡片里已有的 tag_name
+    existingTagsFromHTML = {};
+    var existingSections = container.querySelectorAll(".changelog-item");
+    for (var k = 0; k < existingSections.length; k++) {
+      var existingTag = existingSections[k].getAttribute("data-tag");
+      if (existingTag) existingTagsFromHTML[existingTag] = true;
+    }
+
+    // 2. visibleCount 指向 allFilteredReleases 中第一个"需要动态渲染"的位置
+    //    因为 allFilteredReleases 按发布时间降序，HTML 内嵌的通常就是最前面那几个
     visibleCount = 0;
-    renderChunk(0);  // 首屏 10 条
-    // 总是创建按钮；如果 ≤10 条（首屏就全加载完），按钮直接变成 disabled 状态
+    while (visibleCount < allFilteredReleases.length &&
+           existingTagsFromHTML[allFilteredReleases[visibleCount].tag_name]) {
+      visibleCount++;
+    }
+
+    // 3. 追加 CHUNK_SIZE 条（跳过 HTML 里已有的）
+    renderChunk(visibleCount);
+
+    // 4. 创建加载更多按钮；如果已经覆盖完了，直接变 disabled
     showLoadMoreButton();
     if (visibleCount >= allFilteredReleases.length) {
       finishLoadMoreButton();
