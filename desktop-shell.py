@@ -487,6 +487,7 @@ def open_in_shell_window(server_url, port, icon_path):
         height=WINDOW_HEIGHT,
         min_size=(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT),
         resizable=True,
+        text_select=True,   # 关键: pywebview 默认 text_select=False 会禁用 WebView2 内所有文本选择!
     )
 
     i18n_bridge_js = _build_i18n_bridge_js()
@@ -520,6 +521,34 @@ def open_in_shell_window(server_url, port, icon_path):
         except Exception as exc:
             print(f'[DSH-i18n] inject failed: {exc}')
 
+    # 兜底 CSS: 强制开启文本选择 (pywebview text_select=True 可能在某些版本/平台不生效,
+    # 且 dsh 前端部分组件有 user-select:none, 这里用 !important 覆盖)。
+    TEXT_SELECT_FIX_CSS = r"""
+(function() {
+    try {
+        if (document.getElementById('__dsh_text_select_fix')) return;
+        var style = document.createElement('style');
+        style.id = '__dsh_text_select_fix';
+        style.textContent = [
+            'html, body, body * { -webkit-user-select: text !important; user-select: text !important; }',
+            /* 允许用户主动在输入框里选中文本 */
+            'input, textarea { -webkit-user-select: text !important; user-select: text !important; }',
+            /* 右键菜单恢复 */
+            '* { -webkit-touch-callout: default !important; }',
+        ].join('\n');
+        (document.head || document.documentElement).appendChild(style);
+        console.log('[DSH-Shell] text-select fix injected');
+    } catch(e) {}
+})();
+"""
+
+    def _inject_text_select():
+        """注入强制开启文本选择的 CSS + JS (双保险)。"""
+        try:
+            window_handle.evaluate_js(TEXT_SELECT_FIX_CSS)
+        except Exception as exc:
+            print(f'[DSH-Shell] text-select inject failed: {exc}')
+
     def _start_persistent_injector():
         """启动后台线程, 持续注入 bridge 直到窗口关闭.
 
@@ -538,6 +567,7 @@ def open_in_shell_window(server_url, port, icon_path):
                 else:
                     time.sleep(10)
                 _inject_i18n()
+                _inject_text_select()
         threading.Thread(target=inject_loop, daemon=True).start()
 
     # ===== 关键: 绑定 pywebview 事件, 在正确的 window 上下文里注入 =====
@@ -546,12 +576,14 @@ def open_in_shell_window(server_url, port, icon_path):
     # events.loaded = 页面 HTML + JS 都加载完, evaluate_js 一定在正确的 window 里.
     # events.before_load = 更早触发, 如果能在新页面 JS 执行前注入就完美.
     def _on_page_loaded():
-        """页面加载完成后注入 bridge (正确的 window 上下文)."""
+        """页面加载完成后注入 bridge + text-select fix (正确的 window 上下文)."""
         _inject_i18n()
+        _inject_text_select()
 
     def _on_page_before_load(url):
         """页面开始加载时就尝试注入 (可能在 JS 执行前, 最优时序)."""
         _inject_i18n()
+        _inject_text_select()
 
     try:
         window_handle.events.loaded += _on_page_loaded
