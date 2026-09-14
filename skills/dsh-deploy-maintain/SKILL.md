@@ -226,7 +226,7 @@ updated: "2026-09-13"
 
 - **X 二次确认 + 最小化**：`root.protocol("WM_DELETE_WINDOW", on_close)` 二次确认；最小化到任务栏（图标保留），托盘从启动就常驻，双入口始终可见（用户易误判程序退出）。绿色版自更新传 `confirm=False` 跳过询问。
 
-- **托盘（纯 ctypes + Win32，零依赖）**：`Shell_NotifyIconW` 加删图标；`SetWindowLongPtrW` 子类化窗口过程拦截 `WM_SYSCOMMAND/SC_MINIMIZE` 与自定 `WM_TRAY_CALLBACK`。**关键避坑**：窗口过程挂钩必须在 `__init__` 装（别放 add()，否则第一次最小化漏拦截）；`winfo_id()` 返回 Tk 内部子窗口，须先 `update_idletasks()` 再 `GetAncestor(GA_ROOT)` + 显式 `argtypes/restype=c_ssize_t` 拿真实顶层 HWND；**WndProc 回调里绝不能直接调 Tk**（重入 Tcl 崩溃）→ 只置布尔标志 + `root.after(80,...)` 轮询消费；`--windowed` 下 `sys.stderr=None`，回调内不输出 + 全程 try/except；`remove()` 只删图标不还原窗口过程，退出才 `dispose()`。
+- **托盘（纯 ctypes + Win32，零依赖）**：`Shell_NotifyIconW` 加删图标；`SetWindowLongPtrW` 子类化窗口过程拦截 `WM_SYSCOMMAND/SC_MINIMIZE` 与自定 `WM_TRAY_CALLBACK`。**关键避坑**：窗口过程挂钩必须在 `__init__` 装（别放 add()，否则第一次最小化漏拦截）；`winfo_id()` 返回 Tk 内部子窗口，须先 `update_idletasks()` 再 `GetAncestor(GA_ROOT)` + 显式 `argtypes/restype=c_ssize_t` 拿真实顶层 HWND；**WndProc 回调里绝不能直接调 Tk**（重入 Tcl 崩溃）→ 只置布尔标志 + `root.after(80,...)` 轮询消费；`--windowed` 下 `sys.stderr=None`，回调内不输出 + 全程 try/except；`remove()` 只删图标不还原窗口过程，退出才 `dispose()`。**右键菜单用 Win32 原生 `TrackPopupMenu`（`TPM_RIGHTBUTTON|TPM_RETURNCMD`）**，别用 Tk `tk_popup`（root 隐藏/最小化时弹不出、点外部关不掉）；`CreatePopupMenu`/HMENU 必须设 `restype=c_void_p`（64 位截断 → 静默失败）；弹前先 `SetForegroundWindow`；**且构建器务必 `set_menu_builder(build)` 注入**——漏注入时右键日志恒为 `builder=False`、菜单永远弹不出（2026-09-14 实测根因）。
 
 - **单实例**：`CreateMutexW` 命名互斥量，句柄由实例**整个生命周期持有**（否则 GC 释放后互斥量消失）；`GetLastError()==183` 即已有实例 → `FindWindowW` + `ShowWindow(SW_RESTORE)` + `SetForegroundWindow` + `BringWindowToTop`。窗口标题常量化（查找创建共用同一 WINDOW\_TITLE）。CLI 命令模式不建互斥量。
 

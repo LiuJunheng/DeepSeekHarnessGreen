@@ -132,6 +132,15 @@
    * ③ **`@deepseek-ai/dsh-acp-app/cordis.patch.yml` 仍硬编码 `model: deepseek-v4-flash`**（自动化 ACP 入口，非 WebUI）。同为 node_modules 内官方文件 → 只记录、不手改，随官方 dsh 版本跟进。
    * **内置插件里只允许 `plugins/dsh-usage-stats/lib/client.js` 一处持有价格表**。改价时必须**四件套一起改**：价格值 + 模型键名 + `PRICES_KEY` 版本号（`v3`→`v4`，否则老浏览器 localStorage 里的旧表继续盖住新默认值）+ 插件 README。**教训**：任何"默认值"若被持久化层（localStorage / settings）优先读取，改默认值必须同时升 key 版本，否则改了等于没改。
 
+### 系统托盘坑（tkinter + Win32，2026-08/09 实证）
+
+1. **托盘右键菜单弹不出来，最常见根因不是 Win32 代码，而是"构建器忘了注入"**（2026-09-14 实测）：`SysTrayIcon.set_menu_builder(build_tray_menu)` 定义了 builder 却漏调用，`poll()` 里 `_menu_builder is None`，右键日志恒为 `builder=False`，菜单永远弹不出。排查步骤：看 `tray_menu.log` → 有 `WndProc 收到右键`、`进入菜单分支`，但 `builder=False` → 就是注入缺失；`builder=True` 但无 `TrackPopupMenu 返回` → 才是 Win32 层问题。
+2. **托盘菜单不能用 Tk 的 `tk_popup`**：Tk::Popup 依赖 Tk 窗口状态，root 被隐藏/最小化时菜单弹不出或点外部关不掉。正解 = Win32 原生 `TrackPopupMenu`（`TPM_RIGHTBUTTON | TPM_RETURNCMD`），系统原生菜单点桌面/其他窗口/ESC 自动关闭并返回 0。
+3. **64 位下 ctypes 调用 Win32 必须先设 `restype`/`argtypes`**：`CreatePopupMenu` 返回 HMENU 指针，默认按 32 位 `c_int` 截断 → 无效句柄菜单静默失败。HMENU/HWND 用 `c_void_p`（或 `c_ssize_t`），`AppendMenuW` 的 ID 用 `c_size_t`。
+4. **`TrackPopupMenu` 要求进程有前台窗口**：先 `SetForegroundWindow(self.hwnd)` 再弹（pystray 同款做法），失败不阻断只是降低成功率。
+5. **WndProc 回调里严禁碰 Tk**（`after`/`withdraw` 等会重入 Tcl 崩 GIL）：只置位标志 + 记录坐标，由 `poll_tray_loop()` 每 80ms 在正常 Tk 事件上下文执行；`poll()` 内部任一步异常都必须 try/except 兜住并续链 `root.after`，否则整条托盘轮询链断掉。
+6. **窗口句柄必须 `GetAncestor(GA_ROOT)`**：`winfo_id()` 返回 Tk 内部子窗口，`WM_SYSCOMMAND`/托盘回调发到顶层窗口；且构造时先 `update_idletasks()` 强制 Tk 完成顶层窗口创建。
+
 ### 插件开发坑
 
 1. `package.json` 双入口：`dsh.bundle.patch`(→cordis.patch.yml) + `dsh.client` 才双端加载；`exports` 必须含 `"./package.json"`；`files` 必须含 `cordis.patch.yml`；**纯客户端插件也必须有宿主端** **`lib/index.js`（哪怕空** **`export{}`），否则整个服务起不来**。

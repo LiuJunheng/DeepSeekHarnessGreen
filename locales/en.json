@@ -83,6 +83,7 @@
     "open_desktop": "Standalone desktop window (WebView2)",
     "open_browser": "Web browser",
     "auto_open_label": "Auto-open UI after service starts (uses default method; does not reopen if already open)",
+    "taskbar_on_minimize_label": "Keep taskbar icon when minimized (uncheck to show only tray icon after minimize; service keeps running)",
     "save_hint": "Even without clicking Save, changed values are auto-saved when starting service or installing",
     "save_button": "Save Settings",
     "port_invalid": "Port must be 1-65535",

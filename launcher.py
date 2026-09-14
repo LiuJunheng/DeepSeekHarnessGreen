@@ -176,6 +176,10 @@ DEFAULT_CONFIG = {
     "default_workspace": "",
     # 多语言设置: "zh"=简体中文 / "en"=英文。启动时从 config.json 读取, 切换语言按钮会自动保存
     "language": "zh",
+    # 最小化到任务栏时是否保留任务栏图标 (True=保留 / False=隐藏)。
+    # 托盘图标始终常驻 (不受此开关影响); 只控制启动器主窗口最小化后的行为。
+    # desktop-shell.py 的桌面窗口图标独立存在, 也不受此开关影响。
+    "show_taskbar_on_minimize": True,
     # 注: 绿色版版本号统一以 GREEN_VERSION 常量为准 (唯一来源, 见 green_local_version)。
     # 曾把 "green_version" 默认值写在这里, 发布新版本时与常量不同步,
     # 导致本地一直显示旧版本号并反复提示更新 (见 DEV_NOTES 需求 #20)。
@@ -6157,6 +6161,9 @@ class SysTrayIcon:
         # 右键菜单构建器 (延迟注入): run_gui 里 on_start/on_stop/on_plugin_manager/
         # on_close 都定义在托盘创建之后, 故不能构造时引用, 只能晚注入 builder。
         self._menu_builder = None
+        # 原生右键菜单的菜单 ID → 动作回调 映射 (2026-09-15):
+        # 每次右键重建, TrackPopupMenu 返回选中的菜单 ID, 据此查表执行对应动作。
+        self._menu_actions = {}
         # 关键避坑 (2026-08-16): winfo_id() 返回的是 Tk 内部子窗口 HWND,
         # 不是真实顶层窗口。WM_SYSCOMMAND / 托盘回调消息都发到顶层窗口,
         # 若把钩子挂在子窗口上, 最小化消息永远收不到 (窗口会正常最小化到任务栏)。
@@ -6274,26 +6281,131 @@ class SysTrayIcon:
         """
         if self._minimize_pending:
             self._minimize_pending = False
-            if self.on_minimize:
-                self.on_minimize()
+            try:
+                if self.on_minimize:
+                    self.on_minimize()
+            except Exception as error:
+                self._tray_log("on_minimize 异常: %r" % (error,))
         if self._restore_pending:
             self._restore_pending = False
-            if self.on_click_restore:
-                self.on_click_restore()
+            try:
+                if self.on_click_restore:
+                    self.on_click_restore()
+            except Exception as error:
+                self._tray_log("on_click_restore 异常: %r" % (error,))
         # 右键菜单待办 (2026-09-10): 在正常 Tk 上下文里弹出菜单。
         if self._menu_pending:
             self._menu_pending = False
+            self._tray_log("进入菜单分支, builder=%s" % (self._menu_builder is not None))
             if self._menu_builder:
-                menu = self._menu_builder()
-                if menu is not None:
-                    menu.tk_popup(self._menu_x, self._menu_y, 0)
-                    try:
-                        menu.grab_release()
-                    except Exception:
-                        pass   # 弹窗异常不阻断轮询
+                try:
+                    menu_items = self._menu_builder()   # [(label, action, state), ...]
+                    self._tray_log("builder 返回 %d 项" % (len(menu_items) if menu_items else 0))
+                    if menu_items:
+                        self._show_native_menu(menu_items, self._menu_x, self._menu_y)
+                    else:
+                        self._tray_log("builder 返回空, 不弹菜单")
+                except Exception as error:
+                    self._tray_log("builder 异常: %r" % (error,))
+
+    def _show_native_menu(self, menu_items, screen_x, screen_y):
+        """用 Win32 原生 TrackPopupMenu 弹出托盘右键菜单 (2026-09-15):
+
+        不用 Tk 的 tk_popup (tk::Popup 依赖 Tk 窗口状态, root 被隐藏/最小化时
+        菜单弹不出来或外部点击关闭失效)。TrackPopupMenu 是系统原生菜单,
+        与 Tk 完全独立: 点桌面空白/其他窗口/ESC 都会自动关闭 (返回 0),
+        选中某项则返回该菜单 ID, 据此执行对应动作 —— 这才是"托盘的方式"。
+
+        Args:
+            menu_items: [(label, action, state), ...]
+                        label=="" 或 action=None 表示分隔线
+                        state: "normal" / "disabled"
+            screen_x, screen_y: 菜单在屏幕上的弹出坐标
+        """
+        user32 = ctypes.windll.user32
+        # Win32 常量 (与 pywin32/win32con 同值)
+        MF_STRING = 0x0000
+        MF_SEPARATOR = 0x0800
+        MF_DISABLED = 0x0002
+        MF_GRAYED = 0x0001
+        TPM_RIGHTBUTTON = 0x0002    # 允许右键选择菜单项
+        TPM_RETURNCMD = 0x0100      # 返回所选菜单项 ID (不发送 WM_COMMAND)
+
+        # 关键: 必须先设置 restype/argtypes 再调用, 否则 64 位下 HMENU 指针
+        # 按默认 c_int(32位) 截断, CreatePopupMenu 返回无效句柄, 菜单静默失败。
+        user32.CreatePopupMenu.restype = ctypes.c_void_p
+        user32.AppendMenuW.restype = ctypes.c_int
+        user32.AppendMenuW.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_wchar_p]
+        user32.TrackPopupMenu.restype = ctypes.c_int
+        user32.TrackPopupMenu.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p]
+        user32.SetForegroundWindow.restype = ctypes.c_int
+        user32.SetForegroundWindow.argtypes = [ctypes.c_void_p]
+        user32.DestroyMenu.restype = ctypes.c_int
+        user32.DestroyMenu.argtypes = [ctypes.c_void_p]
+
+        hmenu = user32.CreatePopupMenu()
+        if not hmenu:
+            self._tray_log("CreatePopupMenu 失败 (hmenu=0)")
+            return
+        try:
+            self._menu_actions = {}
+            next_id = 1
+            for label, action, state in menu_items:
+                if not label or action is None:
+                    # 分隔线
+                    user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
+                    continue
+                if state == "disabled":
+                    # 灰色禁用: 不注册动作, 点了也没反应
+                    user32.AppendMenuW(hmenu, MF_STRING | MF_DISABLED | MF_GRAYED,
+                                       next_id, label)
+                else:
+                    user32.AppendMenuW(hmenu, MF_STRING, next_id, label)
+                    self._menu_actions[next_id] = action
+                next_id += 1
+
+            # TrackPopupMenu 要求调用线程的进程有前台窗口, 否则菜单不显示。
+            # 先 SetForegroundWindow 再弹 (pystray 在 Windows 上也是这么做的);
+            # 失败不阻断, 只是降低弹出成功率。
+            try:
+                user32.SetForegroundWindow(self.hwnd)
+            except Exception:
+                pass
+
+            # TrackPopupMenu 阻塞直到菜单关闭: 点外部/ESC 返回 0, 选菜单项返回其 ID
+            selected_id = user32.TrackPopupMenu(
+                hmenu, TPM_RIGHTBUTTON | TPM_RETURNCMD,
+                screen_x, screen_y, 0, self.hwnd, None)
+            self._tray_log("TrackPopupMenu 返回: %s" % selected_id)
+            if selected_id and selected_id in self._menu_actions:
+                try:
+                    self._menu_actions[selected_id]()
+                except Exception:
+                    pass
+        except Exception as error:
+            self._tray_log("弹出菜单异常: %r" % (error,))
+        finally:
+            try:
+                user32.DestroyMenu(hmenu)
+            except Exception:
+                pass
+            self._menu_actions = {}
+
+    def _tray_log(self, message):
+        """托盘菜单诊断日志 (写到程序目录 tray_menu.log, 便于无控制台的 exe 定位问题)"""
+        try:
+            log_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])),
+                                    "tray_menu.log")
+            with open(log_path, "a", encoding="utf-8") as log_file:
+                log_file.write("[TRAY] %s\n" % message)
+        except Exception:
+            pass
 
     def dispose(self):
-        """退出前调用: 移除托盘图标 + 恢复原始窗口过程, 避免窗口销毁后回调悬空"""
+        """退出前调用: 移除托盘图标 + 恢复原始窗口过程"""
         self.remove()
         self._unhook_wndproc()
 
@@ -6336,6 +6448,7 @@ class SysTrayIcon:
                         self._menu_x = cursor_point.x
                         self._menu_y = cursor_point.y
                         self._menu_pending = True   # 不再置 _restore_pending
+                        self._tray_log("WndProc 收到右键, pos=(%d,%d)" % (self._menu_x, self._menu_y))
                     return 0
             except Exception:
                 pass   # 回调异常一律放行给旧窗口过程, 不吞消息
@@ -6705,10 +6818,18 @@ def run_gui():
     # 现在改为: 最小化只把窗口缩到任务栏 (任务栏图标保留), 托盘图标从启动
     # 就常驻不消失; 点任务栏或托盘图标都能恢复窗口, 双入口始终可见。
     def minimize_to_tray():
-        """点击最小化按钮时: 最小化到任务栏 (任务栏图标保留), 托盘图标保持常驻
-        (不再每次打日志提示, 频繁最小化会重复刷屏; 双入口行为见上方设计说明)"""
+        """点击最小化按钮时: 根据 config.show_taskbar_on_minimize 决定行为。
+
+        - True (默认): iconify → 保留任务栏图标, 托盘图标也保留 (双入口)
+        - False:       withdraw → 完全隐藏窗口, 任务栏图标消失, 仅托盘图标可见
+        服务进程始终运行, 不受此开关影响。桌面窗口图标独立存在, 也不受此开关影响。
+        """
         tray_icon.add()   # 幂等: 已常驻则直接返回 True
-        root.iconify()    # 最小化到任务栏, 不隐藏窗口 (任务栏图标不消失)
+        show_taskbar = bool(app.config.get("show_taskbar_on_minimize", True))
+        if show_taskbar:
+            root.iconify()    # 最小化到任务栏, 保留任务栏图标
+        else:
+            root.withdraw()   # 完全隐藏, 任务栏图标消失; 托盘图标仍保留作为唯一入口
 
     def restore_from_tray():
         """托盘左键(2026-09-10): 优先呼出运行中的桌面/网页窗口; 否则恢复启动器主窗口"""
@@ -8179,7 +8300,6 @@ def run_gui():
             context_menu.add_command(label="复制包名",
                                      command=lambda: root.clipboard_append(info["name"]))
             context_menu.tk_popup(event.x_root, event.y_root)
-            context_menu.grab_release()
 
         def resolve_selected_spec():
             """取搜索结果选中项的安装规格与显示名
@@ -8583,7 +8703,6 @@ def run_gui():
             context_menu.add_command(label="复制包名",
                                      command=lambda: root.clipboard_append(package_name))
             context_menu.tk_popup(event.x_root, event.y_root)
-            context_menu.grab_release()
 
         installed_tree.bind("<Button-3>", on_installed_right_click)
         search_tree.bind("<Button-3>",
@@ -8822,6 +8941,15 @@ def run_gui():
                                               padx=8, pady=4, sticky="w")
     _i18n_widgets.append((auto_open_checkbox, 'text', 'settings.auto_open_label'))
 
+    # 最小化到任务栏时是否保留任务栏图标 (2026-09-15, 托盘始终常驻, 桌面窗口图标独立)
+    taskbar_var = tk.BooleanVar(value=bool(app.config.get("show_taskbar_on_minimize", True)))
+    taskbar_checkbox = ttk.Checkbutton(settings_frame,
+                     text=i18n.t('settings.taskbar_on_minimize_label'),
+                     variable=taskbar_var)
+    taskbar_checkbox.grid(row=3, column=0, columnspan=4,
+                                              padx=8, pady=4, sticky="w")
+    _i18n_widgets.append((taskbar_checkbox, 'text', 'settings.taskbar_on_minimize_label'))
+
     def sync_gui(silent=False):
         """把界面当前填入的值("所见")同步进 config 并落盘("所得")。
 
@@ -8859,6 +8987,7 @@ def run_gui():
         app.config["mirror"] = mirror_combo._i18n_internal
         app.config["open_method"] = open_method_combo._i18n_internal
         app.config["auto_open_browser"] = bool(auto_open_var.get())
+        app.config["show_taskbar_on_minimize"] = bool(taskbar_var.get())
         app.save_config()
         return True
 
@@ -8968,35 +9097,47 @@ def run_gui():
     # 的可用性)。因 on_start/on_stop/on_plugin_manager/on_close 均已定义,
     # 在此注入给托盘; 同时闭包在正常 Tk 上下文通过 poll() 触发, 无 GIL 问题。
     def build_tray_menu():
-        """托盘右键菜单构建器: 每次右键重建, 反映服务/界面当前状态"""
-        menu = tk.Menu(root, tearoff=0)
+        """托盘右键菜单构建器 (2026-09-15):
+        返回 [(label, action, state), ...] 列表, 由 SysTrayIcon 用 Win32 原生
+        TrackPopupMenu 渲染 (系统原生菜单, 点外部自动关闭, 不依赖 Tk 窗口状态)。
+        label=="" 或 action=None 表示分隔线。
+        """
+        items = []
         server_running = app.is_server_running()
-        menu.add_command(label=i18n.t('tray.menu.start_service'),
-                         command=on_start,
-                         state="disabled" if server_running else "normal")
-        menu.add_command(label=i18n.t('tray.menu.stop_service'),
-                         command=on_stop,
-                         state="normal" if server_running else "disabled")
-        menu.add_separator()
-        menu.add_command(label=i18n.t('tray.menu.open_desktop'),
-                         command=lambda: app.open_ui(force=True, method="desktop"))
-        menu.add_command(label=i18n.t('tray.menu.open_web'),
-                         command=lambda: app.open_ui(force=True, method="browser"))
-        menu.add_separator()
-        menu.add_command(label=i18n.t('tray.menu.plugin_manager'), command=on_plugin_manager)
-        menu.add_command(label=i18n.t('tray.menu.restore_launcher'), command=restore_from_tray)
-        menu.add_command(label=i18n.t('tray.menu.exit'), command=lambda: on_close(confirm=False))
-        return menu
+        items.append((i18n.t('tray.menu.start_service'), on_start,
+                      "disabled" if server_running else "normal"))
+        items.append((i18n.t('tray.menu.stop_service'), on_stop,
+                      "normal" if server_running else "disabled"))
+        items.append(("", None, None))  # 分隔线
+        items.append((i18n.t('tray.menu.open_desktop'),
+                      lambda: app.open_ui(force=True, method="desktop"), "normal"))
+        items.append((i18n.t('tray.menu.open_web'),
+                      lambda: app.open_ui(force=True, method="browser"), "normal"))
+        items.append(("", None, None))  # 分隔线
+        items.append((i18n.t('tray.menu.plugin_manager'), on_plugin_manager, "normal"))
+        items.append((i18n.t('tray.menu.restore_launcher'), restore_from_tray, "normal"))
+        items.append((i18n.t('tray.menu.exit'),
+                      lambda: on_close(confirm=False), "normal"))
+        return items
 
+    # 关键 (2026-09-14 修复): 必须把菜单构建器注入托盘, 否则 poll() 里
+    # builder=False, 右键弹不出任何菜单。此前只定义了 build_tray_menu 却
+    # 忘了调用 set_menu_builder, 导致右键菜单完全失效。
     tray_icon.set_menu_builder(build_tray_menu)
 
-    # ---------- 托盘标志轮询 ----------
     def poll_tray_loop():
         """定时轮询托盘待办标志 (2026-08-16):
         WndProc 回调里只置位 _minimize_pending/_restore_pending, 不直接碰 Tk;
         这里在正常的 Tk 事件上下文里执行最小化/恢复, 彻底避开 WndProc 重入 Tcl。
+
+        2026-09-15 关键修复: poll() 内部任一步抛异常都不能中断 after 轮询链,
+        否则托盘右键/最小化/恢复一次性全部失效 (曾因 builder 异常杀死整条链,
+        表现为"右键弹不出菜单 + 日志完全不生成")。
         """
-        tray_icon.poll()
+        try:
+            tray_icon.poll()
+        except Exception as error:
+            tray_icon._tray_log("poll_tray_loop 异常: %r" % (error,))
         root.after(80, poll_tray_loop)
     root.after(80, poll_tray_loop)
 

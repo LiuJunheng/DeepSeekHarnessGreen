@@ -83,6 +83,7 @@
     "open_desktop": "独立桌面窗口 (内嵌 WebView2)",
     "open_browser": "网页窗口 (系统浏览器)",
     "auto_open_label": "启动服务后自动打开界面 (按默认方式打开, 已打开则不重复开新页)",
+    "taskbar_on_minimize_label": "最小化时保留任务栏图标 (取消勾选则最小化后仅托盘图标可见, 服务继续运行)",
     "save_hint": "改动后即使不点保存, 启动服务或安装下载时也会自动按最新填入值落盘生效",
     "save_button": "保存设置",
     "port_invalid": "端口范围 1-65535",
