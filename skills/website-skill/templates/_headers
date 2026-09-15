@@ -1,0 +1,21 @@
+# Cloudflare Pages _headers 文件模板
+# 纯文本格式，UTF-8 无 BOM
+# URL 路径前有 / 斜杠，header 行必须 2 空格缩进
+
+# sitemap.xml Content-Type 覆盖（Cloudflare 默认返回 application/xml，GSC 某些版本只认 text/xml）
+/sitemap.xml
+  Content-Type: text/xml
+
+# Cloudflare Pages 默认给项目分配 xxx.pages.dev 子域名
+# 如果自定义域名和子域名同时可访问，Google 会判定为重复内容、分散权重
+# 给 pages.dev 子域名加 noindex，自定义域名不受影响
+# 注意：路径用完整的 https://.../* 通配符（与上面 /sitemap.xml 不同）
+https://your-project.pages.dev/*
+  X-Robots-Tag: noindex
+
+# （可选）给自定义域名加安全响应头
+# https://yourdomain.com/*
+#   X-Content-Type-Options: nosniff
+#   X-Frame-Options: SAMEORIGIN
+#   Referrer-Policy: strict-origin-when-cross-origin
+#   Permissions-Policy: camera=(), microphone=(), geolocation=()
