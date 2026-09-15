@@ -2,7 +2,7 @@
 
 > 只记录对日后维护 / 更新 / 发布有复用价值的内容：避坑经验、约定规则、项目设计要求、当前状态与待办。不存档开发过程与时间线叙述。
 > 文档分流：README = 使用者文档；本文档 = 开发者 / 发布者文档（打包命令、目录约定、发布流程、坑点、规范）。
-> 经验沉淀：全套部署 / 维护 / 插件开发实测经验同步进 TRAE Skill `dsh-deploy-maintain`（SKILL.md + checklists/ + references/），本项目每处改动须同步回该 skill。
+> 经验沉淀：全套部署 / 维护 / 插件开发实测经验同步进 TRAE Skill `dsh-deploy-maintain`（SKILL.md + checklists/ + references/），本项目每处改动须同步回该 skill。**Skill 文档规范**：SKILL.md 只保留通用避坑点与要求规范（压缩精简、不写维护过程日志、不写一次性审计结论）；官方版本兼容性审计结论等一次性内容记在 DEV\_NOTES.md，skill 里最多留一行"审计模板见 DEV_NOTES"的提示。
 
 ## 一、项目定位与设计要求（改动前先对齐）
 
@@ -131,6 +131,12 @@
    * ②的处置：**不要手改 node_modules**（升级重装必被覆盖，见坑 7）。当前默认模型 `deepseek-flash` 与官方一致，**不需要改**；如需屏蔽退役条目，正解是写 `$DSH_HOME/settings.yaml` 的 `llm-deepseek.models` 显式列表（settings 层热重载、随升级保留），但它会一并屏蔽官方未来新增模型，属"钉版本"，非必要不做。
    * ③ **`@deepseek-ai/dsh-acp-app/cordis.patch.yml` 仍硬编码 `model: deepseek-v4-flash`**（自动化 ACP 入口，非 WebUI）。同为 node_modules 内官方文件 → 只记录、不手改，随官方 dsh 版本跟进。
    * **内置插件里只允许 `plugins/dsh-usage-stats/lib/client.js` 一处持有价格表**。改价时必须**四件套一起改**：价格值 + 模型键名 + `PRICES_KEY` 版本号（`v3`→`v4`，否则老浏览器 localStorage 里的旧表继续盖住新默认值）+ 插件 README。**教训**：任何"默认值"若被持久化层（localStorage / settings）优先读取，改默认值必须同时升 key 版本，否则改了等于没改。
+
+10. **官方 v0.1.6-alpha.1（2026-09-15 GitHub pre-release，npm 走 alpha tag）兼容性审计：无需改任何代码**。破坏性变更逐项核对：
+   * **全不沾边**：项目无 PTC / workflow / E2B / Ralph 引用；插件无 `agent/session-start` 或 `agent/created` 钩子；无人调用被弃用的 `snapshotEvents` / `eventAt` / `ownEvents`（dsh-session-rewind 是直接读盘 session.jsonl 跨版本容错解码，dsh-usage-stats 走官方推荐的异步 `sessionQuery.readSurface`/`traceSession`）；无插件实现 `SandboxProvider.confine` / `ShellExecutor.start`；无插件清理被移动的 request-images 缓存；launcher.py 从不写 `llm-deepseek.api.baseURL`（只同步 settings.yaml 的 locale.preference）。
+   * **文档提示级**：v0.1.6 起 DeepSeek 默认走 Messages 协议 + Files API 复用图片。若用户手动配过旧官方根地址（`llm-deepseek.api.baseURL = https://api.deepseek.com`），需删掉或改为 `https://api.deepseek.com/anthropic`。启动器与内置插件从未写过该配置，无需改代码，发版说明提示即可。
+   * **观察项（本次不动作，后续版本再看）**：dsh-file-browser 客户端用的 `sessions.provideInfo` / `resolveAgentScope`（已有 0.1.1/0.1.2 兼容分支）；dsh-session-import 写 `attachments/v1/objects` 路径（Files API 复用是新增、不删旧路径）；dsh-archive-purge 与官方新增"设置→已归档会话列表"功能重叠（互补不冲突）；官方修复轮次分叉语义 → dsh-session-rewind 的 `sessions.fork` 行为更准（利好）。
+   * **版本策略**：launcher 默认装 npm `latest`（仍 = 0.1.5-rc.1），0.1.6-alpha.1 在 `alpha` tag，升级检查不会推送；**等进 latest / 稳定版再升**，别主动装 alpha。
 
 ### 系统托盘坑（tkinter + Win32，2026-08/09 实证）
 
