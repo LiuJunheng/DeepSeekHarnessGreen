@@ -493,47 +493,57 @@
   }
 
   /* 全量渲染入口：
-     - 不做 container.innerHTML = ""，保留 HTML 内嵌的静态种子卡片（给爬虫保底，即使 JS 中断也有内容）
-     - 收集 HTML 里已有的 data-tag，renderChunk 跳过这些 tag，避免重复
-     - 首屏追加 CHUNK_SIZE 条新卡片；如果 HTML 里已经有足够多条，首屏可能不追加任何新卡片 */
+     - 先清理所有动态卡片（没有 data-embedded 标记的），保留 HTML 内嵌给爬虫
+     - 处理"比 HTML 内嵌更新"的 release（insertBefore 到容器最前）
+     - 再从 HTML 内嵌之后的位置追加 CHUNK_SIZE 条新卡片（renderChunk 往末尾 append）
+     - 这样后台 fetch 完 GitHub 发现新版本时，重新 renderAll 就能正确显示最新 */
   function renderAll() {
     var container = document.getElementById("changelog-list");
     var loading = document.getElementById("changelog-loading");
     var errorBox = document.getElementById("changelog-error");
     if (!container) return;
 
-    // === 关键：不清空容器，保留 HTML 内嵌的静态卡片给爬虫 ===
-    // container.innerHTML = "";  ← 旧逻辑，已删除
-
     if (loading) loading.hidden = true;
     if (errorBox) errorBox.hidden = true;
 
     if (!allFilteredReleases || allFilteredReleases.length === 0) {
-      // 只有在真的没数据时才清空（否则会删掉爬虫保底的静态卡片）
       container.innerHTML = '<p class="changelog-empty">暂无发布记录。</p>';
       return;
     }
 
-    // 1. 收集 HTML 内嵌卡片里已有的 tag_name
+    // === 关键：先清理所有动态卡片，保留 HTML 内嵌的 data-embedded 卡片 ===
+    var dynamicSections = container.querySelectorAll(".changelog-item:not([data-embedded])");
+    for (var d = 0; d < dynamicSections.length; d++) {
+      dynamicSections[d].remove();
+    }
+
+    // 1. 收集 HTML 内嵌卡片的 tag（现在只收集 data-embedded 的，更准确）
     existingTagsFromHTML = {};
-    var existingSections = container.querySelectorAll(".changelog-item");
-    for (var k = 0; k < existingSections.length; k++) {
-      var existingTag = existingSections[k].getAttribute("data-tag");
+    var embeddedSections = container.querySelectorAll(".changelog-item[data-embedded]");
+    var firstEmbedded = embeddedSections.length > 0 ? embeddedSections[0] : null;
+    for (var k = 0; k < embeddedSections.length; k++) {
+      var existingTag = embeddedSections[k].getAttribute("data-tag");
       if (existingTag) existingTagsFromHTML[existingTag] = true;
     }
 
-    // 2. visibleCount 指向 allFilteredReleases 中第一个"需要动态渲染"的位置
-    //    因为 allFilteredReleases 按发布时间降序，HTML 内嵌的通常就是最前面那几个
+    // 2. 处理"比 HTML 内嵌更新"的 release：insertBefore 到容器最前面
+    //    这些 release 不在 existingTags 里，排在 allFilteredReleases 最前面
     visibleCount = 0;
-    while (visibleCount < allFilteredReleases.length &&
-           existingTagsFromHTML[allFilteredReleases[visibleCount].tag_name]) {
+    while (visibleCount < allFilteredReleases.length) {
+      var tagNow = allFilteredReleases[visibleCount].tag_name;
+      if (existingTagsFromHTML[tagNow]) break;  // 遇到 HTML 里已有的，停止插入
+      // 不在 HTML 里 → 插到第一个内嵌卡片之前（或容器开头，如果没有内嵌）
+      container.insertBefore(
+        renderOneReleaseItem(allFilteredReleases[visibleCount]),
+        firstEmbedded
+      );
       visibleCount++;
     }
 
-    // 3. 追加 CHUNK_SIZE 条（跳过 HTML 里已有的）
+    // 3. 追加 CHUNK_SIZE 条（从 visibleCount 开始跳过已有，往末尾 append）
     renderChunk(visibleCount);
 
-    // 4. 创建加载更多按钮；如果已经覆盖完了，直接变 disabled
+    // 4. 加载更多按钮
     showLoadMoreButton();
     if (visibleCount >= allFilteredReleases.length) {
       finishLoadMoreButton();
@@ -591,14 +601,18 @@
       allFilteredReleases = cached;
       releasesLoaded = true;
       renderAll();
-      // 后台静默 fetch 一次 GitHub，更新缓存（如果发了新版本）
+      // 后台静默 fetch 一次 GitHub，更新缓存 + 重渲染（如果发了新版本）
       fetchGitHubReleases(function (githubList) {
         if (!githubList || githubList.length === 0) return;
         var merged = mergeReleases(cached, githubList);
         merged = filterReleases(merged);
-        if (merged.length !== allFilteredReleases.length) {
-          // GitHub 返回了更多（有新发布），刷新缓存但不强制重新渲染
+        // 有新发布：长度变了，或者第一个版本号变了
+        if (merged.length !== allFilteredReleases.length ||
+            merged.length > 0 && allFilteredReleases.length > 0 &&
+            merged[0].tag_name !== allFilteredReleases[0].tag_name) {
           writeReleasesCache(merged);
+          allFilteredReleases = merged;
+          renderAll();  // 关键：必须重渲染，不然用户永远看到旧数据
         }
       });
       return;
