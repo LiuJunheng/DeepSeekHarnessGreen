@@ -139,6 +139,8 @@
    * **观察项（本次不动作，后续版本再看）**：dsh-file-browser 客户端用的 `sessions.provideInfo` / `resolveAgentScope`（已有 0.1.1/0.1.2 兼容分支）；dsh-session-import 写 `attachments/v1/objects` 路径（Files API 复用是新增、不删旧路径）；dsh-archive-purge 与官方新增"设置→已归档会话列表"功能重叠（互补不冲突）；官方修复轮次分叉语义 → dsh-session-rewind 的 `sessions.fork` 行为更准（利好）。
    * **版本策略**：launcher 默认装 npm `latest`（仍 = 0.1.5-rc.1），0.1.6-alpha.1 在 `alpha` tag，升级检查不会推送；**等进 latest / 稳定版再升**，别主动装 alpha。
 
+12. **v0.1.6-alpha.2 typert-loader 新增硬校验: 所有 invocation result codec 必须有 `.create()` 工厂**（2026-09-17 实测）。旧插件手写的纯配置对象 `{ mode: "strict", typeSymbol, schema }` 不再够用, 必须改成统一走 `strictCodec(name, schema) => ({ mode, typeSymbol, schema, create: () => schema })` 工厂。典型症状: 插件树加载阶段直接崩, 堆栈里不一定有 node_modules 路径 (typert-loader 在 import 后立即校验), 错误消息形态为 `typert-loader: <包名> invocation "<包名>#xxx" result codec has no create() factory`。实测案例: dsh-cost-meter v1.7.16 裸对象被拒, 作者当天连出 13 个版本, v1.7.28 补上 `create: () => schema` 工厂后过校验。这类错误 launcher 自愈的 `_extract_bundle_from_log` 已新增 typert 消息精确匹配模式 (\"<包> invocation\" / \"typert-loader: <包>\") 覆盖。**第三方插件在 profile 的 dependencies/bundles 里, launcher 升级 dsh 核心时不会自动更新它, 用户需点一次「安装环境」让 pnpm 重建 profile 依赖树同步兼容版本**。
+
 ### 系统托盘坑（tkinter + Win32，2026-08/09 实证）
 
 1. **托盘右键菜单弹不出来，最常见根因不是 Win32 代码，而是"构建器忘了注入"**（2026-09-14 实测）：`SysTrayIcon.set_menu_builder(build_tray_menu)` 定义了 builder 却漏调用，`poll()` 里 `_menu_builder is None`，右键日志恒为 `builder=False`，菜单永远弹不出。排查步骤：看 `tray_menu.log` → 有 `WndProc 收到右键`、`进入菜单分支`，但 `builder=False` → 就是注入缺失；`builder=True` 但无 `TrackPopupMenu 返回` → 才是 Win32 层问题。
