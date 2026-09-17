@@ -260,6 +260,9 @@
 14. **bridge 注入必须全局去重**（v1.0.32 发现）：
     10 个插件各注入一个 `<script src=...3081/__dsh_i18n_bridge.js>` 会发 10 个 114KB 重复请求。用 `window.__dsh_i18n_bridge_loaded` 全局标志，首个插件注入后后续跳过；桌面壳已预注入时直接 return。
 
+15. **tkinter 插件管理窗口（launcher.py 的 `open_plugin_manager`）操作提示需走 i18n**（2026-09-18 发现）：
+    此前想改语言/移除/启停的确认框、状态栏动态文本、右键菜单（"打开 npm 页面/复制包名"）全是硬编码中文，双语环境仍显示中文。改法：动态文本用 `i18n.t('plugin.<key>', **kwargs)` 配合**命名占位符**（语言表写 `{count}` / `{name}` 等，不写 `%s`）；动态 action（启用/停用）用 `plugin.action_enable` / `plugin.action_disable` 拼进 `toggle_*.` 各带 `{action}` 占位。**易错点**：① en.json 值内嵌英文引号必须转义 `\"`（zh 因用「」不触发）；② 语言表补充 key 后必须复查 zh/en `plugin` 区块 key 完全一致（用 `node` 比对 `Object.keys`）；③ 状态栏初值 `StringVar(value=i18n.t(...))` 与 `set_plugin_busy` 恢复态都要翻译。验收：`node` 交叉核对 launcher.py 全体 `i18n.t('plugin.*')` 引用均命中语言表。
+
 ### 发布 / 平台坑
 
 1. **Gitee** **`/releases`** **按创建时间升序返回 + 默认每页 20**：取"最新"必须 `?per_page=100` 后再按 `created_at` 降序（否则首选到最旧 v1.0.9 → 误报"已是最新"）。凡依赖第三方列表接口取"最新"都要防顺序假设 + 分页截断。

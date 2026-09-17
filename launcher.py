@@ -8183,7 +8183,7 @@ def run_gui():
                            enable_btn, disable_btn):
                 button.config(state=button_state)
             if not busy:
-                plugin_status.set("就绪")
+                plugin_status.set(i18n.t('plugin.status_ready'))
 
         def refresh_installed():
             """读取已安装插件并刷新左侧列表 (兼容状态用本地产物判定, 无网络)"""
@@ -8202,7 +8202,8 @@ def run_gui():
             host_versions = app._host_core_versions()
             for package_name, version in sorted(dependencies.items()):
                 state = app.get_plugin_state(package_name, profile)
-                state_label = {"enabled": "启用", "disabled": "停用",
+                state_label = {"enabled": i18n.t('plugin.status_enabled'),
+                               "disabled": i18n.t('plugin.status_disabled'),
                                "plain": "—", "missing": "—"}.get(state, "—")
                 result = app.classify_installed_plugin_compat(package_name, host_versions, profile)
                 compat_text = compat_label.get(result["status"], compat_label["unknown"])
@@ -8222,7 +8223,7 @@ def run_gui():
             if not plugins:
                 # 分类列已去掉, values 只剩 (source, version, description) 三列 (2026-09-10)
                 search_tree.insert("", "end", text=i18n.t('plugin.search_no_result'), values=(default_source, "", ""))
-                plugin_status.set("没有搜索到结果")
+                plugin_status.set(i18n.t('plugin.search_no_result'))
                 return
             for plugin in plugins:
                 item_source = plugin.get("source", default_source)
@@ -8239,7 +8240,7 @@ def run_gui():
                     "url": plugin.get("url", ""),
                     "spec": plugin.get("spec", ""),
                 }
-            plugin_status.set("共 %d 条结果" % len(plugins))
+            plugin_status.set(i18n.t('plugin.status_results', count=len(plugins)))
 
         def do_search():
             """搜索插件 (npm 注册表, 国内镜像优先)"""
@@ -8247,7 +8248,7 @@ def run_gui():
                 return
             keyword = keyword_var.get().strip() or "dsh-plugin"
             set_plugin_busy(True)
-            plugin_status.set("正在搜索: %s ..." % keyword)
+            plugin_status.set(i18n.t('plugin.status_searching', keyword=keyword))
             def worker():
                 try:
                     plugins = app.search_npm_plugins(keyword)
@@ -8256,7 +8257,7 @@ def run_gui():
                     root.after(0, lambda: show_search_results(enriched, "npm"))
                 except Exception as error:
                     root.after(0, lambda: (messagebox.showerror(i18n.t('plugin.search_fail'), str(error), parent=top),
-                                           plugin_status.set("搜索失败")))
+                                           plugin_status.set(i18n.t('plugin.status_search_fail'))))
                 finally:
                     root.after(0, lambda: set_plugin_busy(False))
             threading.Thread(target=worker, daemon=True).start()
@@ -8266,14 +8267,14 @@ def run_gui():
             if plugin_busy[0]:
                 return
             set_plugin_busy(True)
-            plugin_status.set("正在加载 GitHub 官方话题页 ...")
+            plugin_status.set(i18n.t('plugin.status_github_loading'))
             def worker():
                 try:
                     plugins = app.fetch_github_topic_plugins()
                     root.after(0, lambda: show_search_results(plugins, "github"))
                 except Exception as error:
                     root.after(0, lambda: (messagebox.showerror(i18n.t('plugin.load_fail'), str(error), parent=top),
-                                           plugin_status.set("加载失败")))
+                                           plugin_status.set(i18n.t('plugin.status_load_fail'))))
                 finally:
                     root.after(0, lambda: set_plugin_busy(False))
             threading.Thread(target=worker, daemon=True).start()
@@ -8285,7 +8286,7 @@ def run_gui():
                 return
             items = [dict(item) for item in RECOMMENDED_PLUGINS]
             set_plugin_busy(True)
-            plugin_status.set("正在加载推荐插件 ...")
+            plugin_status.set(i18n.t('plugin.status_rec_loading'))
             def worker():
                 try:
                     host_versions = app._host_core_versions()
@@ -8313,11 +8314,11 @@ def run_gui():
                         else:
                             # github 源: 无法本地比对核心版本, 显示"不明"
                             item["version"] = unknown_text
-                    root.after(0, lambda: (show_search_results(items, "推荐"),
-                                           plugin_status.set("已加载 %d 个社区精选推荐插件" % len(items))))
+                    root.after(0, lambda: (show_search_results(items, i18n.t('plugin.source_recommended')),
+                                           plugin_status.set(i18n.t('plugin.status_rec_loaded', count=len(items)))))
                 except Exception as error:
-                    root.after(0, lambda: (show_search_results(items, "推荐"),
-                                           plugin_status.set("已加载 %d 个 (兼容解析失败仍显示): %s" % (len(items), error))))
+                    root.after(0, lambda: (show_search_results(items, i18n.t('plugin.source_recommended')),
+                                           plugin_status.set(i18n.t('plugin.status_rec_partial', count=len(items), error=error))))
                 finally:
                     root.after(0, lambda: set_plugin_busy(False))
             threading.Thread(target=worker, daemon=True).start()
@@ -8336,14 +8337,15 @@ def run_gui():
             # 推荐项 GitHub 标识: 直接打开仓库地址; 仓库名不等于 npm 包名, 不给无效的 npm 页
             if spec.startswith("github:"):
                 repo = spec[len("github:"):]
-                url_list.append(("打开 GitHub 仓库", raw_url or "https://github.com/%s" % repo))
-                url_list.append(("打开 GitHub 搜索",
+                url_list.append((i18n.t('plugin.menu_open_github_repo'),
+                                 raw_url or "https://github.com/%s" % repo))
+                url_list.append((i18n.t('plugin.menu_open_github_search'),
                                  "https://github.com/search?q=%s" % urllib.parse.quote(name)))
             else:
                 # npm 包 / 搜索来源: 打开 npm 页面, 以及 GitHub 搜索
-                url_list.append(("打开 npm 页面",
+                url_list.append((i18n.t('plugin.menu_open_npm_page'),
                                  "https://www.npmjs.com/package/%s" % urllib.parse.quote(name)))
-                url_list.append(("打开 GitHub 搜索",
+                url_list.append((i18n.t('plugin.menu_open_github_search'),
                                  "https://github.com/search?q=%s" % urllib.parse.quote(name)))
             return url_list
 
@@ -8361,7 +8363,7 @@ def run_gui():
             for label, url in build_open_urls(info):
                 context_menu.add_command(label=label, command=lambda u=url: webbrowser.open(u))
             context_menu.add_separator()
-            context_menu.add_command(label="复制包名",
+            context_menu.add_command(label=i18n.t('plugin.menu_copy_name'),
                                      command=lambda: root.clipboard_append(info["name"]))
             context_menu.tk_popup(event.x_root, event.y_root)
 
@@ -8390,7 +8392,7 @@ def run_gui():
                 return
             spec, display_name = resolve_selected_spec()
             if spec is None:
-                messagebox.showinfo(i18n.t('plugin.title'), "请先在右侧选中要安装的插件。", parent=top)
+                messagebox.showinfo(i18n.t('plugin.title'), i18n.t('plugin.install_select_prompt'), parent=top)
                 return
             do_install(spec, display_name)
 
@@ -8401,7 +8403,7 @@ def run_gui():
             spec = manual_var.get().strip()
             if not spec:
                 messagebox.showinfo(i18n.t('plugin.title'),
-                                    "请先输入要安装的插件规格, 如 dsh-advisor 或 github:用户/仓库#提交号。",
+                                    i18n.t('plugin.manual_install_prompt'),
                                     parent=top)
                 return
             do_install(spec, spec)
@@ -8414,14 +8416,14 @@ def run_gui():
             if not os.path.isdir(default_plugins_dir):
                 default_plugins_dir = BASE_DIR
             folder = filedialog.askdirectory(
-                title="选择本地插件目录 (目录内需含 package.json)",
+                title=i18n.t('plugin.local_dir_title'),
                 initialdir=default_plugins_dir,
                 parent=top)
             if not folder:
                 return
             if not messagebox.askyesno(
-                    "安装本地插件",
-                    "将安装本地插件目录:\n%s\n\n安装后需重启服务生效。\n继续吗?" % folder,
+                    i18n.t('plugin.local_install_title'),
+                    i18n.t('plugin.local_install_confirm', path=folder),
                     parent=top):
                 return
             spec = "file:" + os.path.abspath(folder).replace("\\", "/")
@@ -8435,18 +8437,16 @@ def run_gui():
             if plugin_busy[0]:
                 return
             if not app.bundled_plugin_dirs():
-                messagebox.showinfo(i18n.t('plugin.title'), "程序目录 plugins/ 下未发现内置插件。", parent=top)
+                messagebox.showinfo(i18n.t('plugin.title'), i18n.t('plugin.bundled_none'), parent=top)
                 return
             if not messagebox.askyesno(
-                    "安装内置插件",
-                    "将批量安装并同步程序目录 plugins/ 下的全部内置插件:\n%s\n\n"
-                    "未安装的会自动安装, 已安装的自动更新为最新源码 (已是最新的跳过), "
-                    "完成后需重启服务生效。继续吗?" % "\n".join(
-                        os.path.basename(folder) for folder in app.bundled_plugin_dirs()),
+                    i18n.t('plugin.bundled_install_title'),
+                    i18n.t('plugin.bundled_install_confirm', names="\n".join(
+                        os.path.basename(folder) for folder in app.bundled_plugin_dirs())),
                     parent=top):
                 return
             set_plugin_busy(True)
-            plugin_status.set("正在安装/更新内置插件 ...")
+            plugin_status.set(i18n.t('plugin.status_bundled_installing'))
             def worker():
                 try:
                     installed_now, _skipped, failed_install = \
@@ -8455,23 +8455,23 @@ def run_gui():
                         app.update_bundled_plugins(profile)
                     summary = []
                     if installed_now:
-                        summary.append("新装: %s" % ", ".join(installed_now))
+                        summary.append("%s: %s" % (i18n.t('plugin.bundled_new'), ", ".join(installed_now)))
                     if updated:
-                        summary.append("已更新: %s" % ", ".join(updated))
+                        summary.append("%s: %s" % (i18n.t('plugin.bundled_updated'), ", ".join(updated)))
                     if up_to_date:
-                        summary.append("已是最新: %s" % ", ".join(up_to_date))
+                        summary.append("%s: %s" % (i18n.t('plugin.bundled_latest'), ", ".join(up_to_date)))
                     if failed_install:
-                        summary.append("安装失败: %s" % ", ".join(failed_install))
+                        summary.append("%s: %s" % (i18n.t('plugin.bundled_install_failed'), ", ".join(failed_install)))
                     if failed_update:
-                        summary.append("更新失败: %s" % "; ".join(
-                            "%s(%s)" % (name, reason) for name, reason in failed_update))
-                    message = "\n".join(summary) if summary else "(没有可安装/更新的内置插件)"
+                        summary.append("%s: %s" % (i18n.t('plugin.bundled_update_failed'), "; ".join(
+                            "%s(%s)" % (name, reason) for name, reason in failed_update)))
+                    message = "\n".join(summary) if summary else i18n.t('plugin.bundled_nothing')
                     root.after(0, lambda: (refresh_installed(),
                                            messagebox.showinfo(i18n.t('plugin.install_title'), message, parent=top),
-                                           plugin_status.set("内置插件安装/更新完成")))
+                                           plugin_status.set(i18n.t('plugin.status_bundled_done'))))
                 except Exception as error:
-                    root.after(0, lambda: (messagebox.showerror("安装失败", str(error), parent=top),
-                                           plugin_status.set("安装失败")))
+                    root.after(0, lambda: (messagebox.showerror(i18n.t('plugin.status_install_fail'), str(error), parent=top),
+                                           plugin_status.set(i18n.t('plugin.status_install_fail'))))
                 finally:
                     root.after(0, lambda: set_plugin_busy(False))
             threading.Thread(target=worker, daemon=True).start()
@@ -8479,15 +8479,15 @@ def run_gui():
         def do_install(spec, display_name):
             """后台线程执行插件安装"""
             set_plugin_busy(True)
-            plugin_status.set("正在安装: %s ..." % display_name)
+            plugin_status.set(i18n.t('plugin.status_installing', name=display_name))
             def worker():
                 try:
                     app.install_plugin(spec, profile)
                     root.after(0, lambda: (refresh_installed(),
-                                           plugin_status.set("已安装: %s" % display_name)))
+                                           plugin_status.set(i18n.t('plugin.status_installed', name=display_name))))
                 except Exception as error:
-                    root.after(0, lambda: (messagebox.showerror("安装失败", str(error), parent=top),
-                                           plugin_status.set("安装失败")))
+                    root.after(0, lambda: (messagebox.showerror(i18n.t('plugin.status_install_fail'), str(error), parent=top),
+                                           plugin_status.set(i18n.t('plugin.status_install_fail'))))
                 finally:
                     root.after(0, lambda: set_plugin_busy(False))
             threading.Thread(target=worker, daemon=True).start()
@@ -8500,17 +8500,17 @@ def run_gui():
                     app.update_bundled_plugins(profile)
                 if updated:
                     root.after(0, lambda: (refresh_installed(),
-                                           plugin_status.set("已自动更新内置插件: %s (重启服务后完全生效)"
-                                                             % ", ".join(updated))))
+                                           plugin_status.set(i18n.t('plugin.status_auto_updated',
+                                                                    names=", ".join(updated)))))
                 elif failed:
                     root.after(0, lambda: plugin_status.set(
-                        "内置插件同步: 失败 %s" % "; ".join(
-                            "%s(%s)" % (name, reason) for name, reason in failed)))
+                        i18n.t('plugin.status_sync_failed', details="; ".join(
+                            "%s(%s)" % (name, reason) for name, reason in failed))))
                 else:
                     root.after(0, lambda: plugin_status.set(
-                        "内置插件已是最新 (%d 个)" % len(up_to_date)))
+                        i18n.t('plugin.status_uptodate', count=len(up_to_date))))
             except Exception as error:
-                root.after(0, lambda: plugin_status.set("内置插件同步失败: %s" % error))
+                root.after(0, lambda: plugin_status.set(i18n.t('plugin.status_sync_error', error=error)))
 
         def _collect_selected_package_names():
             """从已安装 Treeview 取所有选中条目的包名, 过滤掉 category 分组行 (以 "(" 开头的 text).
@@ -8529,17 +8529,17 @@ def run_gui():
                 return
             package_names = _collect_selected_package_names()
             if not package_names:
-                messagebox.showinfo(i18n.t('plugin.title'), "请先在左侧选中要移除的插件 (可 Ctrl/Shift 多选)。", parent=top)
+                messagebox.showinfo(i18n.t('plugin.title'), i18n.t('plugin.remove_select_prompt'), parent=top)
                 return
             if len(package_names) == 1:
-                confirm_msg = "确定要移除插件「%s」吗?" % package_names[0]
+                confirm_msg = i18n.t('plugin.remove_confirm_single', name=package_names[0])
             else:
                 confirm_msg = "确定要移除以下 %d 个插件吗?\n\n%s" % (
                     len(package_names), "\n".join("· " + name for name in package_names))
             if not messagebox.askyesno(i18n.t('plugin.remove_title'), confirm_msg, parent=top):
                 return
             set_plugin_busy(True)
-            plugin_status.set("正在移除 %d 个插件 ..." % len(package_names))
+            plugin_status.set(i18n.t('plugin.status_removing', count=len(package_names)))
             def worker():
                 removed_ok = []
                 removed_fail = []
@@ -8551,15 +8551,14 @@ def run_gui():
                         removed_fail.append((package_name, str(error)))
                 summary_parts = []
                 if removed_ok:
-                    summary_parts.append("已移除 %d 个: %s" % (len(removed_ok), ", ".join(removed_ok)))
+                    summary_parts.append(i18n.t('plugin.removed_ok_fmt', count=len(removed_ok), names=", ".join(removed_ok)))
                 if removed_fail:
-                    summary_parts.append("失败 %d 个: %s" % (
-                        len(removed_fail),
-                        "; ".join("%s(%s)" % (name, reason) for name, reason in removed_fail)))
-                summary_text = "\n".join(summary_parts) if summary_parts else "(没有需要移除的插件)"
+                    summary_parts.append(i18n.t('plugin.removed_fail_fmt', count=len(removed_fail), details="; ".join(
+                        "%s(%s)" % (name, reason) for name, reason in removed_fail)))
+                summary_text = "\n".join(summary_parts) if summary_parts else i18n.t('plugin.no_removed')
                 root.after(0, lambda: (refresh_installed(),
                                        messagebox.showinfo(i18n.t('plugin.remove_title'), summary_text, parent=top),
-                                       plugin_status.set("移除完成: %s" % summary_text.split("\n")[0]),
+                                       plugin_status.set(i18n.t('plugin.status_remove_done', summary=summary_text.split("\n")[0])),
                                        set_plugin_busy(False)))  # 复用开关: 结束后必须恢复正常按钮, 否则一直禁用
             threading.Thread(target=worker, daemon=True).start()
 
@@ -8569,16 +8568,16 @@ def run_gui():
                 return
             package_names = _collect_selected_package_names()
             if not package_names:
-                messagebox.showinfo(i18n.t('plugin.title'), "请先在左侧选中要启停的插件 (可 Ctrl/Shift 多选)。", parent=top)
+                messagebox.showinfo(i18n.t('plugin.title'), i18n.t('plugin.toggle_select_prompt'), parent=top)
                 return
-            action = "启用" if enable else "停用"
+            action = i18n.t('plugin.action_enable') if enable else i18n.t('plugin.action_disable')
+            toggle_title = i18n.t('plugin.toggle_title', action=action)
             if len(package_names) == 1:
-                confirm_msg = "确定要%s插件「%s」吗?\n\n%s后需重启服务才生效。" % (action, package_names[0], action)
+                confirm_msg = i18n.t('plugin.toggle_confirm_single', action=action, name=package_names[0])
             else:
-                confirm_msg = "确定要对以下 %d 个插件执行「%s」吗?\n\n%s\n\n完成后需重启服务才生效。" % (
-                    len(package_names), action,
-                    "\n".join("· " + name for name in package_names))
-            if not messagebox.askyesno(action + "插件", confirm_msg, parent=top):
+                confirm_msg = i18n.t('plugin.toggle_confirm_multi', count=len(package_names),
+                                     action=action, names="\n".join("· " + name for name in package_names))
+            if not messagebox.askyesno(toggle_title, confirm_msg, parent=top):
                 return
             bundle_ok = []      # 成功启停 (声明了 dsh.bundle)
             bundle_skip = []    # 跳过 (未声明 dsh.bundle, 非 bundle 插件)
@@ -8594,18 +8593,18 @@ def run_gui():
                     bundle_fail.append((package_name, str(error)))
             summary_parts = []
             if bundle_ok:
-                summary_parts.append("已%s %d 个: %s" % (action, len(bundle_ok), ", ".join(bundle_ok)))
+                summary_parts.append(i18n.t('plugin.toggle_summary_ok', action=action,
+                                            count=len(bundle_ok), names=", ".join(bundle_ok)))
             if bundle_skip:
-                summary_parts.append("跳过 %d 个 (非 bundle 插件, 无需启停): %s" % (
-                    len(bundle_skip), ", ".join(bundle_skip)))
+                summary_parts.append(i18n.t('plugin.toggle_summary_skip', count=len(bundle_skip),
+                                            names=", ".join(bundle_skip)))
             if bundle_fail:
-                summary_parts.append("失败 %d 个: %s" % (
-                    len(bundle_fail),
-                    "; ".join("%s(%s)" % (name, reason) for name, reason in bundle_fail)))
-            summary_text = "\n".join(summary_parts) if summary_parts else "(没有需要启停的插件)"
+                summary_parts.append(i18n.t('plugin.toggle_summary_fail', count=len(bundle_fail), details="; ".join(
+                    "%s(%s)" % (name, reason) for name, reason in bundle_fail)))
+            summary_text = "\n".join(summary_parts) if summary_parts else i18n.t('plugin.no_toggle')
             refresh_installed()
-            messagebox.showinfo(action + "插件", summary_text, parent=top)
-            plugin_status.set("%s完成: %s (重启服务后生效)" % (action, summary_text.split("\n")[0]))
+            messagebox.showinfo(toggle_title, summary_text, parent=top)
+            plugin_status.set(i18n.t('plugin.status_toggle_done', action=action, summary=summary_text.split("\n")[0]))
 
         # ---------- 顶部工具栏 ----------
         toolbar = ttk.Frame(top)
@@ -8744,7 +8743,7 @@ def run_gui():
         _i18n_widgets.append((_iw_7345, 'text', 'plugin.local_hint'))
 
         # ---------- 底部状态栏 ----------
-        plugin_status = tk.StringVar(value="就绪")
+        plugin_status = tk.StringVar(value=i18n.t('plugin.status_ready'))
         ttk.Label(top, textvariable=plugin_status, font=("Microsoft YaHei", 9),
                   foreground="#555555").pack(side="bottom", fill="x", padx=10, pady=(0, 8), anchor="w")
 
@@ -8761,10 +8760,10 @@ def run_gui():
                 return
             context_menu = tk.Menu(top, tearoff=0)
             context_menu.add_command(
-                label="打开 npm 页面",
+                label=i18n.t('plugin.menu_open_npm_page'),
                 command=lambda: webbrowser.open(
                     "https://www.npmjs.com/package/%s" % urllib.parse.quote(package_name)))
-            context_menu.add_command(label="复制包名",
+            context_menu.add_command(label=i18n.t('plugin.menu_copy_name'),
                                      command=lambda: root.clipboard_append(package_name))
             context_menu.tk_popup(event.x_root, event.y_root)
 
