@@ -4116,17 +4116,30 @@ class Launcher:
         return {"latest": None, "published_at": None, "known": False}
 
     def check_plugin_updates(self, profile=DEFAULT_PROFILE, package_names=None):
-        """检查已安装插件的 npm registry 是否有更新版本。
-        返回 list[dict], 每项:
-          {name, installed, latest, published_at, has_update, known}
-        known=False 表示该包不在 npm registry (内置 / git 源 / 私有), has_update 一律 False。
-        package_names=None 时查所有已安装插件; 否则只查指定子集。
+        """检查已安装插件的 npm registry 是否有更新版本 (自动过滤内置插件)。
+
+        内置插件 (程序目录 plugins/<name> 下有源码) 随绿色版一起更新,
+        不走 npm registry —— 本函数用 bundled_plugin_dirs() 自动排除它们,
+        只查 profile 里用户自己装的第三方插件。
+
+        返回 list[dict], 每项: {name, installed, latest, published_at, has_update, known}
+        known=False 表示该包不在 npm registry (第三方但 git 源/私有), has_update 一律 False。
+        package_names=None 时查所有已安装第三方插件; 否则只查指定子集 (自动过滤内置)。
         用 ThreadPool 并发查询, 10+ 个插件通常 2-3 秒完成。"""
         installed = self.list_installed_plugins(profile)
         if not installed:
             return []
-        # profile 里只保留 dependencies 里声明的插件 (过滤掉 @deepseek-ai/core 之类内置)
-        names = package_names if package_names else sorted(installed.keys())
+        # 取内置插件包名集合, 自动排除 (内置随绿色版走, 不走 npm update)
+        bundled_dirs = self.bundled_plugin_dirs()
+        bundled_names = {os.path.basename(folder) for folder in bundled_dirs}
+        if package_names:
+            # 调用方指定了子集, 也过滤掉内置
+            names = [n for n in package_names if n not in bundled_names and n in installed]
+        else:
+            names = sorted(n for n in installed.keys() if n not in bundled_names)
+        if not names:
+            self.log("插件更新检查跳过: 全部是内置插件")
+            return []
 
         def _query_one(name):
             result = self._query_npm_package_latest(name)
@@ -4151,13 +4164,20 @@ class Launcher:
             for item in pool.map(_query_one, names):
                 results.append(item)
         update_count = sum(1 for r in results if r["has_update"])
-        self.log("插件更新检查完成: %d 个包, %d 有更新" % (len(results), update_count))
+        self.log("插件更新检查完成: %d 个第三方包, %d 有更新" % (len(results), update_count))
         return results
 
     def update_plugins(self, package_names, profile=DEFAULT_PROFILE):
-        """用 pnpm update @<包名>@latest 更新指定插件, 逐个更新 (失败不阻断其他)。
-        返回 (成功列表, 失败列表)。pnpm update 自动遵循 package.json 里的 semver 约束,
-        但我们用 dsh plugin add 强制装 latest tag (更直接, 也自动 reconcile bundles)。"""
+        """批量更新指定插件 (自动过滤内置)。逐包执行 dsh plugin add @<包>@latest,
+        失败不阻断其他。返回 (成功列表, 失败列表)。"""
+        bundled_dirs = self.bundled_plugin_dirs()
+        bundled_names = {os.path.basename(folder) for folder in bundled_dirs}
+        # 自动跳过内置 (内置靠 update_bundled_plugins 走)
+        names = [n for n in package_names if n not in bundled_names]
+        if not names:
+            self.log("update_plugins: 全部是内置插件, 跳过")
+            return [], []
+
         succeeded = []
         failed = []
         for package_name in package_names:
@@ -8263,6 +8283,7 @@ def run_gui():
 
         profile = DEFAULT_PROFILE
         plugin_busy = [False]   # 本窗口忙碌标志, 防止重复操作
+        plugin_checked = [False]  # 是否已跑过一次 npm 更新检查 (刷新后重置, 避免重复查)
         # 记录列表条目 -> 插件信息, 供右键菜单打开对应网页使用
         installed_item_urls = {}   # 左侧已安装: item_id -> 包名
         search_item_urls = {}      # 右侧搜索:  item_id -> {name, source, url}
@@ -8274,17 +8295,46 @@ def run_gui():
             button_state = "disabled" if busy else "normal"
             for button in (search_btn, load_github_btn, github_btn, load_rec_btn,
                            remove_btn, install_btn, manual_btn, local_install_btn,
-                           enable_btn, disable_btn, refresh_btn,
-                           check_update_btn, update_selected_btn):
+                           enable_btn, disable_btn, refresh_btn, update_selected_btn):
                 button.config(state=button_state)
             if not busy:
                 plugin_status.set(i18n.t('plugin.status_ready'))
 
+        def _apply_update_check_results(results):
+            """把 npm 检查结果填回左侧 Treeview —— 有更新的第三方插件加 ★ + 标红。
+            内置插件 (不在 results 里) 保持原样。"""
+            result_by_name = {r["name"]: r for r in results}
+            has_update_count = 0
+            for item_id in installed_tree.get_children():
+                pkg_name = installed_item_urls.get(item_id)
+                if pkg_name is None:
+                    continue
+                info = result_by_name.get(pkg_name)
+                if info is None:
+                    continue  # 内置插件 / 非 npm 包 → 跳过
+                if info["has_update"]:
+                    has_update_count += 1
+                    current_text = installed_tree.item(item_id, "text")
+                    if not current_text.startswith("★"):
+                        installed_tree.item(item_id, text="★ " + current_text,
+                                            tags=("has_update",))
+            installed_tree.tag_configure("has_update", foreground="#dc2626")
+            total = len(results)
+            if has_update_count > 0:
+                plugin_status.set(
+                    i18n.t('plugin.status_updates_found',
+                           count=has_update_count, total=total))
+            else:
+                plugin_status.set(
+                    i18n.t('plugin.status_updates_all_up_to_date', total=total))
+            plugin_checked[0] = True
+
         def refresh_installed():
-            """读取已安装插件并刷新左侧列表 (兼容状态用本地产物判定, 无网络)。
-            只填 version/compat/state 三列, latest 列留空 (等点「检查更新」后填充)。"""
+            """本地刷新左侧已安装列表 (无网络) —— 恢复原版 3 列 (version/compat/state)。
+            插件名的 ★ 标记会被清掉 (刷新 = 从头再来)。"""
             installed_tree.delete(*installed_tree.get_children())
             installed_item_urls.clear()
+            plugin_checked[0] = False   # 刷新后重置检查状态
             dependencies = app.list_installed_plugins(profile)
             compat_label = {
                 "ok": i18n.t('plugin.compat_ok'),
@@ -8294,7 +8344,7 @@ def run_gui():
             }
             if not dependencies:
                 installed_tree.insert("", "end", text=i18n.t('plugin.no_installed'),
-                                      values=("", "", "", ""))
+                                      values=("", "", ""))
                 return
             host_versions = app._host_core_versions()
             for package_name, version in sorted(dependencies.items()):
@@ -8305,20 +8355,13 @@ def run_gui():
                 result = app.classify_installed_plugin_compat(package_name, host_versions, profile)
                 compat_text = compat_label.get(result["status"], compat_label["unknown"])
                 item_id = installed_tree.insert("", "end", text=package_name,
-                                                values=(version, "", compat_text, state_label))
-                # 配置 tag 用于样式: 有更新的条目后续会加 "has_update" tag 标红
+                                                values=(version, compat_text, state_label))
                 installed_tree.item(item_id, tags=())
                 installed_item_urls[item_id] = package_name
 
-        def on_refresh_installed():
-            """刷新已安装列表 (本地读取, 不耗时)"""
-            refresh_installed()
-
-        def on_check_updates():
-            """并发查已安装插件在 npm registry 上的最新版本, 有更新的条目在 latest 列填充,
-            并给名字加 ★ 前缀 + 标红 tag 样式 (2026-09-18 新增)"""
-            if plugin_busy[0]:
-                return
+        def _run_async_update_check():
+            """后台线程跑一次 npm 检查, 完成后把 ★ 标记填回 Treeview。
+            刷新按钮和更新选中按钮都会调用 (更新选中会先等检查完成再继续)。"""
             plugin_status.set(i18n.t('plugin.status_checking_updates'))
             set_plugin_busy(True)
             def worker():
@@ -8327,110 +8370,102 @@ def run_gui():
                     root.after(0, lambda: _apply_update_check_results(results))
                 except Exception as error:
                     root.after(0, lambda: (
-                        messagebox.showerror(i18n.t('plugin.status_check_updates_fail'),
-                                              str(error), parent=top),
-                        plugin_status.set(i18n.t('plugin.status_check_updates_fail'))))
+                        plugin_status.set(i18n.t('plugin.status_check_updates_fail')),
+                        app.log("插件更新检查异常: %s" % error)))
                 finally:
                     root.after(0, lambda: set_plugin_busy(False))
-
-            def _apply_update_check_results(results):
-                """把检查结果填回左侧 Treeview: latest 列有值 / 有更新的条目 ★ + 标红"""
-                # 建 name -> 结果 字典方便查表
-                result_by_name = {r["name"]: r for r in results}
-                has_update_count = 0
-                for item_id in installed_tree.get_children():
-                    pkg_name = installed_item_urls.get(item_id)
-                    if pkg_name is None:
-                        continue
-                    info = result_by_name.get(pkg_name)
-                    if info is None:
-                        continue
-                    # 填 latest 列: known 但没更新 → latest 版本号 (灰); 有更新 → 也填 latest
-                    latest_text = info["latest"] if info["known"] and info["latest"] else ""
-                    values = list(installed_tree.item(item_id, "values"))
-                    values[1] = latest_text  # latest 在 values[1]
-                    installed_tree.item(item_id, values=tuple(values))
-                    if info["has_update"]:
-                        has_update_count += 1
-                        # 名字前加 ★ 标记, 加 has_update tag 用于样式
-                        current_text = installed_tree.item(item_id, "text")
-                        if not current_text.startswith("★"):
-                            installed_tree.item(item_id, text="★ " + current_text,
-                                                tags=("has_update",))
-                # 配置 tag 样式: has_update 行红色显示
-                installed_tree.tag_configure("has_update", foreground="#dc2626")
-                total = len(results)
-                if has_update_count > 0:
-                    plugin_status.set(
-                        i18n.t('plugin.status_updates_found',
-                               count=has_update_count, total=total))
-                else:
-                    plugin_status.set(
-                        i18n.t('plugin.status_updates_all_up_to_date', total=total))
             threading.Thread(target=worker, daemon=True).start()
 
+        def on_refresh_installed():
+            """刷新已安装列表 —— 本地读 + 自动后台查一次 npm 更新 (不阻塞)。"""
+            refresh_installed()
+            _run_async_update_check()
+
         def on_update_selected():
-            """更新左侧树里**选中且有更新**的插件到 latest (逐个跑 dsh plugin add @latest)
-            弹窗确认 → 后台线程批量更新 → 成功/失败提示 + 自动刷新列表"""
+            """更新左侧树里选中的第三方插件 (逐个 dsh plugin add @latest)。
+            若尚未跑过检查 (plugin_checked=False), 先自动跑一次 npm 检查再更新。"""
             selected = installed_tree.selection()
             if not selected:
                 messagebox.showinfo(i18n.t('plugin.title'),
                                     i18n.t('plugin.update_select_prompt'), parent=top)
                 return
-            # 只挑 has_update 的条目更新, 没标记的自动跳过
-            to_update = []
-            for item_id in selected:
-                pkg_name = installed_item_urls.get(item_id)
-                if pkg_name is None:
-                    continue
-                tags = installed_tree.item(item_id, "tags") or ()
-                if "has_update" in tags:
-                    to_update.append(pkg_name)
-            if not to_update:
-                messagebox.showinfo(i18n.t('plugin.title'),
-                                    i18n.t('plugin.update_none_pending'), parent=top)
-                return
-            preview = "\n".join("  - %s" % n for n in to_update)
-            if not messagebox.askyesno(
-                    i18n.t('plugin.update_title'),
-                    i18n.t('plugin.update_confirm', count=len(to_update), names=preview),
-                    parent=top):
-                return
-            plugin_status.set(i18n.t('plugin.status_updating', count=len(to_update)))
-            set_plugin_busy(True)
-            def worker():
-                try:
-                    succeeded, failed = app.update_plugins(to_update, profile)
-                    def report():
-                        # 更新后自动重新跑一次检查 + 刷新
-                        refresh_installed()
-                        plugin_status.set(
-                            i18n.t('plugin.status_update_done',
-                                   ok=len(succeeded), fail=len(failed)))
-                        if failed:
-                            messagebox.showerror(
-                                i18n.t('plugin.update_fail_title'),
-                                i18n.t('plugin.update_fail_detail',
-                                        ok=len(succeeded),
-                                        fail=len(failed),
-                                        details="\n".join(
-                                            "%s: %s" % (n, m) for n, m in failed)),
-                                parent=top)
-                        else:
-                            messagebox.showinfo(
-                                i18n.t('plugin.update_done_title'),
-                                i18n.t('plugin.update_done_detail',
-                                       count=len(succeeded)),
-                                parent=top)
-                    root.after(0, report)
-                except Exception as error:
-                    root.after(0, lambda: (
-                        messagebox.showerror(i18n.t('plugin.update_fail_title'),
-                                              str(error), parent=top),
-                        plugin_status.set(i18n.t('plugin.update_fail_title'))))
-                finally:
-                    root.after(0, lambda: set_plugin_busy(False))
-            threading.Thread(target=worker, daemon=True).start()
+
+            def _do_update():
+                """真正执行批量更新的 worker (等检查完成后由回调调用)。"""
+                to_update = []
+                for item_id in selected:
+                    pkg_name = installed_item_urls.get(item_id)
+                    if pkg_name is None:
+                        continue
+                    tags = installed_tree.item(item_id, "tags") or ()
+                    if "has_update" in tags:
+                        to_update.append(pkg_name)
+                if not to_update:
+                    messagebox.showinfo(i18n.t('plugin.title'),
+                                        i18n.t('plugin.update_none_pending'), parent=top)
+                    return
+                preview = "\n".join("  - %s" % n for n in to_update)
+                if not messagebox.askyesno(
+                        i18n.t('plugin.update_title'),
+                        i18n.t('plugin.update_confirm', count=len(to_update), names=preview),
+                        parent=top):
+                    return
+                plugin_status.set(i18n.t('plugin.status_updating', count=len(to_update)))
+                set_plugin_busy(True)
+                def worker():
+                    try:
+                        succeeded, failed = app.update_plugins(to_update, profile)
+                        def report():
+                            refresh_installed()
+                            plugin_status.set(
+                                i18n.t('plugin.status_update_done',
+                                       ok=len(succeeded), fail=len(failed)))
+                            if failed:
+                                messagebox.showerror(
+                                    i18n.t('plugin.update_fail_title'),
+                                    i18n.t('plugin.update_fail_detail',
+                                            ok=len(succeeded),
+                                            fail=len(failed),
+                                            details="\n".join(
+                                                "%s: %s" % (n, m) for n, m in failed)),
+                                    parent=top)
+                            else:
+                                messagebox.showinfo(
+                                    i18n.t('plugin.update_done_title'),
+                                    i18n.t('plugin.update_done_detail',
+                                           count=len(succeeded)),
+                                    parent=top)
+                            # 更新完自动再查一次, 刷新 ★ 标记
+                            _run_async_update_check()
+                        root.after(0, report)
+                    except Exception as error:
+                        root.after(0, lambda: (
+                            messagebox.showerror(i18n.t('plugin.update_fail_title'),
+                                                  str(error), parent=top),
+                            plugin_status.set(i18n.t('plugin.update_fail_title'))))
+                    finally:
+                        root.after(0, lambda: set_plugin_busy(False))
+                threading.Thread(target=worker, daemon=True).start()
+
+            # 没检查过 → 自动触发一次, 检查完再更新
+            if not plugin_checked[0]:
+                plugin_status.set(i18n.t('plugin.status_checking_updates'))
+                set_plugin_busy(True)
+                def pre_check_worker():
+                    try:
+                        results = app.check_plugin_updates(profile)
+                        def proceed():
+                            _apply_update_check_results(results)
+                            _do_update()
+                        root.after(0, proceed)
+                    except Exception as error:
+                        root.after(0, lambda: (
+                            messagebox.showerror(i18n.t('plugin.status_check_updates_fail'),
+                                                  str(error), parent=top),
+                            set_plugin_busy(False)))
+                threading.Thread(target=pre_check_worker, daemon=True).start()
+            else:
+                _do_update()
 
 
         def show_search_results(plugins, default_source):
@@ -8864,17 +8899,15 @@ def run_gui():
         installed_body = ttk.Frame(installed_frame)
         installed_body.pack(fill="both", expand=True, padx=6, pady=6)
         # selectmode="extended": 允许多选 (Ctrl+点击 逐个选, Shift+点击 连选)
-        installed_tree = ttk.Treeview(installed_body, columns=("version", "latest", "compat", "state"),
+        installed_tree = ttk.Treeview(installed_body, columns=("version", "compat", "state"),
                                       show="tree headings", selectmode="extended")
         installed_tree.heading("#0", text=i18n.t('plugin.column_name'))
         installed_tree.heading("version", text=i18n.t('plugin.column_version'))
-        installed_tree.heading("latest", text=i18n.t('plugin.column_latest'))
         installed_tree.heading("compat", text=i18n.t('plugin.column_compat'))
         installed_tree.heading("state", text=i18n.t('plugin.column_status'))
-        # 已安装列表增加"兼容"列 (本地产物判定, 无网络, 2026-09-10)
+        # 列宽保持原版 (2026-09-18: 恢复 layout, latest 不再是独立列而是 ★ 标记)
         installed_tree.column("#0", width=120)
         installed_tree.column("version", width=66, anchor="center")
-        installed_tree.column("latest", width=66, anchor="center")
         installed_tree.column("compat", width=88, anchor="center")
         installed_tree.column("state", width=52, anchor="center")
         installed_scrollbar = ttk.Scrollbar(installed_body, orient="vertical",
@@ -8897,13 +8930,9 @@ def run_gui():
         refresh_btn = ttk.Button(installed_buttons, text=i18n.t('plugin.refresh'), command=on_refresh_installed)
         refresh_btn.pack(side="left", padx=(6, 0))
         _i18n_widgets.append((refresh_btn, 'text', 'plugin.refresh'))
-        check_update_btn = ttk.Button(installed_buttons, text=i18n.t('plugin.check_updates'),
-                                      command=on_check_updates)
-        check_update_btn.pack(side="left", padx=(10, 0))
-        _i18n_widgets.append((check_update_btn, 'text', 'plugin.check_updates'))
         update_selected_btn = ttk.Button(installed_buttons, text=i18n.t('plugin.update_selected'),
                                          command=on_update_selected)
-        update_selected_btn.pack(side="left", padx=(6, 0))
+        update_selected_btn.pack(side="left", padx=(10, 0))
         _i18n_widgets.append((update_selected_btn, 'text', 'plugin.update_selected'))
         _iw_7295 = ttk.Label(installed_buttons, text=i18n.t('plugin.multi_select_hint'), foreground="#666666")
         _iw_7295.pack(side="left", padx=(8, 0))
