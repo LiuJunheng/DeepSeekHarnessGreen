@@ -8391,7 +8391,8 @@ def run_gui():
                 return
 
             def _do_update():
-                """真正执行批量更新的 worker (等检查完成后由回调调用)。"""
+                """从已标记 ★ 的选中条目里挑出待更新包, 空则弹框 return (注意恢复 busy)。
+                真正执行 pnpm 更新的 worker 自己管理 busy (set=True 后有 finally 保证恢复)。"""
                 to_update = []
                 for item_id in selected:
                     pkg_name = installed_item_urls.get(item_id)
@@ -8403,6 +8404,8 @@ def run_gui():
                 if not to_update:
                     messagebox.showinfo(i18n.t('plugin.title'),
                                         i18n.t('plugin.update_none_pending'), parent=top)
+                    # 路径 A: pre_check 已经恢复了 busy (proceed 里先 restore 再 _do_update),
+                    # 这里不用再调; 路径 B: plugin_checked=True 直接调用 → 也没设过 busy
                     return
                 preview = "\n".join("  - %s" % n for n in to_update)
                 if not messagebox.askyesno(
@@ -8447,7 +8450,7 @@ def run_gui():
                         root.after(0, lambda: set_plugin_busy(False))
                 threading.Thread(target=worker, daemon=True).start()
 
-            # 没检查过 → 自动触发一次, 检查完再更新
+            # 没检查过 → 自动触发一次 npm 检查, 检查完再更新
             if not plugin_checked[0]:
                 plugin_status.set(i18n.t('plugin.status_checking_updates'))
                 set_plugin_busy(True)
@@ -8456,6 +8459,9 @@ def run_gui():
                         results = app.check_plugin_updates(profile)
                         def proceed():
                             _apply_update_check_results(results)
+                            # 检查阶段完成, 必须先恢复 busy 再进 _do_update
+                            # (_do_update 里如果没包要更会弹框 return, 不会再碰 busy)
+                            set_plugin_busy(False)
                             _do_update()
                         root.after(0, proceed)
                     except Exception as error:
