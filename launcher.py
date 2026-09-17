@@ -247,9 +247,13 @@ _MINIMUM_CORE_BUNDLES = ["@deepseek-ai/dsh-base"]
 
 # 服务启动失败日志里代表"插件与核心不兼容"的关键字 (冒烟验证/历史日志匹配用)。
 # 匹配到任意关键字 + 日志堆栈里出现 profile 的 bundle 插件路径, 即判定该插件不兼容。
+# 新核心版本常新增的硬校验 (如 v0.1.6 的 typert result codec 必须有 create() 工厂),
+# 第三方旧插件过不了校验, 会直接让插件树崩。
 UPGRADE_INCOMPATIBLE_LOG_KEYWORDS = [
     "does not provide an export", "is not in cache",
     "ERR_MODULE_NOT_FOUND", "Cannot find package", "SyntaxError",
+    "codec has no create", "codec must use a strict codec",
+    "typert contributor", "invocation result codec",
 ]
 
 # ---------------------------------------------------------------------------
@@ -1577,9 +1581,19 @@ class Launcher:
     def _extract_bundle_from_log(self, log_text, profile=DEFAULT_PROFILE):
         """从启动失败日志里定位"与核心不兼容的 bundle 插件"包名。
         判定条件 (都满足才算): 日志含不兼容关键字 (UPGRADE_INCOMPATIBLE_LOG_KEYWORDS);
-        堆栈里出现 node_modules/<包>/ 路径; 且该包当前在 profile 的 bundles 列表里、
-        且是 dependencies 里声明的插件 (内置 bundle 如 @deepseek-ai/dsh-base 不在
-        dependencies 中, 永不误删)。返回包名或 None。"""
+        且该包当前在 profile 的 bundles 列表里、且是 dependencies 里声明的插件
+        (内置 bundle 如 @deepseek-ai/dsh-base 不在 dependencies 中, 永不误删)。
+
+        候选提取分两级, 精确匹配优先 (避免误伤 import 语句里的包名):
+          1) 精确模式: typert-loader 错误消息里直接写的触发插件名
+             - "<包> invocation" / "typert-loader: <包>"
+             - 这是 v0.1.6+ typert-loader 新增的硬校验错误, 插件树加载阶段直接报错
+          2) 兜底模式: node_modules/<包>/ 路径匹配
+             - 适用于 module not found / SyntaxError 等老错误类型
+             - 注意: 代码 import 语句里也会出现 node_modules/xxx 路径, 可能误伤
+             - 只在精确模式没命中时才尝试
+
+        返回包名或 None。"""
         if not log_text:
             return None
         if not any(keyword in log_text for keyword in UPGRADE_INCOMPATIBLE_LOG_KEYWORDS):
@@ -1589,13 +1603,28 @@ class Launcher:
             return None
         dependencies = set(manifest.get("dependencies") or {})
         bundles = set((manifest.get("dsh") or {}).get("profile", {}).get("bundles") or [])
-        # 匹配 scoped (@deepseek-ai/x) 或普通 (x) 两种路径形态
-        package_match = re.findall(
+
+        def _match_in(candidates):
+            for pkg in candidates:
+                if pkg in bundles and pkg in dependencies:
+                    return pkg
+            return None
+
+        # 一级: 精确模式 (typert-loader 错误消息)
+        exact_patterns = [
+            r"\b([A-Za-z0-9_.-]+)\s+invocation\b",
+            r"typert-loader:\s*([A-Za-z0-9_.-]+)\b",
+        ]
+        for pat in exact_patterns:
+            candidates = re.findall(pat, log_text)
+            hit = _match_in(candidates)
+            if hit:
+                return hit
+
+        # 二级: 兜底模式 (node_modules 路径匹配, 避免了 import 误伤但需要 bundles+deps 双门禁)
+        path_candidates = re.findall(
             r"node_modules[/\\](?:@deepseek-ai[/\\])?([A-Za-z0-9_.-]+)[/\\]", log_text)
-        for package_name in package_match:
-            if package_name in bundles and package_name in dependencies:
-                return package_name
-        return None
+        return _match_in(path_candidates)
 
     def _diagnose_framework_failure(self, log_text, profile=DEFAULT_PROFILE):
         """从启动失败日志里识别"框架级故障" (vs "单个插件不兼容")。
