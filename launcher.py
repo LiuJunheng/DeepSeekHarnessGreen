@@ -1016,48 +1016,75 @@ class Launcher:
             return None
 
     def dsh_latest_version(self):
-        """查询 npm 上 @deepseek-ai/dsh 的 latest 标签版本号 (只读, 不改动本地)
-        查询失败返回 None。注意: 官方 pre-release (如 rc.8) 常发在 next 标签上,
-        用 dsh_dist_tags() 才能同时看到 latest 与 next。"""
-        npm_cli = self.find_npm_cli()
-        node_exe = self.find_node_exe()
-        if npm_cli is None or node_exe is None:
-            self.log("未找到便携 Node, 无法查询最新版本")
+        """查询 npm 上 @deepseek-ai/dsh 的 latest 标签版本号 (只读, 不改动本地)。
+        用 dsh_npm_registry_json() 直接 HTTP GET, 比 node 子进程更轻更快。
+        查询失败返回 None。"""
+        registry_data = self.dsh_npm_registry_json()
+        if not registry_data:
             return None
-        self.log("正在查询 dsh 最新版本 ...")
-        output = self._npm_view(npm_cli, node_exe,
-                                self.config["dsh_package"], "version")
-        if output:
-            self.log("npm 上最新版本 (latest): %s" % output)
-            return output
-        return None
+        latest = (registry_data.get("dist-tags") or {}).get("latest")
+        if latest:
+            self.log("npm 上最新版本 (latest): %s" % latest)
+        else:
+            self.log("npm registry 未找到 latest 标签")
+        return latest
 
     def dsh_dist_tags(self):
-        """查询 npm 上 @deepseek-ai/dsh 的 latest / next 两个 dist-tag 版本号。
-        返回 dict {"latest": str|None, "next": str|None}; 整体失败返回 None。
-        (官方发布策略: 一般正式在 latest, 预发布在 next)"""
-        npm_cli = self.find_npm_cli()
-        node_exe = self.find_node_exe()
-        if npm_cli is None or node_exe is None:
-            self.log("未找到便携 Node, 无法查询 dist-tags")
+        """查询 npm 上 @deepseek-ai/dsh 的 latest / next 两个 dist-tag, 同时带发布时间。
+        返回 dict: {"latest": {"version": str, "published_at": "YYYY-MM-DD HH:MM"},
+                    "next":   {"version": str, "published_at": "YYYY-MM-DD HH:MM"}};
+        整体失败返回 None。(官方发布策略: 一般正式在 latest, 预发布在 next)"""
+        registry_data = self.dsh_npm_registry_json()
+        if not registry_data:
             return None
-        self.log("正在查询 dsh 版本标签 (latest / next) ...")
-        output = self._npm_view(npm_cli, node_exe,
-                                self.config["dsh_package"], "dist-tags --json")
-        if not output:
-            return None
-        try:
-            tags = json.loads(output)
-        except Exception as error:
-            self.log("解析 dist-tags 失败: %s, 原始: %s" % (error, output))
-            return None
-        result = {
-            "latest": tags.get("latest"),
-            "next": tags.get("next"),
-        }
+        tags = registry_data.get("dist-tags") or {}
+        time_map = registry_data.get("time") or {}
+        result = {}
+        for tag_name in ("latest", "next"):
+            version = tags.get(tag_name)
+            if not version:
+                continue
+            published_iso = time_map.get(version, "")
+            published_at = published_iso.replace("T", " ")[:16] if published_iso else ""
+            result[tag_name] = {
+                "version": version,
+                "published_at": published_at,
+            }
         self.log("npm dist-tags: latest=%s next=%s"
-                 % (result["latest"], result["next"]))
+                 % (result.get("latest", {}).get("version"),
+                    result.get("next", {}).get("version")))
         return result
+
+    def dsh_npm_registry_json(self):
+        """直接 HTTP GET npm registry JSON (不走 node 子进程, 更轻更快)。
+        返回完整 dict (含 dist-tags / versions / time 等) 或 None。
+        用于 dsh_dist_tags / dsh_npm_versions / dsh_latest_version 复用。
+        自动跟随镜像配置 (auto 模式下走 cn 镜像, 官方源兜底)。"""
+        package_name = self.config["dsh_package"]
+        mirror, _is_auto = self.resolve_mirror()
+        registry_root = NPM_REGISTRY[mirror]
+        url = "%s/%s" % (registry_root, package_name)
+        fallback_url = NPM_REGISTRY["official"] + "/" + package_name \
+            if mirror != "official" else None
+        last_error = None
+        for try_url in (url, fallback_url):
+            if not try_url:
+                continue
+            try:
+                self.log("正在查询 npm registry: %s" % try_url)
+                request = urllib.request.Request(
+                    try_url,
+                    headers={"User-Agent": "DSH-Launcher/%s" % GREEN_VERSION})
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+                if data.get("dist-tags") or data.get("time"):
+                    return data
+                self.log("npm registry 返回数据缺少 dist-tags/time, 尝试下一个源")
+            except Exception as error:
+                last_error = error
+                self.log("npm registry 查询失败 [%s]: %s" % (try_url, error))
+        self.log("npm registry 查询全部失败: %s" % last_error)
+        return None
 
     def _dsh_tag_to_version(self, tag_name):
         """把官方 GitHub release tag 解析成版本号 (动态, 不写死标签)。
@@ -1128,30 +1155,26 @@ class Launcher:
         return results
 
     def dsh_npm_versions(self):
-        """查询 npm 上 @deepseek-ai/dsh 的**全部已发布版本号** (动态, 不写死)。
-        与 dsh_dist_tags (latest/next) 不同, 这里拿到完整版本集合,
-        用于判断某个 GitHub tag 对应的版本是否已发布到 npm (可安装)。
-        返回 set[str]; 失败返回 None"""
-        npm_cli = self.find_npm_cli()
-        node_exe = self.find_node_exe()
-        if npm_cli is None or node_exe is None:
-            self.log("未找到便携 Node, 无法查询已发布版本")
+        """查询 npm 上 @deepseek-ai/dsh 的**全部已发布版本 + 发布时间**。
+        用 dsh_npm_registry_json() 一次拿到 dist-tags/versions/time,
+        比起 node 子进程跑 npm view 更轻更快。
+        返回 dict: {version_str: "YYYY-MM-DD HH:MM"} (只含真实版本号, 不含 modified);
+        失败返回 None。调用方用 version in result 即可判断可安装,
+        result.get(version) 可拿发布时间。"""
+        registry_data = self.dsh_npm_registry_json()
+        if not registry_data:
             return None
-        self.log("正在查询 npm 已发布版本列表 ...")
-        output = self._npm_view(npm_cli, node_exe,
-                                self.config["dsh_package"], "versions --json")
-        if not output:
-            return None
-        try:
-            versions = json.loads(output)
-        except Exception as error:
-            self.log("解析 npm versions 失败: %s, 原始: %s" % (error, output))
-            return None
-        result = set()
-        for version in versions:
-            if isinstance(version, str) and version.strip():
-                result.add(version.strip())
-        latest = sorted(result)[-1] if result else "无"
+        time_map = registry_data.get("time") or {}
+        result = {}
+        # "time" 字段里除了各版本号, 还有 modified (包最后更新) 与 created (首次发布) 两个特殊 key
+        for skip_key in ("modified", "created"):
+            time_map.pop(skip_key, None)
+        for version_key, iso_ts in time_map.items():
+            if not isinstance(version_key, str) or not version_key.strip():
+                continue
+            published_at = iso_ts.replace("T", " ")[:16] if iso_ts else ""
+            result[version_key] = published_at
+        latest = sorted(result.keys())[-1] if result else "无"
         self.log("npm 已发布版本 %d 个, 最新: %s" % (len(result), latest))
         return result
 
@@ -7259,22 +7282,34 @@ def run_gui():
                         "body": body,
                         "is_current": is_current,
                     })
-                # 1) npm dist-tags: 官方定义的两条独立通道
+                # 1) npm dist-tags: 官方定义的两条独立通道 (带发布时间)
                 #    latest = 稳定正式版通道    next = 预发布/rc/alpha 通道
                 if tags:
-                    add_candidate(tags.get("latest"), "stable",
-                                  i18n.t('check_update.npm_latest'), True)
-                    add_candidate(tags.get("next"), "prerelease",
-                                  i18n.t('check_update.npm_next'), True)
+                    latest_info = tags.get("latest") or {}
+                    next_info = tags.get("next") or {}
+                    add_candidate(latest_info.get("version"), "stable",
+                                  i18n.t('check_update.npm_latest'), True,
+                                  latest_info.get("published_at", ""))
+                    add_candidate(next_info.get("version"), "prerelease",
+                                  i18n.t('check_update.npm_next'), True,
+                                  next_info.get("published_at", ""))
                 # 2) GitHub Releases 全部 tag: 历史版本, 是否可安装看 npm 有没有发
+                #    发布时间优先用 npm 的 (更准, 是实际 publish 时间), 没发过才用 GitHub tag 时间
                 if github_releases:
                     for item in github_releases:
+                        version = item["version"]
                         installable = (npm_versions is not None
-                                       and item["version"] in npm_versions)
+                                       and version in npm_versions)
                         channel = "prerelease" if item["prerelease"] else "history"
-                        source_label = i18n.t('check_update.github_prerelease') if item["prerelease"] else i18n.t('check_update.github_release')
-                        add_candidate(item["version"], channel, source_label,
-                                      installable, item["published_at"],
+                        source_label = (i18n.t('check_update.github_prerelease')
+                                        if item["prerelease"]
+                                        else i18n.t('check_update.github_release'))
+                        # 发布时间: npm 可安装版本 → npm time (更准); 否则 → GitHub tag 时间
+                        npm_publish_at = (npm_versions.get(version, "")
+                                          if npm_versions is not None else "")
+                        published = npm_publish_at or item["published_at"]
+                        add_candidate(version, channel, source_label,
+                                      installable, published,
                                       item["body"], item["tag_name"])
 
                 # 排序: 先按通道 (stable → prerelease → history), 通道内按版本从新到旧

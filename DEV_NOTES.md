@@ -123,8 +123,9 @@
 6. `crypto.randomUUID` 在 http + 非回环 IP 下用不了 → 注入基于 getRandomValues 的 polyfill。
 7. node\_modules 内所有官方文件补丁都会被 dsh 升级重装还原 → 一律在 install\_dsh + start\_server 双点幂等重打。
 8. **官方 dsh「npm 与 GitHub 不同步」，只查 npm dist-tags 会漏更新**：官方每个版本发 GitHub（tag `dsh-v<ver>`）但不一定同步 npm；源码 tag 无法直接安装（ETARGET）。检测必须同时拉 GitHub Releases 全 tag + npm 全版本（见第二节）。
+9. **npm registry JSON 比 `npm view` 更全更快**：`GET https://registry.npmjs.org/<pkg>` 返回完整 `dist-tags` / `versions` / `time`（每个版本的发布时间戳），一次 HTTP GET 顶三次 node 子进程。`time` 里有三个特殊 key（`modified`=包最后更新 / `created`=首次发布 / 各版本号），解析时要把前两个跳过。2026-09-17 起 `dsh_latest_version` / `dsh_dist_tags` / `dsh_npm_versions` 全改用 `dsh_npm_registry_json()` helper，顺手解决了「npm dist-tags 行没发布时间」的老问题。镜像源自动跟随 resolve_mirror，npmmirror 与官方源都返回完整 time 数据。
 
-9. **DeepSeek 官方模型 id 与定价会"静默换挡"，任何硬编码都会过期（2026-09-10 实证）**：官方 2026-08-17 起改峰谷定价，2026-09-10 12:00（北京时间）起再下调 Flash 系列——命中 0.10→**0.04** / 未命中 3.0→**2.0** / 输出 9.0→**8.0**（元 / 每百万 tokens，均为高峰价；空闲时段为表中一半，V4-Pro 本档未变：0.30 / 9.0 / 27.0）。同时**主力 id 换成 `deepseek-flash`（= DeepSeek-V4.1-Flash，1M 上下文 / 384K 最大输出 / 支持图片）**：`deepseek-v4-flash` 与 `deepseek-v4-flash-vision-exp` **已退役**（请求仍受理，由 V4.1-Flash 服务并按 Flash 计价），`deepseek-v4-pro` 自 **2026-09-14 12:00** 起也整批路由到 V4.1-Flash并按 Flash 计费。三类后果与处置：
+10. **DeepSeek 官方模型 id 与定价会"静默换挡"，任何硬编码都会过期（2026-09-10 实证）**：官方 2026-08-17 起改峰谷定价，2026-09-10 12:00（北京时间）起再下调 Flash 系列——命中 0.10→**0.04** / 未命中 3.0→**2.0** / 输出 9.0→**8.0**（元 / 每百万 tokens，均为高峰价；空闲时段为表中一半，V4-Pro 本档未变：0.30 / 9.0 / 27.0）。同时**主力 id 换成 `deepseek-flash`（= DeepSeek-V4.1-Flash，1M 上下文 / 384K 最大输出 / 支持图片）**：`deepseek-v4-flash` 与 `deepseek-v4-flash-vision-exp` **已退役**（请求仍受理，由 V4.1-Flash 服务并按 Flash 计价），`deepseek-v4-pro` 自 **2026-09-14 12:00** 起也整批路由到 V4.1-Flash并按 Flash 计费。三类后果与处置：
 
    * ① **会话 `message.source.model` 记的是"当时"的 id** → 价格表键名对不上就静默掉进 `fallback` 算错钱。默认表必须把三个 Flash 系 id 并到同一单价、并保留 v4-pro 自身单价到退役完成。
    * ② **DSH 包内置目录仍公布退役 id**：`@deepseek-ai/dsh-llm-deepseek` 的 `DEFAULT_MODELS` 仍列 4 条（含 3 个退役 id），WebUI 模型选择器照旧展示，其中 v4-pro 的 description 还写着"更强、更贵"，9-14 之后属**误导**（9-10 实测 `latest` = `next` = 已装的 `0.1.5-rc.1`，无新版可升）。
@@ -132,7 +133,7 @@
    * ③ **`@deepseek-ai/dsh-acp-app/cordis.patch.yml` 仍硬编码 `model: deepseek-v4-flash`**（自动化 ACP 入口，非 WebUI）。同为 node_modules 内官方文件 → 只记录、不手改，随官方 dsh 版本跟进。
    * **内置插件里只允许 `plugins/dsh-usage-stats/lib/client.js` 一处持有价格表**。改价时必须**四件套一起改**：价格值 + 模型键名 + `PRICES_KEY` 版本号（`v3`→`v4`，否则老浏览器 localStorage 里的旧表继续盖住新默认值）+ 插件 README。**教训**：任何"默认值"若被持久化层（localStorage / settings）优先读取，改默认值必须同时升 key 版本，否则改了等于没改。
 
-10. **官方 v0.1.6-alpha.1（2026-09-15 GitHub pre-release，npm 走 alpha tag）兼容性审计：无需改任何代码**。破坏性变更逐项核对：
+11. **官方 v0.1.6-alpha.1（2026-09-15 GitHub pre-release，npm 走 alpha tag）兼容性审计：无需改任何代码**。破坏性变更逐项核对：
    * **全不沾边**：项目无 PTC / workflow / E2B / Ralph 引用；插件无 `agent/session-start` 或 `agent/created` 钩子；无人调用被弃用的 `snapshotEvents` / `eventAt` / `ownEvents`（dsh-session-rewind 是直接读盘 session.jsonl 跨版本容错解码，dsh-usage-stats 走官方推荐的异步 `sessionQuery.readSurface`/`traceSession`）；无插件实现 `SandboxProvider.confine` / `ShellExecutor.start`；无插件清理被移动的 request-images 缓存；launcher.py 从不写 `llm-deepseek.api.baseURL`（只同步 settings.yaml 的 locale.preference）。
    * **文档提示级**：v0.1.6 起 DeepSeek 默认走 Messages 协议 + Files API 复用图片。若用户手动配过旧官方根地址（`llm-deepseek.api.baseURL = https://api.deepseek.com`），需删掉或改为 `https://api.deepseek.com/anthropic`。启动器与内置插件从未写过该配置，无需改代码，发版说明提示即可。
    * **观察项（本次不动作，后续版本再看）**：dsh-file-browser 客户端用的 `sessions.provideInfo` / `resolveAgentScope`（已有 0.1.1/0.1.2 兼容分支）；dsh-session-import 写 `attachments/v1/objects` 路径（Files API 复用是新增、不删旧路径）；dsh-archive-purge 与官方新增"设置→已归档会话列表"功能重叠（互补不冲突）；官方修复轮次分叉语义 → dsh-session-rewind 的 `sessions.fork` 行为更准（利好）。
