@@ -65,36 +65,57 @@ window.__ModuleLoader__.load({
 		const ROUTE_LIST = "/__dsh/usage-stats/list";
 		const ROUTE_DETAIL = "/__dsh/usage-stats/detail";
 		const ROUTE_BALANCE = "/__dsh/usage-stats/balance";
+		const ROUTE_PRICING = "/__dsh/usage-stats/pricing";
+		const ROUTE_PRICING_REFRESH = "/__dsh/usage-stats/pricing-refresh";
 		const GUARD_HEADER = "X-DSH-Usage-Stats";
-		// 价格表键名版本 v3 -> v4: 2026-09-10 官方下调 Flash 系列价格, 且主力 id 由
-		// 退役的 deepseek-v4-flash 变为 deepseek-flash。不升版本号的话, 老浏览器
-		// localStorage 里的旧 v3 表会一直盖住新默认值 (loadPrices 优先读 localStorage)。
-		const PRICES_KEY = "dsh.usageStats.prices.v4";
+		// 价格表键名版本 v3 -> v4 -> v5: v5 起价格结构升级为两档三桶 (offPeak/peak x cacheHit/cacheMiss/output),
+		// 与后端 /pricing 返回的官方表结构一致, 可无缝覆盖。旧 localStorage 结构不兼容, 升版本号避免盖住新默认值。
+		const PRICES_KEY = "dsh.usageStats.prices.v5";
+		// 高峰窗口 (UTC 小时, 半开区间): 对应北京时间 9:00-12:00 与 14:00-18:00。
+		const PEAK_WINDOWS = [
+			{ start: 1, end: 4 },
+			{ start: 6, end: 10 },
+		];
+		// 周末全谷价生效时刻 (UTC): 2026-08-23 (周日) 00:00 北京时间起, 北京周六/周日全天不再区分峰谷。
+		const WEEKEND_OFFPEAK_EFFECTIVE_AT = "2026-08-22T16:00:00Z";
 
 		/**
-		 * 默认价格表 (单位: 元 / 每百万 tokens)。
-		 * 参考 DeepSeek 官方定价 (api-docs.deepseek.com/zh-cn/quick_start/pricing/, 2026-09-10 抓取),
-		 * 默认取【高峰时段】价格 (北京时间周一至周五 9:00-12:00 / 14:00-18:00, 高峰为低谷 2 倍):
-		 *   deepseek-flash      (DeepSeek-V4.1-Flash):      命中 0.04 / 未命中 2.0 / 输出 8.0
-		 *   deepseek-v4-pro     (DeepSeek-V4-Pro-0813):     命中 0.30 / 未命中 9.0 / 输出 27.0
-		 * 官方口径 (2026-09-10 12:00 北京时间起生效):
-		 *   1) deepseek-flash 是当前唯一在售主力 id; 旧的 deepseek-v4-flash /
-		 *      deepseek-v4-flash-vision-exp 已退役, 请求由 V4.1-Flash 服务并按 Flash 计价,
-		 *      故三者共用同一单价 (历史会话里的旧 id 也能算对)。
-		 *   2) deepseek-v4-pro 自 2026-09-14 12:00 起也整批路由到 V4.1-Flash 并按 Flash
-		 *      计价; 本表先保留其自身单价, 待退役完成后再按实际账单调整。
-		 * 注: 本表默认高峰价, 费用估算偏保守 (空闲时段实际是表中一半),
-		 * 用户可自行按实际价格/时段修改 (前端价格表可编辑并保存)。
-		 * 字段: miss=输入未命中缓存, hit=输入命中缓存, out=输出。
+		 * 默认价格表 (单位: 元 / 每百万 tokens, 2026-09-21 实抓官方中文定价页)。
+		 * 结构: 每个模型含 offPeak(低谷/空闲) 与 peak(高峰) 两档三桶 (cacheHit/cacheMiss/output),
+		 * 与后端 priceState.table 同构。官方口径: 高峰 = 低谷 2 倍, 周末全天低谷价。
+		 * 模型 id 说明: deepseek-flash 为当前主力 id (DeepSeek-V4.1-Flash); 历史/退役 id
+		 * (deepseek-v4-flash / deepseek-v4-flash-vision-exp / deepseek-v4.1-flash) 由 flash 服务并按
+		 * flash 计价, 故三者共用同一单价。deepseek-v4-pro 自 2026-09-14 起也路由到 flash 计价,
+		 * 本表先保留其自身单价, 待退役完成后按实际账单调整。
+		 * 字段: cacheMiss=输入未命中缓存, cacheHit=输入命中缓存, output=输出。
 		 */
 		const DEFAULT_PRICES = {
 			models: {
-				"deepseek-flash": { miss: 2.0, hit: 0.04, out: 8.0 },
-				"deepseek-v4-flash": { miss: 2.0, hit: 0.04, out: 8.0 },
-				"deepseek-v4-flash-vision-exp": { miss: 2.0, hit: 0.04, out: 8.0 },
-				"deepseek-v4-pro": { miss: 9.0, hit: 0.30, out: 27.0 },
+				"deepseek-flash": {
+					offPeak: { cacheHit: 0.02, cacheMiss: 1, output: 4 },
+					peak: { cacheHit: 0.04, cacheMiss: 2, output: 8 },
+				},
+				"deepseek-v4-flash": {
+					offPeak: { cacheHit: 0.02, cacheMiss: 1, output: 4 },
+					peak: { cacheHit: 0.04, cacheMiss: 2, output: 8 },
+				},
+				"deepseek-v4-flash-vision-exp": {
+					offPeak: { cacheHit: 0.02, cacheMiss: 1, output: 4 },
+					peak: { cacheHit: 0.04, cacheMiss: 2, output: 8 },
+				},
+				"deepseek-v4.1-flash": {
+					offPeak: { cacheHit: 0.02, cacheMiss: 1, output: 4 },
+					peak: { cacheHit: 0.04, cacheMiss: 2, output: 8 },
+				},
+				"deepseek-v4-pro": {
+					offPeak: { cacheHit: 0.15, cacheMiss: 4.5, output: 13.5 },
+					peak: { cacheHit: 0.30, cacheMiss: 9, output: 27 },
+				},
 			},
-			fallback: { miss: 2.0, hit: 0.04, out: 8.0 },
+			fallback: {
+				offPeak: { cacheHit: 0.02, cacheMiss: 1, output: 4 },
+				peak: { cacheHit: 0.04, cacheMiss: 2, output: 8 },
+			},
 		};
 
 		// ---- 工具 ----
@@ -149,14 +170,30 @@ window.__ModuleLoader__.load({
 			}
 		}
 
-		/** 取某模型的单价 (缺失用 fallback) */
-		function priceOf(prices, model) {
-			const p = prices.models[model] || prices.fallback;
-			return {
-				miss: num(p.miss),
-				hit: num(p.hit),
-				out: num(p.out),
-			};
+		/**
+		 * 用官方表更新当前价格 (「从官方更新价格」按钮 / 首次静默同步用)。
+		 * 规则 (对齐"用户手动编辑优先"): 官方表里已有的模型用官方新价; 用户手动添加、
+		 * 官方表里没有的自定义模型保留; 不写 localStorage (用户没再点保存前, 本地表仍是旧的,
+		 * 避免静默覆盖用户手改价——只有显式点「保存价格」才落盘)。
+		 */
+		function loadPricesFromOfficial(officialTable) {
+			const official = JSON.parse(JSON.stringify(officialTable || DEFAULT_PRICES));
+			if (!official.models || typeof official.models !== "object") return JSON.parse(JSON.stringify(DEFAULT_PRICES));
+			// 把用户本地保存的自定义模型 (官方表没有的) 并进去。
+			let local = null;
+			try {
+				const raw = localStorage.getItem(PRICES_KEY);
+				if (raw) local = JSON.parse(raw);
+			} catch (e) { local = null; }
+			if (local && local.models && typeof local.models === "object") {
+				for (const model of Object.keys(local.models)) {
+					if (!Object.prototype.hasOwnProperty.call(official.models, model)) {
+						official.models[model] = local.models[model];
+					}
+				}
+			}
+			official.fallback = JSON.parse(JSON.stringify((officialTable && officialTable.fallback) || DEFAULT_PRICES.fallback));
+			return official;
 		}
 
 		function num(v) {
@@ -164,19 +201,61 @@ window.__ModuleLoader__.load({
 			return Number.isFinite(n) && n >= 0 ? n : 0;
 		}
 
+		/** 北京周六/周日全谷区间 (UTC ms 起始), 非周末/生效前返回 null。 */
+		function weekendZoneAt(atMs) {
+			if (typeof atMs !== "number" || !isFinite(atMs) || atMs < Date.parse(WEEKEND_OFFPEAK_EFFECTIVE_AT)) return null;
+			const beijingDay = Math.floor((atMs + 8 * 3600000) / 86400000);
+			const weekday = (beijingDay + 4) % 7; // 0=周日 … 6=周六
+			if (weekday !== 6 && weekday !== 0) return null;
+			const saturdayDay = weekday === 6 ? beijingDay : beijingDay - 1;
+			return {
+				start: Math.max(saturdayDay * 86400000 - 8 * 3600000, Date.parse(WEEKEND_OFFPEAK_EFFECTIVE_AT)),
+				end: (saturdayDay + 2) * 86400000 - 8 * 3600000,
+			};
+		}
+
+		/** 是否处于高峰时段 (周末全谷优先; 未过生效门槛的旧时刻按低谷). 与后端 isPeakHour 同口径. */
+		function isPeakHour(atMs) {
+			const weekend = weekendZoneAt(atMs);
+			if (weekend !== null) return false;
+			if (typeof atMs !== "number" || !isFinite(atMs)) return false;
+			const hour = new Date(atMs).getUTCHours();
+			for (const windowEntry of PEAK_WINDOWS) {
+				if (hour >= windowEntry.start && hour < windowEntry.end) return true;
+			}
+			return false;
+		}
+
+		/**
+		 * 取某模型的当前生效档三桶 (按此刻峰谷): 命中 presence.peak/offPeak, 缺失回退 fallback。
+		 * 兼容只有一档 (无 offPeak/peak 子档) 的旧条目: 直接回退条目本身。
+		 */
+		function priceOf(prices, model, atMs) {
+			const nowMs = (typeof atMs === "number" && isFinite(atMs)) ? atMs : Date.now();
+			const p = (prices.models && prices.models[model]) || prices.fallback;
+			if (!p) return { cacheHit: 0, cacheMiss: 0, output: 0 };
+			const tier = isPeakHour(nowMs) ? (p.peak || p) : (p.offPeak || p);
+			return {
+				cacheHit: num(tier.cacheHit),
+				cacheMiss: num(tier.cacheMiss),
+				output: num(tier.output),
+			};
+		}
+
 		/**
 		 * 按单价估算一次用量的费用 (对齐 DeepSeek 官方计费口径):
 		 *   费用 = 输入(未命中缓存) × 未命中单价 + 输入(命中缓存) × 命中单价 + 输出 × 输出单价
 		 *   其中输入未命中 = inputTokens + cacheWriteTokens (首次写入缓存的输入按未命中价计费);
 		 *   思考(reasoning) token 已计入 outputTokens, 不重复计费。
+		 * atMs 缺省按当前时刻取峰谷档 (消息行「本次token」用)。
 		 */
-		function costOf(usage, prices, model) {
+		function costOf(usage, prices, model, atMs) {
 			if (!usage) return 0;
-			const p = priceOf(prices, model);
+			const p = priceOf(prices, model, atMs);
 			return (
-				((num(usage.inputTokens) + num(usage.cacheWriteTokens)) / 1e6) * p.miss +
-				(num(usage.cacheReadTokens) / 1e6) * p.hit +
-				(num(usage.outputTokens) / 1e6) * p.out
+				((num(usage.inputTokens) + num(usage.cacheWriteTokens)) / 1e6) * p.cacheMiss +
+				(num(usage.cacheReadTokens) / 1e6) * p.cacheHit +
+				(num(usage.outputTokens) / 1e6) * p.output
 			);
 		}
 
@@ -267,8 +346,10 @@ window.__ModuleLoader__.load({
 		}
 
 		// ---- 价格表编辑 ----
+		// 价格结构 v5: 每模型 { offPeak: {cacheHit,cacheMiss,output}, peak: {...} } 两档三桶,
+		// 编辑器按「低谷/高峰」切换编辑档位 (默认高峰, 与第三方插件峰谷提示一致)。
 
-		function PriceEditor({ prices, setPrices, onChange }) {
+		function PriceEditor({ prices, setPrices, onChange, officialInfo, onRefreshOfficial, refreshing }) {
 		const [i18nTick, setI18nTick] = react.useState(0);
 		react.useEffect(() => {
 			const handler = () => setI18nTick(t => t + 1);
@@ -276,40 +357,67 @@ window.__ModuleLoader__.load({
 			return () => document.removeEventListener('dsh-i18n-change', handler);
 		}, []);
 			const [draft, setDraft] = react.useState(prices);
+			const [editTier, setEditTier] = react.useState("peak"); // 当前编辑档位: peak | offPeak
 			const [newName, setNewName] = react.useState("");
 			const [newMiss, setNewMiss] = react.useState("");
 			const [newHit, setNewHit] = react.useState("");
 			const [newOut, setNewOut] = react.useState("");
 
+			// 兼容旧一档条目 (无 offPeak/peak 子档): 取条目自身作为任意档的表现体。
+			const tierOf = (entry) => {
+				if (!entry) return { offPeak: { cacheHit: 0, cacheMiss: 0, output: 0 }, peak: { cacheHit: 0, cacheMiss: 0, output: 0 } };
+				if (!entry.offPeak && !entry.peak) return { offPeak: entry, peak: entry };
+				return {
+					offPeak: entry.offPeak || entry,
+					peak: entry.peak || entry,
+				};
+			};
+			const currentTierOf = (entry) => tierOf(entry)[editTier];
+
 			const setRow = (model, field, value) => {
-				setDraft((prev) => ({
-					...prev,
-					models: { ...prev.models, [model]: { ...(prev.models[model] || prev.fallback), [field]: value } },
-				}));
+				setDraft((prev) => {
+					const next = { ...prev, models: { ...prev.models } };
+					const tiers = tierOf(next.models[model] || prev.fallback);
+					tiers[editTier] = { ...tiers[editTier], [field]: value };
+					next.models[model] = tiers;
+					return next;
+				});
 			};
 			const setFallback = (field, value) => {
-				setDraft((prev) => ({ ...prev, fallback: { ...prev.fallback, [field]: value } }));
+				setDraft((prev) => {
+					const tiers = tierOf(prev.fallback);
+					tiers[editTier] = { ...tiers[editTier], [field]: value };
+					return { ...prev, fallback: tiers };
+				});
 			};
 
 			const save = () => {
-				const next = {
-					models: {},
-					fallback: { miss: num(draft.fallback.miss), hit: num(draft.fallback.hit), out: num(draft.fallback.out) },
+				const normalize = (entry) => {
+					const tiers = tierOf(entry);
+					const norm = (t) => ({
+						cacheHit: num(t.cacheHit),
+						cacheMiss: num(t.cacheMiss),
+						output: num(t.output),
+					});
+					return { offPeak: norm(tiers.offPeak), peak: norm(tiers.peak) };
 				};
+				const next = { models: {}, fallback: normalize(draft.fallback) };
 				for (const model of Object.keys(draft.models)) {
-					next.models[model] = { miss: num(draft.models[model].miss), hit: num(draft.models[model].hit), out: num(draft.models[model].out) };
+					next.models[model] = normalize(draft.models[model]);
 				}
 				savePrices(next);
 				setPrices(next);
+				setDraft(next);
 				onChange(next);
 			};
 
 			const addModel = () => {
 				const name = newName.trim();
 				if (!name) return;
+				const value = { cacheHit: num(newHit), cacheMiss: num(newMiss), output: num(newOut) };
 				setDraft((prev) => ({
 					...prev,
-					models: { ...prev.models, [name]: { miss: num(newMiss), hit: num(newHit), out: num(newOut) } },
+					models: { ...prev.models, [name]: { offPeak: { ...value }, peak: { ...value } } },
 				}));
 				setNewName("");
 				setNewMiss("");
@@ -345,8 +453,49 @@ window.__ModuleLoader__.load({
 			};
 			const th = { padding: "6px 10px", textAlign: "left", fontSize: 12, color: "var(--dsw-alias-label-secondary)", borderBottom: "1px solid var(--dsw-alias-border-l2)" };
 			const td = { padding: "4px 10px", fontSize: 12, color: "var(--dsw-alias-label-primary)" };
+			const tierBtn = (tier, label) => react.createElement("button", {
+				key: tier,
+				type: "button",
+				style: {
+					padding: "3px 10px",
+					fontSize: 12,
+					cursor: "pointer",
+					borderRadius: 4,
+					border: "1px solid var(--dsw-alias-border-l2)",
+					background: editTier === tier ? "var(--dsw-specific-input-major)" : "transparent",
+					color: "var(--dsw-alias-label-primary)",
+					fontWeight: editTier === tier ? 600 : 400,
+				},
+				onClick: () => setEditTier(tier),
+			}, label);
+
+			const tierSwitch = react.createElement("div", { key: "tier", style: { display: "flex", gap: 6, alignItems: "center" } }, [
+				tierBtn("peak", _dsht("plugin.usage_stats.price_tier_peak", "高峰时段")),
+				tierBtn("offPeak", _dsht("plugin.usage_stats.price_tier_offpeak", "低谷时段")),
+			]);
+
+			// 价格来源徽标 + 从官方更新价格按钮 (仅后端可达时显示)
+			const sourceBadge = react.createElement("span", {
+				key: "src",
+				style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)", alignSelf: "center" },
+			}, (officialInfo && officialInfo.source === "official"
+				? _dsht("plugin.usage_stats.price_source_official", "官方同步") +
+					(officialInfo.fetchedAt ? " · " + fmtTime(Date.parse(officialInfo.fetchedAt)) : "")
+				: _dsht("plugin.usage_stats.price_source_bundled", "内置默认价")));
+			const refreshBtn = react.createElement("button", {
+				key: "refresh",
+				type: "button",
+				disabled: refreshing,
+				onClick: () => { if (onRefreshOfficial) onRefreshOfficial(); },
+				style: { padding: "4px 12px", cursor: refreshing ? "default" : "pointer", fontSize: 12 },
+			}, refreshing ? _dsht("plugin.usage_stats.btn_updating", "更新中…") : _dsht("plugin.usage_stats.btn_refresh_prices", "从官方更新价格"));
 
 			return react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, [
+				react.createElement("div", { key: "head", style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } }, [
+					tierSwitch,
+					refreshBtn,
+					sourceBadge,
+				]),
 				react.createElement("table", { key: "tbl", style: { borderCollapse: "collapse", width: "100%", maxWidth: 560 } }, [
 					react.createElement("thead", { key: "h" },
 						react.createElement("tr", { key: "r" },
@@ -362,13 +511,13 @@ window.__ModuleLoader__.load({
 							react.createElement("tr", { key: model },
 								react.createElement("td", { style: { ...td, fontFamily: "Consolas, Menlo, monospace" } }, model),
 								react.createElement("td", { style: td },
-									react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: draft.models[model].miss, onChange: (e) => setRow(model, "miss", e.target.value) })
+									react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: currentTierOf(draft.models[model]).cacheMiss, onChange: (e) => setRow(model, "cacheMiss", e.target.value) })
 								),
 								react.createElement("td", { style: td },
-									react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: draft.models[model].hit, onChange: (e) => setRow(model, "hit", e.target.value) })
+									react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: currentTierOf(draft.models[model]).cacheHit, onChange: (e) => setRow(model, "cacheHit", e.target.value) })
 								),
 								react.createElement("td", { style: td },
-									react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: draft.models[model].out, onChange: (e) => setRow(model, "out", e.target.value) })
+									react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: currentTierOf(draft.models[model]).output, onChange: (e) => setRow(model, "output", e.target.value) })
 								),
 								react.createElement("td", { style: td },
 									react.createElement("button", { type: "button", style: { fontSize: 11, cursor: "pointer", color: "var(--dsw-alias-state-error-primary)", border: "none", background: "transparent" }, onClick: () => removeModel(model) }, _dsht("plugin.usage_stats.price_btn_del", "删"))
@@ -378,13 +527,13 @@ window.__ModuleLoader__.load({
 						react.createElement("tr", { key: "__fallback__" },
 							react.createElement("td", { style: { ...td, fontWeight: 600 } }, _dsht("plugin.usage_stats.price_fallback", "其他模型（兜底）")),
 							react.createElement("td", { style: td },
-								react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: draft.fallback.miss, onChange: (e) => setFallback("miss", e.target.value) })
+								react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: currentTierOf(draft.fallback).cacheMiss, onChange: (e) => setFallback("cacheMiss", e.target.value) })
 							),
 							react.createElement("td", { style: td },
-								react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: draft.fallback.hit, onChange: (e) => setFallback("hit", e.target.value) })
+								react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: currentTierOf(draft.fallback).cacheHit, onChange: (e) => setFallback("cacheHit", e.target.value) })
 							),
 							react.createElement("td", { style: td },
-								react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: draft.fallback.out, onChange: (e) => setFallback("out", e.target.value) })
+								react.createElement("input", { type: "number", min: 0, step: "0.01", style: inputStyle, value: currentTierOf(draft.fallback).output, onChange: (e) => setFallback("output", e.target.value) })
 							),
 							react.createElement("td", { style: td }, "")
 						),
@@ -405,7 +554,7 @@ window.__ModuleLoader__.load({
 					react.createElement("button", { key: "save", type: "button", style: { padding: "4px 14px", cursor: "pointer", fontSize: 12 }, onClick: save }, _dsht("plugin.usage_stats.price_btn_save", "保存价格")),
 					react.createElement("button", { key: "reset", type: "button", style: { padding: "4px 14px", cursor: "pointer", fontSize: 12 }, onClick: reset }, _dsht("plugin.usage_stats.price_btn_reset", "恢复默认")),
 					react.createElement("span", { key: "tip", style: { fontSize: 11, color: "var(--dsw-alias-label-tertiary)", alignSelf: "center" } },
-						_dsht("plugin.usage_stats.price_hint", "单价 = 元 / 每百万 tokens；费用 = 输入(未命中)×单价 + 输入(命中)×单价 + 输出×单价，思考 token 已计入输出不重复计费；默认按 DeepSeek 官方高峰时段价（北京 9:00-12:00 / 14:00-18:00，高峰为低谷 2 倍），请按实际价格/时段修改")
+						_dsht("plugin.usage_stats.price_hint", "单价 = 元 / 每百万 tokens；费用 = 输入(未命中)×单价 + 输入(命中)×单价 + 输出×单价，思考 token 已计入输出不重复计费；高峰/低谷两档按官方规则计（北京周一至周五 9:00-12:00 / 14:00-18:00 为高峰，其余含周末为低谷，高峰为低谷 2 倍），可通过「从官方更新价格」获取最新官方价；手动保存的价格会覆盖官方价")
 					),
 				]),
 			]);
@@ -640,6 +789,10 @@ window.__ModuleLoader__.load({
 			const [detailBusy, setDetailBusy] = react.useState(false);
 			const [balance, setBalance] = react.useState(null);          // 真实余额响应 (含 ok/configured/balance/error)
 			const [balanceBusy, setBalanceBusy] = react.useState(false); // 余额加载/刷新中标志
+			const [todayData, setTodayData] = react.useState(null);      // 今日消耗 (后端按事件时刻/峰谷聚合)
+			const [daysData, setDaysData] = react.useState(null);        // 近 60 天每日序列 (热力图)
+			const [priceInfo, setPriceInfo] = react.useState(null);      // { source, fetchedAt, currentTier }
+			const [priceBusy, setPriceBusy] = react.useState(false);     // 官方价格刷新中标志
 			const loadedRef = react.useRef(false);
 
 			if (prices === null) {
@@ -653,6 +806,11 @@ window.__ModuleLoader__.load({
 					const payload = await getJson(ROUTE_LIST);
 					setSessions(Array.isArray(payload.sessions) ? payload.sessions : []);
 					setDetail(null);
+					setTodayData(payload.today || null);
+					setDaysData(Array.isArray(payload.days) ? payload.days : null);
+					if (payload.price) {
+						setPriceInfo(payload.price);
+					}
 				} catch (err) {
 					setError(_dsht("plugin.usage_stats.err_load", "加载失败: ") + String((err && err.message) || err));
 				} finally {
@@ -672,10 +830,33 @@ window.__ModuleLoader__.load({
 				}
 			}, []);
 
+			// 从官方定价页刷新价格表; 成功则更新状态与来源徽标, 失败保留现有表不崩。
+			// 注意: 必须在本组件内定义于首次加载块之前 (const 声明的 useCallback 在定义前引用会触发 TDZ 报错)。
+			const refreshOfficialPrices = react.useCallback(async () => {
+				setPriceBusy(true);
+				try {
+					const payload = await (await fetch(ROUTE_PRICING_REFRESH, { headers: { [GUARD_HEADER]: "1" } })).json().catch(() => null);
+					if (payload && payload.ok === true) {
+						if (payload.table) setPrices(loadPricesFromOfficial(payload.table));
+						if (payload.source || payload.fetchedAt || payload.currentTier) {
+							setPriceInfo({
+								source: payload.source,
+								fetchedAt: payload.fetchedAt,
+								currentTier: payload.currentTier,
+							});
+						}
+					}
+				} catch (err) { /* 忽略: 保留现有价格表 */ } finally {
+					setPriceBusy(false);
+				}
+			}, []);
+
 			if (!loadedRef.current) {
 				loadedRef.current = true;
 				loadList();
 				loadBalance(false);
+				// 静默拉一次官方价: 刷新价格表为默认 (不落 localStorage, 用户手改优先)。
+				refreshOfficialPrices();
 			}
 
 			const toggleDetail = async (sessionId) => {
@@ -796,6 +977,152 @@ window.__ModuleLoader__.load({
 				]);
 			})();
 
+			// ---- 今日消耗卡 (后端按事件时刻/峰谷聚合) ----
+			const todayCard = (() => {
+				if (todayData === null) return null;
+				const headerChildren = [
+					react.createElement("span", { key: "t", style: { fontSize: 13, fontWeight: 600, color: "var(--dsw-alias-label-primary)" } }, _dsht("plugin.usage_stats.label_today_cost", "今日消耗")),
+				];
+				if (priceInfo && priceInfo.currentTier === "peak") {
+					headerChildren.push(react.createElement("span", { key: "tier", style: { fontSize: 11, marginLeft: 8, color: "var(--dsw-alias-state-warn-primary)", fontWeight: 500 } }, _dsht("plugin.usage_stats.tier_peak_now", "当前高峰时段")));
+				} else {
+					headerChildren.push(react.createElement("span", { key: "tier", style: { fontSize: 11, marginLeft: 8, color: "var(--dsw-alias-state-success-primary)", fontWeight: 500 } }, _dsht("plugin.usage_stats.tier_offpeak_now", "当前低谷时段")));
+				}
+				return react.createElement("div", { key: "todaycard", style: cardStyle }, [
+					react.createElement("div", { key: "h", style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 } }, [
+						react.createElement("span", { key: "ct", style: { display: "flex", alignItems: "center" } }, headerChildren),
+					]),
+					react.createElement("div", { key: "b", style: { display: "flex", gap: 24, flexWrap: "wrap", fontSize: 12 } }, [
+						statCell(_dsht("plugin.usage_stats.label_cost", "估算费用"), fmtCost(todayData.cost)),
+						statCell(_dsht("plugin.usage_stats.label_input", "输入"), fmtInt(todayData.input)),
+						statCell(_dsht("plugin.usage_stats.label_output_short", "输出"), fmtInt(todayData.output)),
+						statCell(_dsht("plugin.usage_stats.label_cache", "缓存"), fmtInt(todayData.cacheRead + todayData.cacheWrite)),
+						statCell(_dsht("plugin.usage_stats.label_reasoning", "思考推理"), fmtInt(todayData.reasoning)),
+						statCell(_dsht("plugin.usage_stats.label_today_calls", "调用数"), fmtInt(todayData.calls)),
+					]),
+				]);
+			})();
+
+			// ---- 近 180 天热力图 (GitHub 风格, 支持横向滚动 + 日期标注) ----
+			const heatmapCard = (() => {
+				if (!Array.isArray(daysData) || daysData.length === 0) return null;
+				// 找出最大日费用 (空天不计), 用于颜色 5 档分级。
+				let maxCost = 0;
+				for (const day of daysData) {
+					const cost = Number(day && day.cost) || 0;
+					if (cost > maxCost) maxCost = cost;
+				}
+				const levelOf = (cost) => {
+					if (!(cost > 0) || maxCost <= 0) return 0;
+					const ratio = cost / maxCost;
+					if (ratio > 0.75) return 4;
+					if (ratio > 0.5) return 3;
+					if (ratio > 0.25) return 2;
+					return 1;
+				};
+				const cells = daysData.map((day) => {
+					const cost = Number(day && day.cost) || 0;
+					return { date: day.date, cost, tokens: (Number(day.input) || 0) + (Number(day.output) || 0) };
+				});
+				// 按真实星期对齐成 [7][] 周网格: rowIndex = 星期几 (0=周日 … 6=周六),
+				// 列 = 周, 每格存 { date: "YYYY-MM-DD", cell } 或 null (该周该星期无数据)。
+				// 用北京时区判定星期几 (后端 localDayKey 同为北京时区)。
+				const weekdayOf = (dateStr) => {
+					const utcMs = Date.parse(dateStr + "T00:00:00Z");
+					const beijingMs = utcMs + 8 * 3600000;
+					return new Date(beijingMs).getUTCDay(); // 0=周日 … 6=周六
+				};
+				const monthOf = (dateStr) => {
+					const parts = String(dateStr).split("-");
+					return parts.length === 3 ? parts[1] : "";
+				};
+				const columns = [];
+				for (const cell of cells) {
+					const columnIndex = columns.length - 1;
+					if (columnIndex < 0 || columns[columnIndex].length >= 7) {
+						columns.push([]);
+					}
+					columns[columns.length - 1].push(cell);
+				}
+				// columns[i] = 该周的 cell 数组 (按日期顺序), 补齐为 7 行 (周日至周六)。
+				const grid = columns.map((column) => {
+					const rows = new Array(7).fill(null);
+					for (const cell of column) {
+						rows[weekdayOf(cell.date)] = cell;
+					}
+					return rows;
+				});
+				const colorLevels = ["var(--dsw-alias-bg-secondary)", "#2e7d32", "#66bb6a", "#aed581", "#fbc02d"];
+				const weekdayChinese = ["日", "一", "二", "三", "四", "五", "六"];
+				const cellBox = (cell, rowIndex) => {
+					// 该周该星期无数据 (如首/末列不完整): 空白兜底, 防访问属性抛错。
+					const cellSafe = cell || { date: "_empty", cost: 0, tokens: 0 };
+					const styleCell = {
+						width: 12,
+						height: 12,
+						borderRadius: 2,
+						background: cellSafe.cost > 0 ? colorLevels[levelOf(cellSafe.cost)] : "var(--dsw-alias-bg-secondary)",
+						margin: 1,
+					};
+					return react.createElement("div", {
+						key: cellSafe.date,
+						style: styleCell,
+						title: _dsht("plugin.usage_stats.heatmap_tip", "{date}: ¥{cost} · {tokens} tokens").replace("{date}", cellSafe.date).replace("{cost}", (cellSafe.cost || 0).toFixed(4)).replace("{tokens}", fmtInt(cellSafe.tokens)),
+					});
+				};
+				// 顶部月份标注: 每列取该周第一个有数据的 cell 的月份, 变化时显示 (跨月处)。
+				const monthLabels = [];
+				let lastMonth = "";
+				for (let index = 0; index < grid.length; index += 1) {
+					const firstCell = grid[index].find((cell) => cell !== null);
+					const month = firstCell ? monthOf(firstCell.date) : "";
+					monthLabels.push(month !== "" && month !== lastMonth ? month : "");
+					if (month !== "") lastMonth = month;
+				}
+				const cellSize = 14; // 12px 方块 + 2px margin
+				return react.createElement("div", { key: "heatmap", style: cardStyle }, [
+					react.createElement("div", { key: "h", style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 } }, [
+						react.createElement("span", { key: "t", style: { fontSize: 13, fontWeight: 600, color: "var(--dsw-alias-label-primary)" } }, _dsht("plugin.usage_stats.label_heatmap", "近 180 天消耗热力图")),
+					]),
+					// 可横向滚动容器 (等宽网格超出面板宽度时出现滚动条)。
+					react.createElement("div", { key: "scroll", style: { overflowX: "auto", width: "100%", paddingBottom: 4 } }, [
+						react.createElement("div", { key: "inner", style: { display: "flex", width: 26 + (grid.length - 1) * cellSize + cellSize } }, [
+							// 左侧固定星期列 (日~六)
+							react.createElement("div", { key: "wklbl", style: { display: "flex", flexDirection: "column", marginRight: 6 } },
+								[].concat(["", ...weekdayChinese]).map((label, index) =>
+									react.createElement("span", {
+										key: "wk" + index,
+										style: { width: 14, height: 14, fontSize: 9, lineHeight: "14px", textAlign: "center", color: "var(--dsw-alias-label-tertiary)" },
+									}, label)
+								)
+							),
+							// 网格区
+							react.createElement("div", { key: "gridwrap", style: { display: "flex", flexDirection: "column" } }, [
+								// 月份标注行
+								react.createElement("div", { key: "months", style: { display: "flex", height: 14, fontSize: 9, color: "var(--dsw-alias-label-tertiary)" } },
+									monthLabels.map((label, index) =>
+										react.createElement("span", { key: "mo" + index, style: { width: cellSize, fontSize: 9, overflow: "hidden", whiteSpace: "nowrap" } }, label)
+									)
+								),
+								// 周 → 7 行 (周日至周六), 每行列宽等宽
+								react.createElement("div", { key: "weeks" }, grid.map((rows, columnIndex) =>
+									react.createElement("div", { key: "col" + columnIndex, style: { display: "flex", flexDirection: "column", float: "left" } },
+										rows.map((cell, rowIndex) => cellBox(cell, rowIndex))
+									)
+								)),
+							]),
+						]),
+					]),
+					react.createElement("div", { key: "legend", style: { marginTop: 6, fontSize: 11, color: "var(--dsw-alias-label-tertiary)", display: "flex", alignItems: "center", gap: 4 } }, [
+						react.createElement("span", { key: "l0" }, _dsht("plugin.usage_stats.heatmap_legend", "少")),
+						...colorLevels.map((color, index) =>
+							react.createElement("span", { key: "lc" + index, style: { display: "inline-block", width: 10, height: 10, borderRadius: 2, background: color, margin: "0 1px" } })
+						),
+						react.createElement("span", { key: "l1" }, _dsht("plugin.usage_stats.heatmap_legend_more", "多")),
+					]),
+				]);
+			})();
+
 			return react.createElement("div", { style: rootStyle }, [
 				react.createElement("p", { key: "title", style: titleStyle }, _dsht("plugin.usage_stats.title", "用量统计")),
 				react.createElement("p", { key: "desc", style: descStyle },
@@ -806,6 +1133,10 @@ window.__ModuleLoader__.load({
 
 				// 真实余额卡 (位于总览上方)
 				balanceCard,
+
+				// 今日消耗卡 + 近 60 天热力图
+				todayCard,
+				heatmapCard,
 
 				// 总览
 				overview !== null && react.createElement("div", { key: "ov", style: cardStyle }, [
@@ -835,7 +1166,14 @@ window.__ModuleLoader__.load({
 				react.createElement("details", { key: "prices", style: cardStyle }, [
 					react.createElement("summary", { key: "s", style: { cursor: "pointer", fontWeight: 600, fontSize: 13, color: "var(--dsw-alias-label-primary)" } }, _dsht("plugin.usage_stats.label_price_table", "价格表（费用估算用）")),
 					react.createElement("div", { key: "b", style: { marginTop: 8 } },
-						prices !== null && react.createElement(PriceEditor, { prices, setPrices, onChange: (next) => setPrices(next) })
+						prices !== null && react.createElement(PriceEditor, {
+							prices,
+							setPrices,
+							onChange: (next) => setPrices(next),
+							officialInfo: priceInfo,
+							onRefreshOfficial: refreshOfficialPrices,
+							refreshing: priceBusy,
+						})
 					),
 				]),
 
@@ -942,6 +1280,12 @@ window.__ModuleLoader__.load({
 			const useChat = props.useChat;
 			const matched = props.matched;
 
+			// 兼容两代 turnTail 插槽 owner 结构 (官方 0.1.6 契约变更):
+			//   - 旧版: owner.matched = { turn: number }
+			//   - 新版: owner.turn = TurnLocation 对象 (turn: number, start/end 事件), owner.seq 为 closing seq
+			const turnObj = (matched && matched.turn) || props.turn;
+			const turnNum = typeof turnObj === "number" ? turnObj : (turnObj && typeof turnObj.turn === "number" ? turnObj.turn : null);
+
 			// 真实余额 (DeepSeek 账户)/预估消耗一起展示: 需在条件 return 之前声明 hook, 保证 hooks 顺序稳定
 			const [balance, setBalance] = react.useState(null);
 			react.useEffect(() => {
@@ -961,8 +1305,6 @@ window.__ModuleLoader__.load({
 			// 防御: standard kit 缺失时静默不渲染 (0.1.2+ 提供 useChat, rc.6 提供 useSession)
 			if ((!useSession || typeof useSession !== "function") && (!useChat || typeof useChat !== "function")) return null;
 
-			const turnObj = matched && matched.turn;
-			const turnNum = typeof turnObj === "number" ? turnObj : (turnObj && typeof turnObj.turn === "number" ? turnObj.turn : null);
 			if (turnNum === null) return null;
 
 			// 取会话/聊天数据: 0.1.2+ 用 useChat (ChatSnapshot: chat.legacy.nodes / chat.nodes),

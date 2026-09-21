@@ -238,3 +238,37 @@ URL.revokeObjectURL(objectUrl);
 
 - **版本日期纪律**：`GREEN_VERSION_DATE` 必须是制作当天，哪怕一天发两个版本，也**不预写未来日期**
 
+## 十一、用量/费用类插件的通用经验（dsh-usage-stats 2026-09 升级）
+
+### 官方定价页零依赖拉取
+
+- DeepSeek 官方定价页 `https://api-docs.deepseek.com/zh-cn/quick_start/pricing`（中文页 = 人民币元，英文页 = $；解析器正则兼容两者关键词 `空闲时段/高峰时段` 与 `OFF-PEAK/PEAK`）是**服务端预渲染**，`fetch` 拿到 HTML 即可正则解析，**不需要 cheerio/jsdom**。
+- 解析套路（三连环正则）：`/<table[\s\S]*?<\/table>/gi` 拆表 → `/<tr[\s\S]*?<\/tr>/gi` 拆行 → `/<t[dh][^>]*>[\s\S]*?<\/t[dh]>/gi` 拆格。去掉 HTML 标签与实体后即为纯文本。
+- 表头行 `[模型, <id>...]` 用 `/deepseek-[a-z0-9_.-]+/i` 提取 id；计价行每指标（缓存命中/未命中/输出）下先 `空闲时段` 后 `高峰时段` 两行，**高峰行无指标标签**（rowspan 合并）→ 需沿用上一行的指标。
+- 启动时静默 `fetch`+解析，失败**静默回退内置表**（不抛错、不阻塞插件注册）。价格结构两档三桶 `{offPeak, peak} x {cacheHit, cacheMiss, output}`。
+
+### 峰谷计费（高峰 = 低谷 2 倍，周末全谷）
+
+- 高峰窗口按 **UTC 小时** `[{1,4},{6,10}]` = 北京 9:00-12:00 / 14:00-18:00。
+- 周末（北京周六/周日，2026-08-22T16:00Z 起生效）全天谷价优先于窗口。
+- **按每条消息的 `time`（epoch ms）判峰谷**——所以费用计算必须在后端扫码时做（后端有事件 time），前端只按"当前时刻"估消息行费用。
+
+### 按日聚合（今日消耗 / 热力图）
+
+- 北京时区日键 = `new Date(ms + 8h)` 取日期，`Math.floor((ms + 8*3600000)/86400000)` 算日 index（1970-01-01 是周四，`(day+4)%7` 得周几）。
+- 每条 `assistant/message` 事件带 `time` + `data.usage`（inputTokens/outputTokens/cacheReadTokens/cacheWriteTokens/reasoningTokens），按日累加后即可出"今日消耗"与近 180 天热力图。
+- 热力图 GitHub 风格：最近 N 天（180 天分 ~26 周，7 行 × 26 列），**横向滚动容器**（`overflowX:auto` + 网格区固定等宽列）；顶部跨月处标注月份、左侧固定星期列（日~六）；颜色按当日 cost 相对最大值 5 档分级（`ratio>0.75/0.5/0.25`），悬停 title 显示日期+费用+tokens。
+
+### 官方插槽契约变更（升级 dsh 后消息行/会话级插件失效的高频根因）
+
+- **`conversation.chat.turnTail` owner 结构在 0.1.6 变了**：旧版 `owner.matched = { turn: number }`，新版 `owner.turn = TurnLocation 对象`（含 `.turn: number`、`.start/.end` 事件）+ `owner.seq`（closing seq）+ `owner.openFile`（[slots.d.ts 的 TurnTailOwnerProps](D:\DeepSeekHarnessLauncher\runtime\dsh\node_modules\@deepseek-ai\dsh-client-ui-chat\lib\types\client\contract\slots.d.ts)）。**组件里不能再只读 `props.matched.turn`**，要兼容两种：`(matched && matched.turn) || props.turn`，再解 `typeof turnObj === "number" ? turnObj : turnObj.turn`。否则升级后消息行"本次token/费用/余额"静默不显示（返回 null 不渲染，无报错）。
+- **官方快照 hook 仍经 scope 标准 props 注入**（`PropsRuntime = Owner & KeyProps & SlotInjectFace & ScopeStandardProps`），`useChat`/`useSession` 不需要插件自带——插件组件照常从 `props.useChat` 取。快照 `chat.legacy.nodes`（AssistantMessageNode 数组，含 `turn: number`、`usage`）在 0.1.6 仍由 `event.data.usage` 填充，官方 StatsPills 同源，可放心用。
+- **排查方法**：设置面板正常但消息行消失 → 优先怀疑插槽 owner / snapshot 契约变化，直接读官方 `dsh-client-ui-chat` 的 `slots.d.ts` 与 `TurnTailNodeView` 里 `renderSlot(...)` 传入的字段（在 `runtime/dsh/node_modules/@deepseek-ai/`，不在 profile 的 node_modules）。
+- **另一高频根因（客户端渲染崩溃→整面板空白）**：`const` 声明的 `useCallback` 若在**定义之前**被调用（如 `if (!loadedRef.current) { refreshOfficialPrices(); }` 放在定义前）→ TDZ `ReferenceError`；以及数组越界 `cells[idx]` 为 `undefined` 后直接访问 `cell.cost` → TypeError。**热力图末列不足一周、组件初始化块引用后定义的回调，都要兜底**（`cell || 默认对象`、把回调定义移到调用前）。
+
+### 存储/兼容避坑
+
+- session 日志文件 `session.v3.jsonl.zstd`（文件名带版本段），内部结构 = zstd 多帧 + 每行 JSONL，与旧版 `session.jsonl.zstd` 完全一致——**扫目录按候选列表挑最高优先级**（`session.v*.jsonl.zstd` > `session.jsonl.zstd` > `session.jsonl`），未来加 v4 也不用改。
+- 前端价格表 localStorage key 若升级结构（如 v4→v5 两档），**必须升 key 名前缀**，否则旧表永远盖住新默认值。
+- 用户手动编辑的价格永远优先：官方同步只更新"内置默认档"，不写 localStorage；前端点「保存价格」才落盘覆盖。`loadPricesFromOfficial()` 合并官方表 + 保留用户自定义模型（官方表没有的键）。
+
