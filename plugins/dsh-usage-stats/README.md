@@ -4,13 +4,15 @@
 
 | 功能面 | 位置 | 内容 |
 |--------|------|------|
-| **用量统计面板** | 设置 → 用量统计 | 全会话 token 合计 / 估算费用 / 按模型分布；可编辑价格表；会话卡片列表 + 逐回合明细 |
-| **消息行「本次token」** | 对话消息行上方 | 每条已完成助手消息上方常驻显示该回合实际消耗的 token：`本次token：输入(未命中) X · 输入(命中缓存) Y · 输出 Z · 思考 R`（与价格表同口径） |
+| **用量统计面板** | 设置 → 用量统计 | 官方价自动同步（峰谷分档）+ 今日消耗 + 近 180 天热力图 + 全会话 token 合计 / 估算费用 / 按模型分布；可编辑价格表；会话卡片列表 + 逐回合明细 |
+| **消息行「本次token」** | 对话消息行上方 | 每条已完成助手消息上方常驻显示该回合实际消耗的 token：`本次token：输入(未命中) X · 输入(命中缓存) Y · 输出 Z · 思考 R`（与价格表同口径，按事件时刻区分峰谷计费） |
 
 ## 功能一：设置页「用量统计」
 
+- **今日消耗卡**：页顶展示**今日（北京时区）总消耗**——估算费用 / 输入 / 输出 / 缓存 / 思考推理 / 调用数，并标注**当前处于高峰还是低谷时段**。后端按每条 `assistant/message` 事件的 `time`（计费时刻）做峰谷分档聚合，节假日/高峰低谷切换无需手工改价。
+- **近 180 天热力图**：GitHub 风格消耗热力图，每格一天，颜色按当天费用 5 档分级（无热度格子也有细边框、清晰可分）；**按自然周对齐**（周日为列首，整天连续不错位）、**支持横向滚动**查看更多历史、悬停显示日期 + 费用 + tokens，顶部标注月份。
 - **总览卡片**：全会话合计（会话数 / 回合总数 / 输入 / 输出 / 缓存读取 / 缓存写入 / 思考推理 tokens + 估算费用），以及**按模型**的分布。
-- **价格表（可编辑）**：费用估算用单价（元 / 每百万 tokens），按 **DeepSeek 官方计费口径**分三列——**输入（未命中缓存）** / **输入（命中缓存）** / **输出**；支持增删模型行、编辑价格、恢复默认；保存在浏览器 localStorage（键 `dsh.usageStats.prices.v4`），仅本浏览器生效。默认值为**官方高峰价**（`deepseek-flash` / `deepseek-v4-pro`，2026-09-10 抓取，估算偏保守），请按实际价格及时段修改。
+- **价格表（可编辑）**：费用估算用单价（元 / 每百万 tokens），按 **DeepSeek 官方计费口径**、**峰谷两档 × 三桶**——高峰档 / 低谷档，各分**输入（未命中缓存）** / **输入（命中缓存）** / **输出**。**自动从官方定价页同步价格模型**：后端首次访问/手动点「刷新官方价格」时拉取官方定价页并解析（失败静默回退内置表），前端可一键刷新、按需修改与恢复默认；保存在浏览器 localStorage（键 `dsh.usageStats.prices.v5`），仅本浏览器生效。默认值是内置的**官方价格快照**（`deepseek-flash` / `deepseek-v4-pro`），随时可「刷新官方价格」更新。
 - **会话列表（卡片式）**：每会话一张卡片——标题独占整行（完整换行显示）、下方会话 ID、再下方元信息 chips（工作区 / 回合 / 输入 / 输出 / 缓存 / 估算费用，自动换行）；点「**明细**」在卡片内展开**逐回合**卡片（用户消息独占整行完整阅读，下方回合号 / 步骤 / 工具调用 / 输出 tk / 估算 / 模型 / 完成状态）。
 - **余额卡（DeepSeek 实时）**：页顶展示**账户真实余额**（总余额 / 充值余额 / 赠金余额 / API 是否可用），由后端用配置的 API Key 调官方 `/user/balance` 接口实时获取（非估算），可点「刷新余额」手动更新；未配置 Key 或查询失败会给出对应提示。
 - **刷新统计**按钮手动重新扫描。
@@ -40,22 +42,25 @@
 
 - 直接扫描 `DSH_HOME/sessions/**/session.jsonl.zstd`（zstd 多帧）。解码用自包含的 `adoptPhysicalRow` 跨版本容错处理（忽略 `ignorable`、折叠 v3 的 `surfaceOp.op==="replace"` 旧事件区间、按 seq 收纳），不依赖 `@deepseek-ai/dsh-session` 的内部导出（`decodeStorageRecord` 在 0.1.5-alpha v3 已移除），与 `dsh-session-rewind` 同一套机制。
 - 统计对象是每条 `assistant/message` 事件里的 `usage` 字段：`inputTokens` / `outputTokens` / `cacheReadTokens` / `cacheWriteTokens` / `reasoningTokens`；模型名取 `message.source.model`。
-## 费用计算口径（对齐 DeepSeek 官方）
+## 费用计算口径（对齐 DeepSeek 官方 · 峰谷计费）
 
 - 日志**不包含费用**，本插件按价格表估算，仅供成本参考，请以服务商账单为准。
 - **公式**：`费用 = 输入(未命中缓存) × 未命中单价 + 输入(命中缓存) × 命中单价 + 输出 × 输出单价`，各项 token 数 ÷ 1e6 × 单价（元/每百万 tokens）。
 - **字段映射**：`inputTokens + cacheWriteTokens`（首次写入缓存的输入按未命中价计费）→ 未命中列；`cacheReadTokens` → 命中列；`outputTokens` → 输出列。
 - **思考 token**：`reasoningTokens` 已计入 `outputTokens`（DeepSeek 输出总量含思考），**不重复计费**。
-- 参考：[DeepSeek 官方模型 & 价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)（**2026-09-10 抓取**：主力 `deepseek-flash`（DeepSeek-V4.1-Flash）高峰 命中 0.04 / 未命中 2.0 / 输出 8.0 元每百万 tokens；`deepseek-v4-pro` 高峰 0.30 / 9.0 / 27.0。官方为峰谷定价——高峰北京周一至周五 9:00-12:00 / 14:00-18:00，高峰为低谷 2 倍；**插件默认取高峰价（估算偏保守）**，前端价格表可改，请按实际价格/时段修改）。
-- **模型 id 退役与并价（2026-09 官方调整，重要）**：当前在售主力 id 是 **`deepseek-flash`**（= DeepSeek-V4.1-Flash，1M 上下文 / 384K 最大输出 / 支持图片）。旧的 `deepseek-v4-flash` 与 `deepseek-v4-flash-vision-exp` **已退役**，请求仍受理但由 V4.1-Flash 服务、按 Flash 价计费；`deepseek-v4-pro` 自 **2026-09-14 12:00（北京时间）** 起也整批路由到 V4.1-Flash 并按 Flash 价计费。因此默认价格表把三个 Flash 系 id 并到同一单价，保留 `deepseek-v4-pro` 自身单价直到退役完成，避免历史会话与当前会话算错费用。
+- **峰谷分档（按事件时刻选价）**：每条 `assistant/message` 记有 `time`（计费时刻），后端判断该时刻是否处于 **高峰时段** 然后选 `peak` / `offPeak` 档价格再计费。高峰时段：北京周一至周五 9:00-12:00 / 14:00-18:00（即 UTC `[1,4)` 与 `[6,10)`）；周末（周六 0:00 — 周日 24:00，北京时区）**全天按低谷价**（官方 2026-08-22T16:00Z 生效）；高峰价为低谷价 2 倍。
+- **价格来源（自动同步官方）**：默认内置官方价格快照；后端首次访问、或前端点「刷新官方价格」时，实时拉取 [DeepSeek 官方模型 & 价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/) 解析出 `offPeak` / `peak` 两档三桶价格存进内存表（8 秒超时；解析/网络失败静默回退内置表，不阻断页面）。内置快照值：主力 `deepseek-flash`（DeepSeek-V4.1-Flash）低谷 命中 0.02 / 未命中 1.0 / 输出 4.0，高峰为低谷 2 倍；`deepseek-v4-pro` 高峰 0.30 / 9.0 / 27.0（低谷减半）。
+- **模型 id 退役与并价（2026-09 官方调整，重要）**：当前在售主力 id 是 **`deepseek-flash`**（= DeepSeek-V4.1-Flash，1M 上下文 / 384K 最大输出 / 支持图片）。旧的 `deepseek-v4-flash` 与 `deepseek-v4-flash-vision-exp` **已退役**，请求仍受理但由 V4.1-Flash 服务、按 Flash 价计费；`deepseek-v4-pro` 自 **2026-09-14 12:00（北京时间）** 起也整批路由到 V4.1-Flash 并按 Flash 价计费。因此价格表把三个 Flash 系 id 并到同一单价，保留 `deepseek-v4-pro` 自身单价直到退役完成，避免历史会话与当前会话算错费用。
 
 ## 接口（宿主端）
 
 | 路由 | 说明 |
 |------|------|
-| `GET /__dsh/usage-stats/list` | 全部会话的用量汇总（每会话按模型聚合；解码失败会带 `error` 字段） |
+| `GET /__dsh/usage-stats/list` | 全部会话的用量汇总（每会话按模型聚合）+ 顶层 `price` / `today` / `days`（近 180 天按日聚合，含峰谷分档费用）；解码失败会带 `error` 字段 |
 | `GET /__dsh/usage-stats/detail?id=<会话ID>` | 单个会话的逐回合明细 + 全会话汇总 |
 | `GET /__dsh/usage-stats/balance` | DeepSeek 账户真实余额（后端持 Key 调官方 `/user/balance`） |
+| `GET /__dsh/usage-stats/pricing` | 当前价格表（含 `source`=官方/内置、`fetchedAt`、`currentTier`=当前时段高峰/低谷） |
+| `GET /__dsh/usage-stats/pricing-refresh` | 强制重新拉取官方定价页并更新价格表 |
 
 均要求自定义头 `X-DSH-Usage-Stats: 1` 防跨站触发（跨域请求无法携带该头）。
 

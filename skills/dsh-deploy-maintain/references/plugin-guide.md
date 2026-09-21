@@ -258,6 +258,7 @@ URL.revokeObjectURL(objectUrl);
 - 北京时区日键 = `new Date(ms + 8h)` 取日期，`Math.floor((ms + 8*3600000)/86400000)` 算日 index（1970-01-01 是周四，`(day+4)%7` 得周几）。
 - 每条 `assistant/message` 事件带 `time` + `data.usage`（inputTokens/outputTokens/cacheReadTokens/cacheWriteTokens/reasoningTokens），按日累加后即可出"今日消耗"与近 180 天热力图。
 - 热力图 GitHub 风格：最近 N 天（180 天分 ~26 周，7 行 × 26 列），**横向滚动容器**（`overflowX:auto` + 网格区固定等宽列）；顶部跨月处标注月份、左侧固定星期列（日~六）；颜色按当日 cost 相对最大值 5 档分级（`ratio>0.75/0.5/0.25`），悬停 title 显示日期+费用+tokens。
+- **热力图必须按"自然周"对齐，不能按"每满 7 个切一列"的顺序切块**——后者会把自然周从周中切开（如首日起于周三则周三~周二错位，9/13-16 后面跟 9/10-12 这样的跳跃）。正确做法：以第一个日期所在周的周日为基准（`firstSundayBase = dayBaseOf(cells[0].date) - weekdayOf(cells[0].date)`），每个 cell 用 `Math.floor((dayBase - firstSundayBase)/7)` 归周列、`weekdayOf(cell.date)`（0=周日…6=周六）归行，填入 `grid[weekIndex][rowIndex]`。空格子（首/末列不完整）用 `cell || {date:"_empty",...}` 兜底并给 `1px` 细边框（`boxSizing:"border-box"` 保持格子不撑大），无热度也能一眼看出是一个个格子。
 
 ### 官方插槽契约变更（升级 dsh 后消息行/会话级插件失效的高频根因）
 

@@ -1024,53 +1024,55 @@ window.__ModuleLoader__.load({
 					const cost = Number(day && day.cost) || 0;
 					return { date: day.date, cost, tokens: (Number(day.input) || 0) + (Number(day.output) || 0) };
 				});
-				// 按真实星期对齐成 [7][] 周网格: rowIndex = 星期几 (0=周日 … 6=周六),
-				// 列 = 周, 每格存 { date: "YYYY-MM-DD", cell } 或 null (该周该星期无数据)。
-				// 用北京时区判定星期几 (后端 localDayKey 同为北京时区)。
+				// 按【自然周】(周日为一周起点) 对齐成网格: 列 = 自然周, 行 = 星期几 (0=周日 … 6=周六)。
+				// 关键: 不能用"每满 7 个切一列"的纯顺序切块——那会把自然周从周中切开, 日期错位。
+				// 用第一个日期所在周的周日作为基准, 每个 cell 按度过多少天归入正确的周列。
 				const weekdayOf = (dateStr) => {
 					const utcMs = Date.parse(dateStr + "T00:00:00Z");
 					const beijingMs = utcMs + 8 * 3600000;
 					return new Date(beijingMs).getUTCDay(); // 0=周日 … 6=周六
 				};
+				const dayMsOf = (dateStr) => Date.parse(dateStr + "T00:00:00Z");
+				const dayBaseOf = (dateStr) => Math.floor((dayMsOf(dateStr) + 8 * 3600000) / 86400000); // 北京日历日 index
+				// 第一个日期所在那一周的周日 (北京日历日 index)。
+				const firstDayBase = dayBaseOf(cells[0].date);
+				const firstWeekday = weekdayOf(cells[0].date);
+				const firstSundayBase = firstDayBase - firstWeekday;
+				// 遍历 (cells 按日期升序且无缺天): 每个 cell 归入 {(dayBase-firstSundayBase)/7} 列的星期几行。
+				const grid = [];
+				for (const cell of cells) {
+					const dayBase = dayBaseOf(cell.date);
+					const weekIndex = Math.floor((dayBase - firstSundayBase) / 7);
+					const rowIndex = weekdayOf(cell.date);
+					if (grid[weekIndex] === void 0) grid[weekIndex] = new Array(7).fill(null);
+					grid[weekIndex][rowIndex] = cell;
+				}
+				const colorLevels = ["var(--dsw-alias-bg-secondary)", "#2e7d32", "#66bb6a", "#aed581", "#fbc02d"];
+				const weekdayChinese = ["日", "一", "二", "三", "四", "五", "六"];
+				const cellBox = (cell, rowIndex) => {
+						// 该周该星期无数据 (如首/末列不完整): 空白兜底, 防访问属性抛错。
+						const cellSafe = cell || { date: "_empty", cost: 0, tokens: 0 };
+						const styleCell = {
+							width: 12,
+							height: 12,
+							boxSizing: "border-box", // 边框不撑大格子, 保持 12px 网格对齐
+							borderRadius: 2,
+							// 空格子用透明底 + 细边框, 让每个格子清晰可分; 有热度时填色。
+							background: cellSafe.cost > 0 ? colorLevels[levelOf(cellSafe.cost)] : "transparent",
+							border: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.35))",
+							margin: 1,
+						};
+						return react.createElement("div", {
+							key: cellSafe.date,
+							style: styleCell,
+							title: _dsht("plugin.usage_stats.heatmap_tip", "{date}: ¥{cost} · {tokens} tokens").replace("{date}", cellSafe.date).replace("{cost}", (cellSafe.cost || 0).toFixed(4)).replace("{tokens}", fmtInt(cellSafe.tokens)),
+						});
+					};
+				// 顶部月份标注: 每列取该周第一个有数据的 cell 的月份, 变化时显示 (跨月处)。
 				const monthOf = (dateStr) => {
 					const parts = String(dateStr).split("-");
 					return parts.length === 3 ? parts[1] : "";
 				};
-				const columns = [];
-				for (const cell of cells) {
-					const columnIndex = columns.length - 1;
-					if (columnIndex < 0 || columns[columnIndex].length >= 7) {
-						columns.push([]);
-					}
-					columns[columns.length - 1].push(cell);
-				}
-				// columns[i] = 该周的 cell 数组 (按日期顺序), 补齐为 7 行 (周日至周六)。
-				const grid = columns.map((column) => {
-					const rows = new Array(7).fill(null);
-					for (const cell of column) {
-						rows[weekdayOf(cell.date)] = cell;
-					}
-					return rows;
-				});
-				const colorLevels = ["var(--dsw-alias-bg-secondary)", "#2e7d32", "#66bb6a", "#aed581", "#fbc02d"];
-				const weekdayChinese = ["日", "一", "二", "三", "四", "五", "六"];
-				const cellBox = (cell, rowIndex) => {
-					// 该周该星期无数据 (如首/末列不完整): 空白兜底, 防访问属性抛错。
-					const cellSafe = cell || { date: "_empty", cost: 0, tokens: 0 };
-					const styleCell = {
-						width: 12,
-						height: 12,
-						borderRadius: 2,
-						background: cellSafe.cost > 0 ? colorLevels[levelOf(cellSafe.cost)] : "var(--dsw-alias-bg-secondary)",
-						margin: 1,
-					};
-					return react.createElement("div", {
-						key: cellSafe.date,
-						style: styleCell,
-						title: _dsht("plugin.usage_stats.heatmap_tip", "{date}: ¥{cost} · {tokens} tokens").replace("{date}", cellSafe.date).replace("{cost}", (cellSafe.cost || 0).toFixed(4)).replace("{tokens}", fmtInt(cellSafe.tokens)),
-					});
-				};
-				// 顶部月份标注: 每列取该周第一个有数据的 cell 的月份, 变化时显示 (跨月处)。
 				const monthLabels = [];
 				let lastMonth = "";
 				for (let index = 0; index < grid.length; index += 1) {
