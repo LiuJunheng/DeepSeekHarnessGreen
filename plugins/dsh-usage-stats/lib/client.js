@@ -1382,11 +1382,15 @@ window.__ModuleLoader__.load({
 			    }, 50);
 			    }
 
+			// 消息行「本次token」显示: 注册到官方 conversation.chat.turnTail (list 型插槽)。
+			// 注意 (0.1.6 契约): list 型插槽必须给 id, 否则 register 抛 SlotAssemblyError
+			// 被 SlotErrorBoundary 吞掉 → 静默不渲染。list 不走 select, 组件直接收到
+			// ownerProps { turn: TurnLocation对象, seq, openFile } + 标准 hook props (useChat/useSession)。
 			ctx.slots.inject("conversation.chat.turnTail", () => ctx.slots.register(
 				{
 					name: "conversation.chat.turnTail",
+					id: "dsh-usage-stats-turn-tail",
 					priority: -10,
-					select: (owner) => ({ turn: owner.turn, seq: owner.seq }),
 				},
 				(props) => react.createElement(TurnTokens, props),
 			));
