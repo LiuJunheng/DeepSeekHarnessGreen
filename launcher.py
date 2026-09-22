@@ -3095,60 +3095,90 @@ class Launcher:
         return env
 
     def _apply_language_preference(self):
-        """把启动器 config.json 的 language 写入 DSH settings.yaml 的 locale.preference。
+        """把启动器 config.json 的 language 写入 DSH profile 的 cordis.patch.yml。
 
-        DSH LocaleRuntime 初始化时优先读后端 settings 存储的 preference 字段
-        (settings.yaml → locale → preference), 没有才 fallback 到 navigator.languages。
-        每次启动 DSH 前调用, 让 WebUI 以启动器语言为初始语言;
-        用户在 WebUI Settings 里再切换则由 DSH 自己持久化覆盖, 下次启动器启动又会覆盖回来。
+        DSH v0.1.7+ (2026-09) 起, 插件配置持久化由 Cordis 框架直接写入
+        profile 目录下的 cordis.patch.yml (每个插件一个 - id / name / config 条目),
+        旧 settings.yaml 只在首次导入时读一次, 之后不再生效。
+        本函数把 locale.preference 写成一个 id=locale 的 patch entry,
+        DSH LocaleRuntime 启动时会从 Cordis 配置树自动读到。
+        每次启动 DSH 前调用, 让 WebUI 以启动器语言为初始语言。
         """
         launcher_lang = self.config.get("language", "zh")
         if launcher_lang not in ("zh", "en"):
             launcher_lang = "zh"
 
-        settings_path = os.path.join(DSH_HOME_DIR, "settings.yaml")
-        os.makedirs(DSH_HOME_DIR, exist_ok=True)
-
-        # 读现有内容 (不存在则空串)
-        existing = ""
-        if os.path.isfile(settings_path):
-            try:
-                with open(settings_path, "r", encoding="utf-8") as f:
-                    existing = f.read()
-            except Exception:
-                existing = ""
-
-        # 正则替换 locale 段里的 preference 值
-        # 匹配: locale: 换行 + 缩进空格 + preference: 任意
-        pattern = r'(^locale:\s*\n(\s+)preference:\s*)([^\n#]+)'
-        import re as _re
-        new_content, count = _re.subn(
-            pattern,
-            lambda m: m.group(1) + launcher_lang,
-            existing,
-            count=1,
-            flags=_re.MULTILINE,
-        )
-
-        if count == 1:
-            # 替换成功, 看值有没有真的变化
-            if _re.search(r'^locale:\s*\n\s+preference:\s*' + _re.escape(launcher_lang) + r'\s*$',
-                          new_content, _re.MULTILINE):
-                self.log("语言同步: settings.yaml locale.preference = %s" % launcher_lang)
-            else:
-                self.log("语言同步: settings.yaml 替换后未匹配, 可能值仍是旧的")
-        else:
-            # locale 段不存在, 追加到文件末尾
-            if existing and not existing.endswith("\n"):
-                existing += "\n"
-            new_content = existing + "\nlocale:\n  preference: %s\n" % launcher_lang
-            self.log("语言同步: 新建 settings.yaml locale.preference = %s" % launcher_lang)
+        # cordis.patch.yml 路径: DSH_HOME_DIR/profiles/{DEFAULT_PROFILE}/cordis.patch.yml
+        profile_dir_path = os.path.join(DSH_HOME_DIR, "profiles", DEFAULT_PROFILE)
+        patch_yml_path = os.path.join(profile_dir_path, "cordis.patch.yml")
+        os.makedirs(profile_dir_path, exist_ok=True)
 
         try:
-            with open(settings_path, "w", encoding="utf-8") as f:
-                f.write(new_content)
+            import yaml
+        except ImportError:
+            # PyInstaller 打包版可能没带 PyYAML; 内置 Python (start.bat) 已 pip install,
+            # 但 EXE 模式下 PyInstaller 不会自动收集 yaml 子模块 (libyaml 等)。
+            # 兜底: 记录日志后跳过, 不阻断启动流程。
+            self.log("语言同步: PyYAML 未安装, 跳过 cordis.patch.yml 写入 (请在 PyInstaller 打包时 --collect-all pyyaml)")
+            return
+
+        # 读现有 patch 列表 + 保留文件前导注释 (PyYAML 会丢, 需要手动截取)
+        leading_comments = ""   # 以 # 开头或空行的前导文本, 写回时拼在最前
+        patch_entries = []
+        if os.path.isfile(patch_yml_path):
+            try:
+                with open(patch_yml_path, "r", encoding="utf-8") as fh:
+                    raw_text = fh.read()
+                # 从第一个非注释/非空行开始切分 —— 切出来的就是 patch 列表正文
+                first_data_index = 0
+                for idx, line in enumerate(raw_text.splitlines(True)):
+                    stripped = line.lstrip()
+                    if stripped.startswith("#") or stripped == "":
+                        first_data_index = idx + 1
+                        continue
+                    else:
+                        break
+                leading_comments = "".join(raw_text.splitlines(True)[:first_data_index])
+                # 只有真的提取到了注释行, 才确保末尾有换行 (避免加出一个多余空行)
+                if leading_comments and not leading_comments.endswith("\n"):
+                    leading_comments += "\n"
+                patch_entries = yaml.safe_load(raw_text) or []
+                if not isinstance(patch_entries, list):
+                    # 顶层不是 list, 放弃解析, 当作空列表重建
+                    self.log("语言同步: cordis.patch.yml 顶层不是 list, 将重建 locale entry")
+                    patch_entries = []
+            except Exception as error:
+                self.log("语言同步: 读 cordis.patch.yml 失败 (%s), 将重建 locale entry" % error)
+                patch_entries = []
+
+        # 找 id=locale 的 entry, 更新或追加
+        found_entry = None
+        for entry in patch_entries:
+            if isinstance(entry, dict) and entry.get("id") == "locale":
+                found_entry = entry
+                break
+
+        if found_entry is not None:
+            found_entry.setdefault("config", {})["preference"] = launcher_lang
+            action_label = "更新"
+        else:
+            patch_entries.append({
+                "id": "locale",
+                "config": {"preference": launcher_lang},
+            })
+            action_label = "新增"
+
+        # 写回 YAML —— 先拼前导注释, 再 dump patch list (default_flow_style=False 块格式)
+        try:
+            dumped = yaml.dump(patch_entries, allow_unicode=True,
+                               default_flow_style=False, sort_keys=False)
+            # yaml.dump 末尾自带换行; leading_comments 也确保以 \n 结尾
+            full_content = leading_comments + dumped
+            with open(patch_yml_path, "w", encoding="utf-8") as fh:
+                fh.write(full_content)
+            self.log("语言同步: %s cordis.patch.yml locale.preference = %s" % (action_label, launcher_lang))
         except Exception as error:
-            self.log("语言同步: 写 settings.yaml 失败: %s" % error)
+            self.log("语言同步: 写 cordis.patch.yml 失败: %s" % error)
 
     def ensure_runtime_dirs(self):
         """确保 runtime 下的所有目录与本地配置文件存在"""
