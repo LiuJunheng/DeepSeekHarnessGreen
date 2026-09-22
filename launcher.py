@@ -3119,7 +3119,7 @@ class Launcher:
             # PyInstaller 打包版可能没带 PyYAML; 内置 Python (start.bat) 已 pip install,
             # 但 EXE 模式下 PyInstaller 不会自动收集 yaml 子模块 (libyaml 等)。
             # 兜底: 记录日志后跳过, 不阻断启动流程。
-            self.log("语言同步: PyYAML 未安装, 跳过 cordis.patch.yml 写入 (请在 PyInstaller 打包时 --collect-all pyyaml)")
+            self.log("语言同步: PyYAML 未安装, 跳过 cordis.patch.yml 写入 (请在 PyInstaller 打包时 --collect-all yaml)")
             return
 
         # 读现有 patch 列表 + 保留文件前导注释 (PyYAML 会丢, 需要手动截取)

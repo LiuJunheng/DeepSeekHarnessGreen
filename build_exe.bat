@@ -9,6 +9,7 @@ rem  missing or broken, auto-download official CPython installer
 rem  (full Lib, tkinter, pip) into project-local dir.
 rem  All tooling (Python, PyInstaller, VC DLLs) lives under runtime\.
 rem  Nothing touches C:\ or system PATH.
+rem  NOTE: This file must be pure ASCII with CRLF line endings.
 rem ================================================================
 
 cd /d "%~dp0"
@@ -100,12 +101,9 @@ set "PYTHONPATH=%PYINSTALLER_DIR%;%PYTHONPATH%"
 rem ---------- 4. Build DSH_Launcher.exe ----------
 echo.
 echo [INFO] Building DSH_Launcher.exe ...
-rem --collect-all pyyaml: PyYAML 是 C 扩展包, PyInstaller 默认只抓顶层 yaml.py,
-rem 漏掉底层 _yaml C DLL + libyaml binding + 可能的 data 文件,
-rem EXE 运行时会报 "ImportError: DLL load failed while importing _yaml".
-rem DSH v0.1.7 升级后 launcher._apply_language_preference() 依赖 PyYAML 写 cordis.patch.yml,
-rem 不收集会让 EXE 版启动崩在 yaml import, 源码版 (start.bat) 不受影响.
-"%PYTHON_EXE%" -m PyInstaller --clean --noconfirm --onefile --windowed --noupx --name DSH_Launcher --icon "%~dp0DSH_Launcher.ico" --collect-all pyyaml --add-data "%~dp0DSH_Launcher.ico;." --add-data "%~dp0locales;locales"%VC_BINARIES% --distpath dist --workpath build --specpath build "%~dp0launcher.py"
+rem NOTE: --collect-all yaml (NOT pyyaml) because the Python import name is "yaml".
+rem PyInstaller's "pyyaml" is only the pip package name; the actual module is "yaml".
+"%PYTHON_EXE%" -m PyInstaller --clean --noconfirm --onefile --windowed --noupx --name DSH_Launcher --icon "%~dp0DSH_Launcher.ico" --collect-all yaml --add-data "%~dp0DSH_Launcher.ico;." --add-data "%~dp0locales;locales"%VC_BINARIES% --distpath dist --workpath build --specpath build "%~dp0launcher.py"
 if errorlevel 1 (
     echo [ERROR] DSH_Launcher.exe build failed. See PyInstaller output above.
     pause
@@ -117,7 +115,7 @@ rem Standalone updater that overlays files AFTER main exe exits.
 rem It also embeds python, so needs same VC DLLs.
 echo.
 echo [INFO] Building DSH_Update.exe ...
-"%PYTHON_EXE%" -m PyInstaller --clean --noconfirm --onefile --windowed --noupx --name DSH_Update --icon "%~dp0DSH_Launcher.ico" --collect-all pyyaml --add-data "%~dp0DSH_Launcher.ico;." --add-data "%~dp0locales;locales"%VC_BINARIES% --distpath dist --workpath build --specpath build "%~dp0update_agent.py"
+"%PYTHON_EXE%" -m PyInstaller --clean --noconfirm --onefile --windowed --noupx --name DSH_Update --icon "%~dp0DSH_Launcher.ico" --collect-all yaml --add-data "%~dp0DSH_Launcher.ico;." --add-data "%~dp0locales;locales"%VC_BINARIES% --distpath dist --workpath build --specpath build "%~dp0update_agent.py"
 if errorlevel 1 (
     echo [ERROR] DSH_Update.exe build failed. See PyInstaller output above.
     pause
