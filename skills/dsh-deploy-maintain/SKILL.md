@@ -416,6 +416,16 @@ ctx.on('system-prompt/assemble', async (assembly, _ctx, next) => {
 
 另需注意：删完必须复查「是否有新符号被孤立」（例如删掉唯一调用者后，被调用者变成新的死代码）。**一次性审计清单记 `DEV_NOTES.md`，skill 只留方法。**
 
+**巨型闭包函数瘦身方法（tkinter `run_gui` 这类上千行的"闭包工厂"）**：不要改写成类（要把所有 `root.`/`app.` 全量改写，diff 巨大收益低），而是**把自包含的弹窗抽成模块级函数 + 显式传参**。步骤：
+
+1. **先算参数表**：用 `ast` 算目标函数的「自由名」= `Load 的 Name` − (`Store 的 Name` ∪ 全部 `ast.arg` 参数名 ∪ 子 `FunctionDef`/`ClassDef` 名 ∪ `ExceptHandler.name` ∪ 模块级名 ∪ builtins)，结果就是必须传入的参数。
+   - **三个假阳性源必须处理**，否则误报一堆"未解析名"：① lambda 默认参数（`lambda _event, u=url:` 的 `u`）；② 嵌套 `def` 的参数名（`choose(value)` 的 `value`）；③ `except Exception as error` 的 `error`（`ExceptHandler.name` 是 `str`，不是 `Name` 节点）。
+2. **大函数（数十 KB）用脚本按 AST 边界机械搬迁**（整体去一层 4 空格缩进 + 换新签名），比手工 Edit 可靠；**先备份到 gitignore 目录**便于回滚。
+3. **搬完立刻机械校验**：新函数的自由名必须为空（⊆ 形参 ∪ 模块级名），再跑 `py_compile` + `import`。
+4. **优先搬"叶子弹窗"**（自带 `Toplevel`、不碰主窗口控件、不调用兄弟嵌套函数的），链式调用组要整组搬或把下游回调作为参数传入。
+
+**关键前提**：若 i18n 注册表（`_i18n_widgets`）是**模块级**列表，抽出去的控件照旧 `append` 即可，语言切换仍能刷新——这是能安全搬迁的基础。反之若注册表是闭包变量，搬迁必须一并迁移注册逻辑。另注意**被 `try/except` 包住的调用**（如 `refresh_all_text` 里调 `_refresh_auth_warning`）：漏传依赖不会报错，只会静默失效，静态检查也看不出来，只能靠"切语言后逐个弹窗开一遍"的手工回归。
+
 ## 七、工作流建议（开发顺序）
 
 1. **先理数据目录**：确认 `DSH_HOME`/`runtime/` 全部重定向到程序目录，明确"绿色整合"边界。

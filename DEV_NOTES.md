@@ -1142,9 +1142,30 @@ for name, def_lines in defs.items():
 - 复查扫描：`launcher.py` 剩 2 个"疑似死代码"（`do_GET` / `log_message`），确认为 `http.server` 框架回调，**保留**；`i18n.py` 归零
 - 残留检查：上述已删符号/键在全仓均为 0 次引用
 
+### 结构性重构（2026-09-23，第二轮）
+
+按 `.trae/documents/launcher-refactor-plan.md` 的方案执行了两项（均为**纯结构搬迁，行为不变**）：
+
+| 项 | 内容 | 验证 |
+|---|---|---|
+| 重构一 | 两处重复的 7 个 `patch_*` 调用合并为 `Launcher._apply_all_patches()`（L4992-L5017）。`install_dsh` 与 `start_server` 改为调用它，各自保留原有告警文案 | AST 提取调用序列与改前**逐项一致**（7 个调用、参数全同）；两处调用点残留 `patch_` 调用数 = 0 |
+| 重构二阶段1 | `show_about` → 模块级 `_show_about_dialog(root, tk, ttk)`；`ask_close_choice` → `_ask_close_choice_dialog(root, tk, ttk)` | 作用域校验：两函数未解析名均为空 |
+| 重构二阶段2 | `open_plugin_manager`（769 行）→ 模块级 `_open_plugin_manager_dialog(app, root, tk, ttk, messagebox, filedialog)` | 作用域校验：未解析名为空；签名与 AST 预测的 6 个自由名完全吻合 |
+
+`run_gui` 行数：**2790 → 1910**（减 880 行）；`launcher.py` 总行数 9597。
+
+**方法论（可复用）**：
+
+- 搬迁前用 AST 算出目标函数的「自由名」= `Load 的 Name` − (`Store 的 Name` ∪ 全部 `ast.arg` ∪ 子 `FunctionDef`/`ClassDef` 名 ∪ `ExceptHandler.name` ∪ 模块级名 ∪ builtins)，这就是必须显式传入的参数表。**三个假阳性源必须处理**，否则误报一堆"未解析名"：① lambda 默认参数（`lambda _event, u=url:` 的 `u`）；② 嵌套 `def` 的参数名（`choose(value)` 的 `value`）；③ `except Exception as error` 的 `error`（`ExceptHandler.name` 是 `str`，不是 `Name` 节点）。
+- 45KB 级的大函数用脚本按 AST 边界机械搬迁（整体去 4 空格缩进 + 换新签名），**比手工 Edit 可靠**；脚本先备份到 `runtime/tmp/` 便于回滚，搬完立刻跑作用域校验 + 导入测试。
+- **`_i18n_widgets` 是模块级列表**，所以抽出去的弹窗照旧 `append` 即可，语言切换仍能刷新——这是能安全搬迁的关键前提。`refresh_all_text` 对每个 `widget.config()` 都包了 try/except，已销毁控件不会报错。
+- **`refresh_all_text` 依赖后置定义的 `_refresh_auth_warning`**（靠闭包延迟解析）。将来若搬 `refresh_all_text`，漏传该依赖**不会报错**（被 try/except 吞掉），只会"切语言后 auth 警告行不刷新"——属静默失效，需特别留意。
+
 ### 本次未处理（保留，供后续判断）
 
-- **重复实现（未合并）**：① "补 peer 依赖 + 同步核心版本 + file: 插件版本"逻辑在 `_heal_profile_dependencies`（L1525-1541）与 `verify_environment_integrity`（L2019-2035）各写一份（后者注释自称"复用"实为复制）；② 同一批 7 个 `patch_*` 调用在 `install_dsh`（L966-978）与 `start_server`（L5436-5451）各写一遍，**新增补丁必须记得改两处，漏一处会出现"装完生效、重启失效"**。
-- **超长函数（可维护性）**：`run_gui` 2805 行、`patch_lan_api_trust` 205 行、`verify_environment_integrity` 173 行、`green_all_releases` 142 行。
+- **重复实现（未合并）**："补 peer 依赖 + 同步核心版本 + file: 插件版本"逻辑在 `_heal_profile_dependencies`（L1474-L1531）与 `verify_environment_integrity`（L1875-L2047）各写一份（后者注释自称"复用"实为复制），可抽 `_sync_profile_peer_deps()` 共用。
+- **超长函数（可维护性）**：`run_gui` 1910 行（已从 2790 降下来）、`patch_lan_api_trust` 205 行（L4651-L4855）、`verify_environment_integrity` 173 行（L1875-L2047）、`green_all_releases` 142 行（L2220-L2361）。
+- **重构二后续阶段（未做）**：`open_purge_dialog`（230 行）、更新链 `ask_update` + `confirm_upgrade`、绿色版更新链 4 个函数。完整方案与分阶段风险见 `.trae/documents/launcher-refactor-plan.md`。**不建议**把 run_gui 改成 `GuiApp` 类——要全量改写 100 处 `root.` + 95 处 `app.`，diff 巨大且收益更低。
+- **`_i18n_widgets` 无界增长**：每次打开弹窗都 `append` 且销毁后不清理（既有行为，非本次引入）。`refresh_all_text` 有 try/except 兜底所以不报错，只是列表无限增长；若修需在弹窗销毁时移除注册项，属独立改动。
 - **保留不删**：`_gitee_*` 家族约 300 行手写 git smart-HTTP 协议（pkt-line / pack 解析 / delta 应用），复杂度高但**仍在用**（Gitee archive 有 JS 挑战页，必须走 git 协议）；`_NoTray` 是 pystray 初始化失败时的正常空对象兜底。
 
