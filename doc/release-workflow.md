@@ -93,6 +93,7 @@ DSH_Update.exe   --print-green-version → "1.0.30"  ✅
 - GitHub 标题 + body = 英文（`release_notes_v{VER}_en.md`，可选，无则复用中文）
 - 两个文件都放 `doc/release_notes/` 目录
 - `release_upload.py` 会自动根据平台选择中文或英文文件
+- **不提交 git**（2026-09-23 明确）：`doc/` 与 `release_notes*.md` 已在 `.gitignore`；这些文件只作本地发版用，仓库里不需要。**别用 `git add -f` 强行提交**（历史上 v1.0.38 的 notes 被跟踪过，已 `git rm --cached` 清理）
 
 ### 什么该写、什么不该写（2026-09-23 新增，最容易写错）
 

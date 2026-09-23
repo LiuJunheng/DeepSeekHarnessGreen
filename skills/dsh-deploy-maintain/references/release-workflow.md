@@ -44,6 +44,7 @@ python -c "import launcher; print(launcher.GREEN_VERSION)"   # 应为新版本�
 - 章节目录：`## 新增功能` / `## 修复` / `## 技术架构`（仅大改）/ `## 版本更新` / `## 升级建议`
 - 英文**禁止机翻**，必须是自然人类英文；技术词如 i18n / overwrite install 保留
 - 发版脚本自动把中英拼接成一条双语正文（带锚点跳转），双平台共用
+- **release notes 只放本地，不提交 git**（2026-09-23 明确）：放在 `doc/release_notes/` 即可，`doc/` 与 `release_notes*.md` 均已在 `.gitignore` 里；发版脚本只读本地文件，仓库不需要它们。**别用 `git add -f` 强行提交**，历史上曾有旧版 notes 被跟踪、需要 `git rm --cached` 清理。
 
 ### 什么该写、什么不该写（重要，最容易写错）
 
