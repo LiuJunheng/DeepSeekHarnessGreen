@@ -139,23 +139,6 @@ class Translator:
         if callable(callback) and callback not in self._change_callbacks:
             self._change_callbacks.append(callback)
 
-    def off_change(self, callback):
-        """注销语言变更回调"""
-        if callback in self._change_callbacks:
-            self._change_callbacks.remove(callback)
-
-    # ---------- 工具 ----------
-    def available_languages(self):
-        """返回 locales 目录下所有可用的语言代码列表 (不含 .json 后缀)"""
-        locales_dir = os.path.join(self._base_dir, "locales")
-        if not os.path.isdir(locales_dir):
-            return []
-        result = []
-        for entry in os.listdir(locales_dir):
-            if entry.endswith(".json"):
-                result.append(entry[:-5])   # 去掉 .json
-        return sorted(result)
-
 
 # ---------- 模块级单例 & 便捷函数 ----------
 translator = Translator(default_lang="zh")

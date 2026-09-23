@@ -979,9 +979,6 @@
   "upgrade_confirm.footer": "Current version auto-backed up to runtime/backup/dsh-<version> before upgrade.\nBackups are NOT auto-deleted. Use Data Maintenance to clean up anytime.",
   "source_hint.gitee_preferred": "\n\nUpdate from Gitee mirror (CN source preferred, release zip direct, content matches GitHub).",
   "source_hint.gitee_fallback": "\n\nNote: GitHub channel unreachable. Update from Gitee mirror (release zip / repo snapshot, content matches GitHub).",
-  "green_update.detected_title": "New Green Edition Found",
-  "green_update.detected_msg": "Current: v{current}\nLatest: v{latest}\n\nRelease Notes:\n{note}{source_hint}\n\nDownload and update?\n\nProcess: Download to runtime/update -> Quit launcher -> Auto overlay -> Restart.\nConfig.json (your settings) and runtime/ (your data) will NOT be replaced.",
-  "green_update.failed_title": "Update Failed",
   "update.failed_title": "Update Failed",
   "green_version_select": {
     "title": "Select Green Portable Version",

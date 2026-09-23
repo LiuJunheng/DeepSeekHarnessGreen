@@ -14,6 +14,5 @@
   "tmp_dir": "",
   "default_workspace": "",
   "language": "zh",
-  "show_taskbar_on_minimize": true,
-  "dsh_heap_limit_mb": 8192
+  "show_taskbar_on_minimize": true
 }

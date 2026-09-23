@@ -991,34 +991,6 @@ class Launcher:
             self.log("未检测到 dsh, 开始自动安装 %s ..." % self.config["dsh_package"])
         return self.install_dsh(package_spec=package_spec)
 
-    def _npm_view(self, npm_cli, node_exe, package_spec, query):
-        """执行一次 npm view 查询, 返回原始输出文本; 失败返回 None。
-        供 dsh_latest_version / dsh_dist_tags 复用 (镜像参数与安装一致)。
-        query 可为 "version" 单值, 也可为 "dist-tags --json" 多 token (按空格拆成独立 argv)"""
-        query_args = (query or "").split()
-        if not query_args:
-            self.log("npm view 查询参数为空")
-            return None
-        command = [node_exe, npm_cli, "view", package_spec] + query_args
-        # 根据镜像配置附加 registry 参数 (与安装一致)
-        mirror, is_auto = self.resolve_mirror()
-        if not is_auto:
-            command.append("--registry=%s" % NPM_REGISTRY[mirror])
-        env = self.build_env()
-        try:
-            result = subprocess.run(command, cwd=DSH_DIR, env=env,
-                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, encoding="utf-8", errors="replace",
-                                    timeout=60, creationflags=_SUBPROC_NO_WINDOW)
-            output = (result.stdout or "").strip()
-            if result.returncode != 0 or not output:
-                self.log("npm view 查询失败, 输出: %s" % (result.stdout or result.stderr or ""))
-                return None
-            return output
-        except Exception as error:
-            self.log("npm view 查询失败: %s" % error)
-            return None
-
     def dsh_latest_version(self):
         """查询 npm 上 @deepseek-ai/dsh 的 latest 标签版本号 (只读, 不改动本地)。
         用 dsh_npm_registry_json() 直接 HTTP GET, 比 node 子进程更轻更快。
@@ -5227,24 +5199,6 @@ class Launcher:
                 flat[full_key] = value
         return flat
 
-    def _write_i18n_bridge_to_plugins(self):
-        """已废弃 (2026-09-07): bridge 由心跳 server 3081 /__dsh_i18n_bridge.js +
-        desktop-shell.py evaluate_js 双通道提供, 这个写 plugins/ 静态副本的路径
-        没有任何消费者, 且每次启动会产生 114KB 孤儿文件。"""
-        return
-        bridge = self._build_i18n_bridge_js()
-        if not bridge:
-            return
-        target_dir = os.path.join(BASE_DIR, "plugins", "dsh-archive-purge")
-        if not os.path.isdir(target_dir):
-            os.makedirs(target_dir, exist_ok=True)
-        target_file = os.path.join(target_dir, "__dsh_i18n_bridge.js")
-        try:
-            with open(target_file, "w", encoding="utf-8") as fh:
-                fh.write(bridge)
-        except OSError as exc:
-            self.log(f"写入 i18n bridge 到 plugins 目录失败 (不致命): {exc!r}")
-
     def _ensure_ui_beacon_server(self):
         """确保 WebUI 心跳接收服务已启动 (幂等, 失败不阻断主流程)。
         绑定地址随 dsh_host: 本机模式绑 127.0.0.1, 局域网模式绑 0.0.0.0 (远程浏览器也能上报)。
@@ -5430,7 +5384,6 @@ class Launcher:
         self._cleanup_orphan_dsh(port)
 
         self._ensure_ui_beacon_server()   # 先启动心跳服务, 使已打开页面的上报能尽早被记录
-        self._write_i18n_bridge_to_plugins()  # 把 bridge JS 写到 plugins 目录, 浏览器直接访问时能通过 DSH 静态加载
         self.log("正在准备环境 ...")
         self.prepare_all()
         self.patch_frontend()             # 确保前端已注入心跳脚本 (dsh 升级重装后自动补齐)
@@ -6480,29 +6433,25 @@ class SysTrayIcon:
             try:
                 if self.on_minimize:
                     self.on_minimize()
-            except Exception as error:
-                self._tray_log("on_minimize 异常: %r" % (error,))
+            except Exception:
+                pass   # 回调异常不能中断 after 轮询链
         if self._restore_pending:
             self._restore_pending = False
             try:
                 if self.on_click_restore:
                     self.on_click_restore()
-            except Exception as error:
-                self._tray_log("on_click_restore 异常: %r" % (error,))
+            except Exception:
+                pass   # 同上
         # 右键菜单待办 (2026-09-10): 在正常 Tk 上下文里弹出菜单。
         if self._menu_pending:
             self._menu_pending = False
-            self._tray_log("进入菜单分支, builder=%s" % (self._menu_builder is not None))
             if self._menu_builder:
                 try:
                     menu_items = self._menu_builder()   # [(label, action, state), ...]
-                    self._tray_log("builder 返回 %d 项" % (len(menu_items) if menu_items else 0))
                     if menu_items:
                         self._show_native_menu(menu_items, self._menu_x, self._menu_y)
-                    else:
-                        self._tray_log("builder 返回空, 不弹菜单")
-                except Exception as error:
-                    self._tray_log("builder 异常: %r" % (error,))
+                except Exception:
+                    pass   # 同上
 
     def _show_native_menu(self, menu_items, screen_x, screen_y):
         """用 Win32 原生 TrackPopupMenu 弹出托盘右键菜单 (2026-09-15):
@@ -6544,8 +6493,7 @@ class SysTrayIcon:
 
         hmenu = user32.CreatePopupMenu()
         if not hmenu:
-            self._tray_log("CreatePopupMenu 失败 (hmenu=0)")
-            return
+            return   # 菜单句柄创建失败, 静默放弃本次弹出
         try:
             self._menu_actions = {}
             next_id = 1
@@ -6575,30 +6523,19 @@ class SysTrayIcon:
             selected_id = user32.TrackPopupMenu(
                 hmenu, TPM_RIGHTBUTTON | TPM_RETURNCMD,
                 screen_x, screen_y, 0, self.hwnd, None)
-            self._tray_log("TrackPopupMenu 返回: %s" % selected_id)
             if selected_id and selected_id in self._menu_actions:
                 try:
                     self._menu_actions[selected_id]()
                 except Exception:
                     pass
-        except Exception as error:
-            self._tray_log("弹出菜单异常: %r" % (error,))
+        except Exception:
+            pass   # 弹菜单失败不影响托盘主流程
         finally:
             try:
                 user32.DestroyMenu(hmenu)
             except Exception:
                 pass
             self._menu_actions = {}
-
-    def _tray_log(self, message):
-        """托盘菜单诊断日志 (写到程序目录 tray_menu.log, 便于无控制台的 exe 定位问题)"""
-        try:
-            log_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])),
-                                    "tray_menu.log")
-            with open(log_path, "a", encoding="utf-8") as log_file:
-                log_file.write("[TRAY] %s\n" % message)
-        except Exception:
-            pass
 
     def dispose(self):
         """退出前调用: 移除托盘图标 + 恢复原始窗口过程"""
@@ -6644,7 +6581,6 @@ class SysTrayIcon:
                         self._menu_x = cursor_point.x
                         self._menu_y = cursor_point.y
                         self._menu_pending = True   # 不再置 _restore_pending
-                        self._tray_log("WndProc 收到右键, pos=(%d,%d)" % (self._menu_x, self._menu_y))
                     return 0
             except Exception:
                 pass   # 回调异常一律放行给旧窗口过程, 不吞消息
@@ -8170,21 +8106,6 @@ def run_gui():
         notes_text.insert("1.0", notes)
         notes_text.configure(state="disabled")
 
-        def switch_src(new_key):
-            nonlocal release_info, preferred_source
-            if new_key not in sources_dict:
-                return
-            preferred_source = new_key
-            release_info = sources_dict[new_key]
-            n = (release_info.get("body") or "").strip()
-            if not n:
-                n = i18n.t('green_version_select.notes_unavailable', version=target_version)
-            notes_text.configure(state="normal")
-            notes_text.delete("1.0", "end")
-            notes_text.insert("1.0", n)
-            notes_text.configure(state="disabled")
-            _iw_source_line.configure(text=_source_line(preferred_source))
-
         footer_frame = ttk.Frame(detail_dialog, padding=12)
         footer_frame.pack(fill="x")
         _iw_confirm_footer = ttk.Label(footer_frame, justify="left", foreground="#888888",
@@ -9487,12 +9408,12 @@ def run_gui():
 
         2026-09-15 关键修复: poll() 内部任一步抛异常都不能中断 after 轮询链,
         否则托盘右键/最小化/恢复一次性全部失效 (曾因 builder 异常杀死整条链,
-        表现为"右键弹不出菜单 + 日志完全不生成")。
+        表现为"右键弹不出菜单")。
         """
         try:
             tray_icon.poll()
-        except Exception as error:
-            tray_icon._tray_log("poll_tray_loop 异常: %r" % (error,))
+        except Exception:
+            pass   # poll 内部异常不能中断 after 轮询链
         root.after(80, poll_tray_loop)
     root.after(80, poll_tray_loop)
 

@@ -1,7 +1,7 @@
 ---
 name: dsh-deploy-maintain
 description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护、插件开发与避坑经验。覆盖便携 Node/dsh 安装、环境变量重定向、工作区 ACL 沙箱、更新备份、插件管理与 dsh 插件双端加载/路由注册等全套实操知识。"
-updated: "2026-09-15"
+updated: "2026-09-23"
 ---
 
 # DeepSeek Harness 绿色整合版 · 部署维护与插件开发
@@ -407,6 +407,14 @@ ctx.on('system-prompt/assemble', async (assembly, _ctx, next) => {
 | 对话停"Deep diving…"很久 | thinking 模型先思考后出正文（本地冷启动+思考十几秒~几十秒）；`GET /api/ps` 确认已加载 |
 | bat 双击闪退但代码看着没问题 | 抓行为用 `subprocess.run(["cmd","/c",bat], capture_output=True)`（别用 PS Start-Process 重定向，与 pause 交互冲突）；字节级检查 ASCII 无 BOM CRLF |
 | 清理更新/备份时 UI 冻结 | tkinter 主线程跑了 `shutil.rmtree` 大目录 → 包进 `threading.Thread(daemon=True)`，UI 更新用 `root.after(0, lambda: ...)` 回主线程 |
+| 想删零引用代码但怕误删活代码 | 见下方「死代码审计方法」；**框架回调搜不到调用点但都是活代码，必须白名单排除** |
+
+**死代码审计方法（维护向，零依赖）**：用 `ast` 收集全部 `def`/`class` 及其行号，再逐行 `re.search(r'\b名\b', 行.split('#')[0])` 计数，**跳过定义行本身与整行注释**，计数为 0 即死代码候选。**必须白名单排除**（否则会误删）：
+- `BaseHTTPRequestHandler.do_GET` / `log_message` —— 由 `http.server` 框架回调；
+- `__del__` / `__enter__` / `__exit__` 等 dunder —— 由 GC / `with` 语句调用；
+- Tkinter `command=` / `bind()` / `after()` 的目标函数 —— 以引用形式传递，无文本调用点。
+
+另需注意：删完必须复查「是否有新符号被孤立」（例如删掉唯一调用者后，被调用者变成新的死代码）。**一次性审计清单记 `DEV_NOTES.md`，skill 只留方法。**
 
 ## 七、工作流建议（开发顺序）
 

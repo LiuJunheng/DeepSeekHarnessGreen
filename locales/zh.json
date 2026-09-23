@@ -979,9 +979,6 @@
   "upgrade_confirm.footer": "升级前会自动备份当前版本到 runtime/backup/dsh-<版本>,\n旧版本备份不会自动删除, 可随时在「数据维护」里一键清理。",
   "source_hint.gitee_preferred": "\n\n本次更新来自 Gitee 镜像源 (国内源优先, 发布版 zip 直连, 与 GitHub 发货内容一致)。",
   "source_hint.gitee_fallback": "\n\n注意: GitHub 通道连不通, 本次更新来自 Gitee 镜像源 (发布版 zip / 整仓快照, 与 GitHub 发货内容一致)。",
-  "green_update.detected_title": "发现新绿色版",
-  "green_update.detected_msg": "当前版本: v{current}\n最新版本: v{latest}\n\n更新说明:\n{note}{source_hint}\n\n是否下载并更新?\n\n更新流程: 下载到 runtime/update 暂存 -> 退出启动器 -> 自动覆盖安装 -> 重启。\n不替换 config.json(你的设置) 与 runtime/(你的数据)。",
-  "green_update.failed_title": "更新失败",
   "update.failed_title": "更新失败",
   "green_version_select": {
     "title": "选择绿色版版本",

@@ -143,7 +143,7 @@
 
 ### 系统托盘坑（tkinter + Win32，2026-08/09 实证）
 
-1. **托盘右键菜单弹不出来，最常见根因不是 Win32 代码，而是"构建器忘了注入"**（2026-09-14 实测）：`SysTrayIcon.set_menu_builder(build_tray_menu)` 定义了 builder 却漏调用，`poll()` 里 `_menu_builder is None`，右键日志恒为 `builder=False`，菜单永远弹不出。排查步骤：看 `tray_menu.log` → 有 `WndProc 收到右键`、`进入菜单分支`，但 `builder=False` → 就是注入缺失；`builder=True` 但无 `TrackPopupMenu 返回` → 才是 Win32 层问题。
+1. **托盘右键菜单弹不出来，最常见根因不是 Win32 代码，而是"构建器忘了注入"**（2026-09-14 实测）：`SysTrayIcon.set_menu_builder(build_tray_menu)` 定义了 builder 却漏调用，`poll()` 里 `_menu_builder is None`，菜单永远弹不出。排查：先确认 `run_gui` 已调用 `set_menu_builder`、`_menu_builder` 非 None，再怀疑 Win32 层（`TrackPopupMenu` 的句柄 / 前台窗口）。**注：原先用于定位此问题的 `tray_menu.log` 诊断日志已于 2026-09-23 移除**（`_tray_log` 属托盘调试期临时产物，已一并删除）；需要时临时加 `append_log` 复现，别再找 `tray_menu.log`。
 2. **托盘菜单不能用 Tk 的 `tk_popup`**：Tk::Popup 依赖 Tk 窗口状态，root 被隐藏/最小化时菜单弹不出或点外部关不掉。正解 = Win32 原生 `TrackPopupMenu`（`TPM_RIGHTBUTTON | TPM_RETURNCMD`），系统原生菜单点桌面/其他窗口/ESC 自动关闭并返回 0。
 3. **64 位下 ctypes 调用 Win32 必须先设 `restype`/`argtypes`**：`CreatePopupMenu` 返回 HMENU 指针，默认按 32 位 `c_int` 截断 → 无效句柄菜单静默失败。HMENU/HWND 用 `c_void_p`（或 `c_ssize_t`），`AppendMenuW` 的 ID 用 `c_size_t`。
 4. **`TrackPopupMenu` 要求进程有前台窗口**：先 `SetForegroundWindow(self.hwnd)` 再弹（pystray 同款做法），失败不阻断只是降低成功率。
@@ -1082,4 +1082,69 @@ for r in result[:5]:
 | v1.0.29 及更早 | 多数无 zip | 部分有 |
 
 → 用户选择更新时，对话框会自动根据 sources 显示可用源标签和安装按钮
+
+## 十二、死代码清理审计（2026-09-23）
+
+> 背景：绿色版长期"做加法"迭代，积累了一批零引用代码。本次做了一次全量静态审计并清理，**行为零变化**（只删零引用符号，不动任何逻辑）。审计方法已同步进 skill `dsh-deploy-maintain` 的速查表。
+
+### 审计方法（可复用）
+
+用 Python `ast` 收集全部 `def` / `class` 及行号，再逐行正则统计引用次数，**排除定义行本身与注释行**（`line.split('#')[0]` 去掉行内注释）。计数为 0 的即死代码候选。
+
+```python
+import ast, re
+src = open('launcher.py', encoding='utf-8').read()
+tree = ast.parse(src)
+defs = {}
+for node in ast.walk(tree):
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        defs.setdefault(node.name, []).append(node.lineno)
+lines = src.splitlines()
+for name, def_lines in defs.items():
+    count = 0
+    for index, line in enumerate(lines, start=1):
+        if index in def_lines:            # 跳过定义行
+            continue
+        if line.strip().startswith('#'):  # 跳过整行注释
+            continue
+        if re.search(r'\b' + re.escape(name) + r'\b', line.split('#')[0]):
+            count += 1
+    if count == 0 and not name.startswith('__'):
+        print(def_lines[0], name)         # 死代码候选
+```
+
+**误报白名单（必须排除，否则会误删活代码）**：
+- `BaseHTTPRequestHandler.do_GET` / `log_message` —— 由 `http.server` 框架回调，代码里搜不到调用点；
+- `__del__` / `__enter__` / `__exit__` 等 dunder —— 由 GC / `with` 语句调用；
+- Tkinter 的 `command=` / `bind()` / `after()` 目标 —— 以引用形式传递，无文本调用点。
+
+**易漏点**：删掉某函数的唯一调用者后，被调用者可能变成新的死代码，删完必须重跑一遍扫描。
+
+### 本次清理清单（共 76 行）
+
+| 文件 | 符号 / 键 | 行数 | 说明 |
+|------|-----------|------|------|
+| launcher.py | `_npm_view` | 27 | 已被 `dsh_npm_registry_json`（HTTP GET）取代；docstring 还自称"供 dsh_latest_version / dsh_dist_tags 复用"，但两者早已不调用它 |
+| launcher.py | `_write_i18n_bridge_to_plugins` | 17 | 函数体首行即 `return`，其后代码永不执行；唯一调用点也是空操作。`.gitignore` 早已标注"已废弃" |
+| launcher.py | `switch_src`（`confirm_green_upgrade` 内嵌套函数） | 14 | 版本选择弹窗里的"下载源切换"回调，含 `nonlocal` 说明本意是回调，但从未接线到任何按钮 |
+| launcher.py | `_tray_log` + 11 处调用 | 12 | 托盘调试期临时诊断日志（往程序根目录追加写 `tray_menu.log`，无开关无上限）。**经确认已无用途**，整体删除；原异常兜底改为 `except Exception: pass`（与文件内既有风格一致，行为不变） |
+| i18n.py | `off_change` | 4 | `on_change` 的注销配对，但全项目无人注销回调 |
+| i18n.py | `available_languages` | 10 | 零调用 |
+| locales/zh.json + en.json | `green_update.detected_title` / `detected_msg` / `failed_title` | 3 键 ×2 | 绿色版更新提示已改走 `green_version_select.*` 弹窗，旧词条无消费者 |
+| config.json | `dsh_heap_limit_mb` | 1 | 全仓零引用，且不在 `DEFAULT_CONFIG` 里（16 键 vs 17 键的唯一差集） |
+
+> `_tray_log` 的删除连带更新了两处文档：本文件「五、避坑经验 · 系统托盘坑」第 1 条（原排查步骤依赖 `tray_menu.log`，已改为不依赖日志的排查顺序），以及 `run_gui` 内 `poll_tray_loop` 的 docstring（去掉"日志完全不生成"的表述）。
+
+### 验证结果
+
+- `ast.parse` 语法通过；`json.load` 三个 JSON 均合法（locales 各 33 键、zh/en 对称；config 16 键）
+- 运行时导入测试通过：`import launcher` / `import i18n` 成功，`hasattr(SysTrayIcon, '_tray_log') == False`
+- 复查扫描：`launcher.py` 剩 2 个"疑似死代码"（`do_GET` / `log_message`），确认为 `http.server` 框架回调，**保留**；`i18n.py` 归零
+- 残留检查：上述已删符号/键在全仓均为 0 次引用
+
+### 本次未处理（保留，供后续判断）
+
+- **重复实现（未合并）**：① "补 peer 依赖 + 同步核心版本 + file: 插件版本"逻辑在 `_heal_profile_dependencies`（L1525-1541）与 `verify_environment_integrity`（L2019-2035）各写一份（后者注释自称"复用"实为复制）；② 同一批 7 个 `patch_*` 调用在 `install_dsh`（L966-978）与 `start_server`（L5436-5451）各写一遍，**新增补丁必须记得改两处，漏一处会出现"装完生效、重启失效"**。
+- **超长函数（可维护性）**：`run_gui` 2805 行、`patch_lan_api_trust` 205 行、`verify_environment_integrity` 173 行、`green_all_releases` 142 行。
+- **保留不删**：`_gitee_*` 家族约 300 行手写 git smart-HTTP 协议（pkt-line / pack 解析 / delta 应用），复杂度高但**仍在用**（Gitee archive 有 JS 挑战页，必须走 git 协议）；`_NoTray` 是 pystray 初始化失败时的正常空对象兜底。
 
