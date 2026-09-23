@@ -963,19 +963,13 @@ class Launcher:
             raise RuntimeError("dsh 安装失败, 请检查网络后重试 (详见上方 npm 输出)")
 
         self.log("dsh 安装成功 (版本: %s)" % self.dsh_version())
-        self.patch_frontend()   # 安装/升级后注入 WebUI 心跳脚本 (单页面去重)
-        self.patch_frontend_uuid()  # 安装/升级后注入 crypto.randomUUID polyfill (局域网 http 用)
-        self.patch_web_startup()  # 安装/升级后补丁 startup.js, 放开 --host 0.0.0.0 (局域网访问)
-        self.patch_lan_trust()    # 安装/升级后补丁 resolveLanTrust, 支持「只信任填写的主机」
-        self.patch_commands_backoff()     # 确保 ui-commands 目录退避补丁已打 (阻断 commands/list 热重拉风暴)
-        # 局域网 /api 补丁 (pickDirectory 等特权 API 不再 403)。失败时给出醒目提示,
+        # 统一重打全部官方文件补丁: dsh 重装会还原 node_modules 内文件, 补丁必须重打。
+        # 7 个补丁各自幂等, 调用序列与说明见 _apply_all_patches。
+        lan_api_patched = self._apply_all_patches()
+        # 局域网 /api 补丁 (pickDirectory 等特权 API 不再 403) 失败时给出醒目提示,
         # 不让用户"装了才发现局域网用不了" (2026-08-17, 避坑 #56)。
-        lan_api_patched = self.patch_lan_api_trust()
         if not lan_api_patched:
             self.log(i18n.t('warn.lan_api_not_patched'))
-        # 安装/升级后同步 web token 认证开关 (2026-08-31, 需求 #49):
-        # dsh 重装会还原所有 client-connection 代码, 之前打的 auth patch 会丢, 需重新应用.
-        self.patch_auth(require_auth=bool(self.config.get("dsh_require_auth", True)))
         return True
 
     def prepare_dsh(self, force=False, package_spec=None):
@@ -4995,6 +4989,33 @@ class Launcher:
                     self.log("已关闭 dsh web token 认证 (本机模式 127.0.0.1, 外部无法访问, 风险极低)")
         return any_ok
 
+    def _apply_all_patches(self):
+        """统一应用 dsh 运行期全部补丁 (全部幂等, 可重复调用), 返回 lan_api_patched。
+
+        调用场景 (两处, 原本各写一份相同的调用序列, 2026-09-23 合并到此):
+            1. install_dsh(): 安装/升级成功后 —— dsh 重装会还原 node_modules 内文件, 补丁必须重打;
+            2. start_server(): 启动服务前兜底 —— 防手工替换 node_modules 后补丁失效。
+
+        顺序说明: 7 个补丁彼此无先后依赖, 此顺序仅沿用原顺序, 未做重排。
+            - patch_frontend / patch_frontend_uuid 同写 index.html,
+              但锚点分别是 </body> 与 </head>, 互不干扰;
+            - patch_lan_api_trust / patch_auth 同写 client-connection/lib/index.js,
+              但锚点互不相交。
+            也没有任何补丁消费前一个补丁的返回值。
+
+        返回: lan_api_patched (局域网 /api 补丁是否生效)。
+              调用方据此决定是否告警 —— 两处告警文案不同 (安装场景 vs 启动场景),
+              故告警留在各自调用点, 不在本方法内统一。
+        """
+        self.patch_frontend()
+        self.patch_frontend_uuid()
+        self.patch_web_startup()
+        self.patch_lan_trust()
+        self.patch_commands_backoff()
+        lan_api_patched = self.patch_lan_api_trust()
+        self.patch_auth(require_auth=bool(self.config.get("dsh_require_auth", True)))
+        return lan_api_patched
+
     def lan_addresses(self):
         """枚举本机非内网 IPv4 地址列表 (绑定 0.0.0.0 时用于提示局域网访问地址)。
         仅作提示用途, 不保证覆盖所有网卡; 出错时静默返回空列表"""
@@ -5386,22 +5407,14 @@ class Launcher:
         self._ensure_ui_beacon_server()   # 先启动心跳服务, 使已打开页面的上报能尽早被记录
         self.log("正在准备环境 ...")
         self.prepare_all()
-        self.patch_frontend()             # 确保前端已注入心跳脚本 (dsh 升级重装后自动补齐)
-        self.patch_frontend_uuid()        # 确保 crypto.randomUUID polyfill 已注入 (局域网 http 用)
-        self.patch_web_startup()          # 确保 startup.js 已补丁 (dsh 升级重装后自动补齐, 局域网绑定用)
-        self.patch_lan_trust()            # 确保 resolveLanTrust 已补丁 (受信任主机精确语义)
-        self.patch_commands_backoff()     # 确保 ui-commands 目录退避补丁已打 (阻断 commands/list 热重拉风暴)
+        # 统一重打全部官方文件补丁 (兜底: 防手工替换 node_modules 后补丁失效)。
+        # 7 个补丁各自幂等, 调用序列与说明见 _apply_all_patches。
+        lan_api_patched = self._apply_all_patches()
         # 确保 /api 通道在局域网模式下可用 (pickDirectory 等特权 API 不再 403);
         # 失败时给出醒目提示, 避免"局域网模式下静默 403" (2026-08-17, 避坑 #56)。
-        lan_api_patched = self.patch_lan_api_trust()
         if not lan_api_patched:
             self.log("[警告] client-connection 局域网补丁未生效: 局域网模式 /api 可能报 403 "
                      "(本机模式不受影响); 可重启服务重试")
-
-        # 确保 web token 认证开关与用户 config 一致 (2026-08-31, 需求 #49):
-        # dsh_require_auth=False 时关掉 BrowserAuth, 允许裸地址直开; True 时还原原始代码.
-        # 只关 token/Cookie 层, Host/Origin 围栏 (isTrustedApiRequest → 403) 保留.
-        self.patch_auth(require_auth=bool(self.config.get("dsh_require_auth", True)))
 
         # 局域网模式下为 Web 端口自动放行防火墙 (按端口放行, 任意电脑绿色版可用, 幂等)
         if self.config.get("dsh_host", "127.0.0.1") == "0.0.0.0":
@@ -6629,6 +6642,915 @@ _i18n_stringvars = []   # 每项: (stringvar, i18n_key, None)  动态值的 Stri
 # ---------------------------------------------------------------------------
 # tkinter 图形界面
 # ---------------------------------------------------------------------------
+
+def _show_about_dialog(root, tk, ttk):
+    """弹出「关于」对话框: 作者 / 版本 / 本仓库 / 发布主页 / 官方 dsh 引用 (2026-08-16)。
+
+    原为 run_gui 内的嵌套函数 (依赖闭包 root/tk/ttk), 2026-09-23 抽为模块级函数,
+    依赖改为显式传参。控件 i18n 注册照旧写入模块级 _i18n_widgets, 不受搬迁影响。
+
+    参数:
+        root: 主窗口 (Toplevel 的 parent / transient 目标)
+        tk:   tkinter 模块
+        ttk:  tkinter.ttk 模块
+    """
+    about_window = tk.Toplevel(root)
+    about_window.title(i18n.t('about.dialog_title'))
+    about_window.resizable(False, False)
+    about_window.geometry("500x525")
+    about_window.transient(root)    # 依附主窗口
+    about_window.grab_set()         # 模态, 关闭前不能操作主窗口
+
+    # 主标题
+    _iw_5835 = ttk.Label(about_window, text=i18n.t('about.main_title'),                   font=("Microsoft YaHei", 13, "bold"))
+    _iw_5835.pack(pady=(18, 4))
+    _i18n_widgets.append((_iw_5835, 'text', 'about.main_title'))
+    _iw_5837 = ttk.Label(about_window, text=i18n.t('about.subtitle'),                   font=("Microsoft YaHei", 9), foreground="#666666")
+    _iw_5837.pack(pady=(0, 12))
+    _i18n_widgets.append((_iw_5837, 'text', 'about.subtitle'))
+
+    # 信息表 (左标签 / 右取值)
+    # 链接项: value 用 (url, 显示文本) 元组, 以可点击链接文字呈现, 鼠标手型 + 点击跳转
+    info_items = [
+        (i18n.t('about.author'), "刘俊亨"),
+        (i18n.t('about.version'), "v" + GREEN_VERSION),
+        (i18n.t('about.version_date'), GREEN_VERSION_DATE),
+        (i18n.t('about.github_repo'), ("https://github.com/LiuJunheng/DeepSeekHarnessGreen",
+                          "github.com/LiuJunheng/DeepSeekHarnessGreen")),
+        (i18n.t('about.gitee_repo'), ("https://gitee.com/liujunheng/DeepSeekHarnessGreen",
+                         "gitee.com/liujunheng/DeepSeekHarnessGreen")),
+        (i18n.t('about.home_page'), (GREEN_HOME_PAGE_URL,
+                       GREEN_HOME_PAGE_URL.replace("https://", ""))),
+        (i18n.t('about.official_repo'), ("https://github.com/deepseek-ai/deepseek-harness",
+                       "github.com/deepseek-ai/deepseek-harness")),
+    ]
+    info_frame = ttk.Frame(about_window)
+    info_frame.pack(fill="x", padx=24, pady=4)
+    for row_index, (label, value) in enumerate(info_items):
+        ttk.Label(info_frame, text=label, font=("Microsoft YaHei", 9),
+                  foreground="#666666").grid(row=row_index, column=0, sticky="w", pady=2, padx=(0, 14))
+        if isinstance(value, tuple):
+            # 链接项: 蓝色文字 + 手型光标 + 点击跳转
+            url, link_text = value
+            link_label = ttk.Label(info_frame, text=link_text, font=("Microsoft YaHei", 9),
+                                   foreground="#0052d9", cursor="hand2")
+            link_label.grid(row=row_index, column=1, sticky="w", pady=2)
+            link_label.bind("<Button-1>", lambda _event, u=url: webbrowser.open(u))
+        else:
+            ttk.Label(info_frame, text=value, font=("Microsoft YaHei", 9)).grid(
+                row=row_index, column=1, sticky="w", pady=2)
+
+    # 绿色便携·本地化说明区块 (2026-08-16 补充: 强调所有文件与依赖全部本地化)
+    local_frame = ttk.Frame(about_window)
+    local_frame.pack(fill="x", padx=24, pady=(12, 0))
+    _iw_5874 = ttk.Label(local_frame, text=i18n.t('about.local_title'), font=("Microsoft YaHei", 9, "bold"),                   foreground="#2f6f2f")
+    _iw_5874.pack(anchor="w")
+    _i18n_widgets.append((_iw_5874, 'text', 'about.local_title'))
+    local_points = [
+        i18n.t('about.local_point_1'),
+        i18n.t('about.local_point_2'),
+        i18n.t('about.local_point_3'),
+        i18n.t('about.local_point_4'),
+        i18n.t('about.local_point_5'),
+        i18n.t('about.local_point_6'),
+    ]
+    for point in local_points:
+        ttk.Label(local_frame, text=point, font=("Microsoft YaHei", 9),
+                  foreground="#444444").pack(anchor="w", pady=1)
+
+    # 按钮行 (仅关闭; 跳转统一用上方可点击链接文字)
+    about_close_btn = ttk.Button(about_window, text=i18n.t('about.close'), command=about_window.destroy)
+    about_close_btn.pack(pady=(18, 18))
+    _i18n_widgets.append((about_close_btn, 'text', 'about.close'))
+
+
+def _ask_close_choice_dialog(root, tk, ttk):
+    """关闭时弹三选一对话框 (模态), 返回:
+    "exit" 退出并停止服务; "tray" 最小化到托盘(服务继续); None 取消。
+    这样"不关服务"时托盘/任务栏入口仍在, 可随时恢复, 与本项目期望一致。
+
+    原为 run_gui 内的嵌套函数 (依赖闭包 root/tk/ttk), 2026-09-23 抽为模块级函数,
+    依赖改为显式传参。
+
+    参数:
+        root: 主窗口 (Toplevel 的 parent / transient 目标, 也是居中计算的基准)
+        tk:   tkinter 模块
+        ttk:  tkinter.ttk 模块
+    """
+    choice = {"value": None}
+
+    def choose(value):
+        choice["value"] = value
+        dialog.destroy()
+
+    dialog = tk.Toplevel(root)
+    dialog.title(i18n.t('close_dialog.title'))
+    dialog.transient(root)
+    dialog.grab_set()          # 模态: 关闭操作期间主窗口不响应
+    dialog.resizable(False, False)
+
+    label_frame = ttk.Frame(dialog, padding=14)
+    label_frame.pack(fill="x")
+    _iw_7672 = ttk.Label(label_frame, justify="left", text=i18n.t('close_dialog.label'))
+    _iw_7672.pack(anchor="w")
+    _i18n_widgets.append((_iw_7672, 'text', 'close_dialog.label'))
+
+    button_row = ttk.Frame(dialog, padding=14)
+    button_row.pack(fill="x")
+    _iw_7676 = ttk.Button(button_row, text=i18n.t('close_dialog.cancel'),                    command=lambda: choose(None))
+    _iw_7676.pack(side="right")
+    _i18n_widgets.append((_iw_7676, 'text', 'close_dialog.cancel'))
+    _iw_7678 = ttk.Button(button_row, text=i18n.t('close_dialog.minimize'),                    command=lambda: choose("tray"))
+    _iw_7678.pack(side="right", padx=8)
+    _i18n_widgets.append((_iw_7678, 'text', 'close_dialog.minimize'))
+    _iw_7680 = ttk.Button(button_row, text=i18n.t('close_dialog.exit'),                    command=lambda: choose("exit"))
+    _iw_7680.pack(side="right")
+    _i18n_widgets.append((_iw_7680, 'text', 'close_dialog.exit'))
+
+    # 居中于主窗口
+    dialog.update_idletasks()
+    pos_x = root.winfo_x() + (root.winfo_width() - dialog.winfo_reqwidth()) // 2
+    pos_y = root.winfo_y() + (root.winfo_height() - dialog.winfo_reqheight()) // 2
+    dialog.geometry("+%d+%d" % (pos_x, pos_y))
+
+    root.wait_window(dialog)
+    return choice["value"]
+
+
+def _open_plugin_manager_dialog(app, root, tk, ttk, messagebox, filedialog):
+    """插件管理窗口: 查看已安装 / 搜索 (npm + GitHub 官方话题页) / 安装 / 移除插件
+    所有耗时操作都在后台线程执行, 通过 root.after 回主线程更新界面
+    原为 run_gui 内的嵌套函数 (依赖闭包 app/root/tk/ttk/messagebox/filedialog),
+    2026-09-23 抽为模块级函数, 依赖改为显式传参。
+    """
+    top = tk.Toplevel(root)
+    top.title(i18n.t('plugin.title'))
+    # 宽度与主启动器一致 (1160) 让右侧搜索结果列/版本列有足够空间 (2026-09-10)
+    top.geometry("1160x680")
+    top.minsize(1000, 580)
+
+    profile = DEFAULT_PROFILE
+    plugin_busy = [False]   # 本窗口忙碌标志, 防止重复操作
+    plugin_checked = [False]  # 是否已跑过一次 npm 更新检查 (刷新后重置, 避免重复查)
+    # 记录列表条目 -> 插件信息, 供右键菜单打开对应网页使用
+    installed_item_urls = {}   # 左侧已安装: item_id -> 包名
+    search_item_urls = {}      # 右侧搜索:  item_id -> {name, source, url}
+
+    # ---------- 操作函数 (先全部定义, 再创建控件; 函数体内对控件的引用在调用时才解析) ----------
+    def set_plugin_busy(busy):
+        """设置本窗口忙碌状态, 统一禁用/恢复操作按钮"""
+        plugin_busy[0] = busy
+        button_state = "disabled" if busy else "normal"
+        for button in (search_btn, load_github_btn, github_btn, load_rec_btn,
+                       remove_btn, install_btn, manual_btn, local_install_btn,
+                       enable_btn, disable_btn, refresh_btn, update_selected_btn):
+            button.config(state=button_state)
+        if not busy:
+            plugin_status.set(i18n.t('plugin.status_ready'))
+
+    def _apply_update_check_results(results):
+        """把 npm 检查结果填回左侧 Treeview —— 有更新的第三方插件加 ★ + 标红。
+        内置插件 (不在 results 里) 保持原样。"""
+        result_by_name = {r["name"]: r for r in results}
+        has_update_count = 0
+        for item_id in installed_tree.get_children():
+            pkg_name = installed_item_urls.get(item_id)
+            if pkg_name is None:
+                continue
+            info = result_by_name.get(pkg_name)
+            if info is None:
+                continue  # 内置插件 / 非 npm 包 → 跳过
+            if info["has_update"]:
+                has_update_count += 1
+                current_text = installed_tree.item(item_id, "text")
+                if not current_text.startswith("★"):
+                    installed_tree.item(item_id, text="★ " + current_text,
+                                        tags=("has_update",))
+        installed_tree.tag_configure("has_update", foreground="#dc2626")
+        total = len(results)
+        if has_update_count > 0:
+            plugin_status.set(
+                i18n.t('plugin.status_updates_found',
+                       count=has_update_count, total=total))
+        else:
+            plugin_status.set(
+                i18n.t('plugin.status_updates_all_up_to_date', total=total))
+        plugin_checked[0] = True
+
+    def refresh_installed():
+        """本地刷新左侧已安装列表 (无网络) —— 恢复原版 3 列 (version/compat/state)。
+        插件名的 ★ 标记会被清掉 (刷新 = 从头再来)。"""
+        installed_tree.delete(*installed_tree.get_children())
+        installed_item_urls.clear()
+        plugin_checked[0] = False   # 刷新后重置检查状态
+        dependencies = app.list_installed_plugins(profile)
+        compat_label = {
+            "ok": i18n.t('plugin.compat_ok'),
+            "warn": i18n.t('plugin.compat_warn'),
+            "no_core_dep": i18n.t('plugin.compat_nocore'),
+            "unknown": i18n.t('plugin.compat_unknown'),
+        }
+        if not dependencies:
+            installed_tree.insert("", "end", text=i18n.t('plugin.no_installed'),
+                                  values=("", "", ""))
+            return
+        host_versions = app._host_core_versions()
+        for package_name, version in sorted(dependencies.items()):
+            state = app.get_plugin_state(package_name, profile)
+            state_label = {"enabled": i18n.t('plugin.status_enabled'),
+                           "disabled": i18n.t('plugin.status_disabled'),
+                           "plain": "—", "missing": "—"}.get(state, "—")
+            result = app.classify_installed_plugin_compat(package_name, host_versions, profile)
+            compat_text = compat_label.get(result["status"], compat_label["unknown"])
+            item_id = installed_tree.insert("", "end", text=package_name,
+                                            values=(version, compat_text, state_label))
+            installed_tree.item(item_id, tags=())
+            installed_item_urls[item_id] = package_name
+
+    def _run_async_update_check():
+        """后台线程跑一次 npm 检查, 完成后把 ★ 标记填回 Treeview。
+        刷新按钮和更新选中按钮都会调用 (更新选中会先等检查完成再继续)。"""
+        plugin_status.set(i18n.t('plugin.status_checking_updates'))
+        set_plugin_busy(True)
+        def worker():
+            try:
+                results = app.check_plugin_updates(profile)
+                root.after(0, lambda: _apply_update_check_results(results))
+            except Exception as error:
+                root.after(0, lambda: (
+                    plugin_status.set(i18n.t('plugin.status_check_updates_fail')),
+                    app.log("插件更新检查异常: %s" % error)))
+            finally:
+                root.after(0, lambda: set_plugin_busy(False))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_refresh_installed():
+        """刷新已安装列表 —— 本地读 + 自动后台查一次 npm 更新 (不阻塞)。"""
+        refresh_installed()
+        _run_async_update_check()
+
+    def on_update_selected():
+        """更新左侧树里选中的第三方插件 (逐个 dsh plugin add @latest)。
+        若尚未跑过检查 (plugin_checked=False), 先自动跑一次 npm 检查再更新。"""
+        selected = installed_tree.selection()
+        if not selected:
+            messagebox.showinfo(i18n.t('plugin.title'),
+                                i18n.t('plugin.update_select_prompt'), parent=top)
+            return
+
+        def _do_update():
+            """从已标记 ★ 的选中条目里挑出待更新包, 空则弹框 return (注意恢复 busy)。
+            真正执行 pnpm 更新的 worker 自己管理 busy (set=True 后有 finally 保证恢复)。"""
+            to_update = []
+            for item_id in selected:
+                pkg_name = installed_item_urls.get(item_id)
+                if pkg_name is None:
+                    continue
+                tags = installed_tree.item(item_id, "tags") or ()
+                if "has_update" in tags:
+                    to_update.append(pkg_name)
+            if not to_update:
+                messagebox.showinfo(i18n.t('plugin.title'),
+                                    i18n.t('plugin.update_none_pending'), parent=top)
+                # 路径 A: pre_check 已经恢复了 busy (proceed 里先 restore 再 _do_update),
+                # 这里不用再调; 路径 B: plugin_checked=True 直接调用 → 也没设过 busy
+                return
+            preview = "\n".join("  - %s" % n for n in to_update)
+            if not messagebox.askyesno(
+                    i18n.t('plugin.update_title'),
+                    i18n.t('plugin.update_confirm', count=len(to_update), names=preview),
+                    parent=top):
+                return
+            plugin_status.set(i18n.t('plugin.status_updating', count=len(to_update)))
+            set_plugin_busy(True)
+            def worker():
+                try:
+                    succeeded, failed = app.update_plugins(to_update, profile)
+                    def report():
+                        refresh_installed()
+                        plugin_status.set(
+                            i18n.t('plugin.status_update_done',
+                                   ok=len(succeeded), fail=len(failed)))
+                        if failed:
+                            messagebox.showerror(
+                                i18n.t('plugin.update_fail_title'),
+                                i18n.t('plugin.update_fail_detail',
+                                        ok=len(succeeded),
+                                        fail=len(failed),
+                                        details="\n".join(
+                                            "%s: %s" % (n, m) for n, m in failed)),
+                                parent=top)
+                        else:
+                            messagebox.showinfo(
+                                i18n.t('plugin.update_done_title'),
+                                i18n.t('plugin.update_done_detail',
+                                       count=len(succeeded)),
+                                parent=top)
+                        # 更新完自动再查一次, 刷新 ★ 标记
+                        _run_async_update_check()
+                    root.after(0, report)
+                except Exception as error:
+                    root.after(0, lambda: (
+                        messagebox.showerror(i18n.t('plugin.update_fail_title'),
+                                              str(error), parent=top),
+                        plugin_status.set(i18n.t('plugin.update_fail_title'))))
+                finally:
+                    root.after(0, lambda: set_plugin_busy(False))
+            threading.Thread(target=worker, daemon=True).start()
+
+        # 没检查过 → 自动触发一次 npm 检查, 检查完再更新
+        if not plugin_checked[0]:
+            plugin_status.set(i18n.t('plugin.status_checking_updates'))
+            set_plugin_busy(True)
+            def pre_check_worker():
+                try:
+                    results = app.check_plugin_updates(profile)
+                    def proceed():
+                        _apply_update_check_results(results)
+                        # 检查阶段完成, 必须先恢复 busy 再进 _do_update
+                        # (_do_update 里如果没包要更会弹框 return, 不会再碰 busy)
+                        set_plugin_busy(False)
+                        _do_update()
+                    root.after(0, proceed)
+                except Exception as error:
+                    root.after(0, lambda: (
+                        messagebox.showerror(i18n.t('plugin.status_check_updates_fail'),
+                                              str(error), parent=top),
+                        set_plugin_busy(False)))
+            threading.Thread(target=pre_check_worker, daemon=True).start()
+        else:
+            _do_update()
+
+
+    def show_search_results(plugins, default_source):
+        """把搜索结果填入右侧列表; default_source 为 'npm' 或 'github'"""
+        search_tree.delete(*search_tree.get_children())
+        search_item_urls.clear()
+        if not plugins:
+            # 分类列已去掉, values 只剩 (source, version, description) 三列 (2026-09-10)
+            search_tree.insert("", "end", text=i18n.t('plugin.search_no_result'), values=(default_source, "", ""))
+            plugin_status.set(i18n.t('plugin.search_no_result'))
+            return
+        for plugin in plugins:
+            item_source = plugin.get("source", default_source)
+            item_id = search_tree.insert("", "end",
+                                         text=plugin["name"],
+                                         values=(item_source,
+                                                 plugin.get("version", ""),
+                                                 plugin.get("description", "")))
+            # 记录每个条目对应的网址, 供右键菜单打开页面使用; spec 为显式安装标识 (推荐项才有)
+            search_item_urls[item_id] = {
+                "name": plugin["name"],
+                "category": plugin.get("category", ""),
+                "source": item_source,
+                "url": plugin.get("url", ""),
+                "spec": plugin.get("spec", ""),
+            }
+        plugin_status.set(i18n.t('plugin.status_results', count=len(plugins)))
+
+    def do_search():
+        """搜索插件 (npm 注册表, 国内镜像优先)"""
+        if plugin_busy[0]:
+            return
+        keyword = keyword_var.get().strip() or "dsh-plugin"
+        set_plugin_busy(True)
+        plugin_status.set(i18n.t('plugin.status_searching', keyword=keyword))
+        def worker():
+            try:
+                plugins = app.search_npm_plugins(keyword)
+                # 纯 npm 结果: 后台再补前若干个的"核心兼容"标记 (其余保持版本号原样)
+                enriched = app.enrich_npm_plugins(plugins)
+                root.after(0, lambda: show_search_results(enriched, "npm"))
+            except Exception as error:
+                root.after(0, lambda: (messagebox.showerror(i18n.t('plugin.search_fail'), str(error), parent=top),
+                                       plugin_status.set(i18n.t('plugin.status_search_fail'))))
+            finally:
+                root.after(0, lambda: set_plugin_busy(False))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def do_load_github():
+        """抓取 GitHub 官方话题页热门仓库并填入搜索结果"""
+        if plugin_busy[0]:
+            return
+        set_plugin_busy(True)
+        plugin_status.set(i18n.t('plugin.status_github_loading'))
+        def worker():
+            try:
+                plugins = app.fetch_github_topic_plugins()
+                root.after(0, lambda: show_search_results(plugins, "github"))
+            except Exception as error:
+                root.after(0, lambda: (messagebox.showerror(i18n.t('plugin.load_fail'), str(error), parent=top),
+                                       plugin_status.set(i18n.t('plugin.status_load_fail'))))
+            finally:
+                root.after(0, lambda: set_plugin_busy(False))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def do_load_recommended():
+        """加载内置推荐插件列表。npm 源推荐项后台拉真实版本 + 兼容状态 (与搜索结果一致);
+        github 源无法本地比对核心版本, 版本列显示"不明" (2026-09-10)"""
+        if plugin_busy[0]:
+            return
+        items = [dict(item) for item in RECOMMENDED_PLUGINS]
+        set_plugin_busy(True)
+        plugin_status.set(i18n.t('plugin.status_rec_loading'))
+        def worker():
+            try:
+                host_versions = app._host_core_versions()
+                unknown_text = i18n.t('plugin.compat_unknown')
+                status_label = {
+                    "ok": i18n.t('plugin.compat_ok'),
+                    "warn": i18n.t('plugin.compat_warn'),
+                    "unknown": unknown_text,
+                }
+                for item in items:
+                    if item.get("source") == "npm":
+                        # npm 源: 用真实的 npm 包名拉版本 + 兼容 (spec 即包名, 可能与显示名不同, 如 dshmarket)
+                        package_name = item.get("spec") or item.get("name")
+                        manifest = app.fetch_plugin_manifest(package_name)
+                        if manifest is not None:
+                            result = _classify_core_compat(manifest, host_versions)
+                            label = status_label.get(result["status"], unknown_text)
+                            base_version = str(manifest.get("version") or "").lstrip("v")
+                            version_text = ("v%s" % base_version) if base_version else "latest"
+                            item["version"] = "%s [%s]" % (version_text, label)
+                            if result.get("detail"):
+                                item["_compat_detail"] = result["detail"]
+                        else:
+                            item["version"] = unknown_text
+                    else:
+                        # github 源: 无法本地比对核心版本, 显示"不明"
+                        item["version"] = unknown_text
+                root.after(0, lambda: (show_search_results(items, i18n.t('plugin.source_recommended')),
+                                       plugin_status.set(i18n.t('plugin.status_rec_loaded', count=len(items)))))
+            except Exception as error:
+                root.after(0, lambda: (show_search_results(items, i18n.t('plugin.source_recommended')),
+                                       plugin_status.set(i18n.t('plugin.status_rec_partial', count=len(items), error=error))))
+            finally:
+                root.after(0, lambda: set_plugin_busy(False))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def do_open_github_topic():
+        """在浏览器打开 GitHub 官方话题页 (完整入口, 可翻页浏览更多)"""
+        webbrowser.open(GITHUB_TOPIC_URL)
+
+    def build_open_urls(item_info):
+        """根据条目信息构造可打开的网址列表
+        返回 [(显示名, url), ...]; 推荐项 GitHub 标识用仓库地址, 其余用 npm 页面 + GitHub 搜索兜底"""
+        name = item_info["name"]
+        spec = item_info.get("spec", "")
+        raw_url = item_info.get("url", "")
+        url_list = []
+        # 推荐项 GitHub 标识: 直接打开仓库地址; 仓库名不等于 npm 包名, 不给无效的 npm 页
+        if spec.startswith("github:"):
+            repo = spec[len("github:"):]
+            url_list.append((i18n.t('plugin.menu_open_github_repo'),
+                             raw_url or "https://github.com/%s" % repo))
+            url_list.append((i18n.t('plugin.menu_open_github_search'),
+                             "https://github.com/search?q=%s" % urllib.parse.quote(name)))
+        else:
+            # npm 包 / 搜索来源: 打开 npm 页面, 以及 GitHub 搜索
+            url_list.append((i18n.t('plugin.menu_open_npm_page'),
+                             "https://www.npmjs.com/package/%s" % urllib.parse.quote(name)))
+            url_list.append((i18n.t('plugin.menu_open_github_search'),
+                             "https://github.com/search?q=%s" % urllib.parse.quote(name)))
+        return url_list
+
+    def on_plugin_right_click(tree, item_urls, event):
+        """Treeview 右键菜单: 打开对应网页 (npm / GitHub)
+        tree 为被点击的 Treeview, item_urls 为条目映射表, event 为鼠标事件"""
+        row_id = tree.identify_row(event.y)
+        if not row_id:
+            return
+        tree.selection_set(row_id)
+        info = item_urls.get(row_id)
+        if info is None:
+            return
+        context_menu = tk.Menu(top, tearoff=0)
+        for label, url in build_open_urls(info):
+            context_menu.add_command(label=label, command=lambda u=url: webbrowser.open(u))
+        context_menu.add_separator()
+        context_menu.add_command(label=i18n.t('plugin.menu_copy_name'),
+                                 command=lambda: root.clipboard_append(info["name"]))
+        context_menu.tk_popup(event.x_root, event.y_root)
+
+    def resolve_selected_spec():
+        """取搜索结果选中项的安装规格与显示名
+        返回 (安装规格, 显示名); 未选中或空条目返回 (None, None)"""
+        selection = search_tree.selection()
+        if not selection:
+            return None, None
+        package_name = search_tree.item(selection[0], "text")
+        if package_name.startswith("("):
+            return None, None
+        # 推荐项: 优先用显式 spec (可能为 github:<repo> 或 npm 包名)
+        item_spec = search_item_urls.get(selection[0], {}).get("spec", "")
+        if item_spec:
+            return item_spec, package_name
+        # 搜索来源: 依来源列判断 (values 首项即 source; 分类列已去掉, 勿用 [1]) (2026-09-10)
+        item_source = search_tree.item(selection[0], "values")[0]
+        if item_source == "github":
+            return "github:%s" % package_name, package_name
+        return package_name, package_name
+
+    def on_install_selected():
+        """安装搜索结果中选中的插件"""
+        if plugin_busy[0]:
+            return
+        spec, display_name = resolve_selected_spec()
+        if spec is None:
+            messagebox.showinfo(i18n.t('plugin.title'), i18n.t('plugin.install_select_prompt'), parent=top)
+            return
+        do_install(spec, display_name)
+
+    def on_manual_install():
+        """手动输入安装规格并安装"""
+        if plugin_busy[0]:
+            return
+        spec = manual_var.get().strip()
+        if not spec:
+            messagebox.showinfo(i18n.t('plugin.title'),
+                                i18n.t('plugin.manual_install_prompt'),
+                                parent=top)
+            return
+        do_install(spec, spec)
+
+    def on_install_local():
+        """选择本地插件文件夹 (含 package.json) 并安装, 重启服务后生效"""
+        if plugin_busy[0]:
+            return
+        default_plugins_dir = os.path.join(BASE_DIR, "plugins")
+        if not os.path.isdir(default_plugins_dir):
+            default_plugins_dir = BASE_DIR
+        folder = filedialog.askdirectory(
+            title=i18n.t('plugin.local_dir_title'),
+            initialdir=default_plugins_dir,
+            parent=top)
+        if not folder:
+            return
+        if not messagebox.askyesno(
+                i18n.t('plugin.local_install_title'),
+                i18n.t('plugin.local_install_confirm', path=folder),
+                parent=top):
+            return
+        spec = "file:" + os.path.abspath(folder).replace("\\", "/")
+        do_install(spec, os.path.basename(folder))
+
+    def on_install_bundled():
+        """一键安装 + 同步程序目录 plugins/ 下所有内置插件:
+        未安装的自动补装, 已安装的自动更新为最新源码 (附带检查更新操作)。
+        复用 install_bundled_plugins() + update_bundled_plugins(), 与「安装环境」里
+        的自动安装同一实现; 更新为增量: 逐文件哈希对比, 只写变化的文件"""
+        if plugin_busy[0]:
+            return
+        if not app.bundled_plugin_dirs():
+            messagebox.showinfo(i18n.t('plugin.title'), i18n.t('plugin.bundled_none'), parent=top)
+            return
+        if not messagebox.askyesno(
+                i18n.t('plugin.bundled_install_title'),
+                i18n.t('plugin.bundled_install_confirm', names="\n".join(
+                    os.path.basename(folder) for folder in app.bundled_plugin_dirs())),
+                parent=top):
+            return
+        set_plugin_busy(True)
+        plugin_status.set(i18n.t('plugin.status_bundled_installing'))
+        def worker():
+            try:
+                installed_now, _skipped, failed_install = \
+                    app.install_bundled_plugins(profile)
+                updated, up_to_date, _not_installed, failed_update = \
+                    app.update_bundled_plugins(profile)
+                summary = []
+                if installed_now:
+                    summary.append("%s: %s" % (i18n.t('plugin.bundled_new'), ", ".join(installed_now)))
+                if updated:
+                    summary.append("%s: %s" % (i18n.t('plugin.bundled_updated'), ", ".join(updated)))
+                if up_to_date:
+                    summary.append("%s: %s" % (i18n.t('plugin.bundled_latest'), ", ".join(up_to_date)))
+                if failed_install:
+                    summary.append("%s: %s" % (i18n.t('plugin.bundled_install_failed'), ", ".join(failed_install)))
+                if failed_update:
+                    summary.append("%s: %s" % (i18n.t('plugin.bundled_update_failed'), "; ".join(
+                        "%s(%s)" % (name, reason) for name, reason in failed_update)))
+                message = "\n".join(summary) if summary else i18n.t('plugin.bundled_nothing')
+                root.after(0, lambda: (refresh_installed(),
+                                       messagebox.showinfo(i18n.t('plugin.install_title'), message, parent=top),
+                                       plugin_status.set(i18n.t('plugin.status_bundled_done'))))
+            except Exception as error:
+                root.after(0, lambda: (messagebox.showerror(i18n.t('plugin.status_install_fail'), str(error), parent=top),
+                                       plugin_status.set(i18n.t('plugin.status_install_fail'))))
+            finally:
+                root.after(0, lambda: set_plugin_busy(False))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def do_install(spec, display_name):
+        """后台线程执行插件安装"""
+        set_plugin_busy(True)
+        plugin_status.set(i18n.t('plugin.status_installing', name=display_name))
+        def worker():
+            try:
+                app.install_plugin(spec, profile)
+                root.after(0, lambda: (refresh_installed(),
+                                       plugin_status.set(i18n.t('plugin.status_installed', name=display_name))))
+            except Exception as error:
+                root.after(0, lambda: (messagebox.showerror(i18n.t('plugin.status_install_fail'), str(error), parent=top),
+                                       plugin_status.set(i18n.t('plugin.status_install_fail'))))
+            finally:
+                root.after(0, lambda: set_plugin_busy(False))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def auto_sync_bundled_on_open():
+        """打开插件管理窗口即自动同步一次内置插件 (无需单独按钮):
+        把已安装的内置插件更新为 plugins/ 最新源码, 结果写入状态栏。"""
+        try:
+            updated, up_to_date, _not_installed, failed = \
+                app.update_bundled_plugins(profile)
+            if updated:
+                root.after(0, lambda: (refresh_installed(),
+                                       plugin_status.set(i18n.t('plugin.status_auto_updated',
+                                                                names=", ".join(updated)))))
+            elif failed:
+                root.after(0, lambda: plugin_status.set(
+                    i18n.t('plugin.status_sync_failed', details="; ".join(
+                        "%s(%s)" % (name, reason) for name, reason in failed))))
+            else:
+                root.after(0, lambda: plugin_status.set(
+                    i18n.t('plugin.status_uptodate', count=len(up_to_date))))
+        except Exception as error:
+            root.after(0, lambda: plugin_status.set(i18n.t('plugin.status_sync_error', error=error)))
+
+    def _collect_selected_package_names():
+        """从已安装 Treeview 取所有选中条目的包名, 过滤掉 category 分组行 (以 "(" 开头的 text).
+        返回合法包名列表; 无选中时返回空列表。"""
+        selection = installed_tree.selection()
+        package_names = []
+        for row_id in selection:
+            text = installed_tree.item(row_id, "text")
+            if text and not text.startswith("("):
+                package_names.append(text)
+        return package_names
+
+    def on_remove():
+        """批量移除左侧选中的已安装插件 (支持多选, Ctrl/Shift 点击 Treeview 多行)"""
+        if plugin_busy[0]:
+            return
+        package_names = _collect_selected_package_names()
+        if not package_names:
+            messagebox.showinfo(i18n.t('plugin.title'), i18n.t('plugin.remove_select_prompt'), parent=top)
+            return
+        if len(package_names) == 1:
+            confirm_msg = i18n.t('plugin.remove_confirm_single', name=package_names[0])
+        else:
+            confirm_msg = "确定要移除以下 %d 个插件吗?\n\n%s" % (
+                len(package_names), "\n".join("· " + name for name in package_names))
+        if not messagebox.askyesno(i18n.t('plugin.remove_title'), confirm_msg, parent=top):
+            return
+        set_plugin_busy(True)
+        plugin_status.set(i18n.t('plugin.status_removing', count=len(package_names)))
+        def worker():
+            removed_ok = []
+            removed_fail = []
+            for package_name in package_names:
+                try:
+                    app.remove_plugin(package_name, profile)
+                    removed_ok.append(package_name)
+                except Exception as error:
+                    removed_fail.append((package_name, str(error)))
+            summary_parts = []
+            if removed_ok:
+                summary_parts.append(i18n.t('plugin.removed_ok_fmt', count=len(removed_ok), names=", ".join(removed_ok)))
+            if removed_fail:
+                summary_parts.append(i18n.t('plugin.removed_fail_fmt', count=len(removed_fail), details="; ".join(
+                    "%s(%s)" % (name, reason) for name, reason in removed_fail)))
+            summary_text = "\n".join(summary_parts) if summary_parts else i18n.t('plugin.no_removed')
+            root.after(0, lambda: (refresh_installed(),
+                                   messagebox.showinfo(i18n.t('plugin.remove_title'), summary_text, parent=top),
+                                   plugin_status.set(i18n.t('plugin.status_remove_done', summary=summary_text.split("\n")[0])),
+                                   set_plugin_busy(False)))  # 复用开关: 结束后必须恢复正常按钮, 否则一直禁用
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_toggle(enable):
+        """批量启用/停用左侧选中的插件 (支持多选, Ctrl/Shift 点击 Treeview 多行)"""
+        if plugin_busy[0]:
+            return
+        package_names = _collect_selected_package_names()
+        if not package_names:
+            messagebox.showinfo(i18n.t('plugin.title'), i18n.t('plugin.toggle_select_prompt'), parent=top)
+            return
+        action = i18n.t('plugin.action_enable') if enable else i18n.t('plugin.action_disable')
+        toggle_title = i18n.t('plugin.toggle_title', action=action)
+        if len(package_names) == 1:
+            confirm_msg = i18n.t('plugin.toggle_confirm_single', action=action, name=package_names[0])
+        else:
+            confirm_msg = i18n.t('plugin.toggle_confirm_multi', count=len(package_names),
+                                 action=action, names="\n".join("· " + name for name in package_names))
+        if not messagebox.askyesno(toggle_title, confirm_msg, parent=top):
+            return
+        bundle_ok = []      # 成功启停 (声明了 dsh.bundle)
+        bundle_skip = []    # 跳过 (未声明 dsh.bundle, 非 bundle 插件)
+        bundle_fail = []    # 异常
+        for package_name in package_names:
+            try:
+                ok = app.set_plugin_enabled(package_name, profile, enabled=enable)
+                if ok:
+                    bundle_ok.append(package_name)
+                else:
+                    bundle_skip.append(package_name)
+            except Exception as error:
+                bundle_fail.append((package_name, str(error)))
+        summary_parts = []
+        if bundle_ok:
+            summary_parts.append(i18n.t('plugin.toggle_summary_ok', action=action,
+                                        count=len(bundle_ok), names=", ".join(bundle_ok)))
+        if bundle_skip:
+            summary_parts.append(i18n.t('plugin.toggle_summary_skip', count=len(bundle_skip),
+                                        names=", ".join(bundle_skip)))
+        if bundle_fail:
+            summary_parts.append(i18n.t('plugin.toggle_summary_fail', count=len(bundle_fail), details="; ".join(
+                "%s(%s)" % (name, reason) for name, reason in bundle_fail)))
+        summary_text = "\n".join(summary_parts) if summary_parts else i18n.t('plugin.no_toggle')
+        refresh_installed()
+        messagebox.showinfo(toggle_title, summary_text, parent=top)
+        plugin_status.set(i18n.t('plugin.status_toggle_done', action=action, summary=summary_text.split("\n")[0]))
+
+    # ---------- 顶部工具栏 ----------
+    toolbar = ttk.Frame(top)
+    toolbar.pack(fill="x", padx=10, pady=(10, 6))
+
+    _iw_7245 = ttk.Label(toolbar, text=i18n.t('plugin.search_label'))
+    _iw_7245.pack(side="left")
+    _i18n_widgets.append((_iw_7245, 'text', 'plugin.search_label'))
+    keyword_var = tk.StringVar(value="dsh-plugin")
+    keyword_entry = ttk.Entry(toolbar, textvariable=keyword_var, width=28)
+    keyword_entry.pack(side="left", padx=(6, 6))
+
+    ttk.Label(toolbar, text="  ").pack(side="left")
+
+    _iw_7252 = ttk.Label(toolbar, text=i18n.t('plugin.github_label'))
+    _iw_7252.pack(side="left")
+    _i18n_widgets.append((_iw_7252, 'text', 'plugin.github_label'))
+    github_btn = ttk.Button(toolbar, text=i18n.t('plugin.github_btn'), command=do_open_github_topic)
+    _i18n_widgets.append((github_btn, 'text', 'plugin.github_btn'))
+    github_btn.pack(side="left", padx=(6, 0))
+
+    bundled_btn = ttk.Button(toolbar, text=i18n.t('plugin.bundled_btn'),
+                             command=on_install_bundled)
+    _i18n_widgets.append((bundled_btn, 'text', 'plugin.bundled_btn'))
+    bundled_btn.pack(side="left", padx=(12, 0))
+    _iw_7259 = ttk.Label(toolbar, text=i18n.t('plugin.bundled_hint'))
+    _iw_7259.pack(side="left", padx=(6, 0))
+    _i18n_widgets.append((_iw_7259, 'text', 'plugin.bundled_hint'))
+
+    # ---------- 中间: 左右两个面板 ----------
+    middle = ttk.Panedwindow(top, orient="horizontal")
+    middle.pack(fill="both", expand=True, padx=10, pady=6)
+
+    # 左侧: 已安装插件
+    installed_frame = ttk.LabelFrame(middle, text=i18n.t('plugin.installed_tab', profile=profile))
+    _i18n_widgets.append((installed_frame, 'text', 'plugin.installed_tab'))
+    # 左:右 = 1:2, 右侧看到更多结果且版本列有空间; 窗口已加宽到 1160, 权重无需过于悬殊 (2026-09-10)
+    middle.add(installed_frame, weight=1)
+    # 列表区: 左 Treeview + 右垂直滚动条 (方便上下滑动)
+    installed_body = ttk.Frame(installed_frame)
+    installed_body.pack(fill="both", expand=True, padx=6, pady=6)
+    # selectmode="extended": 允许多选 (Ctrl+点击 逐个选, Shift+点击 连选)
+    installed_tree = ttk.Treeview(installed_body, columns=("version", "compat", "state"),
+                                  show="tree headings", selectmode="extended")
+    installed_tree.heading("#0", text=i18n.t('plugin.column_name'))
+    installed_tree.heading("version", text=i18n.t('plugin.column_version'))
+    installed_tree.heading("compat", text=i18n.t('plugin.column_compat'))
+    installed_tree.heading("state", text=i18n.t('plugin.column_status'))
+    # 列宽保持原版 (2026-09-18: 恢复 layout, latest 不再是独立列而是 ★ 标记)
+    installed_tree.column("#0", width=120)
+    installed_tree.column("version", width=66, anchor="center")
+    installed_tree.column("compat", width=88, anchor="center")
+    installed_tree.column("state", width=52, anchor="center")
+    installed_scrollbar = ttk.Scrollbar(installed_body, orient="vertical",
+                                        command=installed_tree.yview)
+    installed_tree.configure(yscrollcommand=installed_scrollbar.set)
+    installed_tree.pack(side="left", fill="both", expand=True)
+    installed_scrollbar.pack(side="right", fill="y")
+
+    installed_buttons = ttk.Frame(installed_frame)
+    installed_buttons.pack(fill="x", padx=6, pady=(0, 6))
+    remove_btn = ttk.Button(installed_buttons, text=i18n.t('plugin.batch_remove'), command=on_remove)
+    _i18n_widgets.append((remove_btn, 'text', 'plugin.batch_remove'))
+    remove_btn.pack(side="left")
+    enable_btn = ttk.Button(installed_buttons, text=i18n.t('plugin.batch_enable'), command=lambda: on_toggle(True))
+    _i18n_widgets.append((enable_btn, 'text', 'plugin.batch_enable'))
+    enable_btn.pack(side="left", padx=(6, 0))
+    disable_btn = ttk.Button(installed_buttons, text=i18n.t('plugin.batch_disable'), command=lambda: on_toggle(False))
+    _i18n_widgets.append((disable_btn, 'text', 'plugin.batch_disable'))
+    disable_btn.pack(side="left", padx=(6, 0))
+    refresh_btn = ttk.Button(installed_buttons, text=i18n.t('plugin.refresh'), command=on_refresh_installed)
+    refresh_btn.pack(side="left", padx=(6, 0))
+    _i18n_widgets.append((refresh_btn, 'text', 'plugin.refresh'))
+    update_selected_btn = ttk.Button(installed_buttons, text=i18n.t('plugin.update_selected'),
+                                     command=on_update_selected)
+    update_selected_btn.pack(side="left", padx=(10, 0))
+    _i18n_widgets.append((update_selected_btn, 'text', 'plugin.update_selected'))
+    _iw_7295 = ttk.Label(installed_buttons, text=i18n.t('plugin.multi_select_hint'), foreground="#666666")
+    _iw_7295.pack(side="left", padx=(8, 0))
+    _i18n_widgets.append((_iw_7295, 'text', 'plugin.multi_select_hint'))
+
+    # 右侧: 搜索结果
+    search_frame = ttk.LabelFrame(middle, text=i18n.t('plugin.search_tab'))
+    _i18n_widgets.append((search_frame, 'text', 'plugin.search_tab'))
+    middle.add(search_frame, weight=2)
+    # 列表区: 左 Treeview + 右垂直滚动条 (方便上下滑动)
+    search_body = ttk.Frame(search_frame)
+    search_body.pack(fill="both", expand=True, padx=6, pady=6)
+    search_tree = ttk.Treeview(search_body, columns=("source", "version", "description"), show="tree headings")
+    search_tree.heading("#0", text=i18n.t('plugin.column_name'))
+    search_tree.heading("source", text=i18n.t('plugin.column_source'))
+    search_tree.heading("version", text=i18n.t('version_select.version_column'))
+    search_tree.heading("description", text=i18n.t('plugin.column_desc'))
+    # 列宽留足余量: 总和需明显小于面板宽度, 否则 pack 会把右侧滚动条压缩成 1x1.
+    # 版本列会显示 "v0.48.0 [预估兼容]" 这类较长文本, 需要显著加宽 (2026-09-10 去掉分类列后调整).
+    search_tree.column("#0", width=150)
+    search_tree.column("source", width=52, anchor="center")
+    search_tree.column("version", width=160, anchor="center")
+    search_tree.column("description", width=190, stretch=True)
+    search_scrollbar = ttk.Scrollbar(search_body, orient="vertical",
+                                     command=search_tree.yview)
+    search_tree.configure(yscrollcommand=search_scrollbar.set)
+    search_tree.pack(side="left", fill="both", expand=True)
+    search_scrollbar.pack(side="right", fill="y")
+
+    search_buttons = ttk.Frame(search_frame)
+    search_buttons.pack(fill="x", padx=6, pady=(0, 6))
+    # 按钮顺序: 「加载推荐」在前,「搜索npm插件」在后 (2026-09-10 用户要求对调)
+    load_rec_btn = ttk.Button(search_buttons, text=i18n.t('plugin.load_recommended'), command=do_load_recommended)
+    _i18n_widgets.append((load_rec_btn, 'text', 'plugin.load_recommended'))
+    load_rec_btn.pack(side="left")
+    search_btn = ttk.Button(search_buttons, text=i18n.t('plugin.search_btn'), command=do_search)
+    _i18n_widgets.append((search_btn, 'text', 'plugin.search_btn'))
+    search_btn.pack(side="left", padx=(6, 0))
+    load_github_btn = ttk.Button(search_buttons, text=i18n.t('plugin.load_github_hot'), command=do_load_github)
+    _i18n_widgets.append((load_github_btn, 'text', 'plugin.load_github_hot'))
+    load_github_btn.pack(side="left", padx=(6, 0))
+    install_btn = ttk.Button(search_buttons, text=i18n.t('plugin.install_selected'), command=on_install_selected)
+    _i18n_widgets.append((install_btn, 'text', 'plugin.install_selected'))
+    install_btn.pack(side="left", padx=(6, 0))
+
+    # ---------- 手动安装栏 ----------
+    manual_frame = ttk.Frame(top)
+    manual_frame.pack(fill="x", padx=10, pady=(0, 6))
+    _iw_7336 = ttk.Label(manual_frame, text=i18n.t('plugin.manual_install_hint'))
+    _iw_7336.pack(side="left")
+    _i18n_widgets.append((_iw_7336, 'text', 'plugin.manual_install_hint'))
+    manual_var = tk.StringVar()
+    manual_entry = ttk.Entry(manual_frame, textvariable=manual_var, width=48)
+    manual_entry.pack(side="left", padx=(6, 6))
+    manual_btn = ttk.Button(manual_frame, text=i18n.t('plugin.install_btn'), command=on_manual_install)
+    _i18n_widgets.append((manual_btn, 'text', 'plugin.install_btn'))
+    manual_btn.pack(side="left")
+    local_install_btn = ttk.Button(manual_frame, text=i18n.t('plugin.local_install'),
+                                   command=on_install_local)
+    _i18n_widgets.append((local_install_btn, 'text', 'plugin.local_install'))
+    local_install_btn.pack(side="left", padx=(8, 0))
+    _iw_7345 = ttk.Label(manual_frame, text=i18n.t('plugin.local_hint'),                   foreground="#666666")
+    _iw_7345.pack(side="left", padx=(8, 0))
+    _i18n_widgets.append((_iw_7345, 'text', 'plugin.local_hint'))
+
+    # ---------- 底部状态栏 ----------
+    plugin_status = tk.StringVar(value=i18n.t('plugin.status_ready'))
+    ttk.Label(top, textvariable=plugin_status, font=("Microsoft YaHei", 9),
+              foreground="#555555").pack(side="bottom", fill="x", padx=10, pady=(0, 8), anchor="w")
+
+    # 右键菜单: 已安装列表 -> npm 页面 / 复制包名 (内置插件更新在打开窗口时自动进行,
+    # 无需单独入口); 搜索列表 -> 对应网页 (npm / GitHub) 或复制包名
+    def on_installed_right_click(event):
+        """已安装列表右键: 打开 npm 页面 / 复制包名"""
+        row_id = installed_tree.identify_row(event.y)
+        if not row_id:
+            return
+        installed_tree.selection_set(row_id)
+        package_name = installed_item_urls.get(row_id)
+        if not package_name:
+            return
+        context_menu = tk.Menu(top, tearoff=0)
+        context_menu.add_command(
+            label=i18n.t('plugin.menu_open_npm_page'),
+            command=lambda: webbrowser.open(
+                "https://www.npmjs.com/package/%s" % urllib.parse.quote(package_name)))
+        context_menu.add_command(label=i18n.t('plugin.menu_copy_name'),
+                                 command=lambda: root.clipboard_append(package_name))
+        context_menu.tk_popup(event.x_root, event.y_root)
+
+    installed_tree.bind("<Button-3>", on_installed_right_click)
+    search_tree.bind("<Button-3>",
+                     lambda event: on_plugin_right_click(search_tree,
+                                                         search_item_urls, event))
+
+    # 初始刷新已安装列表; 回车触发搜索
+    refresh_installed()
+    keyword_entry.bind("<Return>", lambda event: do_search())
+
+    # 打开窗口即自动同步一次内置插件 (2026-08-27): 源码随绿色版更新后,
+    # 打开插件管理即可把已装副本更新到最新, 无需单独更新按钮
+    threading.Thread(target=auto_sync_bundled_on_open, daemon=True).start()
+
+
 def run_gui():
     """以 tkinter 图形界面方式运行"""
     global _i18n_widgets, _i18n_stringvars
@@ -6778,78 +7700,9 @@ def run_gui():
               font=("Microsoft YaHei", 9), foreground="#666666").pack(side="left", padx=(12, 0))
 
     # ---------- 关于入口 (右上角) ----------
-    def show_about():
-        """弹出「关于」对话框: 作者 / 版本 / 本仓库 / 发布主页 / 官方 dsh 引用 (2026-08-16)"""
-        about_window = tk.Toplevel(root)
-        about_window.title(i18n.t('about.dialog_title'))
-        about_window.resizable(False, False)
-        about_window.geometry("500x525")
-        about_window.transient(root)    # 依附主窗口
-        about_window.grab_set()         # 模态, 关闭前不能操作主窗口
-
-        # 主标题
-        _iw_5835 = ttk.Label(about_window, text=i18n.t('about.main_title'),                   font=("Microsoft YaHei", 13, "bold"))
-        _iw_5835.pack(pady=(18, 4))
-        _i18n_widgets.append((_iw_5835, 'text', 'about.main_title'))
-        _iw_5837 = ttk.Label(about_window, text=i18n.t('about.subtitle'),                   font=("Microsoft YaHei", 9), foreground="#666666")
-        _iw_5837.pack(pady=(0, 12))
-        _i18n_widgets.append((_iw_5837, 'text', 'about.subtitle'))
-
-        # 信息表 (左标签 / 右取值)
-        # 链接项: value 用 (url, 显示文本) 元组, 以可点击链接文字呈现, 鼠标手型 + 点击跳转
-        info_items = [
-            (i18n.t('about.author'), "刘俊亨"),
-            (i18n.t('about.version'), "v" + GREEN_VERSION),
-            (i18n.t('about.version_date'), GREEN_VERSION_DATE),
-            (i18n.t('about.github_repo'), ("https://github.com/LiuJunheng/DeepSeekHarnessGreen",
-                              "github.com/LiuJunheng/DeepSeekHarnessGreen")),
-            (i18n.t('about.gitee_repo'), ("https://gitee.com/liujunheng/DeepSeekHarnessGreen",
-                             "gitee.com/liujunheng/DeepSeekHarnessGreen")),
-            (i18n.t('about.home_page'), (GREEN_HOME_PAGE_URL,
-                           GREEN_HOME_PAGE_URL.replace("https://", ""))),
-            (i18n.t('about.official_repo'), ("https://github.com/deepseek-ai/deepseek-harness",
-                           "github.com/deepseek-ai/deepseek-harness")),
-        ]
-        info_frame = ttk.Frame(about_window)
-        info_frame.pack(fill="x", padx=24, pady=4)
-        for row_index, (label, value) in enumerate(info_items):
-            ttk.Label(info_frame, text=label, font=("Microsoft YaHei", 9),
-                      foreground="#666666").grid(row=row_index, column=0, sticky="w", pady=2, padx=(0, 14))
-            if isinstance(value, tuple):
-                # 链接项: 蓝色文字 + 手型光标 + 点击跳转
-                url, link_text = value
-                link_label = ttk.Label(info_frame, text=link_text, font=("Microsoft YaHei", 9),
-                                       foreground="#0052d9", cursor="hand2")
-                link_label.grid(row=row_index, column=1, sticky="w", pady=2)
-                link_label.bind("<Button-1>", lambda _event, u=url: webbrowser.open(u))
-            else:
-                ttk.Label(info_frame, text=value, font=("Microsoft YaHei", 9)).grid(
-                    row=row_index, column=1, sticky="w", pady=2)
-
-        # 绿色便携·本地化说明区块 (2026-08-16 补充: 强调所有文件与依赖全部本地化)
-        local_frame = ttk.Frame(about_window)
-        local_frame.pack(fill="x", padx=24, pady=(12, 0))
-        _iw_5874 = ttk.Label(local_frame, text=i18n.t('about.local_title'), font=("Microsoft YaHei", 9, "bold"),                   foreground="#2f6f2f")
-        _iw_5874.pack(anchor="w")
-        _i18n_widgets.append((_iw_5874, 'text', 'about.local_title'))
-        local_points = [
-            i18n.t('about.local_point_1'),
-            i18n.t('about.local_point_2'),
-            i18n.t('about.local_point_3'),
-            i18n.t('about.local_point_4'),
-            i18n.t('about.local_point_5'),
-            i18n.t('about.local_point_6'),
-        ]
-        for point in local_points:
-            ttk.Label(local_frame, text=point, font=("Microsoft YaHei", 9),
-                      foreground="#444444").pack(anchor="w", pady=1)
-
-        # 按钮行 (仅关闭; 跳转统一用上方可点击链接文字)
-        about_close_btn = ttk.Button(about_window, text=i18n.t('about.close'), command=about_window.destroy)
-        about_close_btn.pack(pady=(18, 18))
-        _i18n_widgets.append((about_close_btn, 'text', 'about.close'))
-
-    about_btn = ttk.Button(status_frame, text=i18n.t('buttons.about'), command=show_about)
+    # 弹窗实现已抽为模块级 _show_about_dialog (2026-09-23, 原为闭包嵌套函数)
+    about_btn = ttk.Button(status_frame, text=i18n.t('buttons.about'),
+                           command=lambda: _show_about_dialog(root, tk, ttk))
     _i18n_widgets.append((about_btn, 'text', 'buttons.about'))
     about_btn.pack(side="right", padx=(10, 0))
 
@@ -8221,777 +9074,8 @@ def run_gui():
         if not check_environment_ready():
             messagebox.showinfo(i18n.t('plugin.title'), "请先点击「安装环境」准备环境 (需要 Node + dsh)。")
             return
-        open_plugin_manager()
-
-    def open_plugin_manager():
-        """插件管理窗口: 查看已安装 / 搜索 (npm + GitHub 官方话题页) / 安装 / 移除插件
-        所有耗时操作都在后台线程执行, 通过 root.after 回主线程更新界面"""
-        top = tk.Toplevel(root)
-        top.title(i18n.t('plugin.title'))
-        # 宽度与主启动器一致 (1160) 让右侧搜索结果列/版本列有足够空间 (2026-09-10)
-        top.geometry("1160x680")
-        top.minsize(1000, 580)
-
-        profile = DEFAULT_PROFILE
-        plugin_busy = [False]   # 本窗口忙碌标志, 防止重复操作
-        plugin_checked = [False]  # 是否已跑过一次 npm 更新检查 (刷新后重置, 避免重复查)
-        # 记录列表条目 -> 插件信息, 供右键菜单打开对应网页使用
-        installed_item_urls = {}   # 左侧已安装: item_id -> 包名
-        search_item_urls = {}      # 右侧搜索:  item_id -> {name, source, url}
-
-        # ---------- 操作函数 (先全部定义, 再创建控件; 函数体内对控件的引用在调用时才解析) ----------
-        def set_plugin_busy(busy):
-            """设置本窗口忙碌状态, 统一禁用/恢复操作按钮"""
-            plugin_busy[0] = busy
-            button_state = "disabled" if busy else "normal"
-            for button in (search_btn, load_github_btn, github_btn, load_rec_btn,
-                           remove_btn, install_btn, manual_btn, local_install_btn,
-                           enable_btn, disable_btn, refresh_btn, update_selected_btn):
-                button.config(state=button_state)
-            if not busy:
-                plugin_status.set(i18n.t('plugin.status_ready'))
-
-        def _apply_update_check_results(results):
-            """把 npm 检查结果填回左侧 Treeview —— 有更新的第三方插件加 ★ + 标红。
-            内置插件 (不在 results 里) 保持原样。"""
-            result_by_name = {r["name"]: r for r in results}
-            has_update_count = 0
-            for item_id in installed_tree.get_children():
-                pkg_name = installed_item_urls.get(item_id)
-                if pkg_name is None:
-                    continue
-                info = result_by_name.get(pkg_name)
-                if info is None:
-                    continue  # 内置插件 / 非 npm 包 → 跳过
-                if info["has_update"]:
-                    has_update_count += 1
-                    current_text = installed_tree.item(item_id, "text")
-                    if not current_text.startswith("★"):
-                        installed_tree.item(item_id, text="★ " + current_text,
-                                            tags=("has_update",))
-            installed_tree.tag_configure("has_update", foreground="#dc2626")
-            total = len(results)
-            if has_update_count > 0:
-                plugin_status.set(
-                    i18n.t('plugin.status_updates_found',
-                           count=has_update_count, total=total))
-            else:
-                plugin_status.set(
-                    i18n.t('plugin.status_updates_all_up_to_date', total=total))
-            plugin_checked[0] = True
-
-        def refresh_installed():
-            """本地刷新左侧已安装列表 (无网络) —— 恢复原版 3 列 (version/compat/state)。
-            插件名的 ★ 标记会被清掉 (刷新 = 从头再来)。"""
-            installed_tree.delete(*installed_tree.get_children())
-            installed_item_urls.clear()
-            plugin_checked[0] = False   # 刷新后重置检查状态
-            dependencies = app.list_installed_plugins(profile)
-            compat_label = {
-                "ok": i18n.t('plugin.compat_ok'),
-                "warn": i18n.t('plugin.compat_warn'),
-                "no_core_dep": i18n.t('plugin.compat_nocore'),
-                "unknown": i18n.t('plugin.compat_unknown'),
-            }
-            if not dependencies:
-                installed_tree.insert("", "end", text=i18n.t('plugin.no_installed'),
-                                      values=("", "", ""))
-                return
-            host_versions = app._host_core_versions()
-            for package_name, version in sorted(dependencies.items()):
-                state = app.get_plugin_state(package_name, profile)
-                state_label = {"enabled": i18n.t('plugin.status_enabled'),
-                               "disabled": i18n.t('plugin.status_disabled'),
-                               "plain": "—", "missing": "—"}.get(state, "—")
-                result = app.classify_installed_plugin_compat(package_name, host_versions, profile)
-                compat_text = compat_label.get(result["status"], compat_label["unknown"])
-                item_id = installed_tree.insert("", "end", text=package_name,
-                                                values=(version, compat_text, state_label))
-                installed_tree.item(item_id, tags=())
-                installed_item_urls[item_id] = package_name
-
-        def _run_async_update_check():
-            """后台线程跑一次 npm 检查, 完成后把 ★ 标记填回 Treeview。
-            刷新按钮和更新选中按钮都会调用 (更新选中会先等检查完成再继续)。"""
-            plugin_status.set(i18n.t('plugin.status_checking_updates'))
-            set_plugin_busy(True)
-            def worker():
-                try:
-                    results = app.check_plugin_updates(profile)
-                    root.after(0, lambda: _apply_update_check_results(results))
-                except Exception as error:
-                    root.after(0, lambda: (
-                        plugin_status.set(i18n.t('plugin.status_check_updates_fail')),
-                        app.log("插件更新检查异常: %s" % error)))
-                finally:
-                    root.after(0, lambda: set_plugin_busy(False))
-            threading.Thread(target=worker, daemon=True).start()
-
-        def on_refresh_installed():
-            """刷新已安装列表 —— 本地读 + 自动后台查一次 npm 更新 (不阻塞)。"""
-            refresh_installed()
-            _run_async_update_check()
-
-        def on_update_selected():
-            """更新左侧树里选中的第三方插件 (逐个 dsh plugin add @latest)。
-            若尚未跑过检查 (plugin_checked=False), 先自动跑一次 npm 检查再更新。"""
-            selected = installed_tree.selection()
-            if not selected:
-                messagebox.showinfo(i18n.t('plugin.title'),
-                                    i18n.t('plugin.update_select_prompt'), parent=top)
-                return
-
-            def _do_update():
-                """从已标记 ★ 的选中条目里挑出待更新包, 空则弹框 return (注意恢复 busy)。
-                真正执行 pnpm 更新的 worker 自己管理 busy (set=True 后有 finally 保证恢复)。"""
-                to_update = []
-                for item_id in selected:
-                    pkg_name = installed_item_urls.get(item_id)
-                    if pkg_name is None:
-                        continue
-                    tags = installed_tree.item(item_id, "tags") or ()
-                    if "has_update" in tags:
-                        to_update.append(pkg_name)
-                if not to_update:
-                    messagebox.showinfo(i18n.t('plugin.title'),
-                                        i18n.t('plugin.update_none_pending'), parent=top)
-                    # 路径 A: pre_check 已经恢复了 busy (proceed 里先 restore 再 _do_update),
-                    # 这里不用再调; 路径 B: plugin_checked=True 直接调用 → 也没设过 busy
-                    return
-                preview = "\n".join("  - %s" % n for n in to_update)
-                if not messagebox.askyesno(
-                        i18n.t('plugin.update_title'),
-                        i18n.t('plugin.update_confirm', count=len(to_update), names=preview),
-                        parent=top):
-                    return
-                plugin_status.set(i18n.t('plugin.status_updating', count=len(to_update)))
-                set_plugin_busy(True)
-                def worker():
-                    try:
-                        succeeded, failed = app.update_plugins(to_update, profile)
-                        def report():
-                            refresh_installed()
-                            plugin_status.set(
-                                i18n.t('plugin.status_update_done',
-                                       ok=len(succeeded), fail=len(failed)))
-                            if failed:
-                                messagebox.showerror(
-                                    i18n.t('plugin.update_fail_title'),
-                                    i18n.t('plugin.update_fail_detail',
-                                            ok=len(succeeded),
-                                            fail=len(failed),
-                                            details="\n".join(
-                                                "%s: %s" % (n, m) for n, m in failed)),
-                                    parent=top)
-                            else:
-                                messagebox.showinfo(
-                                    i18n.t('plugin.update_done_title'),
-                                    i18n.t('plugin.update_done_detail',
-                                           count=len(succeeded)),
-                                    parent=top)
-                            # 更新完自动再查一次, 刷新 ★ 标记
-                            _run_async_update_check()
-                        root.after(0, report)
-                    except Exception as error:
-                        root.after(0, lambda: (
-                            messagebox.showerror(i18n.t('plugin.update_fail_title'),
-                                                  str(error), parent=top),
-                            plugin_status.set(i18n.t('plugin.update_fail_title'))))
-                    finally:
-                        root.after(0, lambda: set_plugin_busy(False))
-                threading.Thread(target=worker, daemon=True).start()
-
-            # 没检查过 → 自动触发一次 npm 检查, 检查完再更新
-            if not plugin_checked[0]:
-                plugin_status.set(i18n.t('plugin.status_checking_updates'))
-                set_plugin_busy(True)
-                def pre_check_worker():
-                    try:
-                        results = app.check_plugin_updates(profile)
-                        def proceed():
-                            _apply_update_check_results(results)
-                            # 检查阶段完成, 必须先恢复 busy 再进 _do_update
-                            # (_do_update 里如果没包要更会弹框 return, 不会再碰 busy)
-                            set_plugin_busy(False)
-                            _do_update()
-                        root.after(0, proceed)
-                    except Exception as error:
-                        root.after(0, lambda: (
-                            messagebox.showerror(i18n.t('plugin.status_check_updates_fail'),
-                                                  str(error), parent=top),
-                            set_plugin_busy(False)))
-                threading.Thread(target=pre_check_worker, daemon=True).start()
-            else:
-                _do_update()
-
-
-        def show_search_results(plugins, default_source):
-            """把搜索结果填入右侧列表; default_source 为 'npm' 或 'github'"""
-            search_tree.delete(*search_tree.get_children())
-            search_item_urls.clear()
-            if not plugins:
-                # 分类列已去掉, values 只剩 (source, version, description) 三列 (2026-09-10)
-                search_tree.insert("", "end", text=i18n.t('plugin.search_no_result'), values=(default_source, "", ""))
-                plugin_status.set(i18n.t('plugin.search_no_result'))
-                return
-            for plugin in plugins:
-                item_source = plugin.get("source", default_source)
-                item_id = search_tree.insert("", "end",
-                                             text=plugin["name"],
-                                             values=(item_source,
-                                                     plugin.get("version", ""),
-                                                     plugin.get("description", "")))
-                # 记录每个条目对应的网址, 供右键菜单打开页面使用; spec 为显式安装标识 (推荐项才有)
-                search_item_urls[item_id] = {
-                    "name": plugin["name"],
-                    "category": plugin.get("category", ""),
-                    "source": item_source,
-                    "url": plugin.get("url", ""),
-                    "spec": plugin.get("spec", ""),
-                }
-            plugin_status.set(i18n.t('plugin.status_results', count=len(plugins)))
-
-        def do_search():
-            """搜索插件 (npm 注册表, 国内镜像优先)"""
-            if plugin_busy[0]:
-                return
-            keyword = keyword_var.get().strip() or "dsh-plugin"
-            set_plugin_busy(True)
-            plugin_status.set(i18n.t('plugin.status_searching', keyword=keyword))
-            def worker():
-                try:
-                    plugins = app.search_npm_plugins(keyword)
-                    # 纯 npm 结果: 后台再补前若干个的"核心兼容"标记 (其余保持版本号原样)
-                    enriched = app.enrich_npm_plugins(plugins)
-                    root.after(0, lambda: show_search_results(enriched, "npm"))
-                except Exception as error:
-                    root.after(0, lambda: (messagebox.showerror(i18n.t('plugin.search_fail'), str(error), parent=top),
-                                           plugin_status.set(i18n.t('plugin.status_search_fail'))))
-                finally:
-                    root.after(0, lambda: set_plugin_busy(False))
-            threading.Thread(target=worker, daemon=True).start()
-
-        def do_load_github():
-            """抓取 GitHub 官方话题页热门仓库并填入搜索结果"""
-            if plugin_busy[0]:
-                return
-            set_plugin_busy(True)
-            plugin_status.set(i18n.t('plugin.status_github_loading'))
-            def worker():
-                try:
-                    plugins = app.fetch_github_topic_plugins()
-                    root.after(0, lambda: show_search_results(plugins, "github"))
-                except Exception as error:
-                    root.after(0, lambda: (messagebox.showerror(i18n.t('plugin.load_fail'), str(error), parent=top),
-                                           plugin_status.set(i18n.t('plugin.status_load_fail'))))
-                finally:
-                    root.after(0, lambda: set_plugin_busy(False))
-            threading.Thread(target=worker, daemon=True).start()
-
-        def do_load_recommended():
-            """加载内置推荐插件列表。npm 源推荐项后台拉真实版本 + 兼容状态 (与搜索结果一致);
-            github 源无法本地比对核心版本, 版本列显示"不明" (2026-09-10)"""
-            if plugin_busy[0]:
-                return
-            items = [dict(item) for item in RECOMMENDED_PLUGINS]
-            set_plugin_busy(True)
-            plugin_status.set(i18n.t('plugin.status_rec_loading'))
-            def worker():
-                try:
-                    host_versions = app._host_core_versions()
-                    unknown_text = i18n.t('plugin.compat_unknown')
-                    status_label = {
-                        "ok": i18n.t('plugin.compat_ok'),
-                        "warn": i18n.t('plugin.compat_warn'),
-                        "unknown": unknown_text,
-                    }
-                    for item in items:
-                        if item.get("source") == "npm":
-                            # npm 源: 用真实的 npm 包名拉版本 + 兼容 (spec 即包名, 可能与显示名不同, 如 dshmarket)
-                            package_name = item.get("spec") or item.get("name")
-                            manifest = app.fetch_plugin_manifest(package_name)
-                            if manifest is not None:
-                                result = _classify_core_compat(manifest, host_versions)
-                                label = status_label.get(result["status"], unknown_text)
-                                base_version = str(manifest.get("version") or "").lstrip("v")
-                                version_text = ("v%s" % base_version) if base_version else "latest"
-                                item["version"] = "%s [%s]" % (version_text, label)
-                                if result.get("detail"):
-                                    item["_compat_detail"] = result["detail"]
-                            else:
-                                item["version"] = unknown_text
-                        else:
-                            # github 源: 无法本地比对核心版本, 显示"不明"
-                            item["version"] = unknown_text
-                    root.after(0, lambda: (show_search_results(items, i18n.t('plugin.source_recommended')),
-                                           plugin_status.set(i18n.t('plugin.status_rec_loaded', count=len(items)))))
-                except Exception as error:
-                    root.after(0, lambda: (show_search_results(items, i18n.t('plugin.source_recommended')),
-                                           plugin_status.set(i18n.t('plugin.status_rec_partial', count=len(items), error=error))))
-                finally:
-                    root.after(0, lambda: set_plugin_busy(False))
-            threading.Thread(target=worker, daemon=True).start()
-
-        def do_open_github_topic():
-            """在浏览器打开 GitHub 官方话题页 (完整入口, 可翻页浏览更多)"""
-            webbrowser.open(GITHUB_TOPIC_URL)
-
-        def build_open_urls(item_info):
-            """根据条目信息构造可打开的网址列表
-            返回 [(显示名, url), ...]; 推荐项 GitHub 标识用仓库地址, 其余用 npm 页面 + GitHub 搜索兜底"""
-            name = item_info["name"]
-            spec = item_info.get("spec", "")
-            raw_url = item_info.get("url", "")
-            url_list = []
-            # 推荐项 GitHub 标识: 直接打开仓库地址; 仓库名不等于 npm 包名, 不给无效的 npm 页
-            if spec.startswith("github:"):
-                repo = spec[len("github:"):]
-                url_list.append((i18n.t('plugin.menu_open_github_repo'),
-                                 raw_url or "https://github.com/%s" % repo))
-                url_list.append((i18n.t('plugin.menu_open_github_search'),
-                                 "https://github.com/search?q=%s" % urllib.parse.quote(name)))
-            else:
-                # npm 包 / 搜索来源: 打开 npm 页面, 以及 GitHub 搜索
-                url_list.append((i18n.t('plugin.menu_open_npm_page'),
-                                 "https://www.npmjs.com/package/%s" % urllib.parse.quote(name)))
-                url_list.append((i18n.t('plugin.menu_open_github_search'),
-                                 "https://github.com/search?q=%s" % urllib.parse.quote(name)))
-            return url_list
-
-        def on_plugin_right_click(tree, item_urls, event):
-            """Treeview 右键菜单: 打开对应网页 (npm / GitHub)
-            tree 为被点击的 Treeview, item_urls 为条目映射表, event 为鼠标事件"""
-            row_id = tree.identify_row(event.y)
-            if not row_id:
-                return
-            tree.selection_set(row_id)
-            info = item_urls.get(row_id)
-            if info is None:
-                return
-            context_menu = tk.Menu(top, tearoff=0)
-            for label, url in build_open_urls(info):
-                context_menu.add_command(label=label, command=lambda u=url: webbrowser.open(u))
-            context_menu.add_separator()
-            context_menu.add_command(label=i18n.t('plugin.menu_copy_name'),
-                                     command=lambda: root.clipboard_append(info["name"]))
-            context_menu.tk_popup(event.x_root, event.y_root)
-
-        def resolve_selected_spec():
-            """取搜索结果选中项的安装规格与显示名
-            返回 (安装规格, 显示名); 未选中或空条目返回 (None, None)"""
-            selection = search_tree.selection()
-            if not selection:
-                return None, None
-            package_name = search_tree.item(selection[0], "text")
-            if package_name.startswith("("):
-                return None, None
-            # 推荐项: 优先用显式 spec (可能为 github:<repo> 或 npm 包名)
-            item_spec = search_item_urls.get(selection[0], {}).get("spec", "")
-            if item_spec:
-                return item_spec, package_name
-            # 搜索来源: 依来源列判断 (values 首项即 source; 分类列已去掉, 勿用 [1]) (2026-09-10)
-            item_source = search_tree.item(selection[0], "values")[0]
-            if item_source == "github":
-                return "github:%s" % package_name, package_name
-            return package_name, package_name
-
-        def on_install_selected():
-            """安装搜索结果中选中的插件"""
-            if plugin_busy[0]:
-                return
-            spec, display_name = resolve_selected_spec()
-            if spec is None:
-                messagebox.showinfo(i18n.t('plugin.title'), i18n.t('plugin.install_select_prompt'), parent=top)
-                return
-            do_install(spec, display_name)
-
-        def on_manual_install():
-            """手动输入安装规格并安装"""
-            if plugin_busy[0]:
-                return
-            spec = manual_var.get().strip()
-            if not spec:
-                messagebox.showinfo(i18n.t('plugin.title'),
-                                    i18n.t('plugin.manual_install_prompt'),
-                                    parent=top)
-                return
-            do_install(spec, spec)
-
-        def on_install_local():
-            """选择本地插件文件夹 (含 package.json) 并安装, 重启服务后生效"""
-            if plugin_busy[0]:
-                return
-            default_plugins_dir = os.path.join(BASE_DIR, "plugins")
-            if not os.path.isdir(default_plugins_dir):
-                default_plugins_dir = BASE_DIR
-            folder = filedialog.askdirectory(
-                title=i18n.t('plugin.local_dir_title'),
-                initialdir=default_plugins_dir,
-                parent=top)
-            if not folder:
-                return
-            if not messagebox.askyesno(
-                    i18n.t('plugin.local_install_title'),
-                    i18n.t('plugin.local_install_confirm', path=folder),
-                    parent=top):
-                return
-            spec = "file:" + os.path.abspath(folder).replace("\\", "/")
-            do_install(spec, os.path.basename(folder))
-
-        def on_install_bundled():
-            """一键安装 + 同步程序目录 plugins/ 下所有内置插件:
-            未安装的自动补装, 已安装的自动更新为最新源码 (附带检查更新操作)。
-            复用 install_bundled_plugins() + update_bundled_plugins(), 与「安装环境」里
-            的自动安装同一实现; 更新为增量: 逐文件哈希对比, 只写变化的文件"""
-            if plugin_busy[0]:
-                return
-            if not app.bundled_plugin_dirs():
-                messagebox.showinfo(i18n.t('plugin.title'), i18n.t('plugin.bundled_none'), parent=top)
-                return
-            if not messagebox.askyesno(
-                    i18n.t('plugin.bundled_install_title'),
-                    i18n.t('plugin.bundled_install_confirm', names="\n".join(
-                        os.path.basename(folder) for folder in app.bundled_plugin_dirs())),
-                    parent=top):
-                return
-            set_plugin_busy(True)
-            plugin_status.set(i18n.t('plugin.status_bundled_installing'))
-            def worker():
-                try:
-                    installed_now, _skipped, failed_install = \
-                        app.install_bundled_plugins(profile)
-                    updated, up_to_date, _not_installed, failed_update = \
-                        app.update_bundled_plugins(profile)
-                    summary = []
-                    if installed_now:
-                        summary.append("%s: %s" % (i18n.t('plugin.bundled_new'), ", ".join(installed_now)))
-                    if updated:
-                        summary.append("%s: %s" % (i18n.t('plugin.bundled_updated'), ", ".join(updated)))
-                    if up_to_date:
-                        summary.append("%s: %s" % (i18n.t('plugin.bundled_latest'), ", ".join(up_to_date)))
-                    if failed_install:
-                        summary.append("%s: %s" % (i18n.t('plugin.bundled_install_failed'), ", ".join(failed_install)))
-                    if failed_update:
-                        summary.append("%s: %s" % (i18n.t('plugin.bundled_update_failed'), "; ".join(
-                            "%s(%s)" % (name, reason) for name, reason in failed_update)))
-                    message = "\n".join(summary) if summary else i18n.t('plugin.bundled_nothing')
-                    root.after(0, lambda: (refresh_installed(),
-                                           messagebox.showinfo(i18n.t('plugin.install_title'), message, parent=top),
-                                           plugin_status.set(i18n.t('plugin.status_bundled_done'))))
-                except Exception as error:
-                    root.after(0, lambda: (messagebox.showerror(i18n.t('plugin.status_install_fail'), str(error), parent=top),
-                                           plugin_status.set(i18n.t('plugin.status_install_fail'))))
-                finally:
-                    root.after(0, lambda: set_plugin_busy(False))
-            threading.Thread(target=worker, daemon=True).start()
-
-        def do_install(spec, display_name):
-            """后台线程执行插件安装"""
-            set_plugin_busy(True)
-            plugin_status.set(i18n.t('plugin.status_installing', name=display_name))
-            def worker():
-                try:
-                    app.install_plugin(spec, profile)
-                    root.after(0, lambda: (refresh_installed(),
-                                           plugin_status.set(i18n.t('plugin.status_installed', name=display_name))))
-                except Exception as error:
-                    root.after(0, lambda: (messagebox.showerror(i18n.t('plugin.status_install_fail'), str(error), parent=top),
-                                           plugin_status.set(i18n.t('plugin.status_install_fail'))))
-                finally:
-                    root.after(0, lambda: set_plugin_busy(False))
-            threading.Thread(target=worker, daemon=True).start()
-
-        def auto_sync_bundled_on_open():
-            """打开插件管理窗口即自动同步一次内置插件 (无需单独按钮):
-            把已安装的内置插件更新为 plugins/ 最新源码, 结果写入状态栏。"""
-            try:
-                updated, up_to_date, _not_installed, failed = \
-                    app.update_bundled_plugins(profile)
-                if updated:
-                    root.after(0, lambda: (refresh_installed(),
-                                           plugin_status.set(i18n.t('plugin.status_auto_updated',
-                                                                    names=", ".join(updated)))))
-                elif failed:
-                    root.after(0, lambda: plugin_status.set(
-                        i18n.t('plugin.status_sync_failed', details="; ".join(
-                            "%s(%s)" % (name, reason) for name, reason in failed))))
-                else:
-                    root.after(0, lambda: plugin_status.set(
-                        i18n.t('plugin.status_uptodate', count=len(up_to_date))))
-            except Exception as error:
-                root.after(0, lambda: plugin_status.set(i18n.t('plugin.status_sync_error', error=error)))
-
-        def _collect_selected_package_names():
-            """从已安装 Treeview 取所有选中条目的包名, 过滤掉 category 分组行 (以 "(" 开头的 text).
-            返回合法包名列表; 无选中时返回空列表。"""
-            selection = installed_tree.selection()
-            package_names = []
-            for row_id in selection:
-                text = installed_tree.item(row_id, "text")
-                if text and not text.startswith("("):
-                    package_names.append(text)
-            return package_names
-
-        def on_remove():
-            """批量移除左侧选中的已安装插件 (支持多选, Ctrl/Shift 点击 Treeview 多行)"""
-            if plugin_busy[0]:
-                return
-            package_names = _collect_selected_package_names()
-            if not package_names:
-                messagebox.showinfo(i18n.t('plugin.title'), i18n.t('plugin.remove_select_prompt'), parent=top)
-                return
-            if len(package_names) == 1:
-                confirm_msg = i18n.t('plugin.remove_confirm_single', name=package_names[0])
-            else:
-                confirm_msg = "确定要移除以下 %d 个插件吗?\n\n%s" % (
-                    len(package_names), "\n".join("· " + name for name in package_names))
-            if not messagebox.askyesno(i18n.t('plugin.remove_title'), confirm_msg, parent=top):
-                return
-            set_plugin_busy(True)
-            plugin_status.set(i18n.t('plugin.status_removing', count=len(package_names)))
-            def worker():
-                removed_ok = []
-                removed_fail = []
-                for package_name in package_names:
-                    try:
-                        app.remove_plugin(package_name, profile)
-                        removed_ok.append(package_name)
-                    except Exception as error:
-                        removed_fail.append((package_name, str(error)))
-                summary_parts = []
-                if removed_ok:
-                    summary_parts.append(i18n.t('plugin.removed_ok_fmt', count=len(removed_ok), names=", ".join(removed_ok)))
-                if removed_fail:
-                    summary_parts.append(i18n.t('plugin.removed_fail_fmt', count=len(removed_fail), details="; ".join(
-                        "%s(%s)" % (name, reason) for name, reason in removed_fail)))
-                summary_text = "\n".join(summary_parts) if summary_parts else i18n.t('plugin.no_removed')
-                root.after(0, lambda: (refresh_installed(),
-                                       messagebox.showinfo(i18n.t('plugin.remove_title'), summary_text, parent=top),
-                                       plugin_status.set(i18n.t('plugin.status_remove_done', summary=summary_text.split("\n")[0])),
-                                       set_plugin_busy(False)))  # 复用开关: 结束后必须恢复正常按钮, 否则一直禁用
-            threading.Thread(target=worker, daemon=True).start()
-
-        def on_toggle(enable):
-            """批量启用/停用左侧选中的插件 (支持多选, Ctrl/Shift 点击 Treeview 多行)"""
-            if plugin_busy[0]:
-                return
-            package_names = _collect_selected_package_names()
-            if not package_names:
-                messagebox.showinfo(i18n.t('plugin.title'), i18n.t('plugin.toggle_select_prompt'), parent=top)
-                return
-            action = i18n.t('plugin.action_enable') if enable else i18n.t('plugin.action_disable')
-            toggle_title = i18n.t('plugin.toggle_title', action=action)
-            if len(package_names) == 1:
-                confirm_msg = i18n.t('plugin.toggle_confirm_single', action=action, name=package_names[0])
-            else:
-                confirm_msg = i18n.t('plugin.toggle_confirm_multi', count=len(package_names),
-                                     action=action, names="\n".join("· " + name for name in package_names))
-            if not messagebox.askyesno(toggle_title, confirm_msg, parent=top):
-                return
-            bundle_ok = []      # 成功启停 (声明了 dsh.bundle)
-            bundle_skip = []    # 跳过 (未声明 dsh.bundle, 非 bundle 插件)
-            bundle_fail = []    # 异常
-            for package_name in package_names:
-                try:
-                    ok = app.set_plugin_enabled(package_name, profile, enabled=enable)
-                    if ok:
-                        bundle_ok.append(package_name)
-                    else:
-                        bundle_skip.append(package_name)
-                except Exception as error:
-                    bundle_fail.append((package_name, str(error)))
-            summary_parts = []
-            if bundle_ok:
-                summary_parts.append(i18n.t('plugin.toggle_summary_ok', action=action,
-                                            count=len(bundle_ok), names=", ".join(bundle_ok)))
-            if bundle_skip:
-                summary_parts.append(i18n.t('plugin.toggle_summary_skip', count=len(bundle_skip),
-                                            names=", ".join(bundle_skip)))
-            if bundle_fail:
-                summary_parts.append(i18n.t('plugin.toggle_summary_fail', count=len(bundle_fail), details="; ".join(
-                    "%s(%s)" % (name, reason) for name, reason in bundle_fail)))
-            summary_text = "\n".join(summary_parts) if summary_parts else i18n.t('plugin.no_toggle')
-            refresh_installed()
-            messagebox.showinfo(toggle_title, summary_text, parent=top)
-            plugin_status.set(i18n.t('plugin.status_toggle_done', action=action, summary=summary_text.split("\n")[0]))
-
-        # ---------- 顶部工具栏 ----------
-        toolbar = ttk.Frame(top)
-        toolbar.pack(fill="x", padx=10, pady=(10, 6))
-
-        _iw_7245 = ttk.Label(toolbar, text=i18n.t('plugin.search_label'))
-        _iw_7245.pack(side="left")
-        _i18n_widgets.append((_iw_7245, 'text', 'plugin.search_label'))
-        keyword_var = tk.StringVar(value="dsh-plugin")
-        keyword_entry = ttk.Entry(toolbar, textvariable=keyword_var, width=28)
-        keyword_entry.pack(side="left", padx=(6, 6))
-
-        ttk.Label(toolbar, text="  ").pack(side="left")
-
-        _iw_7252 = ttk.Label(toolbar, text=i18n.t('plugin.github_label'))
-        _iw_7252.pack(side="left")
-        _i18n_widgets.append((_iw_7252, 'text', 'plugin.github_label'))
-        github_btn = ttk.Button(toolbar, text=i18n.t('plugin.github_btn'), command=do_open_github_topic)
-        _i18n_widgets.append((github_btn, 'text', 'plugin.github_btn'))
-        github_btn.pack(side="left", padx=(6, 0))
-
-        bundled_btn = ttk.Button(toolbar, text=i18n.t('plugin.bundled_btn'),
-                                 command=on_install_bundled)
-        _i18n_widgets.append((bundled_btn, 'text', 'plugin.bundled_btn'))
-        bundled_btn.pack(side="left", padx=(12, 0))
-        _iw_7259 = ttk.Label(toolbar, text=i18n.t('plugin.bundled_hint'))
-        _iw_7259.pack(side="left", padx=(6, 0))
-        _i18n_widgets.append((_iw_7259, 'text', 'plugin.bundled_hint'))
-
-        # ---------- 中间: 左右两个面板 ----------
-        middle = ttk.Panedwindow(top, orient="horizontal")
-        middle.pack(fill="both", expand=True, padx=10, pady=6)
-
-        # 左侧: 已安装插件
-        installed_frame = ttk.LabelFrame(middle, text=i18n.t('plugin.installed_tab', profile=profile))
-        _i18n_widgets.append((installed_frame, 'text', 'plugin.installed_tab'))
-        # 左:右 = 1:2, 右侧看到更多结果且版本列有空间; 窗口已加宽到 1160, 权重无需过于悬殊 (2026-09-10)
-        middle.add(installed_frame, weight=1)
-        # 列表区: 左 Treeview + 右垂直滚动条 (方便上下滑动)
-        installed_body = ttk.Frame(installed_frame)
-        installed_body.pack(fill="both", expand=True, padx=6, pady=6)
-        # selectmode="extended": 允许多选 (Ctrl+点击 逐个选, Shift+点击 连选)
-        installed_tree = ttk.Treeview(installed_body, columns=("version", "compat", "state"),
-                                      show="tree headings", selectmode="extended")
-        installed_tree.heading("#0", text=i18n.t('plugin.column_name'))
-        installed_tree.heading("version", text=i18n.t('plugin.column_version'))
-        installed_tree.heading("compat", text=i18n.t('plugin.column_compat'))
-        installed_tree.heading("state", text=i18n.t('plugin.column_status'))
-        # 列宽保持原版 (2026-09-18: 恢复 layout, latest 不再是独立列而是 ★ 标记)
-        installed_tree.column("#0", width=120)
-        installed_tree.column("version", width=66, anchor="center")
-        installed_tree.column("compat", width=88, anchor="center")
-        installed_tree.column("state", width=52, anchor="center")
-        installed_scrollbar = ttk.Scrollbar(installed_body, orient="vertical",
-                                            command=installed_tree.yview)
-        installed_tree.configure(yscrollcommand=installed_scrollbar.set)
-        installed_tree.pack(side="left", fill="both", expand=True)
-        installed_scrollbar.pack(side="right", fill="y")
-
-        installed_buttons = ttk.Frame(installed_frame)
-        installed_buttons.pack(fill="x", padx=6, pady=(0, 6))
-        remove_btn = ttk.Button(installed_buttons, text=i18n.t('plugin.batch_remove'), command=on_remove)
-        _i18n_widgets.append((remove_btn, 'text', 'plugin.batch_remove'))
-        remove_btn.pack(side="left")
-        enable_btn = ttk.Button(installed_buttons, text=i18n.t('plugin.batch_enable'), command=lambda: on_toggle(True))
-        _i18n_widgets.append((enable_btn, 'text', 'plugin.batch_enable'))
-        enable_btn.pack(side="left", padx=(6, 0))
-        disable_btn = ttk.Button(installed_buttons, text=i18n.t('plugin.batch_disable'), command=lambda: on_toggle(False))
-        _i18n_widgets.append((disable_btn, 'text', 'plugin.batch_disable'))
-        disable_btn.pack(side="left", padx=(6, 0))
-        refresh_btn = ttk.Button(installed_buttons, text=i18n.t('plugin.refresh'), command=on_refresh_installed)
-        refresh_btn.pack(side="left", padx=(6, 0))
-        _i18n_widgets.append((refresh_btn, 'text', 'plugin.refresh'))
-        update_selected_btn = ttk.Button(installed_buttons, text=i18n.t('plugin.update_selected'),
-                                         command=on_update_selected)
-        update_selected_btn.pack(side="left", padx=(10, 0))
-        _i18n_widgets.append((update_selected_btn, 'text', 'plugin.update_selected'))
-        _iw_7295 = ttk.Label(installed_buttons, text=i18n.t('plugin.multi_select_hint'), foreground="#666666")
-        _iw_7295.pack(side="left", padx=(8, 0))
-        _i18n_widgets.append((_iw_7295, 'text', 'plugin.multi_select_hint'))
-
-        # 右侧: 搜索结果
-        search_frame = ttk.LabelFrame(middle, text=i18n.t('plugin.search_tab'))
-        _i18n_widgets.append((search_frame, 'text', 'plugin.search_tab'))
-        middle.add(search_frame, weight=2)
-        # 列表区: 左 Treeview + 右垂直滚动条 (方便上下滑动)
-        search_body = ttk.Frame(search_frame)
-        search_body.pack(fill="both", expand=True, padx=6, pady=6)
-        search_tree = ttk.Treeview(search_body, columns=("source", "version", "description"), show="tree headings")
-        search_tree.heading("#0", text=i18n.t('plugin.column_name'))
-        search_tree.heading("source", text=i18n.t('plugin.column_source'))
-        search_tree.heading("version", text=i18n.t('version_select.version_column'))
-        search_tree.heading("description", text=i18n.t('plugin.column_desc'))
-        # 列宽留足余量: 总和需明显小于面板宽度, 否则 pack 会把右侧滚动条压缩成 1x1.
-        # 版本列会显示 "v0.48.0 [预估兼容]" 这类较长文本, 需要显著加宽 (2026-09-10 去掉分类列后调整).
-        search_tree.column("#0", width=150)
-        search_tree.column("source", width=52, anchor="center")
-        search_tree.column("version", width=160, anchor="center")
-        search_tree.column("description", width=190, stretch=True)
-        search_scrollbar = ttk.Scrollbar(search_body, orient="vertical",
-                                         command=search_tree.yview)
-        search_tree.configure(yscrollcommand=search_scrollbar.set)
-        search_tree.pack(side="left", fill="both", expand=True)
-        search_scrollbar.pack(side="right", fill="y")
-
-        search_buttons = ttk.Frame(search_frame)
-        search_buttons.pack(fill="x", padx=6, pady=(0, 6))
-        # 按钮顺序: 「加载推荐」在前,「搜索npm插件」在后 (2026-09-10 用户要求对调)
-        load_rec_btn = ttk.Button(search_buttons, text=i18n.t('plugin.load_recommended'), command=do_load_recommended)
-        _i18n_widgets.append((load_rec_btn, 'text', 'plugin.load_recommended'))
-        load_rec_btn.pack(side="left")
-        search_btn = ttk.Button(search_buttons, text=i18n.t('plugin.search_btn'), command=do_search)
-        _i18n_widgets.append((search_btn, 'text', 'plugin.search_btn'))
-        search_btn.pack(side="left", padx=(6, 0))
-        load_github_btn = ttk.Button(search_buttons, text=i18n.t('plugin.load_github_hot'), command=do_load_github)
-        _i18n_widgets.append((load_github_btn, 'text', 'plugin.load_github_hot'))
-        load_github_btn.pack(side="left", padx=(6, 0))
-        install_btn = ttk.Button(search_buttons, text=i18n.t('plugin.install_selected'), command=on_install_selected)
-        _i18n_widgets.append((install_btn, 'text', 'plugin.install_selected'))
-        install_btn.pack(side="left", padx=(6, 0))
-
-        # ---------- 手动安装栏 ----------
-        manual_frame = ttk.Frame(top)
-        manual_frame.pack(fill="x", padx=10, pady=(0, 6))
-        _iw_7336 = ttk.Label(manual_frame, text=i18n.t('plugin.manual_install_hint'))
-        _iw_7336.pack(side="left")
-        _i18n_widgets.append((_iw_7336, 'text', 'plugin.manual_install_hint'))
-        manual_var = tk.StringVar()
-        manual_entry = ttk.Entry(manual_frame, textvariable=manual_var, width=48)
-        manual_entry.pack(side="left", padx=(6, 6))
-        manual_btn = ttk.Button(manual_frame, text=i18n.t('plugin.install_btn'), command=on_manual_install)
-        _i18n_widgets.append((manual_btn, 'text', 'plugin.install_btn'))
-        manual_btn.pack(side="left")
-        local_install_btn = ttk.Button(manual_frame, text=i18n.t('plugin.local_install'),
-                                       command=on_install_local)
-        _i18n_widgets.append((local_install_btn, 'text', 'plugin.local_install'))
-        local_install_btn.pack(side="left", padx=(8, 0))
-        _iw_7345 = ttk.Label(manual_frame, text=i18n.t('plugin.local_hint'),                   foreground="#666666")
-        _iw_7345.pack(side="left", padx=(8, 0))
-        _i18n_widgets.append((_iw_7345, 'text', 'plugin.local_hint'))
-
-        # ---------- 底部状态栏 ----------
-        plugin_status = tk.StringVar(value=i18n.t('plugin.status_ready'))
-        ttk.Label(top, textvariable=plugin_status, font=("Microsoft YaHei", 9),
-                  foreground="#555555").pack(side="bottom", fill="x", padx=10, pady=(0, 8), anchor="w")
-
-        # 右键菜单: 已安装列表 -> npm 页面 / 复制包名 (内置插件更新在打开窗口时自动进行,
-        # 无需单独入口); 搜索列表 -> 对应网页 (npm / GitHub) 或复制包名
-        def on_installed_right_click(event):
-            """已安装列表右键: 打开 npm 页面 / 复制包名"""
-            row_id = installed_tree.identify_row(event.y)
-            if not row_id:
-                return
-            installed_tree.selection_set(row_id)
-            package_name = installed_item_urls.get(row_id)
-            if not package_name:
-                return
-            context_menu = tk.Menu(top, tearoff=0)
-            context_menu.add_command(
-                label=i18n.t('plugin.menu_open_npm_page'),
-                command=lambda: webbrowser.open(
-                    "https://www.npmjs.com/package/%s" % urllib.parse.quote(package_name)))
-            context_menu.add_command(label=i18n.t('plugin.menu_copy_name'),
-                                     command=lambda: root.clipboard_append(package_name))
-            context_menu.tk_popup(event.x_root, event.y_root)
-
-        installed_tree.bind("<Button-3>", on_installed_right_click)
-        search_tree.bind("<Button-3>",
-                         lambda event: on_plugin_right_click(search_tree,
-                                                             search_item_urls, event))
-
-        # 初始刷新已安装列表; 回车触发搜索
-        refresh_installed()
-        keyword_entry.bind("<Return>", lambda event: do_search())
-
-        # 打开窗口即自动同步一次内置插件 (2026-08-27): 源码随绿色版更新后,
-        # 打开插件管理即可把已装副本更新到最新, 无需单独更新按钮
-        threading.Thread(target=auto_sync_bundled_on_open, daemon=True).start()
+        # 窗口实现已抽为模块级 _open_plugin_manager_dialog (2026-09-23, 原为闭包嵌套函数)
+        _open_plugin_manager_dialog(app, root, tk, ttk, messagebox, filedialog)
 
     # 八个按钮: 安装环境 / 启动服务 / 停止服务 / 打开界面 / 检查更新 / 检查绿色版更新 / 插件管理 / 刷新状态
     install_btn = ttk.Button(button_frame, text=i18n.t('buttons.install'), command=on_install)
@@ -9301,49 +9385,7 @@ def run_gui():
     log_text.pack(side="left", fill="both", expand=True)
 
     # ---------- 关闭窗口时选择: 退出 / 最小化到托盘 / 取消 ----------
-    def ask_close_choice():
-        """关闭时弹三选一对话框 (模态), 返回:
-        "exit" 退出并停止服务; "tray" 最小化到托盘(服务继续); None 取消。
-        这样"不关服务"时托盘/任务栏入口仍在, 可随时恢复, 与本项目期望一致。
-        """
-        choice = {"value": None}
-
-        def choose(value):
-            choice["value"] = value
-            dialog.destroy()
-
-        dialog = tk.Toplevel(root)
-        dialog.title(i18n.t('close_dialog.title'))
-        dialog.transient(root)
-        dialog.grab_set()          # 模态: 关闭操作期间主窗口不响应
-        dialog.resizable(False, False)
-
-        label_frame = ttk.Frame(dialog, padding=14)
-        label_frame.pack(fill="x")
-        _iw_7672 = ttk.Label(label_frame, justify="left", text=i18n.t('close_dialog.label'))
-        _iw_7672.pack(anchor="w")
-        _i18n_widgets.append((_iw_7672, 'text', 'close_dialog.label'))
-
-        button_row = ttk.Frame(dialog, padding=14)
-        button_row.pack(fill="x")
-        _iw_7676 = ttk.Button(button_row, text=i18n.t('close_dialog.cancel'),                    command=lambda: choose(None))
-        _iw_7676.pack(side="right")
-        _i18n_widgets.append((_iw_7676, 'text', 'close_dialog.cancel'))
-        _iw_7678 = ttk.Button(button_row, text=i18n.t('close_dialog.minimize'),                    command=lambda: choose("tray"))
-        _iw_7678.pack(side="right", padx=8)
-        _i18n_widgets.append((_iw_7678, 'text', 'close_dialog.minimize'))
-        _iw_7680 = ttk.Button(button_row, text=i18n.t('close_dialog.exit'),                    command=lambda: choose("exit"))
-        _iw_7680.pack(side="right")
-        _i18n_widgets.append((_iw_7680, 'text', 'close_dialog.exit'))
-
-        # 居中于主窗口
-        dialog.update_idletasks()
-        pos_x = root.winfo_x() + (root.winfo_width() - dialog.winfo_reqwidth()) // 2
-        pos_y = root.winfo_y() + (root.winfo_height() - dialog.winfo_reqheight()) // 2
-        dialog.geometry("+%d+%d" % (pos_x, pos_y))
-
-        root.wait_window(dialog)
-        return choice["value"]
+    # 弹窗实现已抽为模块级 _ask_close_choice_dialog (2026-09-23, 原为闭包嵌套函数)
 
     def on_close(confirm=True):
         """按 X 关闭窗口: 先弹三选一, 避免误关
@@ -9354,7 +9396,7 @@ def run_gui():
                         (此前已确认过, 不再重复询问, 直接退出)。
         """
         if confirm:
-            close_choice = ask_close_choice()
+            close_choice = _ask_close_choice_dialog(root, tk, ttk)
             if close_choice == "tray":
                 minimize_to_tray()   # 服务继续运行, 任务栏/托盘入口保留
                 return
