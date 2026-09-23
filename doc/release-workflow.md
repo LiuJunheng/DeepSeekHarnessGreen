@@ -94,6 +94,17 @@ DSH_Update.exe   --print-green-version → "1.0.30"  ✅
 - 两个文件都放 `doc/release_notes/` 目录
 - `release_upload.py` 会自动根据平台选择中文或英文文件
 
+### 什么该写、什么不该写（2026-09-23 新增，最容易写错）
+
+**唯一判定标准：对比「上一个已发布版本」，使用者是否可能遇到这个问题。** 不是"本轮开发里我改了多少东西"。
+
+- ❌ **不写**：**本轮开发中自己改出来、又在同一轮内改回去的 bug**（如本轮把 `build_exe.bat` 编码写坏又修好、`--collect-all` 参数名写错又纠正）。用户从没装过带该 bug 的版本，写进 notes 只会造成"这版又修了一堆 bug"的错觉——这是开发过程，不是版本变更。
+  - 实例（v1.0.42 的教训）：`9f32ba1` 把中文注释 + LF 写进 bat，`4318985` 又改回纯 ASCII + CRLF 并把 `--collect-all pyyaml` 修正为 `--collect-all yaml`——两条都属本轮自造自修，**不该**出现在 v1.0.42 的"修复"里。
+- ✅ **要写**：修的是**上一个已发布版本里真实存在**的问题（用户装了上一版就会踩到）。
+- ⚠️ **纯内部重构 / 死代码清理**：对外行为不变时不要包装成"新增功能/修复"；确需提就一行带过。若顺带改变了**可感知行为**（如不再往程序目录写某个日志文件），按真实影响如实写一句。
+
+配套纪律：写 notes 前先 `git log v{上一版}..HEAD --oneline`，**逐条问"这条对上一版用户可见吗"**；不可见的合并进"内部改动"或不写。过程经验记到 `DEV_NOTES.md` 的避坑库，**不进 release_notes，也不要事后回填进已发布的 notes**。
+
 ### 中文模板（`release_notes_v{VER}.md`）
 
 ```markdown
@@ -395,6 +406,7 @@ if ($env:GITEE_TOKEN) { python release_upload.py }
 - [ ] 两个 exe 版本号正确、时间戳比 launcher.py 新、root 与 dist `Get-FileHash` 一致
 - [ ] `release_notes_v{VERSION}.md` + `_en.md` 已写（放 `doc/release_notes/`）
   - **必须覆盖从上一 tag 到 HEAD 的全部改动**：先跑 `git log v{上一版本}..HEAD --oneline` 拿到完整 commit 列表，按主题归类（功能新增 / bug 修复 / 架构调整 / SEO / 杂项），**不能只写当前 session 做了什么**
+  - **但只写「对上一版用户可见」的改动**：本轮自造自修的 bug（改坏了又改回去）、纯内部重构/清理，一律不写或合并进"内部改动"一行；判定标准见阶段③「什么该写、什么不该写」
   - 建议在 notes 开头加一行 `> 覆盖 N 个 commit / M 个文件 / +X -Y 行，上一版本是 v{prev}`，用 `git diff v{prev}..HEAD --stat` 拿统计
   - 如果发现中间有别人合的 commit（如启动器自愈回写），也要覆盖进去
 - [ ] `git add DSH_Launcher.exe DSH_Update.exe + commit`（最后才提交 exe，确保新鲜）
