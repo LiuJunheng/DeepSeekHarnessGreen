@@ -4,8 +4,8 @@
 
 ## 功能
 
-- **自动记忆（写入）**：每次用户发消息后，自动脱敏（过滤 API key / 密码 / 手机号等敏感信息），以默认重要性 0.6 写入记忆库
-- **自动召回（读取）**：每次模型请求前，自动注入最近 4 条记忆到 system prompt 的「祖宗记忆库最近记忆」区块
+- **自动记忆（写入，默认关闭）**：开启「自动记录」开关后，对话事件（用户 / 助手消息）自动脱敏（过滤 API key / 密码 / 手机号等敏感信息）后写入记忆库，默认重要性 0.6
+- **自动召回（读取，默认关闭）**：开启「自动注入」开关后，每次模型请求前自动注入最近 6 条记忆到 system prompt 的「祖宗记忆库最近记忆」区块
 - **WebUI 管理卡片**：设置页 → 祖宗记忆库，可查看状态、浏览/搜索/删除/手动写入
 - **Agent 主动调用**：Agent 可调用 7 个工具主动读写记忆（详见下方）
 - **零外部依赖**：记忆引擎用 Python 标准库（sqlite3 + json + sys），MCP stdio 桥用 Node.js 内置模块，不引任何 npm / PyPI 三方包
@@ -85,7 +85,7 @@ Agent 在对话中可随时调用 7 个 `zuzong_*` 工具，由工具调用系�
 
 ## Host 路由（WebUI 后端）
 
-插件在宿主端注册 5 个路由，供 `client.js` fetch 调用：
+插件在宿主端注册 6 个路由，供 `client.js` fetch 调用：
 
 | 路由 | 方法 | 功能 |
 |------|------|------|
@@ -94,6 +94,7 @@ Agent 在对话中可随时调用 7 个 `zuzong_*` 工具，由工具调用系�
 | `/\_\_dsh/memory/search` | GET | 关键词模糊搜索，`?q=&limit=` |
 | `/\_\_dsh/memory/delete` | POST | 删除指定 ID 的记忆，body: `{ "id": 1 }` |
 | `/\_\_dsh/memory/write` | POST | 手动写入记忆，body: `{ "content": "...", "tags": [], "importance": 0.6 }` |
+| `/\_\_dsh/memory/config` | GET / POST | 读取 / 实时保存 WebUI 开关（`autoRemember` / `autoRecall` / `crossSessionRecall`），持久化到 `${DSH_HOME}/memory/memory-config.json` |
 
 webServer 是可选注入：缺失时跳过路由注册，不阻塞插件激活。
 
@@ -102,6 +103,7 @@ webServer 是可选注入：缺失时跳过路由注册，不阻塞插件激活�
 设置页左侧边栏找到「祖宗记忆库」标签，进入后：
 
 - **状态面板**：总条数 / 平均重要性 / 引擎版本 / 最新写入时间 / DB 路径
+- **顶部开关（v4，实时保存）**：「自动记录」（`autoRemember`）/「自动注入」（`autoRecall`）双开关，以及「跨会话加载」（`crossSessionRecall`，仅「自动注入」开启时可用）——改动即时写入 `memory-config.json` 并生效
 - **记忆列表**：卡片式滚动，单条删除按钮
 - **搜索框**：回车或点按钮触发，关键词实时过滤
 - **快速写入**：textarea + 标签 + 重要性滑块，点「写入」按钮
@@ -165,12 +167,18 @@ Engine 脚本路径固定为 `<pluginDir>/engine/zuzong_memory.py`（相对位�
     # dbPath: ''           # 自动用 DSH_HOME/memory/zuzong.db
   identity: '祖宗记忆库'
   tools: ['remember','recall','search','timeline','service_info','list_all','delete']
+         # 默认这 7 个; 也可填 'core' (12 个核心工具) 或 'all' (全部, 含大脑模式)
   memory:
-    userMessage: true       # 用户消息自动 remember
-    autoRecall: true        # 模型请求前自动注入最近 4 条记忆
-    desensitize: true       # 写入前过滤 API 密钥/密码/手机号等敏感信息
-    importance: 0.6         # 默认重要性
-    autoRecallLimit: 4      # 自动召回条数
+    autoRemember: false      # v4 总开关: 自动记录对话事件 (默认关闭, WebUI 开关可改)
+    autoRecall: false        # v4 总开关: 自动注入记忆 (默认关闭, WebUI 开关可改)
+    crossSessionRecall: false  # v3.1: 跨会话加载 (true = 召回时也读全局记忆)
+    userMessage: true        # 用户消息纳入自动记录
+    assistantMessage: true   # 助手消息纳入自动记录
+    toolResult: false        # 工具结果纳入自动记录
+    importance: 0.6          # 默认重要性
+    autoRecallLimit: 6       # 自动召回条数
+    desensitize: true        # 写入前过滤 API 密钥/密码/手机号等敏感信息
+    useSummarize: true       # 写入前摘要压缩
 ```
 
 ## 安装

@@ -398,13 +398,6 @@ function decompressZstd(buf) {
 	return Buffer.concat(parts).toString("utf8");
 }
 
-/** 只解第一帧(会话 header 所在帧), 用于快速读元数据 */
-function decompressZstdHeader(buf) {
-	const frames = splitFrames(buf);
-	if (frames.length === 0) throw new Error("empty or header-less log");
-	return zlib.zstdDecompressSync(frames[0]).toString("utf8");
-}
-
 /** 解析首行会话 header. 跨版本容错: 不校验 header.version (实测 v3 会话物理字段为 0) */
 function parseHeaderLine(firstLine) {
 	const parsed = JSON.parse(firstLine);

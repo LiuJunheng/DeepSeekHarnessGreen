@@ -23,9 +23,9 @@ WebUI「会话导入」插件：把官方「Session log」按钮导出的 ZIP（
 
 ## 接口
 
-- `GET /__dsh/session-import/health` → 插件是否已加载。
-- `POST /__dsh/session-import/upload?filename=<名字>` → 请求体为 ZIP 字节或 JSONL 文本。
-- 两个路由均要求自定义头 `X-DSH-Session-Import: 1`（防跨站伪造）。
+- `GET /__dsh/session-transfer/health` → 插件是否已加载。
+- `POST /__dsh/session-transfer/upload?filename=<名字>` → 请求体为 ZIP 字节或 JSONL 文本。
+- 两个路由均要求自定义头 `X-DSH-Session-Transfer: 1`（防跨站伪造）。
 
 ## 限制
 

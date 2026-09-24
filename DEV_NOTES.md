@@ -1166,6 +1166,42 @@ for name, def_lines in defs.items():
 - **`_heal_after_core_upgrade` 的 docstring 与代码不符**：原写「依赖树重建失败会直接抛异常 (3 失败则 4 无意义); 其余步骤内部已吞异常防阻断。」但实测步骤 1/2/4 的异常保护**都只是局部的**（步骤 1 读日志 try、步骤 2 文件读写 try、步骤 4 单轮验证 try），并无整体兜底 —— 它们抛出未预期异常时会中断自愈流程并上抛给调用方。已改为准确表述（docstring 末段「异常语义」）。
   **教训**：不要据注释推断异常语义，要看实际 try/except 的覆盖范围。"注释比代码乐观"这类表述会误导后续维护者去依赖并不存在的保护。
 
+### 插件代码与文档审计（2026-09-24）
+
+对 `plugins/` 下 10 个内置插件（共 16839 行）做了一次全量审计，**结果：代码卫生明显好于 launcher.py**（无"两处复制同一段逻辑"的问题），但清出 7 处死代码、3 份 README 与代码脱节。
+
+**一、死代码清理（7 处，248 行）** —— 全部零调用、无 export：
+
+| 插件 | 位置 | 符号 | 行数 |
+|---|---|---|---|
+| dsh-file-browser | `lib/client.js` | `formatMention` | 3 |
+| dsh-file-browser | `lib/client.js` | `insertReferenceIntoInputCompat`（含前置 JSDoc） | 107 |
+| dsh-sidebar-lite | `lib/client.js` | `joinPath`（含注释） | 6 |
+| dsh-sidebar-lite | `lib/client.js` | `formatMention` | 3 |
+| dsh-sidebar-lite | `lib/client.js` | `insertReferenceIntoInputCompat`（含前置 JSDoc） | 115 |
+| dsh-sidebar-lite | `lib/index.js` | `fail`（含注释） | 7 |
+| dsh-usage-stats | `lib/index.js` | `decompressZstdHeader`（含注释） | 7 |
+
+**它们为什么死了（有价值的历史线索）**：`insertReferenceIntoInputCompat` 的注释写着它是"**0.1.1-rc.x 旧版** `sessions.provideInfo` → 手动 setDraft → bail"的兼容实现 + DOM fallback；现在代码走的是 `actx.bail(actx, "slash/input-insert-reference", {reference, span})` 官方事件管线。**即：@ 引用功能已迁移到官方 API，旧兼容函数废弃但没删**。`formatMention` 是同批残留；`decompressZstdHeader`（usage-stats）是从 session-rewind 复制过来、但只用了另一个函数。
+
+**二、README 核对（10 份，3 份需修）**：
+
+| 插件 | 不一致点 | 处理 |
+|---|---|---|
+| **dsh-session-import** | README 写路由 `/__dsh/session-import/*` + 守卫头 `X-DSH-Session-Import`，代码实际是 **`session-transfer`** 前缀 + `X-DSH-Session-Transfer: 1` | 已改 README |
+| **dsh-rules** | README 写 `enabled: true`（且排查步骤说"确认 enabled: true"），代码是 `default(false)`（注释明确"v3 默认关闭"）；配置文件写成 `cordis.yml`，实际是 `cordis.patch.yml` | 已改 README |
+| **dsh-memory** | ① 说"每次请求前自动注入最近 **4** 条"+"autoRecall: **true**"，代码默认 `autoRecall: false`、`autoRecallLimit: **6**`；② 说注册 **5** 个路由，实际 **6** 个（缺 `/__dsh/memory/config`）；③ WebUI 描述漏了**三个开关**（autoRemember / autoRecall / crossSessionRecall，见 client.js）；④ 配置块漏了 v3.1/v4 新增字段（autoRemember / crossSessionRecall / assistantMessage / toolResult / useSummarize） | 已改 README（4 处） |
+| 其余 7 个（archive-purge / file-browser / media-background / ollama / session-rewind / sidebar-lite / usage-stats） | 无 | 抽查路由表、配置默认值、工具清单、tools/ 脚本，均与代码一致 |
+
+**三、跨插件重复（存在但**不建议动**）**：`sendJson` 在 9 个插件各一份；`splitFrames` + `adoptPhysicalRow` 在 3 处（session-rewind 的 lib + tools + usage-stats）；`relSegments`/`fmtSize`/`fmtTime` 各 2 份。**理由**：插件是独立分发的 npm 包（`file:` 安装、各自进 profile 的 node_modules），共享代码必须抽成额外公共包并让每个插件声明依赖，会引入插件间耦合，与"零依赖、单目录可独立搬走"的定位冲突 —— **重复是有意的隔离成本**。
+
+**方法论（可复用）**：
+
+- **JS 死代码扫描**（Python 正则 + 全目录引用计数）：收集 `^\s*function\s+(\w+)\s*\(` 与 `^\s*const\s+(\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)\s*=>|function)` 两类定义，在全插件目录文本里数 `\b名字\b` 出现次数，**≤1 即候选**（只出现定义处）。**误报源**：通过对象属性 / 字符串 / 配置引用的名字（如 `slots.register` 的回调）—— 必须人工确认后再删。
+- **删除方法**：用脚本按**括号深度**算函数起止（先 `re.sub` 剥离字符串字面量再统计，避免字符串里的 `{}` 干扰），**连带删除紧邻的前置注释块与上方空行**，**从后往前删**避免行号漂移；删前备份、删后 `node --check` 验证 + 重跑扫描复检。
+- **README 核对的四个高发点**（按命中率排序）：① **默认值漂移**（代码改默认、README 示例没跟）—— 本次 2/3 份都栽在这；② **路由前缀 / 守卫头改名**（插件改名或重构后 README 没同步）；③ **新增的 UI 开关没写进 README**；④ **接口/工具清单数量与代码不符**。
+- 插件改源码后要**重装 + 重启服务**才生效（pnpm 对 `file:` 是拷贝）。
+
 ### 本次未处理（保留，供后续判断）
 
 - **重复实现（未合并）**："补 peer 依赖 + 同步核心版本 + file: 插件版本"逻辑在 `_heal_profile_dependencies`（L1474-L1531）与 `verify_environment_integrity`（L1875-L2047）各写一份（后者注释自称"复用"实为复制），可抽 `_sync_profile_peer_deps()` 共用。**2026-09-24 评估：暂不做** —— 收益仅为"防未来漏改"（两块逻辑已稳定、无已知 bug），却要在无自动化测试的前提下动 dsh 依赖修复这个核心功能（出错后果是 dsh 装不上 / 插件激活失败），风险收益不对等。**将来若因官方 peer 机制变更而必须改这两处逻辑时，顺手合并才有实际价值**；日志文案届时按"统一带前缀 + 后缀"方案处理（已确认）。

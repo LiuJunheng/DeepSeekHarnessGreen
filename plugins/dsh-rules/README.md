@@ -54,11 +54,11 @@ dsh plugin add file:./plugins/dsh-rules
 
 ## 配置
 
-在 `cordis.yml` 里可选配置:
+在 `cordis.patch.yml` 里可选配置:
 
 ```yaml
 dsh-rules:
-  enabled: true              # 总开关
+  enabled: false             # 总开关 (默认关闭: 规则会占 system prompt token; 也可在 WebUI 开关里打开)
   rulesPath: ''              # 空=默认 DSH_HOME/rules/user-rules.md
   autoReload: true           # 文件变化自动重载
   weight: 0.9                # 注入权重 (越高越优先)
@@ -98,7 +98,7 @@ DSH runtime 把所有 contexts 拼成完整 system prompt
 ### 规则没生效?
 
 1. 确认规则文件有内容 (不是空文件)
-2. 确认 `enabled: true` (cordis.yml 或默认值)
+2. 确认已开启: `enabled` **默认是 `false`** (规则会占 system prompt token, 故默认关闭) —— 在 WebUI 开关里打开, 或配 `enabled: true`
 3. 重启 DSH 服务 (或等 autoReload 触发)
 4. 看日志: `dsh-rules: ready, rules file = ...`
 

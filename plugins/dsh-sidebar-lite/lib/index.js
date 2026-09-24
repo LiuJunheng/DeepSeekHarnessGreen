@@ -83,13 +83,6 @@ async function readJsonBody(req, res) {
 	}
 }
 
-/** 规范化绝对路径: 必须是绝对路径并 resolve, 否则抛错 (返回的异常对象)。 */
-function fail(message) {
-	const error = new Error(message);
-	error.aborted = false;
-	return error;
-}
-
 function requireString(payload, key) {
 	const value = payload[key];
 	if (typeof value !== "string" || value.length === 0) {
