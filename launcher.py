@@ -1298,7 +1298,9 @@ class Launcher:
         3) _rebuild_dependency_tree       用便携 pnpm 强制重建 profile 依赖树 (联网下载);
         4) _smoke_verify_core_upgrade     独立子进程冒烟启动验证; 起不来则从日志定位不兼容
                                           bundle 移除后重建重试 (最多 2 轮)。
-        依赖树重建失败会直接抛异常 (3 失败则 4 无意义); 其余步骤内部已吞异常防阻断。"""
+        异常语义: 步骤 3 (依赖树重建) 失败会直接抛异常 (3 失败则 4 已无意义)。步骤 1/2/4
+        的异常保护均只是局部的 (读日志 / 文件读写 / 单轮验证各自 try), 并非整体兜底 ——
+        它们抛出未预期异常时会中断自愈流程并上抛给调用方。"""
         self.log("--- dsh 升级后自愈开始 (profile: %s) ---" % profile)
         removed = self._remove_incompatible_bundles(profile)
         if removed:

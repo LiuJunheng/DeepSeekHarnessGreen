@@ -1161,11 +1161,17 @@ for name, def_lines in defs.items():
 - **`_i18n_widgets` 是模块级列表**，所以抽出去的弹窗照旧 `append` 即可，语言切换仍能刷新——这是能安全搬迁的关键前提。`refresh_all_text` 对每个 `widget.config()` 都包了 try/except，已销毁控件不会报错。
 - **`refresh_all_text` 依赖后置定义的 `_refresh_auth_warning`**（靠闭包延迟解析）。将来若搬 `refresh_all_text`，漏传该依赖**不会报错**（被 try/except 吞掉），只会"切语言后 auth 警告行不刷新"——属静默失效，需特别留意。
 
+### 顺带修正的文档不准确（2026-09-24）
+
+- **`_heal_after_core_upgrade` 的 docstring 与代码不符**：原写「依赖树重建失败会直接抛异常 (3 失败则 4 无意义); 其余步骤内部已吞异常防阻断。」但实测步骤 1/2/4 的异常保护**都只是局部的**（步骤 1 读日志 try、步骤 2 文件读写 try、步骤 4 单轮验证 try），并无整体兜底 —— 它们抛出未预期异常时会中断自愈流程并上抛给调用方。已改为准确表述（docstring 末段「异常语义」）。
+  **教训**：不要据注释推断异常语义，要看实际 try/except 的覆盖范围。"注释比代码乐观"这类表述会误导后续维护者去依赖并不存在的保护。
+
 ### 本次未处理（保留，供后续判断）
 
-- **重复实现（未合并）**："补 peer 依赖 + 同步核心版本 + file: 插件版本"逻辑在 `_heal_profile_dependencies`（L1474-L1531）与 `verify_environment_integrity`（L1875-L2047）各写一份（后者注释自称"复用"实为复制），可抽 `_sync_profile_peer_deps()` 共用。
+- **重复实现（未合并）**："补 peer 依赖 + 同步核心版本 + file: 插件版本"逻辑在 `_heal_profile_dependencies`（L1474-L1531）与 `verify_environment_integrity`（L1875-L2047）各写一份（后者注释自称"复用"实为复制），可抽 `_sync_profile_peer_deps()` 共用。**2026-09-24 评估：暂不做** —— 收益仅为"防未来漏改"（两块逻辑已稳定、无已知 bug），却要在无自动化测试的前提下动 dsh 依赖修复这个核心功能（出错后果是 dsh 装不上 / 插件激活失败），风险收益不对等。**将来若因官方 peer 机制变更而必须改这两处逻辑时，顺手合并才有实际价值**；日志文案届时按"统一带前缀 + 后缀"方案处理（已确认）。
 - **超长函数（可维护性）**：`run_gui` 1910 行（已从 2790 降下来）、`patch_lan_api_trust` 205 行（L4651-L4855）、`verify_environment_integrity` 173 行（L1875-L2047）、`green_all_releases` 142 行（L2220-L2361）。
-- **重构二后续阶段（未做）**：`open_purge_dialog`（230 行）、更新链 `ask_update` + `confirm_upgrade`、绿色版更新链 4 个函数。完整方案与分阶段风险见 `.trae/documents/launcher-refactor-plan.md`。**不建议**把 run_gui 改成 `GuiApp` 类——要全量改写 100 处 `root.` + 95 处 `app.`，diff 巨大且收益更低。
+- **重构二后续阶段（未做）**：`open_purge_dialog`（230 行）、更新链 `ask_update` + `confirm_upgrade`、绿色版更新链 4 个函数。完整方案与分阶段风险见 `.trae/documents/launcher-refactor-plan.md`。**不建议**把 run_gui 改成 `GuiApp` 类——要全量改写 100 处 `root.` + 95 处 `app.`，diff 巨大且收益更低。**2026-09-24 评估：暂不做** —— 收益最大的部分（768 行插件管理窗口）已在阶段 2 拿走，剩余属边际收益递减（纯可维护性、零功能收益），把握度仅 75-90% 且对话框类错误"只有点到才暴露"、最难静态发现。3 小步方案存档于 `.trae/documents/launcher-refactor-round3-plan.md`（含 7 小步顺序、各函数参数表、i18n `append` 计数不变量）。
+- **已评估为"不必做"的其他项（2026-09-24）**：① `_sync_manifest_core_deps` 的日志无前缀（与两处的 `[自愈]/[环境检查]` 风格不一致）—— 纯日志美观，改它需动 4 处调用点；② `status_text.set() + status_indicator.itemconfig(dot, ...)` 这个两行模式在 run_gui 里重复 11 次 —— 可抽 `set_status(key, color)` 闭包，但需改 11 个调用点。两者投入产出比均为负。
 - **`_i18n_widgets` 无界增长**：每次打开弹窗都 `append` 且销毁后不清理（既有行为，非本次引入）。`refresh_all_text` 有 try/except 兜底所以不报错，只是列表无限增长；若修需在弹窗销毁时移除注册项，属独立改动。
 - **保留不删**：`_gitee_*` 家族约 300 行手写 git smart-HTTP 协议（pkt-line / pack 解析 / delta 应用），复杂度高但**仍在用**（Gitee archive 有 JS 挑战页，必须走 git 协议）；`_NoTray` 是 pystray 初始化失败时的正常空对象兜底。
 
