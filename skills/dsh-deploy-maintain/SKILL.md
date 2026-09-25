@@ -1,7 +1,7 @@
 ---
 name: dsh-deploy-maintain
 description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护、插件开发与避坑经验。覆盖便携 Node/dsh 安装、环境变量重定向、工作区 ACL 沙箱、更新备份、插件管理与 dsh 插件双端加载/路由注册等全套实操知识。"
-updated: "2026-09-23"
+updated: "2026-09-25"
 ---
 
 # DeepSeek Harness 绿色整合版 · 部署维护与插件开发
@@ -166,6 +166,7 @@ updated: "2026-09-23"
 - **语言提示**：`.bat` 保持 ASCII 全英文；desktop-shell 相关提示语用英文（中文乱码）。
 - **插件管理窗口宽度教训**：窗口宽度直接决定左右面板够不够。把 `top.geometry("900x600")` 加宽到 **1160x680**（与主启动器 1160x780 同宽）、`minsize` 提到 1000x580——**窄窗口里调 Panedwindow 权重很难把右侧撑宽**（根源是窗口太窄），宽窗口下左右权重回到 1:2 即可让右侧充足。`ttk.Treeview` 改 columns 后插入的 values 列数必须在定义时同步对齐；**去掉列后必须全局检查所有 `values[i]` 下标读取**（分类列删除后 `values` 变 `(source,version,description)`，`resolve_selected_spec` 里原本取来源列的 `[1]` 会读到版本号 → 改 `[0]`，否则 github 搜索结果被误判按 npm 包名安装）。
 - 涉及图标/托盘/单实例的通用经验可另参考 `python-tkinter-desktop-dev` Skill。
+- **对话框开着时最小化主窗口 → 点任务栏图标毫无反应，点托盘却正常（Tk 桌面应用通用坑）**：症状是"程序像卡死"。实测（Tk 8.6 + Windows）真因有**三条独立机制**，别按直觉猜成"Windows 随 owner 隐藏子窗口"（猜错会只修好一半）：① `root.iconify()` 后 **Tk 自己**会把 `transient(root)` 的子窗口状态改成 `withdrawn`，而 master 恢复时 Tk **不会**把子窗口一并还原；② **只要子对话框握着 `grab_set()`，Tk 就会丢弃 Windows 发来的 `SC_RESTORE`** —— 主窗口永远停在 `iconic`，点任务栏完全没反应（**主因**；对照组：释放 grab 后同一 `SC_RESTORE` 立刻恢复正常）；③ 后台线程回调在主窗口已最小化时弹框，对话框一出生就是隐藏态且已抓走输入。**四层修复**：① 弹框前先恢复最小化/隐藏的 master；② 弹框后用 `after_idle` 显式 `deiconify + lift + focus_force`（放 idle 避免"先显示空窗再被控件撑大"的闪烁）；③ **在窗口过程里拦 `SC_RESTORE`，但必须加条件"当前有 grab 对话框"** —— 拦截时改由 Tk 侧 `deiconify()` 恢复（`deiconify` 不受 grab 影响，且会把 ① 造成的 withdrawn 一并带回）；无对话框时不拦截，保持 Tk 原生行为不变；④ 主窗口重新显示后把登记表里所有非 `normal` 状态的对话框拉回 `normal`。**原生 messagebox 无处可登记**（`tk_messageBox` 内部自建 Toplevel、弹完即销毁，调用点又散落十几处）→ 在 GUI 入口把 `messagebox` 这个**局部名字**替换成薄包装对象（转发 `showinfo/showerror/showwarning/askyesno`，调用前先恢复 owner，其余属性 `__getattr__` 透传），一处覆盖全部调用点且不漏将来新增的。**排查方法论**：不要凭"Windows 应该会怎样"猜窗口行为，写 30 行探针用 `IsIconic` / `IsWindowVisible` / `winfo_viewable` / `grab_current()` + `PostMessageW(WM_SYSCOMMAND, SC_RESTORE)` 直接问系统，一轮定位真因。**探针硬约束**：模拟系统消息必须用 `PostMessageW`（异步），用 `SendMessageW`（同步）会同步重入本线程窗口过程，直接崩 `PyEval_RestoreThread: the function must be called with the GIL held`。另实测 `withdraw/unmap` **不会**释放本地 grab。
 
 ## 五、DSH 插件开发（双端加载 + 路由注册）
 

@@ -6277,6 +6277,7 @@ class SysTrayIcon:
     WM_TRAY_CALLBACK = 0x0400 + 100      # 自定义回调消息 ID
     WM_SYSCOMMAND = 0x0112
     SC_MINIMIZE = 0xF020
+    SC_RESTORE = 0xF120
     ICON_BIG = 1
     GCL_HICON = -14
     IDI_APPLICATION = 32512
@@ -6582,6 +6583,21 @@ class SysTrayIcon:
                     # poll_tray() 轮询到标志后, 再在正常事件上下文里执行隐藏。
                     self._minimize_pending = True
                     return 0
+                # (2026-09-25) 拦截"从最小化恢复": 有模态对话框握着 grab 时,
+                # Tk 会把 Windows 发来的 SC_RESTORE 丢掉 —— 实测主窗口永远停在
+                # iconic, 点任务栏图标毫无反应, 用户以为程序卡死 (典型场景:
+                # 版本选择/确认升级这类 grab 对话框开着时点了最小化)。
+                # 这里自己接管: 只置标志, 由 poll() 调 on_click_restore, 用 Tk 侧
+                # deiconify() 恢复 —— deiconify 不受 grab 影响, 而且会把被 Tk 自动
+                # 置为 withdrawn 的 transient 子窗口一并带回 normal。
+                # 无对话框时不拦截(条件里的 _ACTIVE_MODAL_DIALOGS), 保持 Tk 原生
+                # 恢复行为完全不变。此处只判断模块级列表是否为空, 不碰任何 Tk
+                # 对象, 符合 "WndProc 里严禁调用 Tk" 的硬约束。
+                if (msg == self.WM_SYSCOMMAND
+                        and (wparam & 0xFFF0) == self.SC_RESTORE
+                        and _ACTIVE_MODAL_DIALOGS):
+                    self._restore_pending = True
+                    return 0
                 # 拦截托盘图标回调消息
                 if msg == self.WM_TRAY_CALLBACK:
                     if lparam == 0x0202:        # WM_LBUTTONUP → 左键单击: 恢复界面窗口
@@ -6642,6 +6658,146 @@ _i18n_stringvars = []   # 每项: (stringvar, i18n_key, None)  动态值的 Stri
 
 
 # ---------------------------------------------------------------------------
+# 模态对话框「可见性保障」(2026-09-25)
+# 背景 (用户实测): 主窗口最小化期间/之后, 对话框弹不回来 —— 点任务栏图标毫无
+# 反应像卡死, 点托盘却正常。实测 (Tk 8.6 + Windows) 拆出三条独立机制:
+#   ① Tk 在 master 被 iconify 时 **自动** 把 transient 子窗口置为 withdrawn,
+#     而 master 恢复时 **不会** 自动还原 —— 对话框就永久停在 withdrawn;
+#   ② 若对话框握着 grab (grab_set), Tk 会 **丢弃** Windows 发来的 SC_RESTORE,
+#      主窗口永远停在 iconic → 点任务栏图标彻底没反应 (本 bug 的主因);
+#   ③ 后台任务回调 (如「检查更新」查完弹版本选择框) 在窗口最小化时弹出对话框,
+#      该对话框一出生就是隐藏态, 且已经把输入抓走 → 界面看起来完全卡死。
+# 对策 (四层, 全部幂等, 失败静默):
+#   ① 弹框前: 主窗口若最小化/隐藏, 先恢复它 (_restore_owner_window);
+#   ② 弹框后: 用 after_idle 显式 deiconify + lift + focus_force
+#      (_register_modal_dialog), 保证对话框真的在最前;
+#   ③ 有 grab 对话框时接管 SC_RESTORE (见 SysTrayIcon 的窗口过程子类化), 改由
+#      Tk 侧 deiconify() 恢复 —— deiconify 不受 grab 影响, 且会把被 ① 置成
+#      withdrawn 的 transient 子窗口一并带回 normal;
+#   ④ 主窗口重新显示后, 把登记表里所有非 normal 状态的对话框拉回 normal
+#      (_reshow_active_modal_dialogs), 兜住 ① 留下的 withdrawn 状态。
+# 另: 原生 messagebox 走 _RestoringMessagebox 包装 (见该类的说明)。
+# ---------------------------------------------------------------------------
+_ACTIVE_MODAL_DIALOGS = []   # 当前打开的对话框 (Toplevel), 后进先出 (末尾 = 最上层)
+
+
+def _restore_owner_window(root_widget):
+    """弹模态对话框前调用: 主窗口若处于最小化/隐藏状态, 先恢复并抬到最前。
+
+    不恢复的话, 新建的 transient 子窗口会随隐藏的 owner 一起不可见, 而它的
+    grab 又已经生效, 用户就会看到「点了图标没反应」的假死界面。
+    """
+    try:
+        if root_widget.state() in ("iconic", "withdrawn"):
+            root_widget.deiconify()
+            root_widget.lift()
+    except Exception:
+        pass   # 窗口状态查询/恢复失败不应阻断弹框主流程
+
+
+def _register_modal_dialog(root_widget, dialog):
+    """登记对话框并保证它可见 (2026-09-25)。
+
+    调用时机: 对话框已创建并设置了 transient 之后, 紧邻 grab_set() 前后均可。
+    可见性动作放在 after_idle 里执行 —— 等当前构建函数完整返回、控件都 pack 完
+    之后再显示, 避免出现「先显示空窗口再被控件撑大」的闪烁。
+
+    模态与否不需要调用方声明: 重显示时用 dialog.grab_current() 判断它自己是否
+    持有 grab, 因此模态对话框和非模态浮窗 (如会话列表窗口) 都能直接登记。
+    """
+    _restore_owner_window(root_widget)
+    _ACTIVE_MODAL_DIALOGS.append(dialog)
+
+    def _forget_dialog(event, target=dialog):
+        """对话框销毁时从登记表移除 (只响应对话框自身, 忽略其子控件的 Destroy)。"""
+        if event.widget is target:
+            try:
+                _ACTIVE_MODAL_DIALOGS.remove(target)
+            except ValueError:
+                pass
+
+    dialog.bind("<Destroy>", _forget_dialog, add="+")
+
+    def _ensure_visible():
+        try:
+            if not dialog.winfo_exists():
+                return
+            dialog.deiconify()
+            dialog.lift()
+            dialog.focus_force()
+        except Exception:
+            pass   # 可见性保障失败不能影响对话框本身的功能
+
+    dialog.after_idle(_ensure_visible)
+
+
+def _reshow_active_modal_dialogs():
+    """主窗口重新显示时调用: 把仍打开的对话框重新抬回最前 (2026-09-25)。
+
+    Windows 在 owner 最小化时会隐藏 transient 子窗口, 但 owner 恢复后不会自动
+    把它们显示回来; 此时子窗口的 grab 仍在, 界面看起来就像卡死。
+    这里用 withdraw + deiconify 强制重新映射 —— 单纯 deiconify 对 Tk 自认为
+    「已是 normal 状态」的窗口是空操作, 必须先用 withdraw 把状态复位。
+
+    末尾对持有 grab 的对话框再 grab_set 一次只是保险: 实测 (Tk 8.6 + Windows)
+    withdraw/unmap 并不会释放本地 grab, 但个别环境组合下若不补这一手, 对话框
+    能显示却失去模态, 代价仅一次幂等调用。
+    """
+    for dialog in list(_ACTIVE_MODAL_DIALOGS):
+        try:
+            if not dialog.winfo_exists():
+                continue
+            dialog.withdraw()
+            dialog.deiconify()
+            dialog.lift()
+            if dialog.grab_current() == dialog:
+                dialog.grab_set()   # 保险: 确保模态仍然生效
+        except Exception:
+            pass   # 单个对话框重显示失败不影响其余
+
+
+class _RestoringMessagebox:
+    """包装 tkinter.messagebox: 弹原生模态框前先确保主窗口可见 (2026-09-25)。
+
+    与 _register_modal_dialog 处理的是同一类问题, 但原生模态框 (tk_messageBox)
+    内部自己创建 Toplevel、弹完立即销毁, 没有可登记的窗口对象; 调用点又散落在
+    十几处后台回调里 (安装/启动/停止/清理/更新完成的提示)。因此统一做一层薄
+    包装: run_gui 里把 messagebox 这个名字换成本类实例, 所有
+    showinfo / showerror / showwarning / askyesno 调用都会先走一次
+    _restore_owner_window —— 不需要逐点修改, 也不会漏掉将来新增的调用。
+
+    只转发实际用到的 4 个方法; 其他属性 (如 messagebox.YES 之类的常量) 由
+    __getattr__ 透传到底层模块, 保证替换后行为完全一致。
+    """
+
+    def __init__(self, messagebox_module, root_widget):
+        self._messagebox_module = messagebox_module
+        self._root_widget = root_widget
+
+    def _restore_then_call(self, method_name, *args, **kwargs):
+        """先恢复主窗口, 再调用底层同名方法 (参数原样透传, 返回值原样返回)。"""
+        _restore_owner_window(self._root_widget)
+        method = getattr(self._messagebox_module, method_name)
+        return method(*args, **kwargs)
+
+    def showinfo(self, *args, **kwargs):
+        return self._restore_then_call("showinfo", *args, **kwargs)
+
+    def showerror(self, *args, **kwargs):
+        return self._restore_then_call("showerror", *args, **kwargs)
+
+    def showwarning(self, *args, **kwargs):
+        return self._restore_then_call("showwarning", *args, **kwargs)
+
+    def askyesno(self, *args, **kwargs):
+        return self._restore_then_call("askyesno", *args, **kwargs)
+
+    def __getattr__(self, name):
+        """未显式转发的方法/常量直接从底层 tkinter.messagebox 模块取。"""
+        return getattr(self._messagebox_module, name)
+
+
+# ---------------------------------------------------------------------------
 # tkinter 图形界面
 # ---------------------------------------------------------------------------
 
@@ -6661,6 +6817,7 @@ def _show_about_dialog(root, tk, ttk):
     about_window.resizable(False, False)
     about_window.geometry("500x525")
     about_window.transient(root)    # 依附主窗口
+    _register_modal_dialog(root, about_window)   # 2026-09-25: 弹框前恢复主窗口 + 保证对话框可见
     about_window.grab_set()         # 模态, 关闭前不能操作主窗口
 
     # 主标题
@@ -6748,6 +6905,7 @@ def _ask_close_choice_dialog(root, tk, ttk):
     dialog = tk.Toplevel(root)
     dialog.title(i18n.t('close_dialog.title'))
     dialog.transient(root)
+    _register_modal_dialog(root, dialog)   # 2026-09-25: 弹框前恢复主窗口 + 保证对话框可见
     dialog.grab_set()          # 模态: 关闭操作期间主窗口不响应
     dialog.resizable(False, False)
 
@@ -7601,6 +7759,15 @@ def run_gui():
     root.geometry("1160x780")
     root.minsize(1000, 660)
 
+    # ---------- messagebox 统一包装 (2026-09-25) ----------
+    # 本函数内后续所有 messagebox.xxx 调用改走包装对象: 弹原生模态框前先确保主窗口
+    # 可见。原因见 _RestoringMessagebox / _register_modal_dialog 的说明 —— 主窗口
+    # 最小化时弹出(或已存在)的模态框会被 Windows 随 owner 一起隐藏, 但输入已被
+    # 抓走, 表现为「点任务栏图标看不到界面, 像卡死」。
+    # 注意: 上面单实例检测分支里的那次 showwarning 用的是原生 messagebox, 那时
+    # root 还没创建, 且它显式传了 parent=root_tmp, 不受此处替换影响。
+    messagebox = _RestoringMessagebox(messagebox, root)
+
     # ---------- 窗口图标 (2026-08-16): 自定义 DSH 绿色小鲸鱼图标, 缺失时静默降级 ----------
     icon_path = get_icon_path()
     if icon_path:
@@ -7820,6 +7987,14 @@ def run_gui():
 
     def restore_from_tray():
         """托盘左键(2026-09-10): 优先呼出运行中的桌面/网页窗口; 否则恢复启动器主窗口"""
+        # (2026-09-25) 有模态对话框正等用户操作时, 必须先把它抬回最前再返回:
+        # 此时去开桌面/网页窗口会跟对话框的 grab 抢焦点, 用户会以为界面卡死;
+        # 而且最小化期间对话框已被 Windows 隐藏, 需要一并显式恢复。
+        if _ACTIVE_MODAL_DIALOGS:
+            root.deiconify()
+            root.lift()
+            _reshow_active_modal_dialogs()
+            return
         try:
             if app._desktop_shell_alive():
                 if app._focus_desktop_window():
@@ -7972,6 +8147,7 @@ def run_gui():
         top.geometry("920x540")
         top.minsize(720, 380)
         top.transient(root)
+        _register_modal_dialog(root, top)   # 2026-09-25: 弹框前恢复主窗口 + 保证对话框可见
 
         # 数据: 所有会话列表, 勾选字典 {id: True}
         all_items = []          # list of dict
@@ -8375,6 +8551,7 @@ def run_gui():
         detail_dialog = tk.Toplevel(root)
         detail_dialog.title(i18n.t('upgrade_confirm.title'))
         detail_dialog.transient(root)
+        _register_modal_dialog(root, detail_dialog)   # 2026-09-25: 弹框前恢复主窗口 + 保证对话框可见
         detail_dialog.grab_set()   # 模态
 
         header_frame = ttk.Frame(detail_dialog, padding=12)
@@ -8459,6 +8636,7 @@ def run_gui():
         dialog = tk.Toplevel(root)
         dialog.title(i18n.t('version_select.title'))
         dialog.transient(root)
+        _register_modal_dialog(root, dialog)   # 2026-09-25: 弹框前恢复主窗口 + 保证对话框可见
         dialog.grab_set()   # 模态: 关闭前主窗口不可操作
         dialog.geometry("720x520")
 
@@ -8704,6 +8882,7 @@ def run_gui():
         dialog = tk.Toplevel(root)
         dialog.title(i18n.t('green_version_select.title'))
         dialog.transient(root)
+        _register_modal_dialog(root, dialog)   # 2026-09-25: 弹框前恢复主窗口 + 保证对话框可见
         dialog.grab_set()
         dialog.geometry("780x540")
 
@@ -8905,6 +9084,7 @@ def run_gui():
         detail_dialog = tk.Toplevel(root)
         detail_dialog.title(i18n.t('green_update.title'))
         detail_dialog.transient(root)
+        _register_modal_dialog(root, detail_dialog)   # 2026-09-25: 弹框前恢复主窗口 + 保证对话框可见
         detail_dialog.grab_set()
 
         header_frame = ttk.Frame(detail_dialog, padding=12)
@@ -9460,6 +9640,22 @@ def run_gui():
             pass   # poll 内部异常不能中断 after 轮询链
         root.after(80, poll_tray_loop)
     root.after(80, poll_tray_loop)
+
+    def on_main_window_reshown(event=None):
+        """主窗口重新显示时, 把仍打开的模态对话框一并抬回最前 (2026-09-25)。
+
+        覆盖「点任务栏图标恢复」这条路径 (点托盘走 restore_from_tray, 已单独处理):
+        Windows 在 owner 最小化时会把 transient 子窗口一起隐藏, 但 owner 恢复后
+        不会自动把它们显示回来; 此时子窗口的 grab 仍在, 界面看起来就像卡死。
+
+        <Map> 只绑定在主窗口自身的显示事件上, 子控件/对话框的 Map 事件不会触发
+        本回调 (event.widget 判断是二次保险); 启动时注册表为空, 无副作用。
+        """
+        if event is not None and event.widget is not root:
+            return
+        _reshow_active_modal_dialogs()
+
+    root.bind("<Map>", on_main_window_reshown, add="+")
 
     append_log(i18n.t('log.launch_hint'))
     root.mainloop()
