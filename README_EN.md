@@ -69,7 +69,8 @@ All plugins are **pure plugins** (zero modifications to official dsh files), Apa
 | `dsh-session-rewind` | When a session gets "poisoned" by a tool crash, one click to rewind to a good turn and branch into a clean continuation. |
 | `dsh-session-import` | Re-import exported session ZIP / JSONL back to this machine (reverse of the official export). |
 | `dsh-usage-stats` | Usage statistics + per-message token / cost breakdown. |
-| `dsh-sidebar-extend` | Enhances the official right sidebar: takes over the official file tree (browse anywhere / path box / right-click @ reference, edit, save-as, copy path) and adds a text-editing tab. |
+| `dsh-sidebar-extend` | **Official sidebar-right tab type plugin** (enabled by default): takes over the official file tree (browse anywhere / path box / right-click @ reference, edit, save-as, copy path) and adds a text-editing tab. No self-built sidebar shell — fold, split, float, and session persistence are all handled by the official container. |
+| `dsh-sidebar-lite` | **Legacy sidebar (reference only, disabled by default)**: self-contained right-side panel (file browser / preview-edit / embedded browser / CMD terminal / background jobs), not integrated with the official sidebar-right container. |
 | `dsh-media-background` | Play local folder video as WebUI background (video + audio). |
 | `dsh-ollama` | Auto-detects local Ollama service and integrates it — pick Ollama models directly in the model selector. |
 | `dsh-memory` | **Zuzong Memory Bank**: Extracts key information from conversations into SQLite, auto-recalls and injects into the system prompt next time you chat. v3 has **Session Isolation** (session-aware grouping), **Batch Cleanup**, **Cross-Session Load Toggle**, and **Session Titles from projcache/session.jsonl**. Default OFF to save tokens. |

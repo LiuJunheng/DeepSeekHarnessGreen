@@ -214,6 +214,8 @@
     * **「接进官方容器 ≠ 套上官方沙箱」（必须写进插件 README）**：插件自家宿主路由的文件树浏览是**绝对路径、无工作区围栏**，允许上溯到工作区之外；但**单击预览走官方 Host 读取（`workspaceFiles`），受工作区围栏限制** → 工作区外文件预览会被官方预览器报 `outside-workspace`，此时改用右键「编辑」（走插件 `fs.read` / `fs.write`，无围栏）或「另存为」。同一个容器里并存两套边界，用户与维护者都容易误解，必须显式说明。
     * 插件经 `file:` 安装是**拷贝**，改完必须重装 + 重启服务（旧坑 4）。
     * **命名（2026-09-29）**：定位已从「轻量侧栏」变为「官方右栏增强」，故插件由 `dsh-sidebar-lite` 更名为 `dsh-sidebar-extend`。改名要同步的硬标识共 5 处：**目录名 / `package.json` 的 `name` / 客户端 `ModuleLoader.load({ id })` / 宿主端 `const name` / 类型 `definition.id` 与插槽 `key`**；另有 3 处内部标识建议一起改：locale 命名空间、防御头常量、宿主路由前缀。**换名安装必须先移除旧包再装新包**——新旧两份包同时在场会因同一个 `kind` 出现两份 `extension` 档注册而 **throw**（官方只允许一个 kind 带一份 builtin + 一份 extension）。
+    * **独立的旧版已恢复在 `plugins/dsh-sidebar-lite/`（工作区未提交文件）**，留作与新版对比用：profile 里**已安装但列入 `dsh.profile.disabled`**（`bundles` 不含它，`reconcile_bundles` 会保持这个状态）→ 默认不加载，插件管理里切开关即可启用。它与新版**无任何标识冲突**（包名/路由前缀 `/__dsh/sidebar-lite` 与 `/__dsh/sidebar-extend`/防御头/类型 id 全不同，且旧版只自建外壳、不注册官方 tab 类型）。**验证"默认没加载"的手法**：探测插件自带路由的响应码 —— 有 handler 时缺防御头会返回 **403**，没加载则落到 DSH webserver 的通用 **405**（拿一个确定不存在的 `/__dsh/...` 路径对照即可确认基线）。注意旧版启用后，`dsh-file-browser` / `dsh-media-background` 的浮动弹窗**只避让官方右栏**、不再避让旧版自建面板（它们已改读官方 `data-sidebar-right-*` 标记）。
+    * **插件 `launcher.defaultDisabled` 标记（2026-09-29 引入）**：若 `plugins/` 下某插件的 `package.json` 含 `"launcher": { "defaultDisabled": true }`，`install_bundled_plugins()` 安装成功后会自动调 `set_plugin_enabled(pkg, enabled=False)` 把它加进 `dsh.profile.disabled`。**新用户路径全覆盖**：绿色版第一次装环境调 `install_bundled_plugins` 时自动触发；若用预构建 runtime 模板则模板里已预设 disabled。老用户升级已装的插件**不会被自动停用**（`install_bundled_plugins` 对已装的直接 skipped），需手动在插件管理切开关或改 profile。
 
 ### PyInstaller / 打包坑
 
