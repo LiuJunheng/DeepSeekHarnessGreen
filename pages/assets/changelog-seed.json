@@ -1,10 +1,108 @@
 {
   "meta": {
-    "seedGeneratedAt": "2026-09-13",
-    "totalReleases": 38,
-    "repo": "LiuJunheng/DeepSeekHarnessGreen"
+    "formatVersion": 2,
+    "seedGeneratedAt": "2026-09-29T14:08:26Z",
+    "seedSource": "GitHub API (per_page=30)",
+    "totalReleases": 44,
+    "note": "Static seed for offline fallback + HTML-embedded cards. Merged with runtime GitHub API response in app.js."
   },
   "releases": [
+    {
+      "tag_name": "v1.0.44",
+      "name": "v1.0.44 — 官方侧栏增强版 + 模态对话框最小化恢复",
+      "published_at": "2026-09-29T14:05:31Z",
+      "body": "[中文](#cn-1.0.44) | [English](#en-1.0.44)\n\n<a id=\"cn-1.0.44\"></a>\n\n\n> 覆盖 8 个 commit / 26 个文件 / +2133 -98 行，上一版本是 v1.0.43\n\n## 新增功能\n\n- **官方右侧栏增强插件（dsh-sidebar-extend）**：不再自建第二列侧栏外壳，改为注册官方右侧栏 tab 类型。以 extension 档接管官方内置文件树（支持任意路径上溯浏览 / 路径框跳转 / 右键 @引用·编辑·另存为·复制路径），并新增官方没有的「文本编辑」tab 类型。折叠 / 分栏 / 浮窗 / 全屏 / 按会话持久化布局全部由官方容器负责。**默认启用**。\n- **内置插件 `launcher.defaultDisabled` 标记**：插件可在 package.json 声明 `\"launcher\": { \"defaultDisabled\": true }`，绿色版第一次安装该插件时自动加入停用列表。已用于旧版侧栏（默认停用，插件管理界面手动启用）。\n\n## 修复\n\n- **模态对话框持有 `grab_set()` 时最小化再点任务栏图标无反应**：绿色版检查更新、安装环境等操作会弹出模态对话框；Windows 下这种对话框会吞掉 `SC_RESTORE` 消息。修复方案：弹框前先恢复主窗口 + 对话框统一登记显式提升显示层级 + 包装原生 messagebox 走同一恢复逻辑。\n- **dsh-file-browser / dsh-media-background 浮动弹窗与官方右栏互相遮挡**：改读官方 `data-sidebar-right-*` 属性计算避让空间，修复后弹窗能正确避开官方右栏容器。\n\n## 技术架构\n\n- **侧栏插件重构**：原 dsh-sidebar-lite 自建第二列侧栏（注入 `document.body` portal + `#root` 的 `margin-right` 硬让位），折叠/分栏/浮窗全靠自研，且与官方 header、下载按钮、分栏打架。重构后作为官方右侧栏（`dsh-client-ui-sidebar-right`）的 tab 类型提供者：① `ctx.sidebarRightTabs.register({ kind: \"files\", priority: \"extension\" })` 接管文件树；② 注册 `sidebar.right.pane.tab` 插槽注入正文。官方容器已内置浏览器、终端、预览 tab，不再重复实现。\n\n## 版本更新\n\n- GREEN_VERSION: 1.0.43 → 1.0.44\n\n## 升级建议\n\n- 绿色版覆盖安装即可；侧边栏插件为默认启用，旧版 dsh-sidebar-lite 已恢复但默认停用（需对比测试可在插件管理界面手动启用）。\n- 绿色版 zip 内含插件已自动同步到 DSH 0.2.0-rc.2 核心依赖。\n\n\n<a id=\"en-1.0.44\"></a>\n\n\n> Covers 8 commits / 26 files / +2133 -98 lines, previous version v1.0.43\n\n## New Features\n\n- **Official sidebar-right tab type plugin (dsh-sidebar-extend)**: Instead of self-building a second sidebar shell, this plugin registers as a tab type provider for the official right sidebar. It takes over the official file tree with `priority: \"extension\"` (free browsing anywhere / path box / right-click @reference, edit, save-as, copy path) and adds a new text-editing tab type that the official sidebar does not have. Fold, split, float, fullscreen, and per-session layout persistence are all handled by the official container. **Enabled by default**.\n- **`launcher.defaultDisabled` flag for bundled plugins**: Plugins can declare `\"launcher\": { \"defaultDisabled\": true }` in their package.json. When the green launcher installs the plugin for the first time, it automatically adds it to the disabled list. Used by the legacy sidebar plugin (disabled by default — manual enable via Plugin Manager).\n\n## Bug Fixes\n\n- **Modal dialog with `grab_set()` does not restore after minimize + taskbar click**: The launcher shows modal dialogs during update checks, environment installation, etc. On Windows these dialogs swallow `SC_RESTORE` messages, causing the main window to stay hidden forever when the user clicks the taskbar icon. Fixed by: (1) restoring the main window before showing any modal, (2) registering each dialog and explicitly raising it, (3) wrapping the native tkinter `messagebox` to go through the same restore path.\n- **Floating popups from dsh-file-browser / dsh-media-background overlap the official right sidebar**: Fixed by reading the official `data-sidebar-right-*` attributes for proper offset calculation.\n\n## Technical Architecture\n\n- **Sidebar plugin refactor**: The old dsh-sidebar-lite injected a second sidebar column (portal on `document.body` + `#root margin-right` hard shift), with self-built fold/split/float logic that always conflicted with the official header, download button, and split panels. Refactored as an official right-sidebar (`dsh-client-ui-sidebar-right`) tab type provider: ① `ctx.sidebarRightTabs.register({ kind: \"files\", priority: \"extension\" })` takes over the file tree; ② registers to `sidebar.right.pane.tab` slot for content injection. The official sidebar already provides browser, terminal, and preview tabs — no need to reimplement.\n\n## Version Bump\n\n- GREEN_VERSION: 1.0.43 → 1.0.44\n\n## Upgrade Notes\n\n- Green edition: overwrite install is sufficient.\n- The new sidebar plugin is enabled by default. The legacy dsh-sidebar-lite is preserved but disabled — enable manually via Plugin Manager if you want to compare.\n- Bundled plugins auto-synced to DSH 0.2.0-rc.2 core dependencies in this release.\n",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.44",
+      "assets": [
+        {
+          "name": "DSH-GreenPortable-v1.0.44.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.44/DSH-GreenPortable-v1.0.44.zip",
+          "size": 19164857
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.43",
+      "name": "v1.0.43 — 修正 3 份插件文档与代码不符 + 内部清理",
+      "published_at": "2026-09-24T14:13:10Z",
+      "body": "[中文](#cn-1.0.43) | [English](#en-1.0.43)\n\n<a id=\"cn-1.0.43\"></a>\n\n\n> 覆盖 3 个 commit / 12 个文件 / +69 -264 行, 上一版本是 v1.0.42。\n\n## 修复\n\n- **修正 dsh-rules README 的默认值错误（直接影响使用判断）**: 文档写 `enabled: true`（排查步骤也说\"确认 `enabled: true`\"），但代码默认是 **`false`** —— 规则会占 system prompt token，故默认关闭。照旧文档，用户会以为规则已生效、而实际没生效却查不出原因。已改为准确说明，并补上\"在 WebUI 开关里打开\"\n- **修正 dsh-session-import README 的接口名错误**: 文档写的路由前缀是 `session-import`、守卫头是 `X-DSH-Session-Import`，代码实际是 **`session-transfer`** 前缀 + `X-DSH-Session-Transfer: 1`。按旧文档做二次开发或排查会直接 404 / 403\n- **修正 dsh-memory README 的多处不符**: ① 文档说\"每次请求前自动注入最近 **4** 条\"、\"`autoRecall: true`\" —— 代码实际默认 **`false`**、条数 **6**；② 文档说注册 **5** 个路由 —— 实际 **6** 个（补上 `/__dsh/memory/config`）；③ WebUI 的**三个开关**（自动记录 / 自动注入 / 跨会话加载）文档未提及；④ 配置块补上 v3.1 / v4 新增字段（`autoRemember`、`crossSessionRecall`、`assistantMessage`、`toolResult`、`useSummarize`）\n\n## 内部改动（无功能变化）\n\n- 清理 **7 处零引用死代码**（共 250 行）：dsh-file-browser 与 dsh-sidebar-lite 里「@ 文件引用」功能的**旧版兼容实现**（`insertReferenceIntoInputCompat`、`formatMention` 等）—— 该功能现已迁移到官方 `slash/input-insert-reference` 事件管线，旧兼容函数废弃但一直没删；另有 dsh-usage-stats 里一个未被调用的解码函数\n- 其余 **7 份插件 README** 已逐份核对（路由表、配置默认值、工具清单、tools/ 脚本），与代码一致\n- `_heal_after_core_upgrade` 的 docstring 异常语义描述改为与代码一致（原表述偏乐观，会误导维护者）\n\n## 版本更新\n\n- GREEN_VERSION: 1.0.42 → 1.0.43\n\n## 升级建议\n\n- 绿色版覆盖安装即可\n- **如果你在用 dsh-rules**（用户规则注入）：请到「设置 → 规则」确认开关是否已打开 —— 它默认是关闭的，若此前照文档以为\"已生效\"，实际并未注入\n\n\n<a id=\"en-1.0.43\"></a>\n\n\n> Covers 3 commits / 12 files / +69 -264 lines, previous version is v1.0.42.\n\n## Bug Fixes\n\n- **Fixed a wrong default in dsh-rules README (directly affects usage judgment)**: the doc said `enabled: true` (the troubleshooting steps also said \"confirm `enabled: true`\"), but the code default is **`false`** — rules consume system prompt tokens, so they are off by default. Following the old doc, users would assume their rules were active when they actually were not, with no clue why. Now accurately documented, with a note to enable it via the WebUI switch\n- **Fixed wrong interface names in dsh-session-import README**: the doc listed the route prefix `session-import` and guard header `X-DSH-Session-Import`, while the code actually uses the **`session-transfer`** prefix + `X-DSH-Session-Transfer: 1`. Following the old doc would result in 404 / 403\n- **Fixed several mismatches in dsh-memory README**: ① the doc said \"auto-injects the latest **4** memories before each request\" and `autoRecall: true` — the code default is **`false`** with limit **6**; ② the doc said **5** routes were registered — actually **6** (added `/__dsh/memory/config`); ③ the WebUI's **three switches** (auto-record / auto-inject / cross-session) were undocumented; ④ the config block now includes the v3.1 / v4 fields (`autoRemember`, `crossSessionRecall`, `assistantMessage`, `toolResult`, `useSummarize`)\n\n## Internal Changes (no behavior change)\n\n- Removed **7 dead functions** (250 lines) that were never called: the **legacy compatibility implementations** of the \"@ file reference\" feature in dsh-file-browser and dsh-sidebar-lite (`insertReferenceIntoInputCompat`, `formatMention`, and friends) — the feature now goes through the official `slash/input-insert-reference` event pipeline, but the old helpers had been left behind; plus one unused decoder in dsh-usage-stats\n- The other **7 plugin READMEs** were verified one by one (route tables, config defaults, tool lists, tools/ scripts) and match the code\n- The `_heal_after_core_upgrade` docstring's exception semantics were corrected to match the code (the old wording was overly optimistic and could mislead maintainers)\n\n## Version Bump\n\n- GREEN_VERSION: 1.0.42 → 1.0.43\n\n## Upgrade Notes\n\n- Green edition: overwrite install is sufficient\n- **If you use dsh-rules** (user-rule injection): please check whether the switch is enabled under Settings → Rules — it is off by default, so if you assumed it was active based on the old doc, your rules were not being injected\n",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.43",
+      "assets": [
+        {
+          "name": "DSH-GreenPortable-v1.0.43.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.43/DSH-GreenPortable-v1.0.43.zip",
+          "size": 19122273
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.42",
+      "name": "v1.0.42 — 支持 DSH v0.1.7 语言设置新机制 + 内部清理",
+      "published_at": "2026-09-23T14:50:03Z",
+      "body": "[中文](#cn-1.0.42) | [English](#en-1.0.42)\n\n<a id=\"cn-1.0.42\"></a>\n\n\n> 覆盖 4 个 commit / 12 个文件 / +171 -168 行, 上一版本是 v1.0.41。\n\n## 新增功能\n\n- **支持 DSH v0.1.7 的语言设置新机制**: 官方 v0.1.7 起废弃了 `settings.yaml` 的 `locale.preference` 字段, 改用 Cordis patch 机制。启动器 `_apply_language_preference()` 已改为写 `profile/cordis.patch.yml` 的 locale patch entry (`id=locale`, `config.preference`), 用 PyYAML 安全解析、保留文件原有前导注释、并与官方原生 patch 共存\n  - 影响面: 旧版启动器配 DSH v0.1.7 时语言偏好不会生效, 本次一并解决\n- **PyYAML 缺失兜底**: 内置 Python 已装 PyYAML; EXE 打包版若漏收集, 现在只记日志不崩主流程\n\n## 内部改动 (对外行为无变化)\n\n- 删除 76 行零引用死代码: `_npm_view` / `_write_i18n_bridge_to_plugins` / `switch_src` / `_tray_log` 及其 11 处调用等\n- 删除 3 条废弃 i18n 词条 (`green_update.detected_title` / `detected_msg` / `failed_title`) 与无效配置键 `dsh_heap_limit_mb`\n- **不再往程序根目录写 `tray_menu.log`**: 该托盘诊断日志属调试期临时产物, 已整体移除 (此前每次托盘操作都会追加写该文件)\n- 内置插件 `dsh-memory` / `dsh-session-rewind` 的 `@deepseek-ai/*` 依赖同步到宿主版本 (0.1.7-rc.1)\n- 两个 exe 已重建\n\n## 版本更新\n\n- GREEN_VERSION: 1.0.41 → 1.0.42\n\n## 升级建议\n\n- 绿色版覆盖安装即可\n- 若你曾手动在 `settings.yaml` 里配过语言偏好, 升级 dsh 到 v0.1.7 后启动器会自动迁移到 `cordis.patch.yml`, 无需手动处理\n\n\n<a id=\"en-1.0.42\"></a>\n\n\n> Covers 4 commits / 12 files / +171 -168 lines, previous version is v1.0.41.\n\n## New Features\n\n- **Support for DSH v0.1.7's new language settings mechanism**: DSH v0.1.7 deprecated the `locale.preference` field in `settings.yaml` in favor of the Cordis patch mechanism. The launcher's `_apply_language_preference()` now writes a locale patch entry (`id=locale`, `config.preference`) into `profile/cordis.patch.yml`, using safe PyYAML parsing, preserving the file's leading comments, and coexisting with official native patches\n  - Impact: with the older launcher running DSH v0.1.7, the language preference would not take effect — resolved in this release\n- **PyYAML-missing fallback**: The bundled Python already ships PyYAML; if a packaged EXE fails to collect it, the launcher now only logs a warning instead of crashing the main flow\n\n## Internal Changes (no user-visible behavior change)\n\n- Removed 76 lines of zero-reference dead code: `_npm_view` / `_write_i18n_bridge_to_plugins` / `switch_src` / `_tray_log` and its 11 call sites, etc.\n- Removed 3 obsolete i18n entries (`green_update.detected_title` / `detected_msg` / `failed_title`) and the unused config key `dsh_heap_limit_mb`\n- **No longer writes `tray_menu.log` into the program root**: this tray diagnostic log was a temporary artifact from tray debugging and has been removed entirely (previously every tray action appended to it)\n- Bundled plugins `dsh-memory` / `dsh-session-rewind` have their `@deepseek-ai/*` dependencies synced to the host version (0.1.7-rc.1)\n- Both EXEs rebuilt\n\n## Version Bump\n\n- GREEN_VERSION: 1.0.41 → 1.0.42\n\n## Upgrade Notes\n\n- Green edition: overwrite install is sufficient\n- If you manually configured a language preference in `settings.yaml`, the launcher migrates it to `cordis.patch.yml` automatically after upgrading DSH to v0.1.7 — no manual action needed\n",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.42",
+      "assets": [
+        {
+          "name": "DSH-GreenPortable-v1.0.42.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.42/DSH-GreenPortable-v1.0.42.zip",
+          "size": 19121703
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.41",
+      "name": "v1.0.41 — 用量统计插件升级：官方价自动同步 + 峰谷计费 + 今日消耗 + 180 天热力图",
+      "published_at": "2026-09-21T15:24:21Z",
+      "body": "[中文](#cn-1.0.41) | [English](#en-1.0.41)\n\n<a id=\"cn-1.0.41\"></a>\n\n\n> 覆盖 4 个 commit / 6 个文件 / +991 -108 行, 上一版本是 v1.0.40。\n\n## 新增功能（dsh-usage-stats 用量统计插件）\n\n- **官方价自动同步**: 后端首次访问、或前端「刷新官方价格」时, 实时拉取 DeepSeek 官方定价页并解析, 失败静默回退内置表, 官方改价不再需要手工维护\n- **峰谷计费**: 按每条消息的计费时刻区分高峰/低谷档（高峰=低谷 2 倍; 周末全天低谷）, 估算费用更贴近真实账单\n- **今日消耗卡**: 设置页顶部展示今日（北京时区）总消耗——费用/输入/输出/缓存/推理/调用数, 并标注当前处于高峰还是低谷时段\n- **近 180 天消耗热力图**: GitHub 风格热力图, 按自然周对齐（周日为列首, 日期连续不错位）、空格子也有细边框清晰可分、支持横向滚动、悬停显示日期+费用+tokens、顶部标注月份\n\n## 修复\n\n- **修复消息行「本次token / 费用 / 余额」在升级官方 v0.1.6 后静默不显示**: turnTail 已从 chain 型改为 list 型插槽, 注册必须带 id, 缺 id 会被 SlotErrorBoundary 吞掉导致组件不渲染; 同时兼容了 owner 结构从 `matched.turn` 到 `turn` 对象的变更\n- **修复热力图日期排序错位**: 原\"每满 7 个切一列\"会把自然周从周中切开（日期跳跃）, 改为按自然周对齐\n\n## 技术架构\n\n- 官方定价页零依赖正则解析（高峰/低谷两档三桶）, 8 秒超时静默降级, 不阻塞任何页面功能\n- 峰谷判定: 高峰窗口北京周一至周五 9:00-12:00 / 14:00-18:00, 周末全谷（2026-08-22T16:00Z 生效）\n- 价格表 localStorage key 升级 v4→v5（两档结构）, 旧表不影响新默认值\n\n## 版本更新\n\n- GREEN_VERSION: 1.0.40 → 1.0.41\n\n## 升级建议\n\n- 绿色版覆盖安装即可\n- 升级后建议在 设置 → 用量统计 点一次「刷新官方价格」拉取最新官方价\n\n\n<a id=\"en-1.0.41\"></a>\n\n\n> Covers 4 commits / 6 files / +991 -108 lines, previous version is v1.0.40.\n\n## New Features (dsh-usage-stats plugin)\n\n- **Official price auto-sync**: Backend fetches and parses the DeepSeek official pricing page on first access, or when the user clicks \"Refresh Official Price\"; silently falls back to built-in table on failure, no manual price maintenance needed\n- **Peak/Off-Peak billing**: Each message is billed at the correct tier based on its timestamp (peak = 2x off-peak; weekends are all off-peak), estimates now closer to the real bill\n- **Today consumption card**: Shows today's total consumption (Beijing time) at the top of the settings page — cost/input/output/cache/reasoning/call count, and marks whether the current time is in peak or off-peak hours\n- **180-day consumption heatmap**: GitHub-style heatmap aligned by natural week (Sunday start, continuous dates), empty cells still have thin borders making each grid visible, horizontally scrollable, hover shows date+cost+tokens, month labels on top\n\n## Fixes\n\n- **Fix message-line \"this-turn token / cost / balance\" silently disappearing after upgrading to official v0.1.6**: turnTail changed from a chain slot to a list slot; registration must include an id, otherwise SlotErrorBoundary swallows the error and the component doesn't render. Also made compatible with the owner structure change from `matched.turn` to a `turn` object\n- **Fix heatmap date ordering**: the old \"split a column every 7 cells\" logic cut natural weeks mid-week (dates jumped); now aligned by natural week\n\n## Technical Architecture\n\n- Official pricing page parsed with zero-dependency regex (peak/off-peak two tiers × three buckets), 8s timeout with silent fallback, never blocks any page functionality\n- Peak detection: peak windows Beijing Mon–Fri 9:00-12:00 / 14:00-18:00, weekends all off-peak (effective 2026-08-22T16:00Z)\n- Price table localStorage key upgraded v4→v5 (two-tier structure), old table doesn't shadow new defaults\n\n## Version Bump\n\n- GREEN_VERSION: 1.0.40 → 1.0.41\n\n## Upgrade Notes\n\n- Green edition: overwrite install is sufficient\n- After upgrading, click \"Refresh Official Price\" once in Settings → Usage Stats to pull the latest official prices\n",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.41",
+      "assets": [
+        {
+          "name": "DSH-GreenPortable-v1.0.41.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.41/DSH-GreenPortable-v1.0.41.zip",
+          "size": 18700035
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.40",
+      "name": "v1.0.40 — 插件更新检查自愈 + npm registry 直连",
+      "published_at": "2026-09-17T17:15:03Z",
+      "body": "[中文](#cn-1.0.40) | [English](#en-1.0.40)\n\n<a id=\"cn-1.0.40\"></a>\n\n\n> 覆盖 12 个 commit / 34 个文件 / +2605 -940 行, 上一版本是 v1.0.39。\n\n## 新增功能\n\n- **插件管理窗口支持第三方插件检查更新与批量更新**: 刷新按钮自动并发 8 线程查 npm registry, 有更新的第三方插件名字前加 ★ 标记 + 整行红色; 更新选中按钮会自动检查再更新, 内置插件自动过滤 (10 个随绿色版走不显示 ★)\n- **npm 查询全链路改用 HTTP GET registry JSON**: 比起 node 子进程跑 npm view 更轻更快, 自动跟随镜像配置\n- **启动器自愈逻辑识别 v0.1.6 typert codec 不兼容错误**: 插件树加载阶段的 typert-loader 硬校验错误 (codec has no create / typert contributor / invocation result codec) 能从错误消息精确提取包名, 自动自愈不兼容插件\n\n## 修复\n\n- **修复插件更新检查按钮禁用状态未恢复**: 首次点击\"更新选中\"时 busy 状态泄露导致按钮永久禁用, proceed() 回调里先恢复 busy 再进入更新流程\n- **修复官方 v0.1.6-alpha.2 typert codec 硬校验导致 dsh-cost-meter 崩溃**: 内置 launcher 自愈 + 用户重装环境自动拉到 dsh-cost-meter 1.7.28+ (作者当天连出 13 个版本)\n- **修复检查更新列表 npm 发布时间未显示**: npm registry JSON 的 time 字段比 GitHub Release 还准, 已集成到 dsh 版本查询\n\n## 技术架构\n\n- **插件更新后端自动过滤内置插件**: bundled_plugin_dirs() 识别 plugins/ 下有源码的 10 个内置插件, check_plugin_updates / update_plugins 自动跳过, 避免用户误操作\n\n## 版本更新\n\n- GREEN_VERSION: 1.0.39 → 1.0.40\n- 覆盖 v0.1.6-alpha.1 兼容性审计 (已确认零 breaking)\n\n## 升级建议\n\n- 绿色版覆盖安装即可\n- 装了 dsh-cost-meter 的用户重装环境拉到最新版 (1.7.28+)\n\n\n<a id=\"en-1.0.40\"></a>\n\n\n> Covers 12 commits / 34 files / +2605 -940 lines, previous version v1.0.39.\n\n## New Features\n\n- **Plugin manager now supports third-party plugin update checking and batch updates**: The refresh button auto-spawns 8 concurrent threads to query the npm registry; third-party plugins with pending updates get a ★ prefix on the name + red row highlight. The \"Update Selected\" button auto-checks before updating. Built-in plugins (10 items, shipped with the green build) are auto-filtered and never show ★.\n- **npm queries switched from node subprocess to direct HTTP GET**: Faster, no subprocess overhead, auto-respects mirror configuration (npmmirror / official).\n- **Launcher self-heal recognizes v0.1.6 typert codec incompatibilities**: New hard-check errors from the typert-loader at plugin-tree load time (\"codec has no create\", \"typert contributor\", \"invocation result codec\") are now precisely extracted from error messages for auto-remediation.\n\n## Bug Fixes\n\n- **Fixed \"Update Selected\" button staying disabled**: The busy-state leaked in the pre-check worker path. The proceed() callback now restores busy before entering the update flow.\n- **Fixed dsh-cost-meter crash on v0.1.6-alpha.2**: Official typert-loader added a hard check that all invocation result codecs must have a `.create()` factory. dsh-cost-meter v1.7.16 was rejected; the author shipped 13 versions that same day (v1.7.28+) to fix it. Launcher self-heal + user re-install resolve this.\n- **Fixed npm publish timestamp not showing in the update list**: The `time` field in the npm registry JSON is now integrated into DSH version queries — more accurate than GitHub Release timestamps.\n\n## Technical Architecture\n\n- **Plugin update backend auto-filters built-in plugins**: `bundled_plugin_dirs()` identifies the 10 built-in plugins that ship with the green build. `check_plugin_updates` / `update_plugins` skip them automatically to avoid user confusion.\n\n## Version Bump\n\n- GREEN_VERSION: 1.0.39 → 1.0.40\n- Covers v0.1.6-alpha.1 compatibility audit (confirmed zero breaking changes)\n\n## Upgrade Notes\n\n- Green edition: overwrite install is sufficient\n- Users with dsh-cost-meter: re-run the installer to pull latest (v1.7.28+)\n",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.40",
+      "assets": [
+        {
+          "name": "DSH-GreenPortable-v1.0.40.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.40/DSH-GreenPortable-v1.0.40.zip",
+          "size": 18682218
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
+    {
+      "tag_name": "v1.0.39",
+      "name": "v1.0.39 — 托盘右键菜单修复 + 最小化任务栏图标开关",
+      "published_at": "2026-09-14T15:43:25Z",
+      "body": "[中文](#cn-1.0.39) | [English](#en-1.0.39)\n\n<a id=\"cn-1.0.39\"></a>\n\n\n> 覆盖 9 个 commit / 23 个文件 / +1680 -707 行，上一版本是 v1.0.38\n\n## 修复\n\n- **托盘右键菜单弹不出**（本次核心修复）：根因是菜单构建器定义后未注入托盘（右键日志恒为 `builder=False`）；改用 Win32 原生 `TrackPopupMenu` 渲染菜单，点击桌面空白 / 其他窗口 / ESC 均可正常关闭菜单。\n- **桌面版窗口无法选中文本**：pywebview 默认禁用文本选择，已显式开启 `text_select` 并加 CSS 兜底覆盖。\n\n## 新增功能\n\n- **设置面板新增「最小化时保留任务栏图标」开关**：取消勾选后，最小化时仅托盘图标可见（任务栏图标隐藏），服务继续运行；托盘图标始终常驻，桌面窗口图标不受影响。\n\n## 发布页 / SEO\n\n- changelog markdown 渲染增加 HTML 转义与行内代码处理，修复 `<title>` / `<meta>` 泄漏进 HTML body 破坏 DOM 布局与 SEO 抓取的问题。\n- SEO 优化：保留 HTML 内嵌 changelog 卡片（对爬虫可见），`renderChunk` 跳过已存在标签避免重复。\n- 全站 app.js 引用统一到 v=3.10；changelog-seed.json 新增 v1.0.38 条目。\n\n## 文档 / 发布流程\n\n- 发布流程新增避坑：release notes 必须覆盖上一 tag 到 HEAD 的全部 commit；双语 body 必须经 `load_release_notes()` 合并；GitHub PAT 过期处理。\n- DEV_NOTES 版本号与版本覆盖表同步至 v1.0.38。\n\n## 版本更新\n\n- GREEN_VERSION: 1.0.38 → 1.0.39\n\n## 升级建议\n\n- 绿色版覆盖安装即可；升级后托盘右键菜单已可用。\n\n\n<a id=\"en-1.0.39\"></a>\n\n\n> Covers 9 commits / 23 files / +1680 -707 lines since v1.0.38\n\n## Bug Fixes\n\n- **Tray right-click menu not appearing** (core fix): the menu builder was defined but never injected into the tray (the right-click log always showed `builder=False`). Switched to the native Win32 `TrackPopupMenu`; the menu now closes properly when clicking outside, on another window, or pressing ESC.\n- **Text selection broken in the desktop window**: pywebview disables text selection by default; enabled `text_select` explicitly and added a CSS fallback.\n\n## New Features\n\n- **New \"Keep taskbar icon when minimized\" toggle in Settings**: when unchecked, minimizing hides the taskbar icon and keeps only the tray icon visible; the service keeps running, the tray icon stays resident, and the desktop-window icon is unaffected.\n\n## Release Page / SEO\n\n- Changelog markdown rendering now HTML-escapes inline code and text, fixing `<title>` / `<meta>` leaking into the HTML body which broke DOM layout and SEO crawls.\n- SEO: embedded changelog cards are preserved (crawler-visible) and `renderChunk` skips existing tags to avoid duplicates.\n- Unified all app.js references to v=3.10; added v1.0.38 to changelog-seed.json.\n\n## Docs / Release Process\n\n- Added pitfalls to the release workflow: release notes must cover every commit from the previous tag to HEAD; the bilingual body must be merged via `load_release_notes()`; GitHub PAT expiry handling.\n- DEV_NOTES version and coverage table synced to v1.0.38.\n\n## Version Bump\n\n- GREEN_VERSION: 1.0.38 → 1.0.39\n\n## Upgrade Notes\n\n- Green edition: overwrite install is sufficient; the tray right-click menu works after upgrade.\n",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.39",
+      "assets": [
+        {
+          "name": "DSH-GreenPortable-v1.0.39.zip",
+          "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.39/DSH-GreenPortable-v1.0.39.zip",
+          "size": 18495339
+        }
+      ],
+      "draft": false,
+      "prerelease": false
+    },
     {
       "tag_name": "v1.0.38",
       "name": "v1.0.38 — 绿色版更新通道修复 Release 合并逻辑缺失导致界面卡住",
@@ -163,6 +261,16 @@
       "prerelease": false
     },
     {
+      "tag_name": "v1.0.27",
+      "name": "v1.0.27: 插件 WebUI 主题适配 + 祖宗记忆库双开关",
+      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.27",
+      "published_at": "2026-09-03T10:40:29Z",
+      "body": "## 本次更新\n\n### 🎨 插件 WebUI 主题适配（全量 CSS 变量化）\n\n- **dsh-ollama**: 全量替换硬编码颜色 → DSH CSS 变量, 深浅主题自动切换\n- **dsh-memory**: 替换硬编码紫色 → DSH CSS 变量, 深浅主题自动切换\n- **dsh-usage-stats**: 17 处硬编码颜色 → CSS 变量, 深浅主题自动切换\n\n### ✅ 同色系糊片修复（5 处）\n\n- badge/tags 仅保留文字色（state-xxx-primary）, 不加 background\n- 按钮用深彩底 + 白字（state-xxx-primary 做背景, #fff 做文字）\n- 修正 status-success / status-error / status-warn 的语义误用\n- 祖宗记忆库、会话回退、归档清理三个插件状态色同步修正\n\n### 🧠 祖宗记忆库 + 用户规则优化\n\n- **dsh-memory 双开关**: autoRemember（自动记录）+ autoRecall（自动注入）\n- 两个开关各自独立, 默认全部关闭（省 token）\n- 用户规则插件新增「打开规则目录」按钮\n\n### 📚 Skill 文档更新\n\n- SKILL.md §5.7 完整颜色对比度铁律 + 变量速查表\n- 反模式示例: primary 文字 + secondary 背景 = 同色系糊片\n",
+      "assets": [],
+      "draft": false,
+      "prerelease": false
+    },
+    {
       "tag_name": "v1.0.28",
       "name": "v1.0.28: 版本比较 semver 修复 + 更新检查界面重构",
       "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.28",
@@ -174,16 +282,6 @@
           "browser_download_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.28/DSH_Launcher_GreenPortable_Online_20260903_v1.0.28.zip"
         }
       ],
-      "draft": false,
-      "prerelease": false
-    },
-    {
-      "tag_name": "v1.0.27",
-      "name": "v1.0.27: 插件 WebUI 主题适配 + 祖宗记忆库双开关",
-      "html_url": "https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.27",
-      "published_at": "2026-09-03T10:40:29Z",
-      "body": "## 本次更新\n\n### 🎨 插件 WebUI 主题适配（全量 CSS 变量化）\n\n- **dsh-ollama**: 全量替换硬编码颜色 → DSH CSS 变量, 深浅主题自动切换\n- **dsh-memory**: 替换硬编码紫色 → DSH CSS 变量, 深浅主题自动切换\n- **dsh-usage-stats**: 17 处硬编码颜色 → CSS 变量, 深浅主题自动切换\n\n### ✅ 同色系糊片修复（5 处）\n\n- badge/tags 仅保留文字色（state-xxx-primary）, 不加 background\n- 按钮用深彩底 + 白字（state-xxx-primary 做背景, #fff 做文字）\n- 修正 status-success / status-error / status-warn 的语义误用\n- 祖宗记忆库、会话回退、归档清理三个插件状态色同步修正\n\n### 🧠 祖宗记忆库 + 用户规则优化\n\n- **dsh-memory 双开关**: autoRemember（自动记录）+ autoRecall（自动注入）\n- 两个开关各自独立, 默认全部关闭（省 token）\n- 用户规则插件新增「打开规则目录」按钮\n\n### 📚 Skill 文档更新\n\n- SKILL.md §5.7 完整颜色对比度铁律 + 变量速查表\n- 反模式示例: primary 文字 + secondary 背景 = 同色系糊片\n",
-      "assets": [],
       "draft": false,
       "prerelease": false
     },
