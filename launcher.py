@@ -3871,7 +3871,10 @@ class Launcher:
         """把程序目录 plugins/ 下所有内置插件批量装到指定 profile (已装的跳过)。
         返回 (本次新装列表, 已存在跳过列表, 失败列表); 单个失败不中断其余插件。
         安装环境后自动调用 (2026-08-17, 需求: 安装环境最后把所有计划内置插件都装上);
-        插件管理窗口的「一键安装内置插件」按钮也复用本方法。"""
+        插件管理窗口的「一键安装内置插件」按钮也复用本方法。
+
+        若插件 package.json 含 launcher.defaultDisabled=true, 安装成功后自动
+        加入 dsh.profile.disabled 列表 (用户可在插件管理界面手动启用)。"""
         installed_now = []
         skipped = []
         failed = []
@@ -3896,6 +3899,12 @@ class Launcher:
             try:
                 self.install_plugin(spec, profile)
                 installed_now.append(package_name)
+                # 检查插件是否声明了"默认停用"标记
+                launcher_section = manifest.get("launcher") or {}
+                if launcher_section.get("defaultDisabled"):
+                    self.set_plugin_enabled(package_name, profile, enabled=False)
+                    self.log("[插件] %s 已安装但按 launcher.defaultDisabled 标记默认停用"
+                             % package_name)
             except Exception as error:
                 failed.append(package_name)
                 self.log("[警告] 内置插件 %s 安装失败: %s" % (package_name, error))
