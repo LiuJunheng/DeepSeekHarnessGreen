@@ -1,15 +1,13 @@
 // DeepSeek Harness 插件 (宿主端): dsh-sidebar-lite
-// 在 WebUI 右侧提供一个轻量侧边栏的数据后端, 能力聚焦五块:
+// 作为官方右侧栏 (dsh-client-ui-sidebar-right) 的一个 tab 类型并入, 客户端只作为官方右栏
+// 的 tab 正文 (文件树 + 编辑器), 因此本端能力聚焦两块:
 //   1) 文件资源管理器: 列出会话工作目录的目录树, 支持「返回上级 / 路径框」上溯浏览
 //                     (放开 isWithin 上限, 与内部 dsh-file-browser 插件一致);
-//   2) 文件预览/编辑:  读取文本/二进制内容 (带 head 供前端嗅探), 写回保存;
-//   3) 内嵌浏览器:     前端是沙箱 iframe, 本端不代理网络, 因此无需路由 (见 client);
-//   4) CMD 终端:       child_process spawn cmd.exe + SSE 流 (轻量交互式 cmd, 避免
-//                     node-pty 原生依赖), 按会话+标签页键控, 断连重连复用同一进程;
-//   5) 任务管理:       复用官方会话事件日志重放 jobs 输出 + jobs.kill 停止接口。
+//   2) 文件预览/编辑:  读取文本/二进制内容 (带 head 供前端嗅探), 写回保存。
+// 终端与后台任务已删除, 改用官方右侧栏的 terminal tab 与会话头部 jobs 控件。
 // 参考/复刻自第三方插件 DSH Better Sidebar (omdsh-dev/DSH-better-sidebar):
-//   本端实现了其中 fs.tree / fs.read / fs.write / session.cwd / file 媒体路由 / jobs 输出与
-//   收割, 用 SSH 流替代其 node-pty 终端, 去掉了 git、settings 命名空间、browser.probe 等重依赖能力。
+//   本端实现了其中 fs.tree / fs.read / fs.write / session.cwd / file 媒体路由,
+//   去掉了终端、jobs、git、settings 命名空间、browser.probe 等重依赖能力。
 //
 // 提供的接口 (路由前缀 /__dsh/sidebar-lite/*, 均要求自定义头 X-DSH-Sidebar-Lite: 1):
 //   POST /__dsh/sidebar-lite/session.cwd     { sessionId }                 -> { sessionId, cwd, root, parent }
@@ -17,18 +15,11 @@
 //   POST /__dsh/sidebar-lite/fs.read         { sessionId, cwd?, path }     -> { kind, content|size, truncated, head? }
 //   POST /__dsh/sidebar-lite/fs.write        { sessionId, cwd?, path, content } -> { ok }
 //   GET  /__dsh/sidebar-lite/file            ?sessionId=&cwd=&path=&download=      -> 媒体字节 (图片/PDF/MD 等)
-//   GET  /__dsh/sidebar-lite/terminal.stream ?sessionId=&cwd=&tab=         -> SSE 流 (command 输出/回放)
-//   POST /__dsh/sidebar-lite/terminal.open   { sessionId, cwd?, tab? }     -> { ok, terminalId, transcript }
-//   POST /__dsh/sidebar-lite/terminal.input  { sessionId, tab, line }      -> { ok }
-//   POST /__dsh/sidebar-lite/terminal.kill   { sessionId, tab }            -> { ok }
-//   POST /__dsh/sidebar-lite/jobs.output     { sessionId, id }             -> { text, truncated, read }
-//   POST /__dsh/sidebar-lite/jobs.kill       { sessionId, id, reason? }    -> { ok, outcome }
 // 安全约定:
 //   - 资源管理器允许任意绝对路径 (上级浏览); 写操作同样是绝对路径, 用户自己负责范围,
 //     与内部 dsh-file-browser 插件的行为一致;
 //   - 用自定义头防跨站 (同 dsh-usage-stats 的先例, 跨域页面无法携带该头)。
 // 不修改任何官方文件/包。
-import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
@@ -43,7 +34,6 @@ const READ_LIMIT = 1 * 1024 * 1024;          // 文本读取上限 (1MB, 超出�
 const READ_HEAD_LIMIT = 4096;                // 二进制文件返回给前端的 head 字节数
 const LIST_LIMIT = 1000;                     // 单目录最多返回条目数 (超出标 truncated)
 const MEDIA_LIMIT = 32 * 1024 * 1024;        // 媒体路由单文件上限 (32MB)
-const TRANSCRIPT_LIMIT = 1 * 1024 * 1024;    // 终端 transcript 回放缓冲上限 (1MB, 超出丢头)
 const MEDIA_TYPES = {
 	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
 	".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
@@ -379,130 +369,6 @@ async function serveMedia(req, res, ctx, absUrl) {
 	}
 }
 
-// ---- CMD 终端 (轻量: child_process spawn cmd.exe + SSE 流) ----
-//
-// 每个终端按 `${sessionId}:${tab}` 键控, 用一把进程 + 有界 transcript 回放缓冲。
-// 由于不走 node-pty (绿色版零原生依赖), cmd 无真实 TTY: 前端每次回车写一行到 stdin,
-// cmd 默认回显并把命令输出打回 stdout, 我们原样流回前端。断连(刷新/切页)只摘除 SSE
-// 监听器而不杀进程, 重连由 terminal.stream 再次挂接并回放 transcript; 只有「停止」按钮
-// 或 terminal.kill 才真正结束进程。
-
-/** 终端句柄表: key = `${sessionId}:${tab}`。 */
-const TERMINALS = new Map();
-
-function terminalKey(sessionId, tab) {
-	return String(sessionId) + ":" + String(tab || "1");
-}
-
-/**
- * 打开 (或复用) 一个 cmd 终端进程。
- * @param {string} cwd - 进程初始工作目录。
- * @param {string} key - `${sessionId}:${tab}` 键。
- * @returns {{proc:object, transcript:string, closed:boolean, listeners:Set}} 终端句柄。
- */
-function openTerminal(cwd, key) {
-	const existing = TERMINALS.get(key);
-	if (existing && !existing.closed) return existing;
-	const proc = spawn("cmd.exe", [], { cwd: cwd || process.cwd() });
-	// 中文系统 cmd.exe 默认以 GBK(cp936) 编码输出, 直接 Buffer.toString("utf8") 会乱码。
-	// 用 TextDecoder("gbk") 逐块解码, stream:true 保留跨块的多字节字符状态 (node 标准构建
-	// 带 full ICU 支持 gbk 标签; 若异常则降级为 utf8 解码)。
-	const handle = {
-		key,
-		proc,
-		transcript: "",
-		closed: false,
-		listeners: new Set(),
-		decoder: (() => {
-			try {
-				return new TextDecoder("gbk");
-			} catch (__decErr) {
-				return null;
-			}
-		})(),
-	};
-	const decodeChunk = (chunk) => {
-		if (handle.decoder) {
-			return handle.decoder.decode(chunk, { stream: true });
-		}
-		return chunk.toString("utf8");
-	};
-	const appendToTranscript = (text) => {
-		handle.transcript += text;
-		if (handle.transcript.length > TRANSCRIPT_LIMIT) {
-			handle.transcript = handle.transcript.slice(handle.transcript.length - TRANSCRIPT_LIMIT);
-		}
-	};
-	const push = (text) => {
-		appendToTranscript(text);
-		for (const listener of handle.listeners) {
-			listener(text);
-		}
-	};
-	proc.stdout.on("data", (chunk) => push(decodeChunk(chunk)));
-	proc.stderr.on("data", (chunk) => push(decodeChunk(chunk)));
-	proc.on("close", (code) => {
-		handle.closed = true;
-		push("\r\n[进程已退出, 退出码 " + String(code) + "]\r\n");
-	});
-	TERMINALS.set(key, handle);
-	return handle;
-}
-
-/** 关闭并清空一个终端 (停止按钮 / 插件卸载时)。 */
-function closeTerminal(key) {
-	const handle = TERMINALS.get(key);
-	if (handle) {
-		try { handle.proc.kill(); } catch { /* 已退出则忽略 */ }
-	}
-	TERMINALS.delete(key);
-}
-
-// ---- 任务管理 (jobs): 复用官方会话事件日志重放输出 + jobs.kill 收割 ----
-
-/** 从一条会话事件里解析 jobs 输出: job_output 调用与其配对的 tool/result 文本。 */
-function jobOutputParts(events, jobId) {
-	const pairByCallId = new Map(); // callId -> job_id
-	const parts = [];
-	let read = false;
-	for (const event of (events || [])) {
-		if (event.type === "tool/call") {
-			const data = event.data || {};
-			if (data.name !== "job_output" || typeof data.callId !== "string") continue;
-			let parsedJobId;
-			try {
-				const args = typeof data.arguments === "string" ? data.arguments : "";
-				parsedJobId = JSON.parse(args).job_id;
-			} catch { /* 参数无法解析则忽略 */ }
-			if (typeof parsedJobId !== "string") continue;
-			pairByCallId.set(data.callId, parsedJobId);
-		} else if (event.type === "tool/result") {
-			const message = event.data && event.data.message;
-			if (message === undefined || typeof message.source.callId !== "string") continue;
-			if (pairByCallId.get(message.source.callId) !== jobId) continue;
-			read = true;
-			const textBlocks = [];
-			let isError = false;
-			const collect = (blocks) => {
-				for (const block of (blocks || [])) {
-					if (block.type === "tool-result") {
-						if (block.isError === true) isError = true;
-						collect(block.content);
-					} else if (block.type === "text" && typeof block.text === "string") {
-						textBlocks.push(block.text);
-					}
-				}
-			};
-			collect(message.content);
-			const text = textBlocks.join("\n");
-			if (!isError && text !== "" && !text.startsWith("(no new output)")) {
-				parts.push(text);
-			}
-		}
-	}
-	return { text: parts.join("\n"), read };
-}
-
 // ---- 路由装配 ----
 
 function apply(ctx) {
@@ -520,37 +386,6 @@ function apply(ctx) {
 			// GET 媒体路由: 原文返回字节流 (供 fetch+blob 预览)。
 			if (req.method === "GET" && absUrl.pathname === API_PREFIX + "/file") {
 				await serveMedia(req, res, ctx, absUrl);
-				return;
-			}
-			// GET 终端 SSE 流: 回放 transcript 后持续推送命令输出。不进 POST 分支, 提前返回。
-			if (req.method === "GET" && absUrl.pathname === API_PREFIX + "/terminal.stream") {
-				const terminalSessionId = absUrl.searchParams.get("sessionId") || "";
-				const terminalClientCwd = absUrl.searchParams.get("cwd") || undefined;
-				const terminalTab = absUrl.searchParams.get("tab") || "1";
-				const terminalWorkspace = sessionCwdOf(ctx, terminalSessionId, terminalClientCwd);
-				const terminalHandle = openTerminal(terminalWorkspace, terminalKey(terminalSessionId, terminalTab));
-				res.writeHead(200, {
-					"content-type": "text/event-stream",
-					"cache-control": "no-cache",
-					connection: "keep-alive",
-				});
-				res.flushHeaders();
-				const pushEvent = (text) => {
-					if (res.writableEnded) return;
-					res.write("data: " + JSON.stringify({ type: "out", text }) + "\n\n");
-				};
-				terminalHandle.listeners.add(pushEvent);
-				// 先回放已累积的历史输出, 让重连后的页面恢复现场。
-				if (terminalHandle.transcript !== "") {
-					res.write("data: " + JSON.stringify({ type: "replay", text: terminalHandle.transcript }) + "\n\n");
-				} else {
-					res.write("data: " + JSON.stringify({ type: "ready", text: "" }) + "\n\n");
-				}
-				req.on("close", () => {
-					// 断连只摘除监听器, 保留进程以便重连复用 (与 better-sidebar 的
-					// reconnect grace 语义一致); 真正结束需 terminal.kill 或关闭 Tab。
-					terminalHandle.listeners.delete(pushEvent);
-				});
 				return;
 			}
 			if (req.method !== "POST") {
@@ -612,54 +447,6 @@ function apply(ctx) {
 						const target = resolvePathUnder(workspace, requireString(payload, "path"));
 						await writeText(target, requireString(payload, "content"));
 						result = { ok: true };
-						break;
-					}
-					case "terminal.open": {
-						// 确保终端进程已就绪 (SSE 连接前可选调用; SSE 挂接本身也会创建)。
-						const terminalWorkspace = sessionCwdOf(ctx, sessionId, cwd);
-						const terminalTab = typeof payload.tab === "string" ? payload.tab : "1";
-						const terminalHandle = openTerminal(terminalWorkspace, terminalKey(sessionId, terminalTab));
-						result = { ok: true, terminalId: terminalKey(sessionId, terminalTab), transcript: terminalHandle.transcript };
-						break;
-					}
-					case "terminal.input": {
-						const terminalTab = typeof payload.tab === "string" ? payload.tab : "1";
-						const terminalHandle = TERMINALS.get(terminalKey(sessionId, terminalTab));
-						if (terminalHandle === undefined || terminalHandle.closed) {
-							throw new Error("终端不存在或已退出: " + terminalKey(sessionId, terminalTab));
-						}
-						const line = requireString(payload, "line");
-						terminalHandle.proc.stdin.write(line + "\n");
-						result = { ok: true };
-						break;
-					}
-					case "terminal.kill": {
-						const terminalTab = typeof payload.tab === "string" ? payload.tab : "1";
-						closeTerminal(terminalKey(sessionId, terminalTab));
-						result = { ok: true };
-						break;
-					}
-					case "jobs.output": {
-						const jobSessionId = requireString(payload, "sessionId");
-						const jobId = requireString(payload, "id");
-						const sessionService = ctx.get("sessions");
-						const ownerSession = sessionService && sessionService.get(jobSessionId);
-						result = { ...jobOutputParts(ownerSession ? ownerSession.events : [], jobId) };
-						break;
-					}
-					case "jobs.kill": {
-						const jobSessionId = requireString(payload, "sessionId");
-						const jobId = requireString(payload, "id");
-						const candidate = ctx.get("jobs");
-						if (candidate === undefined) {
-							throw new Error("后台任务注册表未挂载, 无法停止任务");
-						}
-						const agents = ctx.get("agents");
-						const caller = agents && typeof agents.get === "function" ? agents.get(jobSessionId) : undefined;
-						const reason = typeof payload.reason === "string" && payload.reason !== ""
-							? payload.reason
-							: "user requested via sidebar";
-						result = { ok: true, outcome: candidate.kill(jobId, caller, reason) };
 						break;
 					}
 					default:

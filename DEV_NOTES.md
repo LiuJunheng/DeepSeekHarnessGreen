@@ -203,6 +203,16 @@
 
 24. **官方「Session 日志」按钮的静默下载无法通过 hook** **`fetch`** **拦截，必须 hook** **`HTMLAnchorElement.prototype.click`**：官方 `@deepseek-ai/dsh-session-log-export` 的下载流程是：HEAD `/api/session.export` 检查 → 创建 `<a download href=url>` → `anchor.click()` → 浏览器下载管理器处理。**浏览器拿到** **`download`** **属性后直接走下载管理器，不经过 fetch/XHR**，所以 hook 全局 `fetch` 拦不住。**唯一拦截点**是 `HTMLAnchorElement.prototype.click` —— 在 prototype 层保存 original，替换成判断 `this.download && this.href && this.href.indexOf('/api/session.export') >= 0`，命中则 `fetch → blob → showSaveFilePicker`，不命中则走 `originalAnchorClick.call(this)`。dsh-session-import v0.3.0 已实现这个 hook。**回退**：`window.showSaveFilePicker` 不存在（纯浏览器环境）时，回退到原生 `<a download>` 行为。**幂等**：prototype.click 每次安装保存上一个 original，可重复覆盖不会链断。
 
+25. **官方右侧栏（`dsh-client-ui-sidebar-right`）是「tab 容器 + 类型提供者」架构：自建第二列侧栏的正解是改成 tab 类型插件（2026-09-28，dsh-sidebar-lite 0.3.0 重构）**：
+
+    * **动机**：官方右栏**已内置 `files` / `text` / `terminal` / `browser` 四个 tab 类型**，且折叠 / 分栏 / 浮窗 / 全屏 / 快捷键 / 按会话持久化（`dsh.sidebar-right.v1.<sessionId>`）**全由官方容器负责**。继续自建「`document.body` portal + `#root` margin-right 硬让位」的第二列侧栏等于重造官方容器，还必然与官方 header、下载按钮、分栏打架（旧坑见插件开发坑 20）。**结论：删掉自建侧栏，改为注册官方 tab 类型。**
+    * **两阶段注册契约（缺一不可）**：① `ctx.sidebarRightTabs.register({ id, kind, priority, keepMounted?, patterns?, canOpen?, title, guide? })` 声明类型；② `ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register({ name: "sidebar.right.pane.tab", key, locale }, Body))` 注册正文（标题另走 `sidebar.right.pane.tab.title`）。**两处标识必须对齐**：slot 的 `key` 要等于类型的 `definition.id`，同时沿用旧坑 23 的「三处名字一致」（`package.json` 的 `name` / 客户端 `ModuleLoader.load({ id })` / 宿主端 `const name`）——任一处不一致**静默不渲染**（不报错、无日志）。
+    * **档位与接管回滚**：`priority: "extension"` 的同类类型会**压过官方 `builtin`**（官方内置文件树被接管）；**禁用 / 卸载插件后官方 builtin 自动恢复**，不需要改任何官方文件 / 包。新增类型（官方无同 kind）不涉及让位。
+    * **官方只持久化资源地址（`tab.contentId`），不持久化 `navigation.params`**（官方 README 明确「导航参数、资源内容和活动连接不属于布局状态」）：把需要跨刷新复原的 tab 身份放进 `navigation.params`（如 `params: { path }`），**刷新页面恢复布局后 params 丢失**，tab 会退化成「没有可编辑的文件」。正解＝**把身份编进资源地址本身**（如 `dsh-resource://edit/session/<sessionId>/<逐段编码的绝对路径>`），刷新后仍能定位同一文件，同址还能去重复用同一 tab。地址编解码与官方 `@deepseek-ai/dsh-util-workspace-path` 同逻辑但**必须内联实现**（客户端不能 `require` 官方包）：`encodeSegment` 保留盘符冒号 `:`，Windows 反斜杠归一为 `/`。
+    * **文案与样式走官方契约**：多语言用 `ctx.locale.register(ns, { zh, en })` + `ctx.locale.bind(ns)` + 插槽注册的 `locale` 选项拿 `t()`（自研 `__DSH_I18N__` 脚本桥可整体删除）；样式只用官方主题 token（`--dsw-alias-*`、`--dsw-specific-input-major`、`--dsw-radius-*`、`--dsh-content-font-size-secondary`），**不写 JS 主题监听**（旧坑 8）。
+    * **「接进官方容器 ≠ 套上官方沙箱」（必须写进插件 README）**：插件自家宿主路由的文件树浏览是**绝对路径、无工作区围栏**，允许上溯到工作区之外；但**单击预览走官方 Host 读取（`workspaceFiles`），受工作区围栏限制** → 工作区外文件预览会被官方预览器报 `outside-workspace`，此时改用右键「编辑」（走插件 `fs.read` / `fs.write`，无围栏）或「另存为」。同一个容器里并存两套边界，用户与维护者都容易误解，必须显式说明。
+    * 插件经 `file:` 安装是**拷贝**，改完必须重装 + 重启服务（旧坑 4）。
+
 ### PyInstaller / 打包坑
 
 1. `--onefile` 不带全运行库：**显式** **`--add-binary`** **打包 VC 运行库三件套** `vcruntime140.dll` / `vcruntime140_1.dll` / `vcruntime140_threads.dll`，否则目标机报 "Failed to load Python DLL"。

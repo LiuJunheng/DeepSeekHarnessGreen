@@ -7,3 +7,9 @@
     - id: sidebar-lite
       name: dsh-sidebar-lite
       displayName: 侧栏
+
+# 启用官方随附的浏览器 tab (web profile 默认禁用: 官方 README 写明 web 用户可通过
+# profile patch 启用)。本插件不再自带 iframe 浏览器, 改用官方实现(历史栈/toolbar/沙箱开关)。
+# 回退方法: 删除下面这条 id 条目并重启服务即可。
+- id: ui-sidebar-browser
+  disabled: false

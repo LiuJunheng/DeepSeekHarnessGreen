@@ -1,95 +1,120 @@
 // DeepSeek Harness 插件 (客户端): dsh-sidebar-lite
-// 在 WebUI 右侧注入一个轻量侧边栏 (参考/复刻自第三方插件 DSH Better Sidebar
-// omdsh-dev/DSH-better-sidebar 的交互形态, 提供五项能力)。
-//   1) 资源管理器:   读取会话工作目录的目录树, 支持「返回上级 / 路径框」上溯浏览任意路径;
-//   2) 文件预览/编辑: 文本就地编辑 + 保存回写; 图片/PDF/HTML 通过 fetch+blob 预览
-//                     (宿主端 file 媒体路由要求防御头, <img>/<iframe> 携带不了,
-//                      故统一 fetch→blob→objectURL);
-//   3) 内嵌浏览器:   地址栏导航 + 沙箱 iframe;
-//   4) CMD 终端:     child_process spawn cmd.exe + SSE 流 (逐行执行命令), 轻量不依赖 node-pty;
-//   5) 任务管理:     读取官方 session/jobs 推送镜像 (jobsBySession) 列出后台任务,
-//                    并可查看 AI 读取到的输出 / 请求停止 (jobs.output / jobs.kill)。
+// 挂进官方右侧栏 (每个会话一个右侧停靠面) 作为 tab 类型提供者, 不再自建侧栏外壳:
+// 折叠/分栏/浮窗/全屏/快捷键/按会话持久化全部交给官方右侧栏容器负责。
+//   1) 接管官方内置文件树 (kind "files"): 以 extension 档注册, 官方 builtin 档自动让位,
+//      本插件卸载后官方文件树自动恢复。在官方能力之上额外提供
+//      「返回上级 / 可编辑路径框跳转任意绝对路径 / 回到工作目录 / 刷新」;
+//      单击文件交给官方资源预览 (dsh-resource://file/... ), 由官方文件预览类型渲染
+//      (Markdown/代码/图片/PDF 均由官方负责)。
+//   2) 新增编辑 tab (kind "sidebar-lite.edit", multiple: true): 文本就地编辑 + 保存回写,
+//      每个文件一份独立内容, 互不顶掉。
 // 数据全部走宿主端路由 /__dsh/sidebar-lite/* (POST JSON / GET 媒体), 均带防御头。
-// 会话溯源: 通过 ctx.sessions.list 订阅当前激活会话, 取其 id 与摘要 cwd 上报宿主。
-// 挂载方式: 与 better-sidebar 一致, 往 document.body 挂一个 portal div 再用
-// createRoot 渲染, 不依赖官方任何内部布局插槽, 也不修改任何官方文件。
+// 会话溯源改用官方 props 注入的 sessionId (标准 prop), 不再订阅 ctx.sessions.list。
 // 这是加载器契约格式 (window.__ModuleLoader__.load), 与官方客户端插件一致。
-
-function _dsht(key, fallback) {
-    try {
-        const bridge = window.__DSH_I18N__;
-        if (bridge && bridge.current && bridge[bridge.current]) {
-            const val = bridge[bridge.current][key];
-            if (val !== undefined && val !== null && val !== "") return val;
-        }
-    } catch (_e) { }
-    return fallback || key;
-}
 
 window.__ModuleLoader__.load({
 	id: "dsh-sidebar-lite",
 	factory: (require) => {
-		        // === 异步加载 i18n bridge ===
-		        (function() {
-		            if (window.__DSH_I18N__ && window.__DSH_I18N__._initialized) return;  // 桌面壳已预注入
-		            var _s = document.createElement('script');
-		            _s.src = 'http://127.0.0.1:3081/__dsh_i18n_bridge.js';
-		            _s.onerror = function() { _s.src = 'http://localhost:3081/__dsh_i18n_bridge.js'; };
-		            document.head.appendChild(_s);
-		        })();
-		        // === i18n bridge END ===
-
-		var module = { exports: {} };
-		var exports = module.exports;
+		const module = { exports: {} };
+		const exports = module.exports;
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
-		let react = require("react");
+		const react = require("react");
 
-		// createRoot 解析: 优先 react-dom/client, 缺省回退到全局 ReactDOM.createRoot。
-		var reactRootFactory = null;
-		try {
-			reactRootFactory = require("react-dom/client");
-		} catch (__e1) {
-			reactRootFactory = null;
-		}
-		var createRootFn = null;
-		if (reactRootFactory && reactRootFactory.createRoot) {
-			createRootFn = reactRootFactory.createRoot;
-		} else if (globalThis.ReactDOM && globalThis.ReactDOM.createRoot) {
-			createRootFn = globalThis.ReactDOM.createRoot;
-		}
-
-		const inject = ["slots", "sessions"];
-
-			// 官方输入机桥接 (独立持有, 不依赖 file-browser 注入的全局变量):
-			// 通过官方 conversation.input.left slot 捕获 ownerProps.inputActions / input
-			// (InputZone 契约, 与 file-browser 同一官方通道), 供右键菜单「插入路径/内容」
-			// 走 inputActions.setDraft() 稳定写入真实会话草稿。
-			let __dslInputActions = null;
-			let __dslInput = null;
+		// 官方客户端服务依赖: 插槽注册表 / 会话服务 / 右侧栏 tab 类型注册表 / 文案。
+		const inject = ["slots", "sessions", "sidebarRightTabs", "locale"];
 
 		// ---- 常量 ----
 		const API_PREFIX = "/__dsh/sidebar-lite";
 		const GUARD_HEADER = "X-DSH-Sidebar-Lite";
-		const PANEL_WIDTH = 320;            // 展开默认宽度 (px, 用户可拖到更大)
-		const MIN_PANEL_WIDTH = 200;        // 最小/初始宽度 (px, 拖到最小就是它, 首次打开默认它, 不挡太多主内容)
-		const PREVIEW_WIDTH = 360;          // 独立文件预览侧栏框默认宽度 (px, 可拖)
-		const CSS_VAR = "--dsh-sidebar-lite-width";
-		const CSS_EXTRA_VAR = "--dsh-sidebar-lite-extra";   // 预览框额外让位量 (px)
-		const STYLE_ID = "dsh-sidebar-lite-css";
-		// 需要就地编辑的文本扩展名 (其余命中宿主端 fs.read 的 text 判定也同样可编辑)。
-		const EDITABLE_EXTS = [
-			"js", "jsx", "ts", "tsx", "json", "py", "md", "txt", "yml", "yaml",
-			"c", "cc", "cpp", "h", "hpp", "java", "go", "rs", "css", "less", "scss",
-			"html", "htm", "xml", "toml", "ini", "cfg", "log", "csv", "tsv",
-			"sh", "bat", "cmd", "ps1", "tex", "sql", "http",
-		];
+		const LOCALE_NS = "dsh-sidebar-lite";            // 官方文案命名空间 (ctx.locale.bind 用)
+		const FILES_TYPE_ID = "dsh-sidebar-lite";        // 文件树类型在 tab 系统内的唯一 id (也是正文插槽 key)
+		const FILES_KIND = "files";                      // 接管官方内置文件树的 kind
+		const EDIT_TYPE_ID = "dsh-sidebar-lite/edit";    // 编辑类型 id (也是正文/标题插槽 key)
+		const EDIT_KIND = "sidebar-lite.edit";           // 编辑类型的 kind
+		const STYLE_TAG_ID = "dsh-sidebar-lite/body.css";
+		const FILES_GUIDE_COMMAND_ID = "workspace.files"; // 官方「工作区文件」快捷键命令 id (仅用于指南卡展示)
 
-		// ---- 命名空间 (防止样式串扰 / 卸载残留) ----
-		const N = "dsl";
+		// ---- 模块级桥接 ----
+		// 官方 @ 引用插入需要一个会话级通道 (sessions.provideInfo / resolveAgentScope),
+		// 原来由自建外壳从 ctx prop 构造; 现在 apply(ctx) 把 ctx 存到这里, 组件内再用它构造。
+		let pluginContext = null;
+		// 官方输入机状态: 通过 conversation.input.left 插槽捕获 InputZone 契约快照,
+		// 供右键「以官方 @ 引用插入」读取 draft / draftRev。
+		let capturedInputActions = null;
+		let capturedInput = null;
+
+		// ---- 官方资源地址构造 (必须内联, 不 require 官方包) ----
+		// 与官方 fileAddressFor / sessionFileAddress 完全同一套逻辑, 保证 openResource 命中
+		// 官方文件预览类型。
+		const FILE_ADDRESS_PREFIX = "dsh-resource://file/";
+
+		/** 逐段编码一个 id 或路径段, 保留盘符里的冒号。 */
+		function encodeSegment(segment) {
+			return encodeURIComponent(segment).replace(/%3A/gi, ":");
+		}
+
+		/** 按 `/` 分段编码整条路径。 */
+		function encodePath(path) {
+			return path.split("/").map(encodeSegment).join("/");
+		}
+
+		/** 构造某会话下文件的资源地址。 */
+		function sessionFileAddress(sessionId, path) {
+			const normalized = path.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
+			return FILE_ADDRESS_PREFIX + "session/" + encodeSegment(sessionId) + "/" + encodePath(normalized);
+		}
+
+		// ---- 编辑器资源地址 (dsh-resource://edit/...) ----
+		// 官方只持久化资源地址 (tab.contentId), 不持久化 navigation.params, 因此编辑 tab 的
+		// 文件身份必须编进地址本身: 刷新页面恢复布局后仍能定位到同一文件, 同一文件的重复
+		// 打开也会按地址去重复用同一个 tab。
+		const EDIT_ADDRESS_PREFIX = "dsh-resource://edit/";
+
+		/** 构造某会话下某个绝对路径的编辑器资源地址 (路径统一成正斜杠后逐段编码)。 */
+		function editAddressFor(sessionId, absolutePath) {
+			const normalized = String(absolutePath || "").replace(/\\/g, "/");
+			return EDIT_ADDRESS_PREFIX + "session/" + encodeSegment(sessionId) + "/" + encodePath(normalized);
+		}
+
+		/** 从编辑器资源地址还原绝对路径; 不是本插件地址时返回空串。 */
+		function pathFromEditAddress(address) {
+			const text = typeof address === "string" ? address : "";
+			const prefix = EDIT_ADDRESS_PREFIX + "session/";
+			if (!text.startsWith(prefix)) return "";
+			const rest = text.slice(prefix.length);
+			const slashIndex = rest.indexOf("/");
+			if (slashIndex < 0) return "";
+			return rest.slice(slashIndex + 1).split("/").map((segment) => {
+				try {
+					return decodeURIComponent(segment);
+				} catch (error) {
+					return segment;
+				}
+			}).join("/");
+		}
+
+		/** 是否为工作区绝对路径 (POSIX / Windows 盘符 / UNC)。 */
+		function isAbsoluteWorkspacePath(value) {
+			return value.startsWith("/") || /^[A-Za-z]:[/\\]/.test(value) || value.startsWith("\\\\");
+		}
+
+		/**
+		 * 按调用方持有的路径形态求资源地址: 相对路径, 或会话工作目录内的绝对路径,
+		 * 转成 session 作用域地址; 工作目录之外或根未知的绝对路径, 保留其绝对路径
+		 * (仍挂在该会话地址下)。
+		 */
+		function fileAddressFor(sessionId, cwd, path) {
+			const normalized = path.replace(/\\/g, "/");
+			if (!isAbsoluteWorkspacePath(normalized)) return sessionFileAddress(sessionId, normalized);
+			const root = (cwd === undefined || cwd === null) ? "" : cwd.replace(/\\/g, "/").replace(/\/+$/, "");
+			if (root !== "" && normalized === root) return sessionFileAddress(sessionId, "");
+			if (root !== "" && normalized.startsWith(root + "/")) return sessionFileAddress(sessionId, normalized.slice(root.length + 1));
+			return sessionFileAddress(sessionId, normalized);
+		}
 
 		// ---- API 辅助 ----
 
-		/** POST 一段 JSON 到宿主方法, 带防御头; 返回 payload (service 层的 ok 校验)。 */
+		/** POST 一段 JSON 到宿主方法, 带防御头; 返回 payload (并校验 service 层的 ok 标记)。 */
 		async function postMethod(method, payload) {
 			const response = await fetch(API_PREFIX + "/" + method, {
 				method: "POST",
@@ -103,28 +128,7 @@ window.__ModuleLoader__.load({
 			return data;
 		}
 
-		/** 取媒体字节为 blob objectURL (预览用)。 */
-		async function fetchBlobUrl(scope, path) {
-			const params = new URLSearchParams({ sessionId: scope.sessionId || "" });
-			if (scope.cwd) params.set("cwd", scope.cwd);
-			params.set("path", path);
-			const response = await fetch(API_PREFIX + "/file?" + params.toString(), {
-				headers: { [GUARD_HEADER]: "1" },
-			});
-			if (!response.ok) {
-				const data = await response.json().catch(() => null);
-				throw new Error((data && data.error) || ("HTTP " + response.status));
-			}
-			const blob = await response.blob();
-			return URL.createObjectURL(blob);
-		}
-
-		/** 文件扩展名小写 (无扩展名返回空串)。 */
-		function extOf(name) {
-			const i = name.lastIndexOf(".");
-			return i < 0 ? "" : name.slice(i + 1).toLowerCase();
-		}
-
+		/** 取错误信息文本 (兼容非 Error 抛出值)。 */
 		function errMessage(error) {
 			return (error && error.message) ? error.message : String(error);
 		}
@@ -137,7 +141,7 @@ window.__ModuleLoader__.load({
 			return fixed.slice(0, index);
 		}
 
-		/** 相对路径 (把绝对 path 减去 cwd 前缀, 得到可从工作目录访问的相对路径)。 */
+		/** 相对路径 (把绝对 path 减去 cwd 前缀, 得到可从当前浏览目录访问的相对路径)。 */
 		function relativeTo(cwd, absolutePath) {
 			const fixedCwd = (cwd || "").replace(/\\/g, "/").replace(/\/+$/, "");
 			const fixedPath = absolutePath.replace(/\\/g, "/");
@@ -147,105 +151,107 @@ window.__ModuleLoader__.load({
 			return fixedPath;
 		}
 
+		/** 取路径里的文件名 (反斜杠/正斜杠都兼容)。 */
+		function baseNameOf(filePath) {
+			const fixed = String(filePath || "").replace(/\\/g, "/").replace(/\/+$/, "");
+			const index = fixed.lastIndexOf("/");
+			return index < 0 ? fixed : fixed.slice(index + 1);
+		}
+
 		// ---- 官方 @ 引用 (dsh-file-reference grammar) 的路径换算 ----
 		// 与 dsh-file-browser 插件同一套逻辑: 官方 @ 文件搜索 (dsh-file-reference-local)
 		// 以会话 header.cwd 为根、索引相对路径; mention 语法无空白 `@path`、含空白
 		// `@"path with spaces"`。这里做 Windows 语义 (大小写不敏感) 的相对换算;
 		// 目标在根之外或跨盘返回 null。
-		function toPosix(p) {
-			return String(p || "").replace(/\\/g, "/");
+		function toPosix(pathValue) {
+			return String(pathValue || "").replace(/\\/g, "/");
 		}
 		function relSegments(fromPath, toPath) {
 			const fromParts = fromPath.split("/").filter(Boolean);
 			const toParts = toPath.split("/").filter(Boolean);
-			let i = 0;
-			while (i < fromParts.length && i < toParts.length && fromParts[i].toLowerCase() === toParts[i].toLowerCase()) i += 1;
-			const ups = fromParts.length - i;
-			const rest = toParts.slice(i);
+			let index = 0;
+			while (index < fromParts.length && index < toParts.length && fromParts[index].toLowerCase() === toParts[index].toLowerCase()) index += 1;
+			const ups = fromParts.length - index;
+			const rest = toParts.slice(index);
 			return [...Array(ups).fill(".."), ...rest].join("/");
 		}
-		function relativePosix(fromAbs, toAbs) {
-			const from = toPosix(fromAbs).replace(/\/+$/, "");
-			const to = toPosix(toAbs);
-			const m1 = from.match(/^([a-zA-Z]:)(\/.*)$/);
-			const m2 = to.match(/^([a-zA-Z]:)(\/.*)$/);
-			if (m1 || m2) {
-				if (!m1 || !m2 || m1[1].toLowerCase() !== m2[1].toLowerCase()) return null; // 跨盘
-				return relSegments(m1[2], m2[2]);
+		function relativePosix(fromAbsolute, toAbsolute) {
+			const from = toPosix(fromAbsolute).replace(/\/+$/, "");
+			const to = toPosix(toAbsolute);
+			const fromDrive = from.match(/^([a-zA-Z]:)(\/.*)$/);
+			const toDrive = to.match(/^([a-zA-Z]:)(\/.*)$/);
+			if (fromDrive || toDrive) {
+				if (!fromDrive || !toDrive || fromDrive[1].toLowerCase() !== toDrive[1].toLowerCase()) return null; // 跨盘
+				return relSegments(fromDrive[2], toDrive[2]);
 			}
 			return relSegments(from, to); // UNC / 相对形态
 		}
 
-
-
 		/**
 		 * 以官方 @ 引用把文件插入当前会话输入框 (与官方 @ 菜单 onPick 完全同一管线):
 		 * 换算相对会话工作目录 (header.cwd, 即官方 @ 搜索的根) 的 mention → 经
-		 * standard-kit sessions.provideInfo 读输入机状态 (draft/draftRev) 与
-		 * inputActions → sessions.scope 取会话作用域, 派发官方事件
+		 * standard-kit sessions.provideInfo 读输入机状态 (draft/draftRev) →
+		 * sessions.resolveAgentScope 取会话作用域, 派发官方事件
 		 * slash/input-insert-reference, 由官方输入机 mint 结构化 occurrence:
 		 * 草稿显示 @文件名 chip, 发送时经 reference source codec 序列化为相对路径。
 		 * @param {object} bridge - { provideInfo(id), scope(id) } 会话级通道。
-		 * @param {string} sessionId - 当前激活会话 id。
+		 * @param {string} sessionId - 当前 tab 所属会话 id。
 		 * @param {string} cwd - 会话工作目录 (官方 @ 引用的根)。
 		 * @param {string} entryPath - 文件的绝对路径。
 		 * @returns {Promise<string|null>} 错误信息 (null = 成功)。
 		 */
 		async function insertOfficialReference(bridge, sessionId, cwd, entryPath) {
-		    try {
-		                    if (!cwd) return "No session cwd, official @ unavailable";
-		                    const rel = relativePosix(cwd, entryPath);
-		                    if (rel === null || rel === "" || rel === ".." || rel.startsWith("../")) {
-		                        return "File outside session cwd";
-		                    }
-		                    // DSH 0.1.2-rc.1: bridge 参数已由调用方从 ctx.sessions 创建
-		                    let actx = null;
-		                    try { actx = bridge && typeof bridge.scope === "function" ? bridge.scope(sessionId) : null; } catch (e) { actx = null; }
-		                    if (!actx) return "Cannot get session scope";
-			                    const inputState = __dslInput || null;
-			                    const draft = (inputState && typeof inputState.draft === "string") ? inputState.draft : "";
-		                    const draftRev = (inputState && typeof inputState.draftRev === "number") ? inputState.draftRev : 0;
-		                    const caret = draft.length;
-		                    const reference = {
-		                        source: "reference",
-		                        ref: "@" + rel,
-		                        label: (entryPath.split(/[\\/]/).pop()) || rel,
-		                        appearance: "file",
-		                        clipboardText: "@" + rel,
-		                    };
-		                    const span = { start: caret, end: caret, draftRev: draftRev };
-		                    let ok = false;
-		                    // DEBUG: 动态拿 liveRev
-		                    try {
-		                        let conv = null;
-try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") : null; } catch(e) { conv = null; }
-		                        const sid = (actx.session && actx.session.id) || sessionId || null;
-		                        const shell = conv && conv.input && typeof conv.input.shell === "function" ? conv.input.shell(sid) : null;
-		                        const liveRev = shell && shell.rev !== undefined ? shell.rev : null;
-		                        if (liveRev !== null && liveRev !== undefined) { span.draftRev = liveRev; }
-		                    } catch (e) {}
-		                    try { ok = actx.bail(actx, "slash/input-insert-reference", { reference, span }) === true; } catch (e) { ok = false; }
-		                    // bail 失败, 尝试 DOM fallback
-		                    if (!ok) {
-		                        try {
-		                            const editor = (typeof document !== "undefined") ? document.querySelector('[contenteditable="true"]') : null;
-		                            if (editor) {
-		                                editor.focus();
-		                                const relText = reference && reference.ref ? reference.ref.replace(/^@/, "") : "";
-		                                const inserted = document.execCommand("insertText", false, "@" + relText + " ");
-		                                if (inserted) {
-		                                    return null; // 成功
-		                                }
-		                            }
-		                        } catch (domErr) {}
-		                        return "Insert failed: @" + reference && reference.ref ? reference.ref.replace(/^@/, "") : "";
-		                    }
-		                    return null;
-		    } catch (e) {
-		        console.error("[sidebar-lite] insertOfficialReference error:", e);
-		        return String(e && e.message || e);
-		    }
-        }
+			try {
+				if (!cwd) return "No session cwd, official @ unavailable";
+				const relativePath = relativePosix(cwd, entryPath);
+				if (relativePath === null || relativePath === "" || relativePath === ".." || relativePath.startsWith("../")) {
+					return "File outside session cwd";
+				}
+				let sessionScopeContext = null;
+				try { sessionScopeContext = bridge && typeof bridge.scope === "function" ? bridge.scope(sessionId) : null; } catch (error) { sessionScopeContext = null; }
+				if (!sessionScopeContext) return "Cannot get session scope";
+				const inputState = capturedInput || null;
+				const draft = (inputState && typeof inputState.draft === "string") ? inputState.draft : "";
+				const draftRevision = (inputState && typeof inputState.draftRev === "number") ? inputState.draftRev : 0;
+				const caret = draft.length;
+				const reference = {
+					source: "reference",
+					ref: "@" + relativePath,
+					label: baseNameOf(entryPath) || relativePath,
+					appearance: "file",
+					clipboardText: "@" + relativePath,
+				};
+				const span = { start: caret, end: caret, draftRev: draftRevision };
+				let inserted = false;
+				// 动态取输入机的 liveRev, 避免 CAS (draftRev 不匹配) 失败。
+				try {
+					let conversation = null;
+					try { conversation = sessionScopeContext && typeof sessionScopeContext.get === "function" ? sessionScopeContext.get("conversation") : null; } catch (error) { conversation = null; }
+					const targetSessionId = (sessionScopeContext.session && sessionScopeContext.session.id) || sessionId || null;
+					const shell = conversation && conversation.input && typeof conversation.input.shell === "function" ? conversation.input.shell(targetSessionId) : null;
+					const liveRevision = shell && shell.rev !== undefined ? shell.rev : null;
+					if (liveRevision !== null && liveRevision !== undefined) { span.draftRev = liveRevision; }
+				} catch (error) { /* 拿不到 liveRev 时沿用原 draftRev */ }
+				try { inserted = sessionScopeContext.bail(sessionScopeContext, "slash/input-insert-reference", { reference, span }) === true; } catch (error) { inserted = false; }
+				// bail 失败时退化为 DOM 插入 (任何版本都能兜底)。
+				if (!inserted) {
+					try {
+						const editor = (typeof document !== "undefined") ? document.querySelector('[contenteditable="true"]') : null;
+						if (editor) {
+							editor.focus();
+							const insertedText = reference && reference.ref ? reference.ref.replace(/^@/, "") : "";
+							const ok = document.execCommand("insertText", false, "@" + insertedText + " ");
+							if (ok) return null;
+						}
+					} catch (domError) { /* 忽略, 继续返回错误信息 */ }
+					return "Insert failed: " + (reference && reference.ref ? reference.ref : "");
+				}
+				return null;
+			} catch (error) {
+				console.error("[dsh-sidebar-lite] insertOfficialReference error:", error);
+				return String((error && error.message) || error);
+			}
+		}
 
 		/** 写剪贴板 (优先 navigator.clipboard, 缺省回退到 execCommand 兼容旧内核)。 */
 		function writeClipboard(text) {
@@ -257,6 +263,8 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 			}
 			return Promise.resolve(fallbackCopy(text));
 		}
+
+		/** execCommand 回退复制 (旧内核 / 非安全上下文)。 */
 		function fallbackCopy(text) {
 			try {
 				const textarea = document.createElement("textarea");
@@ -268,18 +276,20 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 				const ok = document.execCommand("copy");
 				textarea.remove();
 				return ok;
-			} catch (e) {
+			} catch (error) {
 				return false;
 			}
 		}
 
-		/** 通过宿主 file 媒体路由_dsht("plugin.sidebar.btn_save_as", "另存为")文件。 因路由要求防御头, 无法用 <a href> 直接跳转,
-		 *  需先 fetch(带防御头)→blob 拿到字节。 因为是本地机器, _dsht("plugin.sidebar.btn_save_as", "另存为")语义更贴合:
-		 *  优先用原生「另存为」对话框 (File System Access API, showSaveFilePicker) 让用户
-		 *  自由选择保存位置; 该 API 不可用时回退为浏览器自动下载 (同名文件)。
-		 *  注意: 需在用户手势内先弹出对话框, 避免 fetch 异步丢失去焦点后对话框被浏览器拦截。 */
-		async function saveAsFile(scope, path) {
-			const fileName = path.split("/").pop() || "file";
+		/**
+		 * 通过宿主 file 媒体路由下载 (另存为) 文件。该路由要求防御头, 无法用 <a href> 直接跳转,
+		 * 需先 fetch(带防御头) → blob 拿到字节。因为是本地机器, 「另存为」语义更贴合:
+		 * 优先用原生「另存为」对话框 (File System Access API, showSaveFilePicker) 让用户
+		 * 自由选择保存位置; 该 API 不可用时回退为浏览器自动下载 (同名文件)。
+		 * 注意: 需在用户手势内先弹出对话框, 避免 fetch 异步丢失去焦点后对话框被浏览器拦截。
+		 */
+		async function saveAsFile(scope, filePath) {
+			const fileName = baseNameOf(filePath) || "file";
 			let saveHandle = null;
 			// 优先弹出原生「另存为」对话框 (需在用户手势窗口内调用)。
 			if (window.showSaveFilePicker) {
@@ -293,7 +303,7 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 			try {
 				const params = new URLSearchParams({ sessionId: scope.sessionId || "", download: "1" });
 				if (scope.cwd) params.set("cwd", scope.cwd);
-				params.set("path", path);
+				params.set("path", filePath);
 				const response = await fetch(API_PREFIX + "/file?" + params.toString(), {
 					headers: { [GUARD_HEADER]: "1" },
 				});
@@ -319,302 +329,132 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 				anchor.click();
 				anchor.remove();
 				window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-			} catch (e) {
-				console.error("[dsh-sidebar-lite] save-as failed:", e);
+			} catch (error) {
+				console.error("[dsh-sidebar-lite] save-as failed:", error);
 			}
 		}
 
-		/**
-		 * 挂接终端 SSE 流并消费其输出事件。返回一个 AbortController, 供组件在卸载时停止读取
-		 * (注意: 只断开读取, 不结束宿主端进程, 重进终端页会重新挂接并收到历史回放)。
-		 * @param {object} scope - 会话作用域 { sessionId, cwd? }。
-		 * @param {string} tab - 终端标签页 id。
-		 * @param {function} onText - 每次收到一段输出文本时回调 (包含回放与实时输出)。
-		 * @param {function} onError - 出错回调。
-		 * @returns {{controller:AbortController, stop:function}} 控制句柄。
-		 */
-		function attachTerminalStream(scope, tab, onText, onError) {
-			const controller = new AbortController();
-			const params = new URLSearchParams({ sessionId: scope.sessionId || "" });
-			if (scope.cwd) params.set("cwd", scope.cwd);
-			params.set("tab", tab);
-			(async () => {
-				try {
-					const response = await fetch(API_PREFIX + "/terminal.stream?" + params.toString(), {
-						headers: { [GUARD_HEADER]: "1" },
-						signal: controller.signal,
-					});
-					if (!response.ok || !response.body) {
-						onError(_dsht("plugin.sidebar.terminal_stream_fail", "终端流连接失败: HTTP ") + response.status);
-						return;
-					}
-					const reader = response.body.getReader();
-					const decoder = new TextDecoder();
-					let buffer = "";
-					for (;;) {
-						const { done, value } = await reader.read();
-						if (done) break;
-						buffer += decoder.decode(value, { stream: true });
-						let sepIndex;
-						// SSE 事件以空行 "\n\n" 分隔, 逐条解析取出 data: 行里的 JSON。
-						while ((sepIndex = buffer.indexOf("\n\n")) >= 0) {
-							const eventText = buffer.slice(0, sepIndex);
-							buffer = buffer.slice(sepIndex + 2);
-							for (const line of eventText.split("\n")) {
-								if (line.indexOf("data: ") !== 0) continue;
-								try {
-									const data = JSON.parse(line.slice(6));
-									if (typeof data.text === "string" && data.text !== "") onText(data.text);
-								} catch { /* 非 JSON 事件忽略 */ }
-							}
-						}
-					}
-				} catch (e) {
-					if (e && e.name !== "AbortError") onError(errMessage(e));
-				}
-			})();
-			return {
-				controller,
-				stop: () => { try { controller.abort(); } catch (e2) { /* ignore */ } },
-			};
-		}
-
-		// ---- 注入全局样式 (侧边栏定位 + #root 让位, 展开/收起) ----
-
+		// ---- 样式注入 (只注入本插件自己的类名, 全部走官方主题 token, 无硬编码颜色) ----
+		// 仿官方做法: <style> 带 data-plugin / data-plugin-css 标记, 类名前缀 dsl 与官方区分。
 		function injectStyles() {
-			if (document.getElementById(STYLE_ID)) return;
+			if (typeof document === "undefined") return;
+			if (document.querySelector("style[data-plugin-css=" + JSON.stringify(STYLE_TAG_ID) + "]") !== null) return;
 			const style = document.createElement("style");
-			style.id = STYLE_ID;
-			style.textContent =
-				"#" + N + "-host{position:fixed;top:0;right:0;bottom:0;width:var(" + CSS_VAR + "," + PANEL_WIDTH + "px);" +
-				"z-index:2147482999;transition:width .18s ease;display:flex;flex-direction:column;" +
-				"background:var(--dsw-alias-bg-layer-2,#ffffff);box-shadow:-1px 0 0 var(--dsw-alias-border-l1,#e5e5e5);}" +
-				"#" + N + "-host." + N + "-closed{width:0;box-shadow:none;overflow:hidden;}" +
-				"#" + N + "-host." + N + "-resizing{transition:none;cursor:col-resize;user-select:none;}" +
-				// rail 开关: 始终显示在右上角 (与官方 header 顶部线条对齐, right:16px top:48px),
-				// 不与官方「下载日志」按钮重叠 (官方按钮在 ~top:44px right:8px 位置)。
-				// 预览框打开时 inline style 会覆盖 right, 额外让出 previewWidth 空间。
-				"#" + N + "-rail{position:fixed;right:16px;top:48px;z-index:2147483000;" +
-				"display:flex;align-items:center;justify-content:center;width:32px;height:32px;" +
-				"border:none;border-radius:50%;background:var(--dsw-alias-bg-layer-2,#ffffff);" +
-				"box-shadow:0 1px 3px rgba(0,0,0,.12);color:var(--dsw-alias-label-secondary,#8a8f98);cursor:pointer;" +
-				"transition:background .18s ease,color .18s ease;}" +
-				"#" + N + "-rail:hover{background:var(--dsw-alias-interactive-bg-hover,#eef1f5);color:var(--dsw-alias-label-primary,#1f1f1f);}" +
-				// 收起按钮已移到 rail (见上方), 此处不再保留 .collapse 样式。
-				"#" + N + "-host ::-webkit-scrollbar{width:8px;height:8px;}" +
-				"#" + N + "-host ::-webkit-scrollbar-thumb{background:var(--dsw-alias-scrollbar-bg-l1,#c9c9c9);border-radius:4px;}" +
-				"#root{margin-right:calc(var(" + CSS_VAR + ",0px) + var(" + CSS_EXTRA_VAR + ",0px));transition:margin-right .18s ease;}" +
-				/* 状态卡蓝点呼吸动画: 执行中提示「AI 正在推进」。 */
-				"@keyframes dsl-pulse{0%,100%{opacity:1}50%{opacity:.25}}";
+			style.dataset.plugin = "dsh-sidebar-lite";
+			style.dataset.pluginCss = STYLE_TAG_ID;
+			style.textContent = [
+				".dsl-root{height:100%;min-height:0;display:flex;flex-direction:column;color:var(--dsw-alias-label-primary);font-size:var(--dsh-content-font-size-secondary,13px);line-height:1.5;}",
+				".dsl-head{flex:none;display:flex;align-items:center;gap:4px;padding:4px 8px;border-bottom:0.5px solid var(--dsw-alias-border-l3);}",
+				".dsl-path{flex:1;min-width:0;padding:3px 6px;font-size:11px;color:inherit;background:var(--dsw-specific-input-major);border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);outline:none;}",
+				".dsl-tool{flex:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:var(--dsw-alias-label-secondary);background:transparent;border:none;border-radius:var(--dsw-radius-sm);padding:2px 6px;font-size:12px;}",
+				".dsl-tool:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover);}",
+				".dsl-tool[disabled]{cursor:default;opacity:.4;}",
+				".dsl-tool[disabled]:hover{color:var(--dsw-alias-label-secondary);background:transparent;}",
+				".dsl-home{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:3px;height:26px;padding:0 8px;cursor:pointer;white-space:nowrap;color:var(--dsw-alias-label-primary);background:transparent;border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);font-size:12px;}",
+				".dsl-home:hover{background:var(--dsw-alias-interactive-bg-hover);}",
+				".dsl-body{flex:1;min-height:0;overflow:auto;padding:2px 0;}",
+				".dsl-row{display:flex;align-items:center;gap:4px;padding:2px 4px;cursor:pointer;font-size:12.5px;user-select:none;white-space:nowrap;overflow:hidden;border-radius:var(--dsw-radius-sm);}",
+				".dsl-row:hover{background:var(--dsw-alias-interactive-bg-hover);}",
+				".dsl-row-hidden .dsl-name{color:var(--dsw-alias-label-tertiary);}",
+				".dsl-chevron{flex:none;display:inline-block;width:12px;text-align:center;font-size:11px;color:var(--dsw-alias-label-tertiary);}",
+				".dsl-glyph{flex:none;font-size:12px;}",
+				".dsl-name{min-width:0;overflow:hidden;text-overflow:ellipsis;}",
+				".dsl-note{padding:6px 10px;font-size:11px;color:var(--dsw-alias-label-tertiary);}",
+				".dsl-error{padding:6px 10px;font-size:11px;color:var(--dsw-alias-state-error-primary);}",
+				".dsl-copied{font-size:11px;color:var(--dsw-alias-state-success-primary);white-space:nowrap;}",
+				".dsl-menu-mask{position:fixed;inset:0;z-index:2147483000;}",
+				".dsl-menu{position:fixed;z-index:2147483001;min-width:172px;padding:4px 0;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md);}",
+				".dsl-menu-item{padding:6px 10px;cursor:pointer;font-size:12.5px;white-space:nowrap;}",
+				".dsl-menu-item:hover{background:var(--dsw-alias-interactive-bg-hover);}",
+				".dsl-menu-sep{height:1px;margin:3px 4px;background:var(--dsw-alias-border-l3);}",
+				".dsl-editor{height:100%;min-height:0;display:flex;flex-direction:column;}",
+				".dsl-editor-bar{flex:none;display:flex;align-items:center;gap:6px;padding:4px 8px;border-bottom:0.5px solid var(--dsw-alias-border-l3);}",
+				".dsl-editor-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;}",
+				".dsl-editor-area{flex:1;min-height:0;width:100%;box-sizing:border-box;padding:8px;resize:none;border:none;outline:none;background:transparent;color:inherit;font:12px/1.5 ui-monospace,Consolas,Menlo,monospace;}",
+				".dsl-editor-note{flex:none;padding:4px 8px;font-size:11px;color:var(--dsw-alias-state-warn-primary);}",
+				".dsl-editor-message{flex:1;min-height:0;overflow:auto;padding:12px;font-size:12px;color:var(--dsw-alias-label-secondary);}",
+				".dsl-title{display:inline-flex;align-items:center;gap:6px;}",
+			].join("");
 			document.head.appendChild(style);
 		}
 
-		function setPanelWidth(width) {
-			try {
-				document.documentElement.style.setProperty(CSS_VAR, width + "px");
-			} catch (e) { /* ignore */ }
-		}
+		// ---- 右键上下文菜单 (文件: @引用/编辑/另存为/复制; 目录: 复制) ----
 
-		/** 设置预览面板的额外让位量 (#root 需再让出预览框宽度, 避免被遮挡)。 */
-		function setExtraWidth(width) {
-			try {
-				document.documentElement.style.setProperty(CSS_EXTRA_VAR, width + "px");
-			} catch (e) { /* ignore */ }
-		}
-
-		/** 右侧面板图标 (复刻官方 IconPanelRightOutline16: 外框 + 右侧竖条), 颜色随 currentColor。 */
-		function PanelGlyph(size) {
-			return react.createElement("svg", {
-				width: size, height: size, viewBox: "0 0 16 16",
-				fill: "none", stroke: "currentColor", strokeWidth: 1,
-				style: { display: "block" },
-			}, [
-				react.createElement("rect", { key: "f", x: 1.5, y: 1.5, width: 13, height: 13, rx: 1.5 }),
-				react.createElement("line", { key: "s", x1: 11, y1: 1.5, x2: 11, y2: 14.5 }),
-			]);
-		}
-
-		// ---- 小控件 ----
-
-		function IconChevron({ open }) {
-			return react.createElement("span", {
-				style: { display: "inline-block", width: 12, textAlign: "center", fontSize: 11, color: "var(--dsw-alias-label-tertiary)", flex: "none" },
-			}, open ? "▾" : "▸");
-		}
-
-		// 用文件夹/文件图标 (folder=文件家图, file=文档图)
-		function IconLayer(kind) {
-			return react.createElement("span", { style: { fontSize: 12, flex: "none" } }, kind === "f" ? "📁" : "📄");
-		}
-
-		/** 把任意文本插入当前会话输入框 (与 file-browser 的插入能力对齐)。
-		 *  插入路径优先级 (独立可靠, 与 file-browser 同源但不互相依赖):
-		 *    A) __dslInputActions.setDraft() —— 本插件通过官方 conversation.input.left
-		 *       slot 独立捕获的输入机 React 状态通道, 稳定落在真实会话草稿;
-		 *    B) 官方输入机 slash/input-insert-text (bail, 备用);
-		 *    C) DOM fallback (仅前两者都不可用)。 */
-		function insertIntoInput(text, bridge, sessionId) {
-			// ---- 路径 A: 官方 inputActions.setDraft (本插件独立捕获的 slot 通道) ----
-			try {
-				if (__dslInputActions && typeof __dslInputActions.setDraft === "function") {
-					const current = (__dslInput && typeof __dslInput.draft === "string") ? __dslInput.draft : "";
-					const sep = current !== "" && !/\s$/.test(current) ? "\n" : "";
-					__dslInputActions.setDraft(current + sep + text);
-					return true;
-				}
-			} catch (e) { /* fallthrough */ }
-			// ---- 路径 B: 官方输入机 bail (0.1.2-rc.1) ----
-			try {
-				let actx = null;
-				try { actx = bridge && typeof bridge.scope === "function" ? bridge.scope(sessionId) : null; } catch (e) { actx = null; }
-				if (actx && typeof actx.bail === "function") {
-					const inputState = __dslInput || null;
-					const draft = (inputState && typeof inputState.draft === "string") ? inputState.draft : "";
-					const draftRev = (inputState && typeof inputState.draftRev === "number") ? inputState.draftRev : 0;
-					const caret = draft.length;
-					const span = { start: caret, end: caret, draftRev };
-					// 动态拿 liveRev 避免 CAS 失败
-					try {
-						let conv = null;
-						try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") : null; } catch(e) { conv = null; }
-						const sid = (actx.session && actx.session.id) || sessionId || null;
-						const shell = conv && conv.input && typeof conv.input.shell === "function" ? conv.input.shell(sid) : null;
-						const liveRev = shell && shell.rev !== undefined ? shell.rev : null;
-						if (liveRev !== null && liveRev !== undefined) { span.draftRev = liveRev; }
-					} catch (e) {}
-					const ok = actx.bail(actx, "slash/input-insert-text", { text, span }) === true;
-					if (ok) return true;
-				}
-			} catch (e) { /* fallthrough to DOM fallback */ }
-			// ---- 路径 C: DOM fallback (任何 DSH 版本) ----
-			// React 受控组件里必须同时设 value + dispatch('input') 才会触发 onChange handler。
-			try {
-				const ta = document.querySelector("textarea");
-				if (ta) {
-					const cur = ta.value || "";
-					const sep = cur !== "" && !/\s$/.test(cur) ? " " : "";
-					const next = cur + sep + text;
-					const desc = Object.getOwnPropertyDescriptor(ta.constructor.prototype, "value");
-					if (desc && desc.set) desc.set.call(ta, next);
-					else ta.value = next;
-					ta.dispatchEvent(new Event("input", { bubbles: true }));
-					ta.dispatchEvent(new Event("change", { bubbles: true }));
-					try { ta.selectionStart = ta.selectionEnd = next.length; } catch (e) { /* noop */ }
-					return true;
-				}
-				const ce = document.querySelector("[contenteditable='true']");
-				if (ce) {
-					const cur = (ce.innerText || ce.textContent || "");
-					const sep = cur !== "" && !/\s$/.test(cur) ? " " : "";
-					ce.innerText = cur + sep + text;
-					ce.dispatchEvent(new Event("input", { bubbles: true }));
-					return true;
-				}
-				return false;
-			} catch (e) { return false; }
-		}
-
-		/** 读文件内容并拼成"[文件] 路径\n内容\n[文件内容结束]"插入输入框 (对齐 file-browser ins content)。
-		 *  大文件仅取前部 (host 端 fs.read 已按 READ_LIMIT 截断并标 truncated)。 */
-		async function insertFileContentToInput(scope, path, bridge, sessionId) {
-			try {
-				const data = await postMethod("fs.read", { sessionId: scope.sessionId, ...(scope.cwd ? { cwd: scope.cwd } : {}), path });
-				const file = data && typeof data.file === "object" ? data.file : null;
-				let text;
-				if (!file || file.kind === "binary") {
-					text = "[文件] " + path + "（无法读取文本）";
-				} else {
-					let body = typeof file.content === "string" ? file.content : "";
-					let note = file.truncated ? "（内容过长，已截断为前部）" : "";
-					text = "[文件] " + path + "\n" + body + "\n[文件内容结束]" + note;
-				}
-				const ok = insertIntoInput(text, bridge, sessionId);
-				if (!ok) insertIntoInput("[文件] " + path + "（无法找到输入框）", bridge, sessionId);
-			} catch (e) {
-				insertIntoInput("[文件] " + path + "（读取失败）", bridge, sessionId);
-			}
-		}
-
-		// ---- 右键上下文菜单 (与 better-sidebar 一致: 下载[仅文件] / 复制相对 / 复制绝对) ----
-
-		function ContextMenu({ x, y, entry, onSelect }) {
-		const [i18nTick, setI18nTick] = react.useState(0);
-		react.useEffect(() => {
-			const handler = () => setI18nTick(t => t + 1);
-			document.addEventListener('dsh-i18n-change', handler);
-			return () => document.removeEventListener('dsh-i18n-change', handler);
-		}, []);
-			const itemStyle = { padding: "6px 10px", cursor: "pointer", fontSize: 12.5, whiteSpace: "nowrap" };
-			const sepStyle = { height: 1, background: "var(--dsw-alias-border-l1,#eee)", margin: "3px 4px" };
-			// 统一右键菜单 (与 file-browser 完全一致):
-			// 文件行: @引用 → 插入路径 → 插入内容 → 另存为 → 复制相对 → 复制绝对
-			// 目录行: 插入路径 → 复制相对 → 复制绝对
+		function ContextMenu({ x, y, entry, onSelect, t }) {
 			const items = [];
 			if (!entry.isDir) {
-				items.push(react.createElement("div", { key: "insertref", style: itemStyle, onClick: () => onSelect("insertref") }, _dsht("plugin.sidebar.btn_insert_ref", "以官方 @ 引用插入")));
+				items.push(react.createElement("div", { key: "insertref", className: "dsl-menu-item", onClick: () => onSelect("insertref") }, t("menu_insert_ref")));
+				items.push(react.createElement("div", { key: "edit", className: "dsl-menu-item", onClick: () => onSelect("edit") }, t("menu_edit")));
+				items.push(react.createElement("div", { key: "saveas", className: "dsl-menu-item", onClick: () => onSelect("saveas") }, t("menu_save_as")));
+				items.push(react.createElement("div", { key: "sep", className: "dsl-menu-sep" }));
 			}
-			items.push(react.createElement("div", { key: "insertpath", style: itemStyle, onClick: () => onSelect("insertpath") }, _dsht("plugin.sidebar.btn_insert_path", "插入路径到输入框")));
-			if (!entry.isDir) {
-				items.push(react.createElement("div", { key: "insertcontent", style: itemStyle, onClick: () => onSelect("insertcontent") }, _dsht("plugin.sidebar.btn_insert_content", "插入内容到输入框")));
-				items.push(react.createElement("div", { key: "saveas", style: itemStyle, onClick: () => onSelect("saveas") }, _dsht("plugin.sidebar.btn_save_as", "另存为")));
-			}
-			if (items.length > 0) {
-				items.push(react.createElement("div", { key: "sep0", style: sepStyle }));
-			}
-			items.push(react.createElement("div", { key: "relative", style: itemStyle, onClick: () => onSelect("relative") }, _dsht("plugin.sidebar.btn_copy_rel", "复制相对路径")));
-			items.push(react.createElement("div", { key: "absolute", style: itemStyle, onClick: () => onSelect("absolute") }, _dsht("plugin.sidebar.btn_copy_abs", "复制绝对路径")));
+			items.push(react.createElement("div", { key: "relative", className: "dsl-menu-item", onClick: () => onSelect("relative") }, t("menu_copy_rel")));
+			items.push(react.createElement("div", { key: "absolute", className: "dsl-menu-item", onClick: () => onSelect("absolute") }, t("menu_copy_abs")));
 			return react.createElement("div", {
+				className: "dsl-menu",
 				style: {
-					position: "fixed", left: Math.min(x, window.innerWidth - 190), top: Math.min(y, window.innerHeight - 240),
-					zIndex: 2147483001, minWidth: 172, background: "var(--dsw-alias-bg-overlay,#ffffff)",
-					border: "1px solid var(--dsw-alias-border-l2,#ddd)", borderRadius: 6,
-					boxShadow: "0 4px 16px rgba(0,0,0,.12)", padding: "4px 0",
+					left: Math.min(x, window.innerWidth - 190),
+					top: Math.min(y, window.innerHeight - 240),
 				},
 				onMouseDown: (event) => event.stopPropagation(),
 				onContextMenu: (event) => event.preventDefault(),
 			}, items);
 		}
 
-		// ---- 资源管理器节点 (递归目录) ----
+		// ---- 资源管理器节点 (递归目录, 懒加载展开) ----
 
-		function TreeNode({ entry, depth, scope, onOpenFile, onMenu }) {
-		const [i18nTick, setI18nTick] = react.useState(0);
-		react.useEffect(() => {
-			const handler = () => setI18nTick(t => t + 1);
-			document.addEventListener('dsh-i18n-change', handler);
-			return () => document.removeEventListener('dsh-i18n-change', handler);
-		}, []);
+		function TreeNode({ entry, depth, scope, refreshTick, onOpenFile, onMenu, t }) {
 			const [expanded, setExpanded] = react.useState(false);
-			const [children, setChildren] = react.useState(null); // null=未加载
+			const [children, setChildren] = react.useState(null);       // null = 尚未加载
+			const [truncated, setTruncated] = react.useState(false);     // 命中单目录条数上限
 			const [busy, setBusy] = react.useState(false);
 			const [error, setError] = react.useState(null);
 
-			const toggle = async () => {
+			/** 读取本目录一级子项 (懒加载与刷新共用)。 */
+			const loadChildren = react.useCallback(async () => {
+				setBusy(true);
+				setError(null);
+				try {
+					const data = await postMethod("fs.tree", { sessionId: scope.sessionId, ...(scope.cwd ? { cwd: scope.cwd } : {}), path: entry.path });
+					setChildren((data.listing && data.listing.entries) || []);
+					setTruncated(!!(data.listing && data.listing.truncated));
+				} catch (loadError) {
+					setError(errMessage(loadError));
+					setChildren([]);
+				} finally {
+					setBusy(false);
+				}
+			}, [scope.sessionId, scope.cwd, entry.path]);
+
+			const toggle = () => {
 				if (!entry.isDir) {
 					onOpenFile(entry);
 					return;
 				}
 				const next = !expanded;
 				setExpanded(next);
-				if (next && children === null && !busy) {
-					setBusy(true);
-					setError(null);
-					try {
-						const data = await postMethod("fs.tree", { sessionId: scope.sessionId, ...(scope.cwd ? { cwd: scope.cwd } : {}), path: entry.path });
-						setChildren((data.listing && data.listing.entries) || []);
-					} catch (e) {
-						setError(errMessage(e));
-						setChildren([]);
-					} finally {
-						setBusy(false);
-					}
-				}
+				if (next && children === null && !busy) loadChildren();
 			};
 
-			return react.createElement("div", { key: entry.path }, [
+			// 官方刷新快捷键 (tab.actions.bindCommands refresh) 触发时, 重新读取已展开目录的子级。
+			react.useEffect(() => {
+				if (!expanded || children === null) return;
+				loadChildren();
+			}, [refreshTick]);
+
+			const rowChildren = [
+				react.createElement("span", { key: "chev", className: "dsl-chevron" }, entry.isDir ? (expanded ? "▾" : "▸") : ""),
+				react.createElement("span", { key: "glyph", className: "dsl-glyph" }, entry.isDir ? "📁" : "📄"),
+				react.createElement("span", { key: "name", className: "dsl-name" }, entry.name),
+			];
+
+			const levelIndent = 6 + (depth + 1) * 22;
+
+			return react.createElement("div", null, [
 				react.createElement("div", {
 					key: "row",
-					style: { display: "flex", alignItems: "center", gap: 4, padding: "2px 4px", paddingLeft: 6 + depth * 22, cursor: "pointer", fontSize: 12.5, userSelect: "none", whiteSpace: "nowrap", overflow: "hidden" },
+					className: entry.hidden ? "dsl-row dsl-row-hidden" : "dsl-row",
+					style: { paddingLeft: 6 + depth * 22 },
 					title: entry.path,
 					onClick: toggle,
 					onContextMenu: (event) => {
@@ -622,44 +462,33 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 						event.stopPropagation();
 						onMenu(entry, event.clientX, event.clientY);
 					},
-				}, [
-					IconChevron({ open: expanded }),
-					entry.isDir ? IconLayer("f") : IconLayer("d"),
-					react.createElement("span", { key: "n", style: { color: entry.hidden ? "var(--dsw-alias-label-tertiary)" : "inherit", textDecoration: entry.isDir ? "none" : undefined } }, entry.name),
-				]),
+				}, rowChildren),
 				entry.isDir && expanded && react.createElement("div", { key: "children" }, [
-					busy && children === null && react.createElement("div", { key: "busy", style: { paddingLeft: 6 + (depth + 1) * 22, fontSize: 11, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.sidebar.explorer_scanning", "扫描目录…")),
-					children !== null && error && react.createElement("div", { key: "err", style: { paddingLeft: 6 + (depth + 1) * 22, fontSize: 11, color: "var(--dsw-alias-state-error-primary)" } }, _dsht("plugin.sidebar.explorer_load_failed", "读取失败")),
-					children !== null && children.length === 0 && !error && react.createElement("div", { key: "empty", style: { paddingLeft: 6 + (depth + 1) * 22, fontSize: 11, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.sidebar.explorer_hint_empty", "(空目录)")),
-					children !== null ? children.map((child) => react.createElement(TreeNode, { key: child.path, entry: child, depth: depth + 1, scope, onOpenFile, onMenu })) : null,
+					busy && children === null && react.createElement("div", { key: "busy", className: "dsl-note", style: { paddingLeft: levelIndent } }, t("files.scanning")),
+					children !== null && error && react.createElement("div", { key: "err", className: "dsl-error", style: { paddingLeft: levelIndent } }, t("files.load_failed")),
+					children !== null && children.length === 0 && !error && react.createElement("div", { key: "empty", className: "dsl-note", style: { paddingLeft: levelIndent } }, t("files.empty")),
+					children !== null && truncated && react.createElement("div", { key: "trunc", className: "dsl-note", style: { paddingLeft: levelIndent } }, t("files.truncated_note")),
+					children !== null ? children.map((child) => react.createElement(TreeNode, { key: child.path, entry: child, depth: depth + 1, scope, refreshTick, onOpenFile, onMenu, t })) : null,
 				]),
 			]);
 		}
 
-		// ---- 资源管理器面板 ----
+		// ---- 资源管理器面板 (官方 tab 格子的正文) ----
 
-		function ExplorerView({ scope, cwd, workspaceRoot, rootName, onOpenFile, bridge }) {
-		const [i18nTick, setI18nTick] = react.useState(0);
-		react.useEffect(() => {
-			const handler = () => setI18nTick(t => t + 1);
-			document.addEventListener('dsh-i18n-change', handler);
-			return () => document.removeEventListener('dsh-i18n-change', handler);
-		}, []);
-			// 当前正在浏览的目录 (默认优先用会话工作目录 cwd——即"这个会话锁指定的目录"
-			// session.header.cwd, 如 D:\DeepSeekHarnessLauncher；无会话/无 cwd 时回退到
-			// 工作区根 workspaceRoot)。
-			// 支持「返回上级」与路径框上溯任意路径，不再锁死在会话 cwd 内。
+		function ExplorerView({ sessionId, cwd, workspaceRoot, refreshTick, onRefresh, t, onOpenFile, onEdit, bridge }) {
+			// 当前正在浏览的目录: 默认会话工作目录 cwd (即"这个会话锁指定的目录"),
+			// 无会话/无 cwd 时回退工作区根 workspaceRoot; 之后可由路径框上溯任意路径。
 			const initialRoot = (cwd || workspaceRoot || "");
 			const [currentPath, setCurrentPath] = react.useState(initialRoot);
 			const [pathBox, setPathBox] = react.useState(initialRoot);
 			const [busy, setBusy] = react.useState(false);
 			const [error, setError] = react.useState(null);
 			const [rootEntries, setRootEntries] = react.useState(null);
-			const [refreshTick, setRefreshTick] = react.useState(0);
-			// 单个共享右键菜单 (与原版一致): 记录触发行 + 光标位置; 复制成功短暂显示_dsht("plugin.sidebar.explorer_hint_copied", "已复制")。
+			const [rootTruncated, setRootTruncated] = react.useState(false);
+			// 单个共享右键菜单: 记录触发行 + 光标位置; 复制成功短暂显示「已复制」。
 			const [rowMenu, setRowMenu] = react.useState(null);
 			const [copiedPath, setCopiedPath] = react.useState(null);
-			// 临时提示条 (如官方 @ 引用不可用原因), 数秒后自动消失。
+			// 临时提示条 (如官方 @ 引用不可用的原因), 数秒后自动消失。
 			const [notice, setNotice] = react.useState(null);
 			const noticeTimerRef = react.useRef(null);
 			const showNotice = react.useCallback((text) => {
@@ -672,8 +501,6 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 			}, []);
 
 			// 工作区根/会话工作目录可能在会话挂载后才确定, 首次拿到后同步当前浏览目录。
-			// 与 initialRoot 一致: 会话工作目录 cwd 优先 (即"这个会话锁指定的目录"),
-			// 工作区根 workspaceRoot 兜底。
 			react.useEffect(() => {
 				if (currentPath === "") {
 					const target = cwd || workspaceRoot || "";
@@ -684,27 +511,29 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 				}
 			}, [cwd, workspaceRoot]);
 
+			// 读取当前目录一级子项 (切目录 / 换会话 / 官方刷新都走这里)。
 			react.useEffect(() => {
 				let cancelled = false;
-				if (currentPath === "") return;
+				if (currentPath === "") return undefined;
 				setBusy(true);
 				setError(null);
 				setRootEntries(null);
 				(async () => {
 					try {
-						const data = await postMethod("fs.tree", { sessionId: scope.sessionId, ...(scope.cwd ? { cwd: scope.cwd } : {}), path: currentPath });
+						const data = await postMethod("fs.tree", { sessionId, ...(cwd ? { cwd } : {}), path: currentPath });
 						if (cancelled) return;
 						setRootEntries((data.listing && data.listing.entries) || []);
-					} catch (e) {
-						if (!cancelled) setError(errMessage(e));
+						setRootTruncated(!!(data.listing && data.listing.truncated));
+					} catch (loadError) {
+						if (!cancelled) setError(errMessage(loadError));
 					} finally {
 						if (!cancelled) setBusy(false);
 					}
 				})();
 				return () => { cancelled = true; };
-			}, [currentPath, scope.sessionId, refreshTick]);
+			}, [currentPath, sessionId, cwd, refreshTick]);
 
-			// 进入上级目录 (回到菜单目录; 已是盘符/根目录时禁用)。
+			// 进入上级目录 (已是盘符/根目录时禁用)。
 			const parentPath = dirnameOf(currentPath);
 			const fixedCurrent = currentPath.replace(/\\/g, "/");
 			const isDriveRoot = /^[A-Za-z]:[\\/]?$/i.test(fixedCurrent) || fixedCurrent === "/" || currentPath === "";
@@ -714,6 +543,7 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 				setCurrentPath(parentPath);
 				setPathBox(parentPath);
 			};
+
 			// 通过路径框跳转到任意目录 (回车触发)。
 			const goToPath = () => {
 				const trimmed = pathBox.trim();
@@ -721,17 +551,12 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 				setCurrentPath(trimmed);
 			};
 
-			const openFile = (entry) => {
-				// 点击文件: 上抛给顶层, 在独立预览侧栏框里打开 (不再挤占列表)。
-				onOpenFile(entry);
-			};
-
 			// 打开右键菜单 (记录触发行与光标位置)。
 			const openMenu = (entry, x, y) => {
 				setRowMenu({ entry, x, y });
 			};
 
-			// 复制文本; 成功后把该行标记为_dsht("plugin.sidebar.explorer_hint_copied", "已复制")并短暂显示。
+			// 复制文本; 成功后把该行标记为「已复制」并短暂显示。
 			const copyPath = (text, path) => {
 				writeClipboard(text).then((ok) => {
 					if (!ok) return;
@@ -742,100 +567,113 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 				});
 			};
 
-			// 菜单项点击: 'insertref' 走官方 @ 引用插入, 'saveas' 走另存为, 'relative'/'absolute' 走复制。
-			// 统一后 (与 file-browser 对齐): 'insertpath' 插入路径, 'insertcontent' 插入文件内容。
+			// 菜单项点击: insertref=官方 @ 引用, edit=打开编辑 tab, saveas=另存为, relative/absolute=复制。
 			const onMenuSelect = (id) => {
 				const menu = rowMenu;
 				if (menu === null) return;
 				setRowMenu(null);
-				if (id === "insertpath") {
-					insertIntoInput(menu.entry.path, bridge, scope.sessionId);
-					return;
-				}
-				if (id === "insertcontent") {
-					if (menu.entry.isDir) return;
-					insertFileContentToInput({ sessionId: scope.sessionId, cwd }, menu.entry.path, bridge, scope.sessionId);
-					return;
-				}
 				if (id === "insertref") {
 					if (menu.entry.isDir) return;
 					// 官方 @ 引用以会话工作目录 (header.cwd) 为根 —— 正是侧栏解析出的 cwd。
-					console.log("[sidebar-lite] insertref args:", { bridge, sessionId: scope.sessionId, cwd, entryPath: menu.entry.path });
-					insertOfficialReference(bridge, scope.sessionId, cwd, menu.entry.path).then((err) => {
-						if (err) showNotice(err);
+					insertOfficialReference(bridge, sessionId, cwd, menu.entry.path).then((insertError) => {
+						if (insertError) showNotice(insertError);
 					});
 					return;
 				}
-				if (id === "saveas") {
-					saveAsFile(scope, menu.entry.path);
+				if (id === "edit") {
+					if (menu.entry.isDir) return;
+					onEdit(menu.entry.path);
 					return;
 				}
-				const text = id === "relative"
-					? relativeTo(currentPath, menu.entry.path)
-					: menu.entry.path;
+				if (id === "saveas") {
+					saveAsFile({ sessionId, cwd: cwd || undefined }, menu.entry.path);
+					return;
+				}
+				const text = id === "relative" ? relativeTo(currentPath, menu.entry.path) : menu.entry.path;
 				copyPath(text, menu.entry.path);
 			};
 
-			const currentLabel = (currentPath || rootName || _dsht("plugin.sidebar.tab_file", "资源管理")).replace(/[\\/]+$/, "").split(/[\\/]/).pop();
+			const currentLabel = (currentPath || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop() || currentPath;
 
-			return react.createElement("div", { style: { display: "flex", flexDirection: "column", minHeight: 0, flex: 1, position: "relative" } }, [
-				// 资源管理头: 返回上级 + 根目录名 + 路径框 + 回到工作目录 + 刷新按钮。
-				react.createElement("div", { key: "head", style: { display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)" } }, [
-					react.createElement("button", { key: "up", type: "button", disabled: !canGoUp, style: { cursor: canGoUp ? "pointer" : "default", fontSize: 12, padding: "2px 6px", opacity: canGoUp ? 1 : 0.4 }, title: _dsht("plugin.sidebar.explorer_title_parent", "返回上级 ({{parentPath}})").replace("{{parentPath}}", parentPath), onClick: goUp }, "⬆"),
+			return react.createElement("div", { className: "dsl-root" }, [
+				// 顶部路径条: 返回上级 + 路径框 + 回到工作目录 + 刷新。
+				react.createElement("div", { key: "head", className: "dsl-head" }, [
+					react.createElement("button", {
+						key: "up",
+						type: "button",
+						className: "dsl-tool",
+						disabled: !canGoUp,
+						title: t("btn_up"),
+						onClick: goUp,
+					}, "⬆"),
 					react.createElement("input", {
 						key: "path",
 						type: "text",
+						className: "dsl-path",
 						value: pathBox,
 						spellCheck: false,
-						placeholder: _dsht("plugin.sidebar.explorer_placeholder", "完整路径, 回车跳转"),
-						style: { flex: 1, minWidth: 0, padding: "3px 6px", fontSize: 11, border: "1px solid var(--dsw-alias-border-l2,#ccc)", borderRadius: 4, outline: "none" },
+						placeholder: t("path.placeholder"),
 						onChange: (event) => setPathBox(event.target.value),
 						onKeyDown: (event) => { if (event.key === "Enter") goToPath(); },
 					}),
-					// 回到工作目录: 目标是「这个会话锁指定的目录」= 会话工作目录 cwd
-					// (session.header.cwd), 而非 dsh 程序目录 runtime\dsh、也非工作区根;
-					// 无会话/无 cwd 时才回退到工作区根 workspaceRoot。
-					// 图标用内联 SVG 房子 (不依赖字体字形, 跨浏览器/字体稳定显示, 避免
-					// 原 "⌂" 字符在某些字体下渲染成空白/方框看不清); 按钮放大 26px 高,
-					// 图标旁带文字标签「目录」, 一眼可辨用途; 边框用主题强调色更醒目,
-					// 悬停提示显示实际跳转的目标路径。
+					// 回到工作目录: 目标是「这个会话锁指定的目录」= 会话工作目录 cwd,
+					// 无会话/无 cwd 时才回退工作区根 workspaceRoot。
+					// 图标用内联 SVG 房子 (不依赖字体字形, 跨浏览器/字体稳定显示);
+					// 图标旁带文字标签「目录」, 一眼可辨用途; 悬停提示显示实际跳转目标路径。
 					react.createElement("button", {
 						key: "home",
 						type: "button",
-						style: { cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 3, height: 26, padding: "0 8px", whiteSpace: "nowrap", border: "1px solid #4a7bff", borderRadius: 4, background: "transparent", color: "#4a7bff", fontSize: 12 },
-						title: _dsht("plugin.sidebar.explorer_title_workdir", "回到工作目录: {{path}} (未连接会话)").replace("{{path}}", cwd || workspaceRoot || ""),
+						className: "dsl-home",
+						title: t("btn_home_title") + ": " + (cwd || workspaceRoot || ""),
 						onClick: () => {
 							const target = (cwd || workspaceRoot || "");
 							if (target !== "") { setCurrentPath(target); setPathBox(target); }
 						},
 					}, [
 						react.createElement("svg", { key: "ic", width: 15, height: 15, viewBox: "0 0 24 24", fill: "currentColor", style: { display: "block" } }, react.createElement("path", { d: "M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" })),
-						react.createElement("span", { key: "lb", style: { lineHeight: "16px" } }, _dsht("plugin.sidebar.explorer_btn_dir", "目录")),
+						react.createElement("span", { key: "lb" }, t("btn_home")),
 					]),
-					react.createElement("button", { key: "refresh", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 5px", border: "none", background: "transparent", color: "var(--dsw-alias-label-tertiary)" }, title: _dsht("plugin.sidebar.explorer_title_refresh", "刷新"), onClick: () => setRefreshTick((tick) => tick + 1) }, "⟳"),
+					react.createElement("button", {
+						key: "refresh",
+						type: "button",
+						className: "dsl-tool",
+						title: t("btn_refresh"),
+						onClick: () => { if (typeof onRefresh === "function") onRefresh(); },
+					}, "⟳"),
 				]),
-				error !== null && react.createElement("div", { key: "err", style: { padding: 8, fontSize: 12, color: "var(--dsw-alias-state-error-primary)" } }, _dsht("plugin.sidebar.explorer_err_load", "加载失败: ") + error),
-				notice !== null && react.createElement("div", { key: "ntc", style: { padding: 6, fontSize: 11, color: "var(--dsw-alias-state-error-primary)" } }, notice),
-				react.createElement("div", { key: "body", style: { flex: 1, overflow: "auto", padding: "2px 0" } }, [
-					// 根行: 当前目录自身也可右键 (与原版一致, 复制相对/绝对路径)。
+				error !== null && react.createElement("div", { key: "err", className: "dsl-error" }, t("files.load_error") + error),
+				notice !== null && react.createElement("div", { key: "ntc", className: "dsl-error" }, notice),
+				react.createElement("div", { key: "body", className: "dsl-body" }, [
+					// 根行: 当前目录自身也可右键 (复制相对/绝对路径)。
 					react.createElement("div", {
 						key: "rootrow",
-						style: { display: "flex", alignItems: "center", gap: 4, padding: "2px 4px", paddingLeft: 6, cursor: "pointer", fontSize: 12.5, userSelect: "none", whiteSpace: "nowrap", overflow: "hidden" },
+						className: "dsl-row",
+						style: { paddingLeft: 6 },
 						title: currentPath,
 						onClick: () => { if (currentPath) copyPath(relativeTo(currentPath, currentPath), currentPath); },
 						onContextMenu: (event) => { event.preventDefault(); event.stopPropagation(); if (currentPath) openMenu({ isDir: true, name: currentLabel, path: currentPath }, event.clientX, event.clientY); },
 					}, [
-						IconLayer("f"),
-						react.createElement("span", { key: "n", style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis" } }, currentLabel + (busy ? _dsht("plugin.sidebar.explorer_hint_loading", " · 加载中…") : "")),
-						copiedPath === currentPath && react.createElement("span", { key: "copied", style: { fontSize: 11, color: "#4a7bff", whiteSpace: "nowrap" } }, _dsht("plugin.sidebar.explorer_hint_copied", "已复制")),
+						react.createElement("span", { key: "glyph", className: "dsl-glyph" }, "📁"),
+						react.createElement("span", { key: "name", className: "dsl-name", style: { flex: 1 } }, currentLabel + (busy ? t("files.loading_suffix") : "")),
+						copiedPath === currentPath && react.createElement("span", { key: "copied", className: "dsl-copied" }, t("files.copied")),
 					]),
-					rootEntries === null && !error && react.createElement("div", { key: "loading", style: { padding: 8, fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.sidebar.explorer_scanning", "扫描目录…")),
-					rootEntries !== null && rootEntries.length === 0 && react.createElement("div", { key: "empty", style: { padding: 8, fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.sidebar.explorer_hint_empty", "(空目录)")),
-					rootEntries !== null ? rootEntries.map((child) => react.createElement(TreeNode, { key: child.path, entry: child, depth: 0, scope: { sessionId: scope.sessionId, cwd: currentPath }, onOpenFile: openFile, onMenu: openMenu })) : null,
-					// 菜单关闭: 点击空白处或关闭菜单后复位。
+					rootEntries === null && !error && react.createElement("div", { key: "loading", className: "dsl-note" }, t("files.scanning")),
+					rootEntries !== null && rootEntries.length === 0 && react.createElement("div", { key: "empty", className: "dsl-note" }, t("files.empty")),
+					rootEntries !== null && rootTruncated && react.createElement("div", { key: "trunc", className: "dsl-note" }, t("files.truncated_note")),
+					rootEntries !== null ? rootEntries.map((child) => react.createElement(TreeNode, {
+						key: child.path,
+						entry: child,
+						depth: 0,
+						scope: { sessionId, cwd: currentPath },
+						refreshTick,
+						onOpenFile,
+						onMenu: openMenu,
+						t,
+					})) : null,
+					// 菜单遮罩: 点击空白处关闭菜单。
 					rowMenu !== null && react.createElement("div", {
 						key: "menu-mask",
-						style: { position: "fixed", inset: 0, zIndex: 2147483000 },
+						className: "dsl-menu-mask",
 						onMouseDown: () => setRowMenu(null),
 						onContextMenu: (event) => event.preventDefault(),
 					}),
@@ -845,703 +683,379 @@ try { conv = actx && typeof actx.get === "function" ? actx.get("conversation") :
 						y: rowMenu.y,
 						entry: rowMenu.entry,
 						onSelect: onMenuSelect,
+						t,
 					}),
 				]),
 			]);
 		}
 
-		// ---- 文件预览/编辑 ----
+		// ---- 文件树 tab 正文 (注册为 kind "files" 的类型正文) ----
 
-		function FileViewer({ entry, scope, onClose }) {
-		const [i18nTick, setI18nTick] = react.useState(0);
-		react.useEffect(() => {
-			const handler = () => setI18nTick(t => t + 1);
-			document.addEventListener('dsh-i18n-change', handler);
-			return () => document.removeEventListener('dsh-i18n-change', handler);
-		}, []);
-			const [kind, setKind] = react.useState(null);   // 'text' | 'binary' | 'loading' | 'error'
-			const [text, setText] = react.useState("");
-			const [editDirty, setEditDirty] = react.useState(false);
-			const [saved, setSaved] = react.useState(false);
-			const [truncated, setTruncated] = react.useState(false);
-			const [mediaUrl, setMediaUrl] = react.useState(null);
-			const [error, setError] = react.useState(null);
-			// html/htm only: preview=iframe render, source=show raw code
-			const [viewMode, setViewMode] = react.useState("preview");
+		function FilesBody({ useTabInfo, sessionId, useSessions, t }) {
+			const tab = useTabInfo().tab;
 
-			const editable = EDITABLE_EXTS.includes(extOf(entry.name));
-			// hoist up, needed by both branch logic and render
-			const ext = extOf(entry.name);
-			const isHtml = ext === "html" || ext === "htm";
+			// 会话工作目录: 官方标准 prop 提供的会话列表选择器 (不再订阅 ctx.sessions.list)。
+			const sessionCwd = useSessions((state) => (state && state.byId ? (state.byId[sessionId] && state.byId[sessionId].cwd) : undefined));
 
+			// 根解析兜底: useSessions 拿不到 cwd 时, 经宿主 session.cwd 取 workspaceRoot || cwd。
+			const [fallbackRoot, setFallbackRoot] = react.useState("");
+			const [fallbackSettled, setFallbackSettled] = react.useState(false);
+			const fallbackResolvedFor = react.useRef(null);
+			// 会话切换 (keepMounted 下) 时重置根兜底与展开状态。
 			react.useEffect(() => {
+				setFallbackRoot("");
+				setFallbackSettled(false);
+				fallbackResolvedFor.current = null;
+			}, [sessionId]);
+			react.useEffect(() => {
+				if (typeof sessionCwd === "string" && sessionCwd !== "") return undefined;
+				if (fallbackResolvedFor.current === sessionId) return undefined;
+				fallbackResolvedFor.current = sessionId;
 				let cancelled = false;
-				setKind("loading");
-				setError(null);
 				(async () => {
 					try {
-						const data = await postMethod("fs.read", { sessionId: scope.sessionId, ...(scope.cwd ? { cwd: scope.cwd } : {}), path: entry.path });
-						if (cancelled) return;
-						// html/htm: always fetch both source and blob,
-						// let viewMode decide initial kind (binary=iframe / text=source).
-						// Switching viewMode only changes kind, no re-fetch.
-						if (isHtml) {
-							setText(data.file.content || "");
-							setTruncated(!!(data.file && data.file.truncated));
-							setKind(viewMode === "preview" ? "binary" : "text");
-							const url = await fetchBlobUrl({ sessionId: scope.sessionId, cwd: scope.cwd }, entry.path);
-							if (cancelled) { URL.revokeObjectURL(url); return; }
-							setMediaUrl(url);
-						} else if (data.file && data.file.kind === "text" && editable) {
-							setKind("text");
-							setText(data.file.content);
-							setTruncated(!!data.file.truncated);
-						} else if (data.file && data.file.kind === "text") {
-							setKind("text");          // treated as text by server, read-only
-							setText(data.file.content);
-							setTruncated(!!data.file.truncated);
-						} else {
-							// binary: fetch blob and render by extension
-							setKind("binary");
-							setTruncated(!!(data.file && data.file.truncated));
-							const url = await fetchBlobUrl({ sessionId: scope.sessionId, cwd: scope.cwd }, entry.path);
-							if (cancelled) { URL.revokeObjectURL(url); return; }
-							setMediaUrl(url);
-						}
-					} catch (e) {
-						if (!cancelled) { setKind("error"); setError(errMessage(e)); }
+						const data = await postMethod("session.cwd", { sessionId });
+						if (!cancelled) setFallbackRoot(data.workspaceRoot || data.cwd || "");
+					} catch (fallbackError) {
+						// 宿主不可用时保持空根, 界面提示"没有工作目录"。
+					} finally {
+						if (!cancelled) setFallbackSettled(true);
 					}
 				})();
 				return () => { cancelled = true; };
-			}, [entry.path, scope.sessionId]);
+			}, [sessionId, sessionCwd]);
 
-			// html viewMode toggle: only change kind, no re-fetch
+			const hasSessionCwd = (typeof sessionCwd === "string" && sessionCwd !== "");
+			// 当前会话的根兜底是否已经落定 (ref 在 effect 内同步赋值, 再触发状态更新)。
+			const fallbackReady = fallbackResolvedFor.current === sessionId && fallbackSettled;
+			const effectiveCwd = hasSessionCwd ? sessionCwd : (fallbackRoot || "");
+
+			// 官方刷新快捷键: 绑定到「重新读取当前目录」。
+			const [refreshTick, setRefreshTick] = react.useState(0);
 			react.useEffect(() => {
-				if (!isHtml) return;
-				if (kind !== "binary" && kind !== "text") return;
-				setKind(viewMode === "preview" ? "binary" : "text");
-			}, [viewMode]);
-
-			react.useEffect(() => () => {
-				if (mediaUrl) URL.revokeObjectURL(mediaUrl);
-			}, [mediaUrl]);
-
-			const save = async () => {
-				try {
-					await postMethod("fs.write", { sessionId: scope.sessionId, ...(scope.cwd ? { cwd: scope.cwd } : {}), path: entry.path, content: text });
-					setEditDirty(false);
-					setSaved(true);
-					setTimeout(() => setSaved(false), 1600);
-				} catch (e) {
-					setError(errMessage(e));
-				}
-			};
-
-			const isImage = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"].includes(ext);
-			const isPdf = ext === "pdf";
-			const isMd = ext === "md";
-
-			const headerStyle = { display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)", fontSize: 12.5 };
-
-			let bodyElem;
-			if (kind === "loading") bodyElem = react.createElement("div", { key: "loading", style: { padding: 12, fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.sidebar.fileviewer_reading", "读取文件…"));
-			else if (kind === "error") bodyElem = react.createElement("div", { key: "err", style: { padding: 12, fontSize: 12, color: "var(--dsw-alias-state-error-primary)" } }, _dsht("plugin.sidebar.fileviewer_err_read", "无法读取: ") + error);
-			else if (kind === "binary" && isImage) bodyElem = react.createElement("div", { key: "img", style: { overflow: "auto", padding: 6 } }, react.createElement("img", { src: mediaUrl || undefined, alt: entry.name, style: { maxWidth: "100%", display: "block" } }));
-			else if (kind === "binary" && isPdf) bodyElem = react.createElement("iframe", { key: "pdf", src: mediaUrl || undefined, style: { flex: 1, border: "none", width: "100%", height: "100%", background: "var(--dsw-alias-bg-base,#fff)" } });
-			else if (kind === "binary" && isHtml) bodyElem = react.createElement("iframe", { key: "html", src: mediaUrl || undefined, sandbox: "allow-scripts allow-same-origin", style: { flex: 1, border: "none", width: "100%", height: "100%", background: "var(--dsw-alias-bg-base,#fff)" } });
-			else if (kind === "binary") bodyElem = react.createElement("div", { key: "bin", style: { padding: 12, fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.sidebar.fileviewer_binary", "二进制文件, 不支持文本预览扩展名。"));
-			else {
-				bodyElem = react.createElement("div", { key: "txt", style: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 } }, [
-					react.createElement("textarea", {
-						key: "ta",
-						value: text,
-						readOnly: !editable || !editDirty,
-						spellCheck: false,
-						style: { flex: 1, width: "100%", boxSizing: "border-box", border: "none", outline: "none", resize: "none", font: "12px/1.5 ui-monospace,Consolas,Menlo,monospace", padding: 8, color: "inherit", background: "transparent" },
-						onChange: (e) => { setText(e.target.value); setEditDirty(true); },
-					}),
-					truncated && react.createElement("div", { key: "trunc", style: { padding: "2px 8px", fontSize: 11, color: "var(--dsw-alias-state-warn-label)" } }, _dsht("plugin.sidebar.fileviewer_hint_large", "文件超过 1MB, 仅载入前部 (只读保护)。")),
-				]);
-			}
-
-			return react.createElement("div", { key: "fv", style: { borderTop: "1px solid var(--dsw-alias-border-l1,#eee)", display: "flex", flexDirection: "column", flex: 1, minHeight: 0 } }, [
-				react.createElement("div", { key: "h", style: headerStyle }, [
-					react.createElement("button", { key: "back", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 6px" }, onClick: onClose }, _dsht("plugin.sidebar.fileviewer_btn_back", "‹ 返回")),
-					react.createElement("span", { key: "t", title: entry.path, style: { flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, "📄 " + entry.name),
-					kind === "text" && editable && react.createElement("button", { key: "edit", type: "button", disabled: !editDirty, style: { cursor: editDirty ? "pointer" : "default", fontSize: 12, padding: "2px 8px", opacity: editDirty ? 1 : 0.5 }, onClick: () => { if (!editDirty) { setEditDirty(true); } else { save(); } } }, saved ? _dsht("plugin.sidebar.fileviewer_btn_saved", "已保存 ✓") : (editDirty ? _dsht("plugin.sidebar.fileviewer_btn_save", "保存") : _dsht("plugin.sidebar.fileviewer_btn_edit", "编辑"))),
-					isMd && kind === "text" && react.createElement("button", { key: "md", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 8px", opacity: 0.85 }, onClick: () => window.open("/__dsh/sidebar-lite/file?" + new URLSearchParams({ sessionId: scope.sessionId, ...(scope.cwd ? { cwd: scope.cwd } : {}), path: entry.path }), "_blank") }, _dsht("plugin.sidebar.fileviewer_btn_new_win", "在新窗口查看")),
-					isHtml && react.createElement("button", { key: "toggle-html-view", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "2px 6px", opacity: 0.85 }, onClick: () => setViewMode((v) => v === "preview" ? "source" : "preview"), title: viewMode === "preview" ? "View source" : "Render page" }, viewMode === "preview" ? _dsht("plugin.sidebar.fileviewer_btn_source", "📄 源码") : _dsht("plugin.sidebar.fileviewer_btn_preview", "🌐 预览")),
-				]),
-				error !== null && kind !== "error" && react.createElement("div", { key: "err2", style: { padding: 6, fontSize: 12, color: "var(--dsw-alias-state-error-primary)" } }, error),
-				bodyElem,
-			]);
-		}
-
-		// ---- 独立文件预览侧栏框 ----
-		// 点击文件后在主侧栏旁的"第二个侧栏框"里预览/编辑, 不再挤占资源管理器列表;
-		// 复用 FileViewer (其自带「返回」= 关闭预览)。宽度可拖 (左缘), 固定定位右缘
-		// 贴住主面板左缘 (right: panelWidth), 并让 #root 额外让位 (CSS_EXTRA_VAR)。
-
-		function PreviewPane({ entry, scope, panelWidth, previewWidth, onClose, onResizeStart }) {
-			return react.createElement("div", { key: "preview-pane", style: {
-				position: "fixed", top: 0, right: panelWidth, bottom: 0, width: previewWidth,
-				zIndex: 2147482998, display: "flex", flexDirection: "column", minHeight: 0,
-				background: "var(--dsw-alias-bg-layer-2,#ffffff)",
-				boxShadow: "-1px 0 0 var(--dsw-alias-border-l1,#e5e5e5)",
-			}}, [
-				// 左缘拖拽条: 拖动调节预览框宽度。
-				react.createElement("div", {
-					key: "pvres",
-					style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 5, zIndex: 2147483001, cursor: "ew-resize", background: "transparent" },
-					title: _dsht("plugin.sidebar.explorer_title_resize", "拖动调节预览宽度"),
-					onMouseDown: onResizeStart,
-				}),
-				react.createElement(FileViewer, { key: "pvfile", entry, scope, onClose }),
-			]);
-		}
-
-		// ---- 内嵌浏览器 ----
-
-		function BrowserView({ scope }) {
-		const [i18nTick, setI18nTick] = react.useState(0);
-		react.useEffect(() => {
-			const handler = () => setI18nTick(t => t + 1);
-			document.addEventListener('dsh-i18n-change', handler);
-			return () => document.removeEventListener('dsh-i18n-change', handler);
-		}, []);
-			const [address, setAddress] = react.useState("");
-			const [src, setSrc] = react.useState(null);
-			const [error, setError] = react.useState(null);
-
-			const go = () => {
-				setError(null);
-				let url = address.trim();
-				if (!url) return;
-				if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url)) url = "https://" + url;
-				setSrc(url);
-			};
-
-			react.useEffect(() => { setAddress(src || ""); }, [src]);
-
-			return react.createElement("div", { style: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 } }, [
-				react.createElement("div", { key: "bar", style: { display: "flex", gap: 4, padding: 4, borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)" } }, [
-					react.createElement("input", { key: "in", type: "text", value: address, placeholder: _dsht("plugin.sidebar.browser_placeholder", "输入网址 (如 example.com) 回车访问"), spellCheck: false, style: { flex: 1, minWidth: 0, padding: "3px 6px", fontSize: 12, border: "1px solid var(--dsw-alias-border-l2,#ccc)", borderRadius: 4, outline: "none" }, onChange: (e) => setAddress(e.target.value), onKeyDown: (e) => { if (e.key === "Enter") go(); } }),
-					react.createElement("button", { key: "go", type: "button", style: { cursor: "pointer", fontSize: 12, padding: "3px 10px" }, onClick: go }, _dsht("plugin.sidebar.browser_btn_go", "前往")),
-				]),
-				error !== null && react.createElement("div", { key: "err", style: { padding: 6, fontSize: 12, color: "var(--dsw-alias-state-error-primary)" } }, error),
-				react.createElement("div", { key: "frame", style: { flex: 1, minHeight: 0, position: "relative", background: "var(--dsw-alias-bg-base,#fff)" } }, [
-					src === null && react.createElement("div", { key: "hint", style: { position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.sidebar.browser_hint_start", "在上方输入网址开始浏览")),
-					src !== null && react.createElement("iframe", {
-						key: "if",
-						src,
-						sandbox: "allow-scripts allow-same-origin allow-forms allow-popups allow-downloads allow-modals",
-						referrerPolicy: "no-referrer",
-						style: { position: "absolute", inset: 0, width: "100%", height: "100%", border: "none" },
-						onLoad: () => setError(null),
-						onError: () => setError(_dsht("plugin.sidebar.browser_err_load", "无法载入该页面 (可能拒绝 iframe 嵌入)。")),
-					}),
-				]),
-			]);
-		}
-
-		// ---- CMD 终端 ----
-
-		function TerminalView({ scope, tab }) {
-		const [i18nTick, setI18nTick] = react.useState(0);
-		react.useEffect(() => {
-			const handler = () => setI18nTick(t => t + 1);
-			document.addEventListener('dsh-i18n-change', handler);
-			return () => document.removeEventListener('dsh-i18n-change', handler);
-		}, []);
-			// 输出日志 (合并回放 + 实时输出), 用一个 <pre> 整体渲染, 追加时自动滚动到底。
-			const [lines, setLines] = react.useState([]);
-			const [input, setInput] = react.useState("");
-			const [error, setError] = react.useState(null);
-			const [busy, setBusy] = react.useState(false); // 发送中 / 停止中
-			const streamRef = react.useRef(null);
-			const bottomRef = react.useRef(null);
-
-			// 挂载时确保进程就绪并挂接 SSE 流; 卸载时只断开读取, 不结束宿主进程。
-			react.useEffect(() => {
-				let alive = true;
-				postMethod("terminal.open", { sessionId: scope.sessionId, ...(scope.cwd ? { cwd: scope.cwd } : {}), tab })
-					.then(() => {
-						if (!alive) return;
-						const stream = attachTerminalStream(scope, tab, (text) => {
-							setLines((previous) => previous.concat([text]));
-						}, (message) => {
-							if (alive) setError(message);
-						});
-						streamRef.current = stream;
-					})
-					.catch((e) => {
-						if (alive) setError(errMessage(e));
-					});
-				return () => {
-					alive = false;
-					if (streamRef.current) streamRef.current.stop();
-				};
-			}, [scope.sessionId, tab]);
-
-			// 输出区域自动滚动到底。
-			react.useEffect(() => {
-				if (bottomRef.current) bottomRef.current.scrollIntoView();
-			}, [lines]);
-
-			const sendLine = async () => {
-				const line = input;
-				if (line === "") return;
-				setInput("");
-				setError(null);
-				setBusy(true);
-				try {
-					// cmd 默认回显命令本身, 因此只在本地补一行 v 光标提示后交给宿主写 stdin。
-					await postMethod("terminal.input", { sessionId: scope.sessionId, tab, line });
-					setLines((previous) => previous.concat([""])); // 触发一次滚动
-				} catch (e) {
-					setError(errMessage(e));
-				} finally {
-					setBusy(false);
-				}
-			};
-
-			const killTerminal = async () => {
-				setBusy(true);
-				try {
-					// 先断开 SSE 读取再停进程, 避免进程退出事件写到一个断开的响应上。
-					if (streamRef.current) streamRef.current.stop();
-					await postMethod("terminal.kill", { sessionId: scope.sessionId, tab });
-					setLines((previous) => previous.concat(["\r\n" + _dsht("plugin.sidebar.terminal_stopped", "[终端已停止]") + "\r\n"]));
-				} catch (e) {
-					setError(errMessage(e));
-				} finally {
-					setBusy(false);
-				}
-			};
-
-			return react.createElement("div", { style: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 } }, [
-				react.createElement("div", { key: "bar", style: { display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)" } }, [
-					react.createElement("span", { key: "hint", style: { flex: 1, fontSize: 11, color: "var(--dsw-alias-label-tertiary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, _dsht("plugin.sidebar.terminal_title", "CMD 终端 (逐行执行命令)")),
-					react.createElement("button", { key: "kill", type: "button", disabled: busy, style: { cursor: busy ? "default" : "pointer", fontSize: 12, padding: "2px 8px", color: "var(--dsw-alias-state-error-primary)" }, onClick: killTerminal }, _dsht("plugin.sidebar.terminal_btn_stop", "停止")),
-				]),
-				error !== null && react.createElement("div", { key: "err", style: { padding: 6, fontSize: 11, color: "var(--dsw-alias-state-error-primary)" } }, error),
-				react.createElement("div", { key: "out", style: { flex: 1, minHeight: 0, overflow: "auto", padding: "6px 8px" } }, [
-					react.createElement("pre", { key: "pre", style: { margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-all", font: "12px/1.5 ui-monospace,Consolas,Menlo,monospace", color: "inherit" } },
-						(lines.length === 0 ? _dsht("plugin.sidebar.terminal_hint", "输入命令后回车执行 (如 dir / cd / python --version)。") + "\n" : lines.join(""))),
-					react.createElement("div", { key: "bottom", ref: bottomRef }),
-				]),
-				react.createElement("div", { key: "cmd", style: { display: "flex", gap: 4, padding: "4px 8px", borderTop: "1px solid var(--dsw-alias-border-l1,#eee)" } }, [
-					react.createElement("input", {
-						key: "i",
-						type: "text",
-						value: input,
-						placeholder: _dsht("plugin.sidebar.terminal_placeholder", "输入命令, 回车执行"),
-						spellCheck: false,
-						style: { flex: 1, minWidth: 0, padding: "3px 6px", fontSize: 12, border: "1px solid var(--dsw-alias-border-l2,#ccc)", borderRadius: 4, outline: "none" },
-						onChange: (event) => setInput(event.target.value),
-						onKeyDown: (event) => { if (event.key === "Enter") sendLine(); },
-					}),
-					react.createElement("button", { key: "send", type: "button", disabled: busy || input === "", style: { cursor: (busy || input === "") ? "default" : "pointer", fontSize: 12, padding: "3px 10px" }, onClick: sendLine }, _dsht("plugin.sidebar.terminal_btn_exec", "执行")),
-				]),
-			]);
-		}
-
-		// ---- 任务管理 (后台任务) ----
-
-		function TasksView({ scope, jobs, active }) {
-		const [i18nTick, setI18nTick] = react.useState(0);
-		react.useEffect(() => {
-			const handler = () => setI18nTick(t => t + 1);
-			document.addEventListener('dsh-i18n-change', handler);
-			return () => document.removeEventListener('dsh-i18n-change', handler);
-		}, []);
-			// 展开查看输出时用 objectMap 缓存每个任务的输出文本与错误。
-			const [outputText, setOutputText] = react.useState({});
-			const [busyId, setBusyId] = react.useState(null);
-
-			const loadOutput = async (job) => {
-				setBusyId(job.id);
-				try {
-					const data = await postMethod("jobs.output", { sessionId: scope.sessionId, id: job.id });
-					setOutputText((previous) => ({ ...previous, [job.id]: { text: data.text || _dsht("plugin.sidebar.tasks_no_output", "(无输出)"), error: null } }));
-				} catch (e) {
-					setOutputText((previous) => ({ ...previous, [job.id]: { text: "", error: errMessage(e) } }));
-				} finally {
-					setBusyId(null);
-				}
-			};
-
-			const killJob = async (job) => {
-				setBusyId(job.id);
-				try {
-					await postMethod("jobs.kill", { sessionId: scope.sessionId, id: job.id, reason: "user requested via sidebar" });
-					setOutputText((previous) => ({ ...previous, [job.id]: { text: _dsht("plugin.sidebar.tasks_stop_requested", "已请求停止该任务。"), error: null } }));
-				} catch (e) {
-					setOutputText((previous) => ({ ...previous, [job.id]: { text: "", error: errMessage(e) } }));
-				} finally {
-					setBusyId(null);
-				}
-			};
-
-			const list = jobs || [];
-
-			// ---- 顶部: 当前激活会话的「AI 状态卡」(明确 AI 当前任务目标与进度) ----
-			// 数据来源是官方会话列表 store 的 SessionSummary: displayTitle=当前任务目标,
-			// running=是否在执行中, completed=是否已完成, cwd=会话工作目录。
-			const hasSession = !!active;
-			const goalTitle = (active && active.displayTitle && active.displayTitle !== "") ? active.displayTitle : _dsht("plugin.sidebar.tasks_unnamed", "（未命名）");
-			const isRunning = !!(active && active.running);
-			const isCompleted = !!(active && active.completed);
-
-			// 状态徽标: 执行中蓝点闪烁提示「正在推进」, 空闲灰点, 已完成绿点。
-			let status = { text: _dsht("plugin.sidebar.tasks_no_session", "未选择会话"), color: "var(--dsw-alias-label-tertiary)", dot: "#c9c9c9", pulse: false };
-			if (hasSession) {
-				if (isRunning) status = { text: _dsht("plugin.sidebar.tasks_running", "AI 正在执行当前任务…"), color: "#1a56db", dot: "#1a56db", pulse: true };
-				else if (isCompleted) status = { text: _dsht("plugin.sidebar.tasks_done", "已完成"), color: "var(--dsw-alias-state-success-primary)", dot: "#16a34a", pulse: false };
-				else status = { text: _dsht("plugin.sidebar.tasks_idle", "空闲 · 等待新的指令"), color: "var(--dsw-alias-label-secondary)", dot: "#8a8f98", pulse: false };
-			}
-
-			return react.createElement("div", { key: "tasks", style: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "auto" } }, [
-				// 状态卡: 明确 AI 当前任务与进度。
-				react.createElement("div", { key: "status", style: { margin: "8px 8px 4px", padding: 10, border: "1px solid var(--dsw-alias-border-l1,#e5e5e5)", borderRadius: 8, background: "var(--dsw-alias-bg-layer-2,#ffffff)" } }, [
-					react.createElement("div", { key: "goal", style: { fontSize: 12.5, fontWeight: 600, color: "var(--dsw-alias-label-primary,#1f2329)", wordBreak: "break-all", lineHeight: 1.4 } }, _dsht("plugin.sidebar.tasks_target", "目标 / 当前任务: ") + goalTitle),
-					react.createElement("div", { key: "st", style: { display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 12, color: status.color } }, [
-						react.createElement("span", { key: "dot", style: { width: 8, height: 8, borderRadius: "50%", background: status.dot, flex: "none", animation: status.pulse ? "dsl-pulse 1.2s ease-in-out infinite" : undefined } }),
-						react.createElement("span", { key: "t", style: { fontWeight: 600 } }, status.text),
-					]),
-					(hasSession && active && active.cwd) ? react.createElement("div", { key: "cwd", style: { marginTop: 6, fontSize: 11, color: "var(--dsw-alias-label-tertiary)", wordBreak: "break-all" }, title: active.cwd }, _dsht("plugin.sidebar.tasks_workdir", "工作目录: ") + active.cwd) : null,
-				]),
-
-				// 后台任务标题行。
-				react.createElement("div", { key: "jobshead", style: { display: "flex", alignItems: "center", gap: 6, padding: "8px 10px 4px", fontSize: 12, fontWeight: 600, color: "var(--dsw-alias-label-primary,#1f2329)" } }, _dsht("plugin.sidebar.tasks_bg_fmt", "后台任务 ({{count}})").replace("{{count}}", list.length)),
-
-				// 无会话 / 无后台任务 的提示 (避免看起来像"没绑定到东西")。
-				react.createElement("div", { key: "jobsbody", style: { padding: "4px 10px 10px", display: "flex", flexDirection: "column", gap: 4 } }, [
-					(!hasSession) && react.createElement("div", { key: "nosess", style: { fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.sidebar.tasks_no_session_hint", "未选择会话, 无法显示 AI 的当前任务状态。")),
-					(hasSession && list.length === 0) && react.createElement("div", { key: "empty", style: { fontSize: 12, color: "var(--dsw-alias-label-tertiary)" } }, _dsht("plugin.sidebar.tasks_no_bg", "当前没有后台任务运行。")),
-				]),
-
-				// 后台任务列表 (仅 AI 调 job_* 类工具时才有; 恒空属正常)。
-				hasSession && list.map((job) => {
-					const currentOutput = outputText[job.id] || null;
-					const statusLabel = job.status || "unknown";
-					return react.createElement("div", { key: job.id, style: { borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)", padding: "8px 10px" } }, [
-						react.createElement("div", { key: "row", style: { display: "flex", alignItems: "center", gap: 6 } }, [
-							react.createElement("span", { key: "st", style: { fontSize: 11, padding: "1px 6px", borderRadius: 3, background: statusLabel === "running" ? "var(--dsw-alias-interactive-bg-hover-accent)" : "var(--dsw-alias-bg-module-platform)", color: statusLabel === "running" ? "#1a56db" : "var(--dsw-alias-label-secondary)" } }, statusLabel),
-							react.createElement("span", { key: "id", style: { flex: 1, minWidth: 0, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", userSelect: "none" }, title: job.title || job.id }, (job.title || job.id)),
-							react.createElement("button", { key: "out", type: "button", disabled: busyId === job.id, style: { cursor: busyId === job.id ? "default" : "pointer", fontSize: 11, padding: "2px 6px", flex: "none" }, onClick: () => loadOutput(job), title: _dsht("plugin.sidebar.tasks_title_view_output", "查看 AI 读取到的输出") }, _dsht("plugin.sidebar.tasks_btn_output", "输出")),
-							react.createElement("button", { key: "kill", type: "button", disabled: busyId === job.id, style: { cursor: busyId === job.id ? "default" : "pointer", fontSize: 11, padding: "2px 6px", flex: "none" }, onClick: () => killJob(job), title: _dsht("plugin.sidebar.tasks_title_stop", "停止该任务") }, _dsht("plugin.sidebar.terminal_btn_stop", "停止")),
-						]),
-						currentOutput !== null && react.createElement("div", { key: "body", style: { marginTop: 6, padding: 6, background: "var(--dsw-alias-bg-module-platform)", borderRadius: 4 } }, [
-							currentOutput.error !== null
-								? react.createElement("div", { key: "e", style: { fontSize: 11, color: "var(--dsw-alias-state-error-primary)" } }, _dsht("plugin.sidebar.err_op_fail", "操作失败: ") + currentOutput.error)
-								: react.createElement("pre", { key: "o", style: { margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-all", fontSize: 11, lineHeight: 1.5 } }, currentOutput.text),
-						]),
-					]);
-				}),
-			]);
-		}
-
-		// ---- 侧边栏外壳 (折叠 + Tab 切换) ----
-
-		function SidebarShell({ ctx }) {
-		const [i18nTick, setI18nTick] = react.useState(0);
-		react.useEffect(() => {
-			const handler = () => setI18nTick(t => t + 1);
-			document.addEventListener('dsh-i18n-change', handler);
-			return () => document.removeEventListener('dsh-i18n-change', handler);
-		}, []);
-			const [open, setOpen] = react.useState(true);
-			const [tab, setTab] = react.useState("explorer"); // 'explorer' | 'browser' | 'terminal' | 'tasks'
-			const [cwd, setCwd] = react.useState(null);
-			const [rootName, setRootName] = react.useState("");
-			// 工作区根目录 (E:\DeepSeekHarnessLauncher): 资源管理器默认根。
-			const [workspaceRoot, setWorkspaceRoot] = react.useState(null);
-			const [sessionErr, setSessionErr] = react.useState(null);
-
-			// ---- 侧边栏宽度自由拉伸 ----
-			// 拖动左边缘调整面板宽度 (右停靠, 宽度=视口宽-光标x); 记录收起前宽度以便展开复位。
-			// 初始宽度用 MIN_PANEL_WIDTH (200px): 首次打开不挡太多主内容, 需要时用户自己拖宽。
-			const [panelWidth, setPanelWidthState] = react.useState(MIN_PANEL_WIDTH);
-			const [resizing, setResizing] = react.useState(false);
-			const lastWidthRef = react.useRef(MIN_PANEL_WIDTH);
-
-			// 宽度变化时同步 CSS 变量 (驱动 #root 让位 + 面板宽度)。
-			react.useEffect(() => {
-				setPanelWidth(panelWidth);
-			}, [panelWidth]);
-
-			// 收起点下当前宽度, 展开时恢复 (避免每次展开重置回默认宽度)。
-			react.useEffect(() => {
-				if (open) {
-					setPanelWidthState(lastWidthRef.current);
-				} else {
-					lastWidthRef.current = panelWidth;
-					setPanelWidthState(0);
-					setExtraWidth(0);      // 收起时立即清预览让位
-					setPreview(null);      // 收起时关闭预览框
-				}
-			}, [open]);
-
-			// 拖动左边缘: 全局监听 mousemove / mouseup 连续更新宽度, 最小 MIN_PANEL_WIDTH。
-			const onResizeStart = (event) => {
-				event.preventDefault();
-				setResizing(true);
-			};
-			react.useEffect(() => {
-				if (!resizing) return undefined;
-				const onMove = (moveEvent) => {
-					const nextWidth = Math.max(MIN_PANEL_WIDTH, window.innerWidth - moveEvent.clientX);
-					setPanelWidthState(nextWidth);
-				};
-				const onEnd = () => setResizing(false);
-				document.addEventListener("mousemove", onMove);
-				document.addEventListener("mouseup", onEnd);
-				return () => {
-					document.removeEventListener("mousemove", onMove);
-					document.removeEventListener("mouseup", onEnd);
-				};
-			}, [resizing]);
-
-			// ---- 独立文件预览侧栏框 ----
-			// 点击文件后打开一个"第二个侧栏框" (位于主面板左侧, right:panelWidth)。
-			const [preview, setPreview] = react.useState(null);   // { entry, scope }
-			const [previewWidth, setPreviewWidth] = react.useState(PREVIEW_WIDTH);
-			const [previewResizing, setPreviewResizing] = react.useState(false);
-
-
-			// 预览框存在时额外让位 (让 #root 左右内容避让), 关闭后归零。
-			react.useEffect(() => {
-				setExtraWidth(preview !== null ? previewWidth : 0);
-			}, [preview, previewWidth]);
-
-			// 拖动预览框左缘: 宽度 = 视口宽 - 光标x - 主面板宽; 最小 200px。
-			const onPreviewResizeStart = (event) => {
-				event.preventDefault();
-				setPreviewResizing(true);
-			};
-			react.useEffect(() => {
-				if (!previewResizing) return undefined;
-				const onMove = (moveEvent) => {
-					const nextWidth = Math.max(MIN_PANEL_WIDTH, window.innerWidth - moveEvent.clientX - panelWidth);
-					setPreviewWidth(nextWidth);
-				};
-				const onEnd = () => setPreviewResizing(false);
-				document.addEventListener("mousemove", onMove);
-				document.addEventListener("mouseup", onEnd);
-				return () => {
-					document.removeEventListener("mousemove", onMove);
-					document.removeEventListener("mouseup", onEnd);
-				};
-			}, [previewResizing, panelWidth]);
-
-			// 订阅当前激活会话 (ctx.sessions.list 外部 store)。
-			const [, force] = react.useReducer((x) => x + 1, 0);
-			react.useEffect(() => {
-				if (!ctx || !ctx.sessions || !ctx.sessions.list || typeof ctx.sessions.list.subscribe !== "function") return undefined;
-				return ctx.sessions.list.subscribe(() => force());
-			}, [ctx]);
-
-			const snapshot = (ctx && ctx.sessions && ctx.sessions.list && typeof ctx.sessions.list.getSnapshot === "function") ? ctx.sessions.list.getSnapshot() : null;
-			// 当前激活会话 id: 官方 list store 的字段是 current (不是 sessionId!),
-			// 用错字段会恒为 null → 走"无会话兜底" → 任务面板永远空、会话 cwd 拿不到。
-			const sessionId = (snapshot && (snapshot.current || snapshot.sessionId)) || null;
-			const summaryCwd = sessionId ? ((snapshot && snapshot.byId && snapshot.byId[sessionId] && snapshot.byId[sessionId].cwd) || undefined) : undefined;
-			// 后台任务列表 (官方 session/jobs 推送镜像, 与 better-sidebar 同一数据源)。
-			// 注意: 该字段只在 AI 调用 job_* 类工具 (长任务/后台脚本) 产生 session/jobs 帧时
-			// 才会被填充, 普通对话恒为空 —— 旧任务页"永远没显示"的根因就在于此。
-			const jobs = (snapshot && snapshot.jobsBySession && sessionId && snapshot.jobsBySession[sessionId]) || [];
-			// 激活会话的元信息 (目标/状态来源): byId 里的 SessionSummary 含
-			// displayTitle (当前任务目标)、running (是否在执行)、cwd、completed (是否已完成),
-			// 用于在任务页明确展示 AI 当前任务进度与目标。
-			const activeSummary = sessionId ? ((snapshot && snapshot.byId && snapshot.byId[sessionId]) || null) : null;
-
-			const scope = { sessionId: sessionId || "", cwd: cwd || undefined };
-
-			const openPreview = react.useCallback((entry) => {
-				setPreview({ entry, scope });
-			}, [scope]);
-			// 已做过"无会话兜底根解析"的标记: 只兜底一次, 避免频繁轮询宿主端点根。
-			const fallbackResolved = react.useRef(false);
-
-			// 解析会话权威工作目录 (宿主端以 session.header.cwd 为准)。
-			react.useEffect(() => {
-				let cancelled = false;
-				if (sessionId) {
-					// 有会话: 解析会话 cwd + 工作区根, 作为资源管理器默认根。
-					fallbackResolved.current = true;
-					setSessionErr(null);
-					(async () => {
-						try {
-							const data = await postMethod("session.cwd", { sessionId, ...(summaryCwd ? { cwd: summaryCwd } : {}) });
-							if (cancelled) return;
-							setCwd(data.cwd || null);
-							setRootName(data.root || "");
-							// 资源管理器默认根: 优先工作区根, 兜底会话工作目录。
-							setWorkspaceRoot(data.workspaceRoot || data.cwd || null);
-						} catch (e) {
-							if (!cancelled) setSessionErr(errMessage(e));
-						}
-					})();
-				} else if (!fallbackResolved.current) {
-					// 无会话: 仍兜底解析一次工作区根 (宿主 resolveWorkspaceRoot 不依赖 sessionId),
-					// 否则资源管理器 currentPath 永远为空, 卡死在「扫描目录…」不显示目录。
-					fallbackResolved.current = true;
-					setSessionErr(null);
-					(async () => {
-						try {
-							const data = await postMethod("session.cwd", { sessionId: "" });
-							if (cancelled) return;
-							const fallbackRoot = data.workspaceRoot || data.cwd || null;
-							setWorkspaceRoot(fallbackRoot);
-							setRootName(data.root || "");
-							// 无会话时, 会话 cwd 也一并兜底, 保证 fs.tree / file / terminal 有非空作用域。
-							setCwd((existing) => existing || fallbackRoot);
-						} catch (e) {
-							if (!cancelled) setSessionErr(errMessage(e));
-						}
-					})();
-				}
-				return () => { cancelled = true; };
-			}, [sessionId]);
+				if (!tab || !tab.actions || typeof tab.actions.bindCommands !== "function") return undefined;
+				return tab.actions.bindCommands({ refresh: () => setRefreshTick((tick) => tick + 1) });
+			}, [tab.actions, tab.id]);
 
 			// 官方 @ 引用插入需要的会话级通道 (与 dsh-file-browser 插件相同):
-			//   provideInfo(id) -> standard-kit 提供包 { hooks: { input: 输入机状态 store }, props: { inputActions } }
+			//   provideInfo(id) -> standard-kit 提供包
 			//   scope(id)       -> 会话作用域 ctx (用于派发 slash/input-insert-reference)
 			const bridge = {
 				provideInfo: (id) => {
 					try {
-						const sessions = ctx && ctx.sessions;
+						const sessions = pluginContext && pluginContext.sessions;
 						return sessions && typeof sessions.provideInfo === "function" ? sessions.provideInfo(id) : null;
-					} catch (e) { return null; }
+					} catch (error) { return null; }
 				},
 				scope: (id) => {
 					try {
-						const sessions = ctx && ctx.sessions;
+						const sessions = pluginContext && pluginContext.sessions;
 						return sessions && typeof sessions.resolveAgentScope === "function" ? sessions.resolveAgentScope(id) : (sessions && typeof sessions.scope === "function" ? sessions.scope(id) : null);
-					} catch (e) { return null; }
+					} catch (error) { return null; }
 				},
 			};
 
-			// 展开/收起时的 #root 让位现由上方 panelWidth 相关 effect 统一处理。
+			// 单击文件行: 交给官方资源预览 (Markdown/代码/图片/PDF 都由官方渲染)。
+			const openResource = (absolutePath) => {
+				if (!tab || !tab.actions) return;
+				tab.actions.openResource(fileAddressFor(sessionId, effectiveCwd, absolutePath));
+			};
+			// 「编辑」: 打开本插件的编辑 tab, 文件身份编进资源地址 (刷新页面后可恢复同一文件)。
+			const openEdit = (absolutePath) => {
+				if (!tab || !tab.actions) return;
+				tab.actions.openResource(editAddressFor(sessionId, absolutePath));
+			};
 
-			const tabButton = (id, label) => react.createElement("button", {
-				key: id,
-				type: "button",
-				onClick: () => setTab(id),
-				style: { flex: 1, cursor: "pointer", padding: "6px 4px", fontSize: 12, border: "none", borderBottom: tab === id ? "2px solid #4a7bff" : "2px solid transparent", background: "transparent", color: tab === id ? "inherit" : "var(--dsw-alias-label-secondary)", fontWeight: tab === id ? 600 : 400 },
-			}, label);
-
-			// rail 开关按钮: fixed 定位, 作为全局 toggle 开关。
-			// right 值随状态自适应:
-			//   - 收起态 (open=false): CSS 默认 right:16px, 贴视口右上角
-			//   - 展开态 (open=true): right = panelWidth + previewWidth + 16px
-			//     (主侧栏 + 预览框宽度 + 间距), 贴最左侧面板的左边缘外
-			const extraRight = open ? (panelWidth + (preview !== null ? previewWidth : 0) + 16) : null;
-			const railStyle = extraRight !== null ? { right: extraRight + "px" } : undefined;
-			const railButton = react.createElement("button", {
-				type: "button",
-				id: N + "-rail",
-				style: railStyle,
-				onClick: () => setOpen((previous) => !previous),
-				title: open ? _dsht("plugin.sidebar.btn_collapse", "收起侧边栏") : _dsht("plugin.sidebar.btn_expand", "展开侧边栏"),
-				"aria-label": open ? _dsht("plugin.sidebar.btn_collapse", "收起侧边栏") : _dsht("plugin.sidebar.btn_expand", "展开侧边栏"),
-			}, react.createElement(PanelGlyph, { size: 18 }));
-
-			if (!open) {
-				// 收起态: host 不渲染 (省 DOM), 只显示 rail
-				return railButton;
+			// 根尚未确定 (会话 cwd 未到 / 兜底未落定): 先显示"扫描目录…", 避免用上一会话的旧根挂载树。
+			if (!hasSessionCwd && !fallbackReady) {
+				return react.createElement("div", { className: "dsl-root" },
+					react.createElement("div", { className: "dsl-note" }, t("files.scanning")));
+			}
+			if (effectiveCwd === "") {
+				return react.createElement("div", { className: "dsl-root" },
+					react.createElement("div", { className: "dsl-note" }, t("files.no_workspace")));
 			}
 
-			// 展开态: Fragment 包装 host + rail (rail fixed 在右上角, 不占 host 内部空间)
-			return react.createElement(react.Fragment, null, [
-				react.createElement("div", { key: "main", id: N + "-host", className: resizing ? N + "-resizing" : undefined }, [
-				// 左边缘拖动手柄: 透明分隔条, 悬停显示横向拖拽光标, 拖动即调整宽度。
-				react.createElement("div", {
-					key: "resizer",
-					style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 5, zIndex: 2147483001, cursor: "ew-resize", background: "transparent" },
-					onMouseDown: onResizeStart,
+			return react.createElement(ExplorerView, {
+				// keepMounted 下换会话时用 key 强制重建, 重置根目录/展开/菜单等内部状态。
+				key: sessionId,
+				sessionId,
+				cwd: effectiveCwd,
+				workspaceRoot: fallbackRoot,
+				refreshTick,
+				onRefresh: () => setRefreshTick((tick) => tick + 1),
+				t,
+				onOpenFile: (entry) => openResource(entry.path),
+				onEdit: openEdit,
+				bridge,
+			});
+		}
+
+		// ---- 编辑 tab (kind "sidebar-lite.edit") ----
+		// 内容完全由 props 里的会话与 tab 身份驱动: 文件路径从资源地址 (tab.contentId) 还原,
+		// 因为官方只持久化地址、不持久化 navigation.params。
+
+		function EditorBody({ useTabInfo, sessionId, t }) {
+			const tab = useTabInfo().tab;
+			// 绝对路径来自资源地址, 因此宿主端无需再用 cwd 兜底 (resolvePathUnder 只接受绝对路径)。
+			const filePath = pathFromEditAddress(tab && tab.contentId);
+
+			const [kind, setKind] = react.useState("loading");   // loading | text | binary | error
+			const [content, setContent] = react.useState("");
+			const [truncated, setTruncated] = react.useState(false);
+			const [error, setError] = react.useState(null);
+			const [dirty, setDirty] = react.useState(false);
+			const [saved, setSaved] = react.useState(false);
+			const [saving, setSaving] = react.useState(false);
+			const savedTimerRef = react.useRef(null);
+
+			// 读取文件内容 (二进制 / 超 1MB 截断分别标记)。
+			react.useEffect(() => {
+				let cancelled = false;
+				if (filePath === "") {
+					setKind("error");
+					setError(t("edit.no_path"));
+					return undefined;
+				}
+				setKind("loading");
+				setError(null);
+				setDirty(false);
+				setSaved(false);
+				setTruncated(false);
+				(async () => {
+					try {
+						const data = await postMethod("fs.read", { sessionId, path: filePath });
+						if (cancelled) return;
+						const file = (data && typeof data.file === "object") ? data.file : null;
+						if (file === null) {
+							setKind("error");
+							setError(t("edit.read_failed"));
+							return;
+						}
+						setTruncated(file.truncated === true);
+						if (file.kind === "binary") {
+							setKind("binary");
+							setContent("");
+							return;
+						}
+						setKind("text");
+						setContent(typeof file.content === "string" ? file.content : "");
+					} catch (readError) {
+						if (!cancelled) {
+							setKind("error");
+							setError(t("edit.read_failed") + errMessage(readError));
+						}
+					}
+				})();
+				return () => { cancelled = true; };
+			}, [filePath, sessionId]);
+
+			react.useEffect(() => () => {
+				if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+			}, []);
+
+			/** 保存: 把 textarea 内容写回宿主 (截断文件禁止保存)。 */
+			const save = async () => {
+				if (saving || kind !== "text" || truncated) return;
+				setSaving(true);
+				setError(null);
+				try {
+					await postMethod("fs.write", { sessionId, path: filePath, content });
+					setDirty(false);
+					setSaved(true);
+					if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+					savedTimerRef.current = window.setTimeout(() => setSaved(false), 1600);
+				} catch (writeError) {
+					setError(t("edit.save_failed") + errMessage(writeError));
+				} finally {
+					setSaving(false);
+				}
+			};
+
+			const fileName = baseNameOf(filePath) || t("edit.title");
+
+			if (kind === "loading") {
+				return react.createElement("div", { className: "dsl-editor" },
+					react.createElement("div", { className: "dsl-editor-message" }, t("edit.loading")));
+			}
+			if (kind === "error") {
+				return react.createElement("div", { className: "dsl-editor" },
+					react.createElement("div", { className: "dsl-editor-message" }, error));
+			}
+			if (kind === "binary") {
+				return react.createElement("div", { className: "dsl-editor" }, [
+					react.createElement("div", { key: "bar", className: "dsl-editor-bar" }, [
+						react.createElement("span", { key: "name", className: "dsl-editor-name", title: filePath }, fileName),
+					]),
+					react.createElement("div", { key: "msg", className: "dsl-editor-message" }, t("edit.binary")),
+				]);
+			}
+
+			return react.createElement("div", { className: "dsl-editor" }, [
+				react.createElement("div", { key: "bar", className: "dsl-editor-bar" }, [
+					react.createElement("span", { key: "name", className: "dsl-editor-name", title: filePath }, fileName),
+					truncated ? null : react.createElement("button", {
+						key: "save",
+						type: "button",
+						className: "dsl-tool",
+						disabled: !dirty || saving,
+						onClick: save,
+					}, saved ? t("edit.saved") : (saving ? t("edit.saving") : t("edit.save"))),
+				]),
+				truncated && react.createElement("div", { key: "trunc", className: "dsl-editor-note" }, t("edit.truncated")),
+				error !== null && react.createElement("div", { key: "err", className: "dsl-error" }, error),
+				react.createElement("textarea", {
+					key: "area",
+					className: "dsl-editor-area",
+					value: content,
+					readOnly: truncated,
+					spellCheck: false,
+					onChange: (event) => { setContent(event.target.value); setDirty(true); },
 				}),
-				react.createElement("div", { key: "title", style: { position: "relative", display: "flex", alignItems: "center", gap: 4, padding: "6px 8px", borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)", fontSize: 12.5, fontWeight: 600 } }, [
-					react.createElement("span", { key: "t", style: { flex: 1 } }, _dsht("plugin.sidebar.tab_sidebar", "侧边栏")),
-					// 收起开关已移到右上角 rail (fixed 定位 toggle, 不与官方按钮重叠),
-					// 标题条内部不再重复放 collapse 按钮 — 避免两个相同图标挤在一起。
-				]),
-				react.createElement("div", { key: "tabs", style: { display: "flex", borderBottom: "1px solid var(--dsw-alias-border-l1,#eee)" } }, [
-					tabButton("explorer", _dsht("plugin.sidebar.tab_file", "资源管理")),
-					tabButton("terminal", _dsht("plugin.sidebar.tab_terminal", "终端")),
-					tabButton("tasks", _dsht("plugin.sidebar.tab_tasks", "任务")),
-					tabButton("browser", _dsht("plugin.sidebar.tab_browser", "浏览器")),
-				]),
-				sessionErr !== null && react.createElement("div", { key: "serr", style: { padding: 6, fontSize: 11, color: "var(--dsw-alias-state-error-primary)" } }, _dsht("plugin.sidebar.explorer_err_session", "会话定位失败: ") + sessionErr),
-				react.createElement("div", { key: "body", style: { flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" } }, [
-					tab === "explorer"
-						? react.createElement(ExplorerView, { key: "ex", scope, cwd, workspaceRoot, rootName, onOpenFile: openPreview, bridge })
-						: tab === "terminal"
-						? react.createElement(TerminalView, { key: "te", scope, tab: "1" })
-						: tab === "tasks"
-						? react.createElement(TasksView, { key: "ta", scope, jobs, active: activeSummary })
-						: react.createElement(BrowserView, { key: "br", scope }),
-				]),
-				// 独立文件预览侧栏框: 点击文件时在主面板左侧出现, 关闭或收起侧栏后隐藏。
-				preview !== null && react.createElement(PreviewPane, {
-					key: "preview",
-					entry: preview.entry,
-					scope: preview.scope,
-					panelWidth,
-					previewWidth,
-					onClose: () => setPreview(null),
-					onResizeStart: onPreviewResizeStart,
-				}),
-				]),
-				// rail 固定在右上角, 独立于 host (fixed 定位不占 host 内部空间)
-				railButton,
 			]);
 		}
 
-		// ---- 应用入口 / 挂载 ----
+		/** 编辑 tab 的标题: 显示文件名 (同样从资源地址还原绝对路径)。 */
+		function EditorTitle({ useTabInfo, t }) {
+			const tab = useTabInfo().tab;
+			const filePath = pathFromEditAddress(tab && tab.contentId);
+			return react.createElement("span", { className: "dsl-title" }, (baseNameOf(filePath) || t("edit.title")));
+		}
+
+		// ---- 文案字典 (扁平键值; zh 为准, en 对应) ----
+		const zh = {
+			"files.title": "文件",
+			"files.description": "浏览会话工作区的文件",
+			"files.no_workspace": "这个会话没有工作目录。",
+			"files.scanning": "扫描目录…",
+			"files.empty": "(空目录)",
+			"files.load_failed": "读取失败",
+			"files.load_error": "加载失败: ",
+			"files.copied": "已复制",
+			"files.loading_suffix": " · 加载中…",
+			"files.truncated_note": "条目太多, 只显示了一部分。",
+			"path.placeholder": "完整路径, 回车跳转",
+			btn_up: "返回上级",
+			btn_home: "目录",
+			"btn_home_title": "回到工作目录",
+			btn_refresh: "刷新",
+			menu_insert_ref: "以官方 @ 引用插入",
+			menu_edit: "编辑",
+			menu_save_as: "另存为",
+			menu_copy_rel: "复制相对路径",
+			menu_copy_abs: "复制绝对路径",
+			"edit.title": "编辑",
+			"edit.no_path": "没有可编辑的文件。",
+			"edit.loading": "读取文件…",
+			"edit.read_failed": "无法读取: ",
+			"edit.binary": "该文件不可编辑（二进制）。",
+			"edit.truncated": "文件过大，已截断，禁止保存。",
+			"edit.save": "保存",
+			"edit.saving": "保存中…",
+			"edit.saved": "已保存 ✓",
+			"edit.save_failed": "保存失败: ",
+		};
+		const en = {
+			"files.title": "Files",
+			"files.description": "Browse files in this session's workspace",
+			"files.no_workspace": "This session has no workspace directory.",
+			"files.scanning": "Reading…",
+			"files.empty": "(Empty directory)",
+			"files.load_failed": "Read failed",
+			"files.load_error": "Load failed: ",
+			"files.copied": "Copied",
+			"files.loading_suffix": " · loading…",
+			"files.truncated_note": "Too many entries, showing only some of them.",
+			"path.placeholder": "Full path, press Enter to jump",
+			btn_up: "Go to parent",
+			btn_home: "Dir",
+			"btn_home_title": "Back to working directory",
+			btn_refresh: "Reload",
+			menu_insert_ref: "Insert as official @ reference",
+			menu_edit: "Edit",
+			menu_save_as: "Save as",
+			menu_copy_rel: "Copy relative path",
+			menu_copy_abs: "Copy absolute path",
+			"edit.title": "Edit",
+			"edit.no_path": "No file to edit.",
+			"edit.loading": "Reading file…",
+			"edit.read_failed": "Cannot read: ",
+			"edit.binary": "This file cannot be edited (binary).",
+			"edit.truncated": "File too large; truncated and saving is disabled.",
+			"edit.save": "Save",
+			"edit.saving": "Saving…",
+			"edit.saved": "Saved ✓",
+			"edit.save_failed": "Save failed: ",
+		};
+
+		// ---- 应用入口 ----
 
 		function apply(ctx) {
-			// 独立捕获官方输入机通道: 注册 conversation.input.left 的隐藏组件
-			// (与 file-browser 同一官方 slot 契约, 但由本插件自己持有, 互不依赖)。
-			// 组件渲染时把 ownerProps.inputActions / input (InputZone 契约快照) 存入
-			// 模块级变量, 供右键菜单插入使用; 渲染 null 不占任何 UI 空间。
+			// 模块级保存 ctx: 组件内用它构造 sessions 桥接 (官方 @ 引用插入)。
+			pluginContext = ctx;
+
+			const t = ctx.locale.bind(LOCALE_NS);
+			ctx.effect(() => ctx.locale.register(LOCALE_NS, { zh, en }), "dsh-sidebar-lite: dictionaries");
+
+			// 1) 接管官方内置文件树 (kind "files"): extension 档压过官方 builtin,
+			//    卸载本插件后官方文件树自动恢复。
+			ctx.effect(() => ctx.sidebarRightTabs.register({
+				id: FILES_TYPE_ID,
+				kind: FILES_KIND,
+				priority: "extension",
+				keepMounted: true,
+				title: () => t("files.title"),
+				guide: [{
+					id: "files",
+					commandId: FILES_GUIDE_COMMAND_ID,
+					order: 20,
+					title: () => t("files.title"),
+					description: () => t("files.description"),
+				}],
+			}), "dsh-sidebar-lite: files type");
+			ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register({
+				name: "sidebar.right.pane.tab",
+				key: FILES_TYPE_ID,
+				locale: LOCALE_NS,
+			}, FilesBody)), "dsh-sidebar-lite: files body");
+
+			// 2) 编辑类型: 资源类型 (认领 dsh-resource://edit/**), 文件身份编进地址本身。
+			//    官方持久化资源地址 (contentId), 因此刷新页面后编辑 tab 仍能定位同一文件;
+			//    同一文件重复打开按地址去重, 复用同一个 tab。
+			ctx.effect(() => ctx.sidebarRightTabs.register({
+				id: EDIT_TYPE_ID,
+				kind: EDIT_KIND,
+				priority: "extension",
+				patterns: [EDIT_ADDRESS_PREFIX + "**"],
+				canOpen: (address) => pathFromEditAddress(address) !== "",
+				title: (address) => baseNameOf(pathFromEditAddress(address)) || t("edit.title"),
+			}), "dsh-sidebar-lite: edit type");
+			ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register({
+				name: "sidebar.right.pane.tab",
+				key: EDIT_TYPE_ID,
+				locale: LOCALE_NS,
+			}, EditorBody)), "dsh-sidebar-lite: edit body");
+			ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab.title", () => ctx.slots.register({
+				name: "sidebar.right.pane.tab.title",
+				key: EDIT_TYPE_ID,
+				locale: LOCALE_NS,
+			}, EditorTitle)), "dsh-sidebar-lite: edit title");
+
+			// 3) 官方输入机捕获 (不变): 注册 conversation.input.left 的隐藏组件,
+			//    把 ownerProps.inputActions / input (InputZone 契约快照) 存入模块级变量,
+			//    供右键「以官方 @ 引用插入」读取输入机 draft / draftRev。渲染 null 不占 UI。
 			try {
 				ctx.slots.inject("conversation.input.left", () => ctx.slots.register(
 					{ name: "conversation.input.left", id: "dsh-sidebar-lite-bridge", order: 1 },
 					(ownerProps) => {
-						__dslInputActions = (ownerProps && ownerProps.inputActions) || null;
-						__dslInput = (ownerProps && ownerProps.input) || null;
+						capturedInputActions = (ownerProps && ownerProps.inputActions) || null;
+						capturedInput = (ownerProps && ownerProps.input) || null;
 						return null;
 					},
 				));
-			} catch (e) { /* slot 不可用时插入退化为 bail / DOM fallback */ }
-			if (!createRootFn) {
-				console.error("[dsh-sidebar-lite] 未找到 createRoot (react-dom 不可用), 侧边栏跳过");
-				return;
-			}
+			} catch (error) { /* slot 不可用时插入退化为 bail / DOM fallback */ }
+
 			injectStyles();
-			ctx.effect(() => {
-				let disposed = false;
-				let root = null;
-				let host = null;
-				try {
-					host = document.createElement("div");
-					host.id = N + "-host-wrap";
-					document.body.appendChild(host);
-					root = createRootFn(host);
-					root.render(react.createElement(SidebarShell, { ctx }));
-					setPanelWidth(MIN_PANEL_WIDTH);  // 与 SidebarShell 初始 state 一致, 等 effect 接管
-				} catch (error) {
-					console.error("[dsh-sidebar-lite] mount error:", error);
-				}
-				return () => {
-					disposed = true;
-					try { if (root) root.unmount(); } catch (e) { /* ignore */ }
-					try { if (host) host.remove(); } catch (e2) { /* ignore */ }
-					setPanelWidth(0);
-				};
-			}, "dsh-sidebar-lite: sidebar mount");
 		}
 
 		exports.apply = apply;

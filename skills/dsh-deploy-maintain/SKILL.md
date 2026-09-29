@@ -1,7 +1,7 @@
 ---
 name: dsh-deploy-maintain
 description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护、插件开发与避坑经验。覆盖便携 Node/dsh 安装、环境变量重定向、工作区 ACL 沙箱、更新备份、插件管理与 dsh 插件双端加载/路由注册等全套实操知识。"
-updated: "2026-09-25"
+updated: "2026-09-28"
 ---
 
 # DeepSeek Harness 绿色整合版 · 部署维护与插件开发
@@ -346,6 +346,8 @@ ctx.on('system-prompt/assemble', async (assembly, _ctx, next) => {
 
 ### 5.12 WebUI 悬浮侧栏/浮层的开关按钮：别钉右上角、也别叠内容区
 
+> **首选方案已变更**：官方右侧栏自带 tab 容器（`files` / `text` / `terminal` / `browser`）与折叠 / 分栏 / 持久化能力 → **能注册官方 tab 类型就不要自建侧栏**（见 5.14）。以下自建侧栏的坑仅在确实必须自建、或需理解历史实现时参考。
+
 - 官方 WebUI 右上角自带宽操作按钮（下载对话等）；自建侧栏/浮层的**展开收拢开关若 `position:fixed; top/right` 固定右上角会盖住官方按钮**（第一处坑）。**把折叠开关垂直居中叠在面板内容区（文件列表）高度上会挡住列表点击**（第二处坑，`dsh-sidebar-lite` 两面都踩过）。
 - **展开态**：折叠按钮放在**标题/tab 条右端**（内容区之外），绝不叠在列表中间高度；**收起态**：开关在右上角/右缘（圆形图标按钮）。
 - 按钮用**官方 icon-button 样式**（圆形无边框 / secondary 墨色 / hover 加深填底），图标复刻官方 `IconPanelRightOutline16`（外框 + 右侧竖条）而非字符箭头。
@@ -377,11 +379,42 @@ ctx.on('system-prompt/assemble', async (assembly, _ctx, next) => {
 - **语言字典对齐纪律**：`locales/zh.json` / `en.json` 扁平化后 key 集合必须完全一致（漏一个 key 该语言 fallback 回 key 本身）；launcher 的 3081 心跳端口同时服务 `/__dsh_ui_alive` 心跳、`/__dsh_i18n_bridge.js` bridge 脚本、`/__dsh_locales/{zh,en}.json` 字典四类请求。
 - **验证**：切 en 后全部插件面板实时变英文；控制台无 `already has an entry`；Network 里 bridge 请求只有一次。
 
+### 5.14 官方右侧栏 tab 类型插件（官方容器扩展点，优先于自建侧栏）
+
+自建第二列侧栏（`document.body` portal + `#root` `margin-right` 让位）等于重造官方容器，会与官方 header / 下载按钮 / 分栏持续打架（见 5.12）。**官方右栏已内置 `files` / `text` / `terminal` / `browser` 四类 tab，且容器级能力齐全（折叠 / 分栏 / 浮窗 / 全屏 / 快捷键 / 按会话持久化 `dsh.sidebar-right.v1.<sessionId>`）→ 正解是注册官方 tab 类型**（实作：`dsh-sidebar-lite` 接管 files + 新增 `sidebar-lite.edit` 编辑类型）。
+
+**两阶段注册契约（缺一不可）**：
+
+```js
+// ① 声明 tab 类型
+ctx.effect(() => ctx.sidebarRightTabs.register({
+  id, kind, priority: "extension",        // extension 档压过官方 builtin
+  keepMounted: true,                      // 可选: 切会话不销毁
+  patterns: ["dsh-resource://edit/**"],   // 可选: 资源类型按地址认领
+  canOpen, title, guide,
+}), "label");
+// ② 把正文注册进官方插槽 (标题另走 sidebar.right.pane.tab.title)
+ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register(
+  { name: "sidebar.right.pane.tab", key: id, locale: ns }, Body,
+)), "label");
+```
+
+**四条硬约束**：
+
+1. **命名必须两两对齐**：`sidebar.right.pane.tab` 注册的 `key` 必须等于类型的 `definition.id`；且沿用「三处名字一致」（`package.json` 的 `name` / 客户端 `window.__ModuleLoader__.load({ id })` / 宿主端 `export const name`）。任一处不一致会**静默不渲染 / 静默加载失败**，不报错、无日志。
+2. **档位与接管回滚**：`priority: "extension"` 的同类类型会**压过官方 `builtin`**（如官方内置文件树被接管）；**禁用 / 卸载插件后官方实现自动恢复**，无需改官方文件 / 包。新增类型（官方无同 kind）不涉及让位。
+3. **官方只持久化资源地址（`tab.contentId`），不持久化 `navigation.params`**（官方 README：导航参数 / 资源内容 / 活动连接不属于布局状态）→ 需要跨刷新复原的 tab，**必须把身份编进资源地址本身**（如 `dsh-resource://edit/session/<sessionId>/<逐段编码的绝对路径>`），**不能**用 `params: { path }`（刷新后 params 丢失，tab 退化成空）。地址编解码与官方 `@deepseek-ai/dsh-util-workspace-path` 同逻辑但**必须内联实现**（客户端不能 `require` 官方包；`encodeSegment` 保留盘符冒号 `:`，Windows 反斜杠归一 `/`）。
+4. **文案走官方 `ctx.locale`（`register` + `bind` + 插槽 `locale` 选项拿 `t()`），样式只用官方主题 token**（`--dsw-alias-*` / `--dsw-specific-input-major` / `--dsw-radius-*` 等）；不要再注入自研 i18n 脚本桥、不要 JS 主题监听。
+
+**边界差异必须写进插件 README**：插件自家宿主路由的文件树浏览是「绝对路径、**无工作区围栏**，可上溯到工作区之外」，而**官方预览读取（`workspaceFiles`）受工作区围栏限制** → 工作区外文件预览会被官方预览器报 `outside-workspace`。**容器统一 ≠ 沙箱统一**，同一个右栏里并存两套边界，用户与维护者都易误解。
+
 ## 六、验证与排查速查表
 
 | 症状 | 首选排查动作 |
 | - | - |
 | WebUI 入口不显示 | 抓 `__DSH_BOOT__.entries` 是否含插件 → 查 exports 含 `./package.json` → 查 files 含 `cordis.patch.yml` |
+| 右栏 tab 类型注册了却不出现在侧栏 | slot 的 `key` ≠ 类型 `definition.id`（核对「两处标识 + 三处命名」是否对齐，不一致**静默不渲染**）→ 确认 `priority` 档位未被官方 `builtin` 遮挡 → 重启服务（见 5.14） |
+| 右栏 tab 刷新后变空 / 丢内容 | 把身份放进了 `navigation.params`（官方不持久化）→ 改为编进资源地址本身（`tab.contentId`，见 5.14） |
 | 客户端组件不渲染/按钮消失（componentDidCatch、Rendered more/fewer hooks） | 查条目组件是否条件调用 props 传入的 hook → 改读 ownerProps 普通字段 → 强刷页面 |
 | 点击按钮 HTTP 405 | 路由没进 exact 表 → `ctx.effect(()=>register(...), label)` 写法 → `dsh-host-frontend-static` fallback |
 | 客户端 fetch 404（服务端明明有路由） | 是否同 (kind,path) 注册两条（无 method 字段，重复注册抛 Duplicate 回滚全路由）→ 合并单 handler 按 req.method 分流 → 重启服务 |
