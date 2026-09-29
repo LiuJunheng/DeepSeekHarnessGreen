@@ -37,4 +37,4 @@ dsh-deploy-maintain/
 
 ## 来源
 
-沉淀自 `DeepSeekHarnessLauncher` 项目（Python tkinter 绿色整合版启动器 + 内置 `dsh-archive-purge` / `dsh-file-browser` / `dsh-session-rewind` / `dsh-usage-stats` / `dsh-sidebar-lite` / `dsh-media-background` 插件）的全过程实测，避坑记录持续补录。
+沉淀自 `DeepSeekHarnessLauncher` 项目（Python tkinter 绿色整合版启动器 + 内置 `dsh-archive-purge` / `dsh-file-browser` / `dsh-session-rewind` / `dsh-usage-stats` / `dsh-sidebar-extend` / `dsh-media-background` 插件）的全过程实测，避坑记录持续补录。

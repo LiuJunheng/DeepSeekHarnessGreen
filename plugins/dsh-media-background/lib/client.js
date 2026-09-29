@@ -704,20 +704,25 @@ window.__ModuleLoader__.load({
 			browseEl = el("div", { id: "dsw-mbg-browse" }, [browseBox]);
 			rootEl.appendChild(browseEl);
 
-			// ---- 弹窗几何: 避让右侧侧栏 + 可拖拽 + 可拉伸 ----
-			var MIN_W=280,MAX_W=520,MIN_H=220;
-			var panelWin=null,dragState=null;
-			function getSidebarRightOffset(){
-				var h=document.getElementById("dsl-host");
-				if(h&&!h.classList.contains("dsl-closed")&&h.offsetWidth>0){
-					var e=parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dsh-sidebar-lite-extra"))||0;
-					return h.offsetWidth+e;
-				}
-				var r=document.documentElement;
-				var w=parseFloat(getComputedStyle(r).getPropertyValue("--dsh-sidebar-lite-width"))||0;
-				var e=parseFloat(getComputedStyle(r).getPropertyValue("--dsh-sidebar-lite-extra"))||0;
-				var g=parseFloat(getComputedStyle(r).getPropertyValue("--dsh-sidebar-offset"))||0;
-				return Math.max(w+e,g);
+			// ---- 弹窗几何: 避让官方右侧栏 + 可拖拽 + 可拉伸 ----
+			var MIN_W=280,MAX_W=520,MIN_H=220;
+			var panelWin=null,dragState=null;
+			// 读取官方右侧栏 (dsh-client-ui-sidebar-right) 当前实际占位宽度 (px):
+			// 官方停靠面板带 data-sidebar-right-* 标记 —— 展开态才有 data-sidebar-right-open;
+			// 折叠态面板被滑出框架不占宽度; 全屏态覆盖整个视口(浮动弹窗无处可让)记 0;
+			// 多个会话的面板可能同时在 DOM 里(后台会话子树隐藏), 用 checkVisibility() 只取可见那块。
+			function getSidebarRightOffset(){
+				var panels=document.querySelectorAll("[data-sidebar-right-session]");
+				var offset=0;
+				for(var i=0;i<panels.length;i++){
+					var panel=panels[i];
+					if(!panel.hasAttribute("data-sidebar-right-open"))continue;
+					if(panel.getAttribute("data-sidebar-right-panel")==="fullscreen")continue;
+					if(typeof panel.checkVisibility==="function"&&!panel.checkVisibility())continue;
+					var rect=panel.getBoundingClientRect();
+					if(rect&&rect.width>offset)offset=rect.width;
+				}
+				return offset;
 			}
 			function applyWin(){
 				if(!panelWin)return;
@@ -783,11 +788,12 @@ window.__ModuleLoader__.load({
 			document.addEventListener("mousemove",pm);
 			document.addEventListener("mouseup",pu);
 			window.addEventListener("resize",reposition);
-			(function(){
-				var h=document.getElementById("dsl-host");
-				if(!h)return;
-				new MutationObserver(reposition).observe(h,{attributes:true,attributeFilter:["class","style"]});
-				new MutationObserver(reposition).observe(document.documentElement,{attributes:true,attributeFilter:["style"]});
+			// 官方右侧栏变化(展开/收起/切全屏/拖动宽度/切会话重建面板)时重新定位:
+			(function(){
+				new MutationObserver(reposition).observe(document.body,{
+					childList:true,subtree:true,attributes:true,
+					attributeFilter:["data-sidebar-right-open","data-sidebar-right-panel","style"]
+				});
 			})();
 
 			function togglePanel(){

@@ -498,7 +498,7 @@ function apply(ctx) {
 
 	// 视频流 (Range)。
 	// 注意: 本路由【不】校验守卫头——浏览器 <video> 标签无法携带自定义请求头,
-	// 一加守卫头视频就永远加载不出来 (与 dsh-sidebar-lite「img/iframe 携带不了防御头、
+	// 一加守卫头视频就永远加载不出来 (与 dsh-sidebar-extend「img/iframe 携带不了防御头、
 	// 只能 fetch→blob」同理)。因此只能靠"目录内防穿越 + 仅限已配置目录"兜底:
 	// 即便外部网页用 <video>/<img> 试探, 最多读到用户自己配置目录里的文件,
 	// 无法读到目录之外的内容 (/config、/list、/browse 仍保留守卫头, 目录清单与写操作不外泄)。

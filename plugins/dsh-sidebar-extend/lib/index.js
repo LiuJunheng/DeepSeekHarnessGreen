@@ -1,4 +1,4 @@
-// DeepSeek Harness 插件 (宿主端): dsh-sidebar-lite
+// DeepSeek Harness 插件 (宿主端): dsh-sidebar-extend
 // 作为官方右侧栏 (dsh-client-ui-sidebar-right) 的一个 tab 类型并入, 客户端只作为官方右栏
 // 的 tab 正文 (文件树 + 编辑器), 因此本端能力聚焦两块:
 //   1) 文件资源管理器: 列出会话工作目录的目录树, 支持「返回上级 / 路径框」上溯浏览
@@ -9,12 +9,12 @@
 //   本端实现了其中 fs.tree / fs.read / fs.write / session.cwd / file 媒体路由,
 //   去掉了终端、jobs、git、settings 命名空间、browser.probe 等重依赖能力。
 //
-// 提供的接口 (路由前缀 /__dsh/sidebar-lite/*, 均要求自定义头 X-DSH-Sidebar-Lite: 1):
-//   POST /__dsh/sidebar-lite/session.cwd     { sessionId }                 -> { sessionId, cwd, root, parent }
-//   POST /__dsh/sidebar-lite/fs.tree         { sessionId, cwd?, path? }    -> 列目录 { path, entries, truncated }
-//   POST /__dsh/sidebar-lite/fs.read         { sessionId, cwd?, path }     -> { kind, content|size, truncated, head? }
-//   POST /__dsh/sidebar-lite/fs.write        { sessionId, cwd?, path, content } -> { ok }
-//   GET  /__dsh/sidebar-lite/file            ?sessionId=&cwd=&path=&download=      -> 媒体字节 (图片/PDF/MD 等)
+// 提供的接口 (路由前缀 /__dsh/sidebar-extend/*, 均要求自定义头 X-DSH-Sidebar-Extend: 1):
+//   POST /__dsh/sidebar-extend/session.cwd     { sessionId }                 -> { sessionId, cwd, root, parent }
+//   POST /__dsh/sidebar-extend/fs.tree         { sessionId, cwd?, path? }    -> 列目录 { path, entries, truncated }
+//   POST /__dsh/sidebar-extend/fs.read         { sessionId, cwd?, path }     -> { kind, content|size, truncated, head? }
+//   POST /__dsh/sidebar-extend/fs.write        { sessionId, cwd?, path, content } -> { ok }
+//   GET  /__dsh/sidebar-extend/file            ?sessionId=&cwd=&path=&download=      -> 媒体字节 (图片/PDF/MD 等)
 // 安全约定:
 //   - 资源管理器允许任意绝对路径 (上级浏览); 写操作同样是绝对路径, 用户自己负责范围,
 //     与内部 dsh-file-browser 插件的行为一致;
@@ -24,12 +24,12 @@ import { createReadStream } from "node:fs";
 import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 
-const name = "dsh-sidebar-lite";
+const name = "dsh-sidebar-extend";
 // webServer 是 DSH webserver 提供给插件的路由注册服务; sessions 提供会话 cwd 溯源。
 const inject = ["webServer"];
 
-const API_PREFIX = "/__dsh/sidebar-lite";
-const GUARD_HEADER = "x-dsh-sidebar-lite";
+const API_PREFIX = "/__dsh/sidebar-extend";
+const GUARD_HEADER = "x-dsh-sidebar-extend";
 const READ_LIMIT = 1 * 1024 * 1024;          // 文本读取上限 (1MB, 超出标 truncated)
 const READ_HEAD_LIMIT = 4096;                // 二进制文件返回给前端的 head 字节数
 const LIST_LIMIT = 1000;                     // 单目录最多返回条目数 (超出标 truncated)
@@ -162,17 +162,17 @@ function sessionCwdOf(ctx, sessionId, clientCwd, fallbackRoot) {
 		const session = sessions && sessions.get(sessionId);
 		const headerCwd = session && session.header && session.header.cwd;
 		if (typeof headerCwd === "string" && headerCwd !== "") {
-			console.log("[dsh-sidebar-lite] sessionCwdOf: 用 header.cwd =", headerCwd, "(sessionId =", sessionId + ")");
+			console.log("[dsh-sidebar-extend] sessionCwdOf: 用 header.cwd =", headerCwd, "(sessionId =", sessionId + ")");
 			return headerCwd;
 		}
-		console.log("[dsh-sidebar-lite] sessionCwdOf: header.cwd 缺失", { sessionId, hasSession: !!session, headerCwd });
+		console.log("[dsh-sidebar-extend] sessionCwdOf: header.cwd 缺失", { sessionId, hasSession: !!session, headerCwd });
 	} catch (error) {
-		console.log("[dsh-sidebar-lite] sessionCwdOf: sessions 服务异常", error && error.message);
+		console.log("[dsh-sidebar-extend] sessionCwdOf: sessions 服务异常", error && error.message);
 	}
 	if (typeof clientCwd === "string" && clientCwd !== "") {
 		try {
 			if (!isAbsolute(clientCwd)) throw new Error("not absolute");
-			console.log("[dsh-sidebar-lite] sessionCwdOf: 用客户端 cwd =", clientCwd);
+			console.log("[dsh-sidebar-extend] sessionCwdOf: 用客户端 cwd =", clientCwd);
 			return resolve(clientCwd);
 		} catch {
 			throw new Error("invalid client cwd: " + clientCwd);
@@ -180,7 +180,7 @@ function sessionCwdOf(ctx, sessionId, clientCwd, fallbackRoot) {
 	}
 	// 兜底: 优先工作区根(用户工作目录的根), 最后才落到进程 cwd(runtime\dsh)。避免默认路径显示成 "dsh"。
 	const root = fallbackRoot || defaultRootOf(ctx, sessionId) || process.cwd();
-	console.log("[dsh-sidebar-lite] sessionCwdOf: 兜底 cwd =", root);
+	console.log("[dsh-sidebar-extend] sessionCwdOf: 兜底 cwd =", root);
 	return root;
 }
 
@@ -306,7 +306,7 @@ async function readText(path) {
 
 async function writeText(path, content) {
 	await mkdir(dirname(path), { recursive: true }).catch(() => {});
-	const tmp = `${path}.dsh-sidebar-lite-tmp-${process.pid}`;
+	const tmp = `${path}.dsh-sidebar-extend-tmp-${process.pid}`;
 	try {
 		await writeFile(tmp, content, "utf8");
 		await rename(tmp, path);

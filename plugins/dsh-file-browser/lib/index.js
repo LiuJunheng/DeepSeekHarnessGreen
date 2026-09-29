@@ -28,7 +28,7 @@ const GUARD_HEADER = "x-dsh-file-browser";
 const TEXT_PREVIEW_BYTES = 512 * 1024;    // 文本 512KB 预览 (≈25 万汉字, 够读)
 const IMAGE_PREVIEW_BYTES = 32 * 1024 * 1024;  // 图片 32MB 预览 (仍以文件实际大小为主, 超大图 truncated)
 const BINARY_HEAD_BYTES = 4096;            // 大二进制文件只读 4KB head (嗅探二进制/文本混合)
-const DOWNLOAD_LIMIT_BYTES = 32 * 1024 * 1024; // 另存为下载单文件上限 (32MB, 与 sidebar-lite 媒体路由一致)
+const DOWNLOAD_LIMIT_BYTES = 32 * 1024 * 1024; // 另存为下载单文件上限 (32MB, 与 sidebar-extend 媒体路由一致)
 const READ_CHUNK_DEFAULT_BYTES = 512 * 1024;  // readChunk 单次默认 512KB
 const READ_CHUNK_MAX_BYTES = 4 * 1024 * 1024; // readChunk 单次上限 4MB
 const LIST_CAP = 1000;
@@ -415,7 +415,7 @@ function apply(ctx) {
 				return sendJson(res, 400, { error: "not a file: " + rawPath });
 			}
 			const fileSize = typeof info.size === "number" ? info.size : 0;
-			// 与 sidebar-lite 的媒体路由一致: 单文件上限 32MB, 避免一次性载入内存炸掉。
+			// 与 sidebar-extend 的媒体路由一致: 单文件上限 32MB, 避免一次性载入内存炸掉。
 			if (fileSize > DOWNLOAD_LIMIT_BYTES) {
 				return sendJson(res, 413, { error: "file too large for download (>32MB)" });
 			}

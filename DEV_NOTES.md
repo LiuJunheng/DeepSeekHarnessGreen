@@ -193,7 +193,8 @@
 
 19. **pnpm git 源插件** **`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`**：pnpm 11 strictDepBuilds 拦 git 源依赖（`github:owner/repo` → codeload tar.gz）的 prepare 脚本。正解＝profile 的 `pnpm-workspace.yaml` 的 `allowBuilds` 用**错误里含完整 commit hash 的 URL** 置 `true`（用包名/版本/分支都不匹配）；预构建原生依赖（cloudflared/cpu-features/node-pty/protobufjs/ssh2）显式 `false`，否则 `ERR_PNPM_IGNORED_BUILDS` 中断。改完无需删 node\_modules，直接重跑 add。launcher 已自动化（见第四节）。
 
-20. **自建 WebUI 侧栏/悬浮件的开关按钮别钉官方右上角，也别叠在内容区中间高度**：官方右上角有「下载对话」等按钮，`position:fixed;top:right` 会盖住它们；而把折叠开关**垂直居中叠在面板（如文件列表）高度上会挡住列表点击**（两面都踩坑）。社区 better-sidebar 的 **toggle cluster**——开关**始终固定在面板顶部**：展开态折叠按钮在标题/tab 条右端（内容区之外），收起态开关在右上角/右缘圆形图标按钮；按钮用官方 icon-button 样式（圆形无边框 / hover 加深），图标复刻 `IconPanelRightOutline16` 而非字符箭头。重叠靠\*\*「展开时官方 header 已被 `#root` 的 `margin-right` 让位推到面板左侧」，官方按钮不在面板内右上角**来规避（`dsh-sidebar-lite`** **已如此实现）。多侧栏/浮动面板并存**时，额外面板（如独立文件预览框）用固定定位 + `right: 主面板宽`\*\* 叠在主面板左侧，并在 `#root` 的 `margin-right` 里**累加该面板宽度的让位 CSS 变量**（`calc(var(--dsh-sidebar-lite-width) + var(--dsh-sidebar-lite-extra))`），面板关闭时让位变量归零——否则主内容会被后开的浮动面板遮挡。
+20. **自建 WebUI 侧栏/悬浮件的开关按钮别钉官方右上角，也别叠在内容区中间高度**：官方右上角有「下载对话」等按钮，`position:fixed;top:right` 会盖住它们；而把折叠开关**垂直居中叠在面板（如文件列表）高度上会挡住列表点击**（两面都踩坑）。社区 better-sidebar 的 **toggle cluster**——开关**始终固定在面板顶部**：展开态折叠按钮在标题/tab 条右端（内容区之外），收起态开关在右上角/右缘圆形图标按钮；按钮用官方 icon-button 样式（圆形无边框 / hover 加深），图标复刻 `IconPanelRightOutline16` 而非字符箭头。重叠靠\*\*「展开时官方 header 已被 `#root` 的 `margin-right` 让位推到面板左侧」，官方按钮不在面板内右上角**来规避（`dsh-sidebar-extend`** **已如此实现）。多侧栏/浮动面板并存**时，额外面板（如独立文件预览框）用固定定位 + `right: 主面板宽`\*\* 叠在主面板左侧，并在 `#root` 的 `margin-right` 里**累加该面板宽度的让位 CSS 变量**（`calc(var(--dsh-sidebar-extend-width) + var(--dsh-sidebar-extend-extra))`），面板关闭时让位变量归零——否则主内容会被后开的浮动面板遮挡。
+    * **（2026-09-29 更新）**：`dsh-sidebar-extend` 已并入官方右栏，上述自建外壳与 `--dsh-sidebar-extend-*` 变量**全部删除**。**浮动弹窗避让官方右栏的正解是直接量官方停靠面板**：`document.querySelectorAll("[data-sidebar-right-session]")` 取面板，只认同时满足「带 `data-sidebar-right-open`（**展开态才有**；折叠态面板被滑出框架、不占宽度）」「`data-sidebar-right-panel !== "fullscreen"`（全屏覆盖整个视口，弹窗无处可让）」「`checkVisibility()` 为真（后台会话的隐藏子树不算）」的那块，宽度取 `getBoundingClientRect().width`。重定位监听同样盯官方面板：`MutationObserver(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-sidebar-right-open", "data-sidebar-right-panel", "style"] })`——`style` 覆盖拖动分栏宽度、`childList` 覆盖切会话时面板重建。实作见 `dsh-file-browser` / `dsh-media-background` 的 `getSidebarRightOffset()`。
 
 21. **React 函数组件里 const/let 变量的 TDZ（Temporal Dead Zone）坑**：任何被 `useCallback(fn, [scope])` / `useEffect(fn, [scope])` **依赖数组引用**的变量（包括从 useState 返回的值、从 store/getSnapshot 计算的局部变量、`const scope = {...}` 这类派生对象），**必须在这些 hooks 声明之前定义**。JavaScript 的 TDZ 规则：`const`/`let` 声明从代码执行流到达该行时才初始化，在此之前引用抛 `ReferenceError: Cannot access "xxx" before initialization`。典型场景：SidebarShell 组件里 `openPreview = useCallback(() => { setPreview({entry,scope}) }, [scope])` 写在 L1107，而 `const scope = {...}` 直到 L1201 才声明 → 组件渲染时 useCallback 初始化就炸。**修复方式**：要么把依赖变量的定义上移到所有 hooks 之前，要么把 useCallback/useEffect 下移到变量定义之后。注意：dsh 的插件 client.js 最终被合并打包（`/plugins/??...&rev=hash`），报错堆栈里的行号是 **sourcemap 映射后的原始文件行号**（不是 bundle 里的绝对行号），修完后须用**全新浏览器标签页**验证（旧标签页的 ModuleLoader 已缓存模块，刷新不会重新执行）。
 
@@ -203,7 +204,7 @@
 
 24. **官方「Session 日志」按钮的静默下载无法通过 hook** **`fetch`** **拦截，必须 hook** **`HTMLAnchorElement.prototype.click`**：官方 `@deepseek-ai/dsh-session-log-export` 的下载流程是：HEAD `/api/session.export` 检查 → 创建 `<a download href=url>` → `anchor.click()` → 浏览器下载管理器处理。**浏览器拿到** **`download`** **属性后直接走下载管理器，不经过 fetch/XHR**，所以 hook 全局 `fetch` 拦不住。**唯一拦截点**是 `HTMLAnchorElement.prototype.click` —— 在 prototype 层保存 original，替换成判断 `this.download && this.href && this.href.indexOf('/api/session.export') >= 0`，命中则 `fetch → blob → showSaveFilePicker`，不命中则走 `originalAnchorClick.call(this)`。dsh-session-import v0.3.0 已实现这个 hook。**回退**：`window.showSaveFilePicker` 不存在（纯浏览器环境）时，回退到原生 `<a download>` 行为。**幂等**：prototype.click 每次安装保存上一个 original，可重复覆盖不会链断。
 
-25. **官方右侧栏（`dsh-client-ui-sidebar-right`）是「tab 容器 + 类型提供者」架构：自建第二列侧栏的正解是改成 tab 类型插件（2026-09-28，dsh-sidebar-lite 0.3.0 重构）**：
+25. **官方右侧栏（`dsh-client-ui-sidebar-right`）是「tab 容器 + 类型提供者」架构：自建第二列侧栏的正解是改成 tab 类型插件（2026-09-28，dsh-sidebar-extend 0.3.0 重构）**：
 
     * **动机**：官方右栏**已内置 `files` / `text` / `terminal` / `browser` 四个 tab 类型**，且折叠 / 分栏 / 浮窗 / 全屏 / 快捷键 / 按会话持久化（`dsh.sidebar-right.v1.<sessionId>`）**全由官方容器负责**。继续自建「`document.body` portal + `#root` margin-right 硬让位」的第二列侧栏等于重造官方容器，还必然与官方 header、下载按钮、分栏打架（旧坑见插件开发坑 20）。**结论：删掉自建侧栏，改为注册官方 tab 类型。**
     * **两阶段注册契约（缺一不可）**：① `ctx.sidebarRightTabs.register({ id, kind, priority, keepMounted?, patterns?, canOpen?, title, guide? })` 声明类型；② `ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register({ name: "sidebar.right.pane.tab", key, locale }, Body))` 注册正文（标题另走 `sidebar.right.pane.tab.title`）。**两处标识必须对齐**：slot 的 `key` 要等于类型的 `definition.id`，同时沿用旧坑 23 的「三处名字一致」（`package.json` 的 `name` / 客户端 `ModuleLoader.load({ id })` / 宿主端 `const name`）——任一处不一致**静默不渲染**（不报错、无日志）。
@@ -212,6 +213,7 @@
     * **文案与样式走官方契约**：多语言用 `ctx.locale.register(ns, { zh, en })` + `ctx.locale.bind(ns)` + 插槽注册的 `locale` 选项拿 `t()`（自研 `__DSH_I18N__` 脚本桥可整体删除）；样式只用官方主题 token（`--dsw-alias-*`、`--dsw-specific-input-major`、`--dsw-radius-*`、`--dsh-content-font-size-secondary`），**不写 JS 主题监听**（旧坑 8）。
     * **「接进官方容器 ≠ 套上官方沙箱」（必须写进插件 README）**：插件自家宿主路由的文件树浏览是**绝对路径、无工作区围栏**，允许上溯到工作区之外；但**单击预览走官方 Host 读取（`workspaceFiles`），受工作区围栏限制** → 工作区外文件预览会被官方预览器报 `outside-workspace`，此时改用右键「编辑」（走插件 `fs.read` / `fs.write`，无围栏）或「另存为」。同一个容器里并存两套边界，用户与维护者都容易误解，必须显式说明。
     * 插件经 `file:` 安装是**拷贝**，改完必须重装 + 重启服务（旧坑 4）。
+    * **命名（2026-09-29）**：定位已从「轻量侧栏」变为「官方右栏增强」，故插件由 `dsh-sidebar-lite` 更名为 `dsh-sidebar-extend`。改名要同步的硬标识共 5 处：**目录名 / `package.json` 的 `name` / 客户端 `ModuleLoader.load({ id })` / 宿主端 `const name` / 类型 `definition.id` 与插槽 `key`**；另有 3 处内部标识建议一起改：locale 命名空间、防御头常量、宿主路由前缀。**换名安装必须先移除旧包再装新包**——新旧两份包同时在场会因同一个 `kind` 出现两份 `extension` 档注册而 **throw**（官方只允许一个 kind 带一份 builtin + 一份 extension）。
 
 ### PyInstaller / 打包坑
 
@@ -310,7 +312,7 @@
 
 1. **web token 认证开关（2026-08-31，需求 #49）**：DSH 0.1.2-alpha.2+ 的 BrowserAuth 是强制开启的（官方 Config 里没有 enableAuth 开关），关掉只能 patch。绿色版实现：`launcher.py` 加 `dsh_require_auth` config 字段（默认 True）+ GUI 网络设置区复选框（动态安全警告：0.0.0.0+关auth 时红框、127.0.0.1+关auth 时橙框提示风险极低）+ `patch_auth(require_auth=True/False)` 条件式补丁函数（双副本覆盖 core+shared、幂等、支持正向关闭+反向还原）。patch **只关 token/Cookie 层**（BrowserAuth.isAuthenticated 跳过），**保留 Host/Origin 围栏**（isTrustedApiRequest → 403）。所以 "关 token" ≠ 回到旧版 0.1.1-rc.2 裸奔（旧版两层都没），而是 401 那层的安全门拆了但 403 Host 防火墙还在。127.0.0.1 下 loopback 自动放行 403，实际差异为零；0.0.0.0 下等于"局域网任何人靠 Host header 就能直接访问界面"。两个精确 patch 点（官方打包纯 tab 缩进）：① `requestRejection()` 第二行 `return this.browserAuth.isAuthenticated(request) ? void 0 : 401` → 改 `return void 0;`；② `authorizeIndex()` 方法体开头插入 `return true;` 跳过 token/Cookie 校验。启动前 patch 链（两处：install\_dsh 安装后 + 启动服务前）根据 config 决定 patch 方向；`_web_auth_url()` 在 auth 关闭时直接返回裸地址短路，省掉 8s token 竞态等待。**还原方向**（用户改回 require\_auth=True）会把两处 patch 还原回官方原始代码，不留残留。dsh 升级重装会清除所有 patch，启动前自动重新应用。
 
-2. **dsh-sidebar-lite rail 开关位置 + 初始宽度最小化（2026-09-01）**：
+2. **dsh-sidebar-extend rail 开关位置 + 初始宽度最小化（2026-09-01）**：
 
 * **rail 位置**：从
   ight:10px;top:50%（右侧垂直居中）→
@@ -908,7 +910,7 @@ return next();  // 必须继续传下去
 
 * plugins/dsh-file-browser/lib/client.js - @ 引用插入 fallback (resolveAgentScope + DOM execCommand)
 
-* plugins/dsh-sidebar-lite/lib/client.js - @ 引用插入 fallback (同上)
+* plugins/dsh-sidebar-extend/lib/client.js - @ 引用插入 fallback (同上)
 
 **避坑清单**:
 
@@ -965,7 +967,7 @@ readSessionTitle 里拼路径时直接 "session-" + sessionId 就变成了 "sess
 2. inject 数组补全 "sessions" 依赖 (session-rewind, archive-purge)
 3. 删掉所有 inline require("zlib") (ESM 不兼容)
 4. 加 normalizeSessionId() 处理 "session-" 前缀
-5. dsh-file-browser / dsh-sidebar-lite @ 引用插入: resolveAgentScope + DOM fallback
+5. dsh-file-browser / dsh-sidebar-extend @ 引用插入: resolveAgentScope + DOM fallback
 
 #### 8.10 usage-stats 事件加载: sessionQuery.readSurface 不返回 turn 事件
 
@@ -1189,10 +1191,10 @@ for name, def_lines in defs.items():
 |---|---|---|---|
 | dsh-file-browser | `lib/client.js` | `formatMention` | 3 |
 | dsh-file-browser | `lib/client.js` | `insertReferenceIntoInputCompat`（含前置 JSDoc） | 107 |
-| dsh-sidebar-lite | `lib/client.js` | `joinPath`（含注释） | 6 |
-| dsh-sidebar-lite | `lib/client.js` | `formatMention` | 3 |
-| dsh-sidebar-lite | `lib/client.js` | `insertReferenceIntoInputCompat`（含前置 JSDoc） | 115 |
-| dsh-sidebar-lite | `lib/index.js` | `fail`（含注释） | 7 |
+| dsh-sidebar-extend | `lib/client.js` | `joinPath`（含注释） | 6 |
+| dsh-sidebar-extend | `lib/client.js` | `formatMention` | 3 |
+| dsh-sidebar-extend | `lib/client.js` | `insertReferenceIntoInputCompat`（含前置 JSDoc） | 115 |
+| dsh-sidebar-extend | `lib/index.js` | `fail`（含注释） | 7 |
 | dsh-usage-stats | `lib/index.js` | `decompressZstdHeader`（含注释） | 7 |
 
 **它们为什么死了（有价值的历史线索）**：`insertReferenceIntoInputCompat` 的注释写着它是"**0.1.1-rc.x 旧版** `sessions.provideInfo` → 手动 setDraft → bail"的兼容实现 + DOM fallback；现在代码走的是 `actx.bail(actx, "slash/input-insert-reference", {reference, span})` 官方事件管线。**即：@ 引用功能已迁移到官方 API，旧兼容函数废弃但没删**。`formatMention` 是同批残留；`decompressZstdHeader`（usage-stats）是从 session-rewind 复制过来、但只用了另一个函数。
@@ -1204,7 +1206,7 @@ for name, def_lines in defs.items():
 | **dsh-session-import** | README 写路由 `/__dsh/session-import/*` + 守卫头 `X-DSH-Session-Import`，代码实际是 **`session-transfer`** 前缀 + `X-DSH-Session-Transfer: 1` | 已改 README |
 | **dsh-rules** | README 写 `enabled: true`（且排查步骤说"确认 enabled: true"），代码是 `default(false)`（注释明确"v3 默认关闭"）；配置文件写成 `cordis.yml`，实际是 `cordis.patch.yml` | 已改 README |
 | **dsh-memory** | ① 说"每次请求前自动注入最近 **4** 条"+"autoRecall: **true**"，代码默认 `autoRecall: false`、`autoRecallLimit: **6**`；② 说注册 **5** 个路由，实际 **6** 个（缺 `/__dsh/memory/config`）；③ WebUI 描述漏了**三个开关**（autoRemember / autoRecall / crossSessionRecall，见 client.js）；④ 配置块漏了 v3.1/v4 新增字段（autoRemember / crossSessionRecall / assistantMessage / toolResult / useSummarize） | 已改 README（4 处） |
-| 其余 7 个（archive-purge / file-browser / media-background / ollama / session-rewind / sidebar-lite / usage-stats） | 无 | 抽查路由表、配置默认值、工具清单、tools/ 脚本，均与代码一致 |
+| 其余 7 个（archive-purge / file-browser / media-background / ollama / session-rewind / sidebar-extend / usage-stats） | 无 | 抽查路由表、配置默认值、工具清单、tools/ 脚本，均与代码一致 |
 
 **三、跨插件重复（存在但**不建议动**）**：`sendJson` 在 9 个插件各一份；`splitFrames` + `adoptPhysicalRow` 在 3 处（session-rewind 的 lib + tools + usage-stats）；`relSegments`/`fmtSize`/`fmtTime` 各 2 份。**理由**：插件是独立分发的 npm 包（`file:` 安装、各自进 profile 的 node_modules），共享代码必须抽成额外公共包并让每个插件声明依赖，会引入插件间耦合，与"零依赖、单目录可独立搬走"的定位冲突 —— **重复是有意的隔离成本**。
 

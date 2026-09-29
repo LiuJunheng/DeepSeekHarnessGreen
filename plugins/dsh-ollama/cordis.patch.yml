@@ -1,5 +1,5 @@
 # dsh-ollama bundle patch: 把本插件作为一行插入 profile 插件树。
-# 格式与同项目插件 dsh-sidebar-lite / dsh-usage-stats 完全一致:
+# 格式与同项目插件 dsh-sidebar-extend / dsh-usage-stats 完全一致:
 #   - insert: 新增一行插件行 (id 是本插件行标识, name 是包名)。
 # config 为本插件的入口配置, 覆盖 DEFAULT_CONFIG (见 lib/index.js):
 #   enabled              是否启用自动识别 (默认 true)

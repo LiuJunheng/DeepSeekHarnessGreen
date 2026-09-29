@@ -1,4 +1,4 @@
-# dsh-sidebar-lite（官方右侧栏 tab 类型插件）
+# dsh-sidebar-extend（官方右侧栏 tab 类型插件）
 
 > 三国云:「关云长千里走单骑，不另立营寨——借荆州之壁，只自备一份图籍。」
 > 本插件不再自建第二列侧栏，而是作为 **官方右侧栏（`dsh-client-ui-sidebar-right`）的 tab 类型提供者**：以扩展档接管官方内置文件树，并新增一个「文本编辑」tab 类型。文档预览、内嵌浏览器、终端、后台任务一律交由官方实现。
@@ -13,14 +13,14 @@
 
 官方右栏是「tab 容器 + 类型提供者」架构。本插件提供两个 tab 类型，进入方式如下。
 
-### 1）接管官方文件树（kind `files`，id `dsh-sidebar-lite`）
+### 1）接管官方文件树（kind `files`，id `dsh-sidebar-extend`）
 
 - **官方引导页入口**：右栏空态的官方引导页会列出本插件声明的文件树类型卡（`guide`，绑官方命令 `workspace.files`），点它即打开本插件的文件树 tab。
 - **官方快捷键**：按官方「工作区文件」命令 `workspace.files`（Web 默认 `Mod+Alt+P`）打开同一个 tab。
 - **文件行单击 → 官方预览**：单击文件行调 `tab.actions.openResource(dsh-resource://file/<会话>/<路径>)`，交给**官方 `text` 类型**渲染预览。
 - **文件行右键**：见下方右键菜单（「编辑」进本插件的编辑 tab；其余项由本插件处理）。
 
-### 2）文本编辑 tab（资源类型，kind `sidebar-lite.edit`，id `dsh-sidebar-lite/edit`）
+### 2）文本编辑 tab（资源类型，kind `sidebar-extend.edit`，id `dsh-sidebar-extend/edit`）
 
 官方预览是只读的；本插件认领 `dsh-resource://edit/**` 资源地址，提供可写编辑器。
 
@@ -55,8 +55,8 @@
 
 - 本插件的文件树类型以 `priority: "extension"` 注册，**官方内置文件树是 `builtin` 档，会被 `extension` 档自动让位**（同 kind 只渲染优先级更高者）。
 - **禁用或卸载本插件后，官方内置文件树自动恢复**（无需手动改任何官方文件/包）。
-- 编辑 tab 是本插件**新增**的类型（kind `sidebar-lite.edit`），官方没有同 kind 类型，不涉及让位。
-- 回退到"完全没有本插件"：删掉 `cordis.patch.yml` 中本插件那一行（`id: sidebar-lite`）后重启服务。
+- 编辑 tab 是本插件**新增**的类型（kind `sidebar-extend.edit`），官方没有同 kind 类型，不涉及让位。
+- 回退到"完全没有本插件"：删掉 `cordis.patch.yml` 中本插件那一行（`id: sidebar-extend`）后重启服务。
 
 ### 官方浏览器 tab 的启用 / 回退（一行）
 
@@ -73,27 +73,27 @@
 
 ### 双入口
 
-- **宿主端** `lib/index.js`：导出 `apply` / `inject` / `name`，`inject = ["webServer"]`；在 DSH 的 `webServer` 上注册路由前缀 `/__dsh/sidebar-lite/*`（`ctx.effect(() => ctx.webServer.register({ kind: "prefix", ... }), label)`）。
-- **客户端** `lib/client.js`：走 `window.__ModuleLoader__.load({ id: "dsh-sidebar-lite", factory })`，导出 `exports.apply` / `exports.inject`；`inject = ["slots", "sessions", "sidebarRightTabs", "locale"]`。
+- **宿主端** `lib/index.js`：导出 `apply` / `inject` / `name`，`inject = ["webServer"]`；在 DSH 的 `webServer` 上注册路由前缀 `/__dsh/sidebar-extend/*`（`ctx.effect(() => ctx.webServer.register({ kind: "prefix", ... }), label)`）。
+- **客户端** `lib/client.js`：走 `window.__ModuleLoader__.load({ id: "dsh-sidebar-extend", factory })`，导出 `exports.apply` / `exports.inject`；`inject = ["slots", "sessions", "sidebarRightTabs", "locale"]`。
 
 ### 客户端注册（官方两阶段契约）
 
 ```js
 // 1) 接管官方文件树 (kind "files"): extension 档压过官方 builtin, 卸载后官方自动恢复
 ctx.effect(() => ctx.sidebarRightTabs.register({
-  id: "dsh-sidebar-lite", kind: "files", priority: "extension",
+  id: "dsh-sidebar-extend", kind: "files", priority: "extension",
   keepMounted: true, title, guide,
-}), "dsh-sidebar-lite: files type");
+}), "dsh-sidebar-extend: files type");
 ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register(
-  { name: "sidebar.right.pane.tab", key: "dsh-sidebar-lite", locale: "dsh-sidebar-lite" }, FilesBody,
-)), "dsh-sidebar-lite: files body");
+  { name: "sidebar.right.pane.tab", key: "dsh-sidebar-extend", locale: "dsh-sidebar-extend" }, FilesBody,
+)), "dsh-sidebar-extend: files body");
 
 // 2) 编辑 tab: 资源类型 (认领 dsh-resource://edit/**)
 ctx.effect(() => ctx.sidebarRightTabs.register({
-  id: "dsh-sidebar-lite/edit", kind: "sidebar-lite.edit", priority: "extension",
+  id: "dsh-sidebar-extend/edit", kind: "sidebar-extend.edit", priority: "extension",
   patterns: ["dsh-resource://edit/**"], canOpen, title,
-}), "dsh-sidebar-lite: edit type");
-// 正文 / 标题分别注册到 sidebar.right.pane.tab / sidebar.right.pane.tab.title, slot key 同为 "dsh-sidebar-lite/edit"
+}), "dsh-sidebar-extend: edit type");
+// 正文 / 标题分别注册到 sidebar.right.pane.tab / sidebar.right.pane.tab.title, slot key 同为 "dsh-sidebar-extend/edit"
 ```
 
 **三处名字必须一致**：`package.json` 的 `name`、`lib/client.js` 的 `ModuleLoader.load({ id })`、`lib/index.js` 的 `const name`；并且 `sidebar.right.pane.tab` 注册的 `key` 必须等于类型 `definition.id`。任一处不一致会**静默不渲染 / 静默加载失败**（不报错）。
@@ -109,7 +109,7 @@ ctx.effect(() => ctx.sidebarRightTabs.register({
 
 ### 文案与样式（官方契约）
 
-- **多语言**：`ctx.locale.register("dsh-sidebar-lite", { zh, en })` + `ctx.locale.bind`；插槽注册带 `locale: "dsh-sidebar-lite"` 选项即可拿到 `t()`。**已删除自研 `__DSH_I18N__` 脚本桥**（原来从 `http://127.0.0.1:3081/__dsh_i18n_bridge.js` 注入）。
+- **多语言**：`ctx.locale.register("dsh-sidebar-extend", { zh, en })` + `ctx.locale.bind`；插槽注册带 `locale: "dsh-sidebar-extend"` 选项即可拿到 `t()`。**已删除自研 `__DSH_I18N__` 脚本桥**（原来从 `http://127.0.0.1:3081/__dsh_i18n_bridge.js` 注入）。
 - **样式**：只用官方主题 token，**不写 JS 主题监听**：`--dsw-alias-label-primary/secondary/tertiary`、`--dsw-alias-border-l3`、`--dsw-alias-interactive-bg-hover`、`--dsw-alias-bg-overlay`、`--dsw-alias-state-error/success/warn-primary`、`--dsw-specific-input-major`、`--dsw-radius-sm/md`、`--dsh-content-font-size-secondary`。
 
 ### 官方输入机捕获（保留）
@@ -118,15 +118,15 @@ ctx.effect(() => ctx.sidebarRightTabs.register({
 
 ## 路由与安全一览
 
-宿主端前缀 `/__dsh/sidebar-lite/*`，**全部要求自定义头 `X-DSH-Sidebar-Lite: 1`**（跨域页面无法伪造）：
+宿主端前缀 `/__dsh/sidebar-extend/*`，**全部要求自定义头 `X-DSH-Sidebar-Extend: 1`**（跨域页面无法伪造）：
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/__dsh/sidebar-lite/session.cwd` | 解析会话权威工作目录 `cwd` + 工作区根（资源管理器默认根） |
-| POST | `/__dsh/sidebar-lite/fs.tree` | 列目录（目录优先、隐藏灰显、懒加载、`truncated`） |
-| POST | `/__dsh/sidebar-lite/fs.read` | 读文件（文本/二进制 head；文本上限 1MB，超出置 `truncated` 只读） |
-| POST | `/__dsh/sidebar-lite/fs.write` | 写文件（临时文件 + rename 原子化） |
-| GET | `/__dsh/sidebar-lite/file?sessionId=&cwd=&path=&download=` | 返回原始媒体字节（另存为；`download=1` 附 `content-disposition`；单文件上限 32MB） |
+| POST | `/__dsh/sidebar-extend/session.cwd` | 解析会话权威工作目录 `cwd` + 工作区根（资源管理器默认根） |
+| POST | `/__dsh/sidebar-extend/fs.tree` | 列目录（目录优先、隐藏灰显、懒加载、`truncated`） |
+| POST | `/__dsh/sidebar-extend/fs.read` | 读文件（文本/二进制 head；文本上限 1MB，超出置 `truncated` 只读） |
+| POST | `/__dsh/sidebar-extend/fs.write` | 写文件（临时文件 + rename 原子化） |
+| GET | `/__dsh/sidebar-extend/file?sessionId=&cwd=&path=&download=` | 返回原始媒体字节（另存为；`download=1` 附 `content-disposition`；单文件上限 32MB） |
 
 > 安全要点：
 > - 路径一律按**绝对路径**处理，**允许上溯浏览到工作区之外**（安全边界 = 自定义头 + 本地进程，不再有目录围栏）。
@@ -145,10 +145,10 @@ ctx.effect(() => ctx.sidebarRightTabs.register({
 插件通过 `cordis.patch.yml` 以一行 bundle 插入 profile 插件树，随 DSH 服务启动加载：
 
 ```
-右下角 → 插件管理 →（enable/disable dsh-sidebar-lite）
+右下角 → 插件管理 →（enable/disable dsh-sidebar-extend）
 ```
 
-或直接编辑配置文件，增删 `dsh-sidebar-lite` 一行后再重启服务。
+或直接编辑配置文件，增删 `dsh-sidebar-extend` 一行后再重启服务。
 
 > **改源码必须重装 + 重启**：插件通过 `file:` 依赖安装，**pnpm 是拷贝不是软链**，改完 `lib/*.js` 必须重装插件 + 重启服务才生效。
 
@@ -171,7 +171,7 @@ ctx.effect(() => ctx.sidebarRightTabs.register({
 | 终端（node-pty / xterm） | **删除 → 官方 `terminal` tab**（绿色版已随附 `node-pty` + `conpty.dll`） |
 | 后台任务（Jobs）列表 / 输出 / 收割 | **删除 → 官方会话头部 `dsh-client-ui-jobs` 控件** |
 | 独立预览侧栏框 / 自研折叠按钮 / 宽度拖拽 / `#root` 让位 | **删除 → 官方右侧栏容器** |
-| 自定义头防跨站 + DNS-rebinding / CSRF 边界 | **保留**（`X-DSH-Sidebar-Lite: 1`） |
+| 自定义头防跨站 + DNS-rebinding / CSRF 边界 | **保留**（`X-DSH-Sidebar-Extend: 1`） |
 | Git 面板、Diff、Subagent、多分栏等 | **去除**（偏离本版定位） |
 
 特此向原创作者致谢。若介意使用，可随时禁用本插件；本插件不修改任何官方文件 / 包。

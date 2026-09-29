@@ -16,7 +16,7 @@
 
 ## 类型 A：路由 + 客户端双端插件（有 UI）
 
-参考实作：`dsh-archive-purge` / `dsh-usage-stats` / `dsh-sidebar-lite`
+参考实作：`dsh-archive-purge` / `dsh-usage-stats` / `dsh-sidebar-extend`
 
 ### package.json
 

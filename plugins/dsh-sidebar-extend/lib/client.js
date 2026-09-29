@@ -1,4 +1,4 @@
-// DeepSeek Harness 插件 (客户端): dsh-sidebar-lite
+// DeepSeek Harness 插件 (客户端): dsh-sidebar-extend
 // 挂进官方右侧栏 (每个会话一个右侧停靠面) 作为 tab 类型提供者, 不再自建侧栏外壳:
 // 折叠/分栏/浮窗/全屏/快捷键/按会话持久化全部交给官方右侧栏容器负责。
 //   1) 接管官方内置文件树 (kind "files"): 以 extension 档注册, 官方 builtin 档自动让位,
@@ -6,14 +6,14 @@
 //      「返回上级 / 可编辑路径框跳转任意绝对路径 / 回到工作目录 / 刷新」;
 //      单击文件交给官方资源预览 (dsh-resource://file/... ), 由官方文件预览类型渲染
 //      (Markdown/代码/图片/PDF 均由官方负责)。
-//   2) 新增编辑 tab (kind "sidebar-lite.edit", multiple: true): 文本就地编辑 + 保存回写,
+//   2) 新增编辑 tab (kind "sidebar-extend.edit", multiple: true): 文本就地编辑 + 保存回写,
 //      每个文件一份独立内容, 互不顶掉。
-// 数据全部走宿主端路由 /__dsh/sidebar-lite/* (POST JSON / GET 媒体), 均带防御头。
+// 数据全部走宿主端路由 /__dsh/sidebar-extend/* (POST JSON / GET 媒体), 均带防御头。
 // 会话溯源改用官方 props 注入的 sessionId (标准 prop), 不再订阅 ctx.sessions.list。
 // 这是加载器契约格式 (window.__ModuleLoader__.load), 与官方客户端插件一致。
 
 window.__ModuleLoader__.load({
-	id: "dsh-sidebar-lite",
+	id: "dsh-sidebar-extend",
 	factory: (require) => {
 		const module = { exports: {} };
 		const exports = module.exports;
@@ -24,14 +24,14 @@ window.__ModuleLoader__.load({
 		const inject = ["slots", "sessions", "sidebarRightTabs", "locale"];
 
 		// ---- 常量 ----
-		const API_PREFIX = "/__dsh/sidebar-lite";
-		const GUARD_HEADER = "X-DSH-Sidebar-Lite";
-		const LOCALE_NS = "dsh-sidebar-lite";            // 官方文案命名空间 (ctx.locale.bind 用)
-		const FILES_TYPE_ID = "dsh-sidebar-lite";        // 文件树类型在 tab 系统内的唯一 id (也是正文插槽 key)
+		const API_PREFIX = "/__dsh/sidebar-extend";
+		const GUARD_HEADER = "X-DSH-Sidebar-Extend";
+		const LOCALE_NS = "dsh-sidebar-extend";            // 官方文案命名空间 (ctx.locale.bind 用)
+		const FILES_TYPE_ID = "dsh-sidebar-extend";        // 文件树类型在 tab 系统内的唯一 id (也是正文插槽 key)
 		const FILES_KIND = "files";                      // 接管官方内置文件树的 kind
-		const EDIT_TYPE_ID = "dsh-sidebar-lite/edit";    // 编辑类型 id (也是正文/标题插槽 key)
-		const EDIT_KIND = "sidebar-lite.edit";           // 编辑类型的 kind
-		const STYLE_TAG_ID = "dsh-sidebar-lite/body.css";
+		const EDIT_TYPE_ID = "dsh-sidebar-extend/edit";    // 编辑类型 id (也是正文/标题插槽 key)
+		const EDIT_KIND = "sidebar-extend.edit";           // 编辑类型的 kind
+		const STYLE_TAG_ID = "dsh-sidebar-extend/body.css";
 		const FILES_GUIDE_COMMAND_ID = "workspace.files"; // 官方「工作区文件」快捷键命令 id (仅用于指南卡展示)
 
 		// ---- 模块级桥接 ----
@@ -248,7 +248,7 @@ window.__ModuleLoader__.load({
 				}
 				return null;
 			} catch (error) {
-				console.error("[dsh-sidebar-lite] insertOfficialReference error:", error);
+				console.error("[dsh-sidebar-extend] insertOfficialReference error:", error);
 				return String((error && error.message) || error);
 			}
 		}
@@ -330,7 +330,7 @@ window.__ModuleLoader__.load({
 				anchor.remove();
 				window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
 			} catch (error) {
-				console.error("[dsh-sidebar-lite] save-as failed:", error);
+				console.error("[dsh-sidebar-extend] save-as failed:", error);
 			}
 		}
 
@@ -340,7 +340,7 @@ window.__ModuleLoader__.load({
 			if (typeof document === "undefined") return;
 			if (document.querySelector("style[data-plugin-css=" + JSON.stringify(STYLE_TAG_ID) + "]") !== null) return;
 			const style = document.createElement("style");
-			style.dataset.plugin = "dsh-sidebar-lite";
+			style.dataset.plugin = "dsh-sidebar-extend";
 			style.dataset.pluginCss = STYLE_TAG_ID;
 			style.textContent = [
 				".dsl-root{height:100%;min-height:0;display:flex;flex-direction:column;color:var(--dsw-alias-label-primary);font-size:var(--dsh-content-font-size-secondary,13px);line-height:1.5;}",
@@ -791,7 +791,7 @@ window.__ModuleLoader__.load({
 			});
 		}
 
-		// ---- 编辑 tab (kind "sidebar-lite.edit") ----
+		// ---- 编辑 tab (kind "sidebar-extend.edit") ----
 		// 内容完全由 props 里的会话与 tab 身份驱动: 文件路径从资源地址 (tab.contentId) 还原,
 		// 因为官方只持久化地址、不持久化 navigation.params。
 
@@ -995,7 +995,7 @@ window.__ModuleLoader__.load({
 			pluginContext = ctx;
 
 			const t = ctx.locale.bind(LOCALE_NS);
-			ctx.effect(() => ctx.locale.register(LOCALE_NS, { zh, en }), "dsh-sidebar-lite: dictionaries");
+			ctx.effect(() => ctx.locale.register(LOCALE_NS, { zh, en }), "dsh-sidebar-extend: dictionaries");
 
 			// 1) 接管官方内置文件树 (kind "files"): extension 档压过官方 builtin,
 			//    卸载本插件后官方文件树自动恢复。
@@ -1012,12 +1012,12 @@ window.__ModuleLoader__.load({
 					title: () => t("files.title"),
 					description: () => t("files.description"),
 				}],
-			}), "dsh-sidebar-lite: files type");
+			}), "dsh-sidebar-extend: files type");
 			ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register({
 				name: "sidebar.right.pane.tab",
 				key: FILES_TYPE_ID,
 				locale: LOCALE_NS,
-			}, FilesBody)), "dsh-sidebar-lite: files body");
+			}, FilesBody)), "dsh-sidebar-extend: files body");
 
 			// 2) 编辑类型: 资源类型 (认领 dsh-resource://edit/**), 文件身份编进地址本身。
 			//    官方持久化资源地址 (contentId), 因此刷新页面后编辑 tab 仍能定位同一文件;
@@ -1029,24 +1029,24 @@ window.__ModuleLoader__.load({
 				patterns: [EDIT_ADDRESS_PREFIX + "**"],
 				canOpen: (address) => pathFromEditAddress(address) !== "",
 				title: (address) => baseNameOf(pathFromEditAddress(address)) || t("edit.title"),
-			}), "dsh-sidebar-lite: edit type");
+			}), "dsh-sidebar-extend: edit type");
 			ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register({
 				name: "sidebar.right.pane.tab",
 				key: EDIT_TYPE_ID,
 				locale: LOCALE_NS,
-			}, EditorBody)), "dsh-sidebar-lite: edit body");
+			}, EditorBody)), "dsh-sidebar-extend: edit body");
 			ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab.title", () => ctx.slots.register({
 				name: "sidebar.right.pane.tab.title",
 				key: EDIT_TYPE_ID,
 				locale: LOCALE_NS,
-			}, EditorTitle)), "dsh-sidebar-lite: edit title");
+			}, EditorTitle)), "dsh-sidebar-extend: edit title");
 
 			// 3) 官方输入机捕获 (不变): 注册 conversation.input.left 的隐藏组件,
 			//    把 ownerProps.inputActions / input (InputZone 契约快照) 存入模块级变量,
 			//    供右键「以官方 @ 引用插入」读取输入机 draft / draftRev。渲染 null 不占 UI。
 			try {
 				ctx.slots.inject("conversation.input.left", () => ctx.slots.register(
-					{ name: "conversation.input.left", id: "dsh-sidebar-lite-bridge", order: 1 },
+					{ name: "conversation.input.left", id: "dsh-sidebar-extend-bridge", order: 1 },
 					(ownerProps) => {
 						capturedInputActions = (ownerProps && ownerProps.inputActions) || null;
 						capturedInput = (ownerProps && ownerProps.input) || null;

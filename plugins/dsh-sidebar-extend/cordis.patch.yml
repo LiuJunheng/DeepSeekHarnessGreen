@@ -1,12 +1,12 @@
-# dsh-sidebar-lite bundle patch: 把本插件作为一行插入 profile 插件树。
+# dsh-sidebar-extend bundle patch: 把本插件作为一行插入 profile 插件树。
 # 格式与官方 bundle (如 @deepseek-ai/dsh-base) 及同项目插件 dsh-usage-stats 完全一致:
 #   - insert: 新增一行插件行 (id 是本插件行标识, name 是包名)。
-# dsh plugin 命令 reconcile 时会据此把 dsh-sidebar-lite 加入
+# dsh plugin 命令 reconcile 时会据此把 dsh-sidebar-extend 加入
 # profile 的 dsh.profile.bundles 层列表, 服务启动时才真正被加载。
 - insert:
-    - id: sidebar-lite
-      name: dsh-sidebar-lite
-      displayName: 侧栏
+    - id: sidebar-extend
+      name: dsh-sidebar-extend
+      displayName: 侧栏扩展
 
 # 启用官方随附的浏览器 tab (web profile 默认禁用: 官方 README 写明 web 用户可通过
 # profile patch 启用)。本插件不再自带 iframe 浏览器, 改用官方实现(历史栈/toolbar/沙箱开关)。

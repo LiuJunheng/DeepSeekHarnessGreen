@@ -1,7 +1,7 @@
 ---
 name: dsh-deploy-maintain
 description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护、插件开发与避坑经验。覆盖便携 Node/dsh 安装、环境变量重定向、工作区 ACL 沙箱、更新备份、插件管理与 dsh 插件双端加载/路由注册等全套实操知识。"
-updated: "2026-09-28"
+updated: "2026-09-29"
 ---
 
 # DeepSeek Harness 绿色整合版 · 部署维护与插件开发
@@ -348,17 +348,17 @@ ctx.on('system-prompt/assemble', async (assembly, _ctx, next) => {
 
 > **首选方案已变更**：官方右侧栏自带 tab 容器（`files` / `text` / `terminal` / `browser`）与折叠 / 分栏 / 持久化能力 → **能注册官方 tab 类型就不要自建侧栏**（见 5.14）。以下自建侧栏的坑仅在确实必须自建、或需理解历史实现时参考。
 
-- 官方 WebUI 右上角自带宽操作按钮（下载对话等）；自建侧栏/浮层的**展开收拢开关若 `position:fixed; top/right` 固定右上角会盖住官方按钮**（第一处坑）。**把折叠开关垂直居中叠在面板内容区（文件列表）高度上会挡住列表点击**（第二处坑，`dsh-sidebar-lite` 两面都踩过）。
-- **展开态**：折叠按钮放在**标题/tab 条右端**（内容区之外），绝不叠在列表中间高度；**收起态**：开关在右上角/右缘（圆形图标按钮）。
+- 官方 WebUI 右上角自带宽操作按钮（下载对话等）；自建侧栏/浮层的**展开收拢开关若 `position:fixed; top/right` 固定右上角会盖住官方按钮**（第一处坑）。**把折叠开关垂直居中叠在面板内容区（文件列表）高度上会挡住列表点击**（第二处坑，`dsh-sidebar-extend` 自建侧栏时期两面都踩过）。
+- **（历史实现，已被 5.14 取代）展开态**：折叠按钮放在**标题/tab 条右端**（内容区之外），绝不叠在列表中间高度；**收起态**：开关在右上角/右缘（圆形图标按钮）。
 - 按钮用**官方 icon-button 样式**（圆形无边框 / secondary 墨色 / hover 加深填底），图标复刻官方 `IconPanelRightOutline16`（外框 + 右侧竖条）而非字符箭头。
-- 规避重叠的正解不是"把开关挪开"，而是靠 `#root` 让位：面板展开时 `#root{margin-right:面板宽}` 把**官方 header（含下载按钮）推到面板左侧**，故面板内右上角本就没有官方按钮 → 标题条右端放折叠按钮天然不重叠。收起态若用右上角 cluster，需让官方 header `padding-right` 给 cluster 让位。左缘拖拽调宽条保持窄透明（宽 5px），避免挡内容。
-- **多浮动面板并存时的让位累加**（如侧栏 + 独立文件预览框）：额外面板用 `position:fixed; right:主面板宽; width:预览宽` 叠在主面板**左侧**，并把它的宽度也累进 `#root` 的 `margin-right`（`calc(var(--w1)+var(--w2))`）；面板关闭/收起时对应让位变量归零，否则主内容会被后开的浮动面板遮挡（`dsh-sidebar-lite` 已如此实现）。
+- 规避重叠的正解不是"把开关挪开"，而是靠 `#root` 让位：面板展开时 `#root{margin-right:面板宽}` 把**官方 header（含下载按钮）推到面板左侧**，故面板内右上角本就没有官方按钮 → 标题条右端放折叠按钮天然不重叠。收起态若用右上角 cluster，需让官方 header `padding-right` 给 cluster 让位。左缘拖拽调宽条保持窄透明（宽 5px），避免挡内容。**注意：`#root` 让位本身就是在和官方右侧栏争抢宽度，这套自建外壳已被官方容器方案取代（见 5.14）。**
+- **浮动弹窗避让官方右侧栏的正解读法（2026-09-29）**：别再读自建插件的 CSS 变量（外壳已删除），直接量官方停靠面板 —— `document.querySelectorAll("[data-sidebar-right-session]")` 里只认「带 `data-sidebar-right-open`（展开态才有）+ `data-sidebar-right-panel !== "fullscreen"` + `checkVisibility()` 为真」的那块，宽度取 `getBoundingClientRect().width`；变化监听用 `MutationObserver(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-sidebar-right-open", "data-sidebar-right-panel", "style"] })`。实作：`dsh-file-browser` / `dsh-media-background` 的 `getSidebarRightOffset()`。
 
-### 5.12.1 内置文件类插件：右键菜单统一约定 + 跨插件输入机独立桥接（dsh-sidebar-lite / dsh-file-browser）
+### 5.12.1 内置文件类插件：右键菜单统一约定 + 跨插件输入机独立桥接（dsh-sidebar-extend / dsh-file-browser）
 
-**右键菜单约定（两个插件严格一致）：**
-- **文件行 6 项**（顺序固定）：①以官方 @ 引用插入 → ②插入路径到输入框 → ③插入内容到输入框 → ④另存为 → ⑤复制相对路径 → ⑥复制绝对路径。
-- **目录行 3 项**：①插入路径到输入框 → ②复制相对路径 → ③复制绝对路径。
+**右键菜单约定（同一套设计，条目按各自定位取舍）：**
+- `dsh-file-browser`（浮动文件浏览器）：**文件行 6 项**（顺序固定）：①以官方 @ 引用插入 → ②插入路径到输入框 → ③插入内容到输入框 → ④另存为 → ⑤复制相对路径 → ⑥复制绝对路径；**目录行 3 项**：①插入路径到输入框 → ②复制相对路径 → ③复制绝对路径。
+- `dsh-sidebar-extend`（0.3.0 起并入官方右栏）：**文件行 5 项**：①以官方 @ 引用插入 → ②编辑（打开本插件编辑 tab）→ ③另存为 → ④复制相对路径 → ⑤复制绝对路径；**目录行 2 项**：①复制相对路径 → ②复制绝对路径。已去掉走 `setDraft` 的「插入路径 / 插入内容」（官方 @ 引用管线已覆盖，插件不再持有输入机全局桥接）。
 - 各功能分别承担：①走官方 `slash/input-insert-reference`（mint 成 chip）；②③走输入机 `setDraft`（见下）；④走宿主端 `/download` 路由（文件全量字节，单文件上限 32MB，`showSaveFilePicker` 原生另存为对话框，不可用回退浏览器下载）；⑤⑥复制相对/绝对路径（相对会话工作目录 cwd，跨盘返回绝对路径兜底）。
 
 **跨插件插入输入框必须独立桥接（核心避坑）：**
@@ -366,6 +366,7 @@ ctx.on('system-prompt/assemble', async (assembly, _ctx, next) => {
 - **正解（两个插件各自独立完成）**：每个插件在 `apply(ctx)` 里**自己**注册官方 `conversation.input.left` slot（`ctx.slots.inject("conversation.input.left", () => ctx.slots.register({name, id:"<插件>-bridge", order:1}, (ownerProps)=>{ ...存 inputActions/input 到模块级变量; return null }))`），渲染 null 不占 UI。组件渲染时把 `ownerProps.inputActions` / `ownerProps.input`（InputZone 契约快照）存入**模块级变量**，供菜单插值用。
 - **插入走三级降级**：①`inputActions.setDraft(current + sep + text)`（首选，稳定落在真实会话草稿）；②官方输入机 `actx.bail(actx, "slash/input-insert-text", {text, span})`（bail 拿 liveRev 避免 CAS 失败）；③DOM fallback（`textarea`/`[contenteditable]`，仅前两者都不可用，且**只作用于会话输入框**）。路径 B 从 `bridge.scope(sessionId)` 取 actx，不一定拿到官方通道，故 A 优先。
 - **关键**：官方 `conversation.input.left` 是**每个插件可独立捕获**的通道，别依赖对方注入的全局；两个插件各自持有模块变量，互不依赖、互不干扰。
+- **现状（2026-09-28 起）**：`dsh-sidebar-extend` 并入官方右栏后只用官方 @ 引用（`slash/input-insert-reference`），本节的 `setDraft` 桥接与 DOM fallback 只对 `dsh-file-browser` 生效；侧栏侧的 `insertIntoInput` / DOM 兜底已删除。
 
 ### 5.13 插件 WebUI 多语言（i18n，10 个插件统一后的规范）
 
@@ -378,10 +379,11 @@ ctx.on('system-prompt/assemble', async (assembly, _ctx, next) => {
 - **waitReady 注册必须幂等**：只保留"立即 or 轮询"两分支；**严禁 setTimeout 强制注册**——轮询成功后 2 秒再注册一次，报 7 条 `list slot "settings.section" already has an entry with id "XXX"`。
 - **语言字典对齐纪律**：`locales/zh.json` / `en.json` 扁平化后 key 集合必须完全一致（漏一个 key 该语言 fallback 回 key 本身）；launcher 的 3081 心跳端口同时服务 `/__dsh_ui_alive` 心跳、`/__dsh_i18n_bridge.js` bridge 脚本、`/__dsh_locales/{zh,en}.json` 字典四类请求。
 - **验证**：切 en 后全部插件面板实时变英文；控制台无 `already has an entry`；Network 里 bridge 请求只有一次。
+- **例外（2026-09-28 起）**：并入官方右栏的 `dsh-sidebar-extend` 已改用官方 locale 契约（`ctx.locale.register(ns, { zh, en })` + 插槽 `locale` 选项拿 `t()`），**不再用 `_dsht` / `__DSH_I18N__` bridge**；其余 9 个插件仍按本节规范。
 
 ### 5.14 官方右侧栏 tab 类型插件（官方容器扩展点，优先于自建侧栏）
 
-自建第二列侧栏（`document.body` portal + `#root` `margin-right` 让位）等于重造官方容器，会与官方 header / 下载按钮 / 分栏持续打架（见 5.12）。**官方右栏已内置 `files` / `text` / `terminal` / `browser` 四类 tab，且容器级能力齐全（折叠 / 分栏 / 浮窗 / 全屏 / 快捷键 / 按会话持久化 `dsh.sidebar-right.v1.<sessionId>`）→ 正解是注册官方 tab 类型**（实作：`dsh-sidebar-lite` 接管 files + 新增 `sidebar-lite.edit` 编辑类型）。
+自建第二列侧栏（`document.body` portal + `#root` `margin-right` 让位）等于重造官方容器，会与官方 header / 下载按钮 / 分栏持续打架（见 5.12）。**官方右栏已内置 `files` / `text` / `terminal` / `browser` 四类 tab，且容器级能力齐全（折叠 / 分栏 / 浮窗 / 全屏 / 快捷键 / 按会话持久化 `dsh.sidebar-right.v1.<sessionId>`）→ 正解是注册官方 tab 类型**（实作：`dsh-sidebar-extend` 接管 files + 新增 `sidebar-extend.edit` 编辑类型）。
 
 **两阶段注册契约（缺一不可）**：
 
