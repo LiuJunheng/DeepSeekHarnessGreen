@@ -340,6 +340,9 @@ RECOMMENDED_PLUGINS = [
     {"name": "dsh-usage-stats", "category": "统计", "source": "npm", "version": "latest",
      "spec": "dsh-usage-stats",
      "description": "WebUI 用量统计: 扫描会话日志按模型汇总 token 用量与费用估算, 消息行常驻显示本次 token (价格表可编辑)"},
+    {"name": "dsh-context", "category": "上下文", "source": "npm", "version": "latest",
+     "spec": "dsh-context",
+     "description": "上下文洞察与管理: WebUI 面板实时查看当前会话上下文的 token 构成与历史演变, 理解 context 是怎么拼出来和怎么变化的"},
 ]
 
 # ---------------------------------------------------------------------------

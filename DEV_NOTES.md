@@ -141,6 +141,27 @@
 
 12. **v0.1.6-alpha.2 typert-loader 新增硬校验: 所有 invocation result codec 必须有 `.create()` 工厂**（2026-09-17 实测）。旧插件手写的纯配置对象 `{ mode: "strict", typeSymbol, schema }` 不再够用, 必须改成统一走 `strictCodec(name, schema) => ({ mode, typeSymbol, schema, create: () => schema })` 工厂。典型症状: 插件树加载阶段直接崩, 堆栈里不一定有 node_modules 路径 (typert-loader 在 import 后立即校验), 错误消息形态为 `typert-loader: <包名> invocation "<包名>#xxx" result codec has no create() factory`。实测案例: dsh-cost-meter v1.7.16 裸对象被拒, 作者当天连出 13 个版本, v1.7.28 补上 `create: () => schema` 工厂后过校验。这类错误 launcher 自愈的 `_extract_bundle_from_log` 已新增 typert 消息精确匹配模式 (\"<包> invocation\" / \"typert-loader: <包>\") 覆盖。**第三方插件在 profile 的 dependencies/bundles 里, launcher 升级 dsh 核心时不会自动更新它, 用户需点一次「安装环境」让 pnpm 重建 profile 依赖树同步兼容版本**。
 
+### Windows 文件权限 / 沙箱授权坑（2026-10-08 实证）
+
+**症状**：会话里**任何** shell 命令都立刻失败，报 `Error: SetNamedSecurityInfoW failed (Win32 5): grantWrite(D:\DeepSeekHarnessLauncher\workspace)` —— 连 `Get-Location` 这种什么都不改的命令也一样；而 `read` / `glob` / `grep` 等走 DSH 文件后端、不需要工作区写授权的操作**一切正常**。极易误判成"命令写错 / 转义问题 / shell 坏了"。
+
+**机制**：DSH 的 Windows 沙箱在起受限进程前，要在授权工作区根上**写一条 ACL**（grantWrite）来授予写权限；写 DACL 要求调用者对目标**同时**具备 `WRITE_DAC` 与 `WRITE_OWNER`。实测本机 `workspace`：owner 就是当前用户、`WRITE_DAC=true`，但 **`WRITE_OWNER=false`** —— ACE 表里只有 Administrators/SYSTEM 的 FullControl、Authenticated Users 的 Modify、Users 的 ReadAndExecute，**没有任何一条给出 WRITE_OWNER** → `SetNamedSecurityInfoW` 以 `ERROR_ACCESS_DENIED(5)` 失败 → 所有受限命令在起进程前就被挡掉（工作区权限从未被真正授予）。
+
+**修复（一次一条命令，非受限运行）**：用本机 skill `diagnose-windows-sandbox-acl` 的脚本；它要写权限，**受限令牌做不了**（受限跑只会把沙箱自身的限制报成"缺权限"），所以必须按 skill 要求为这**一条**命令申请一次更宽权限：
+
+```powershell
+& '<skill目录>\scripts\diagnose-windows-sandbox-acl.ps1' -Path '<失败路径>' -AllowRoot '<授权根>' -Out '<持久化恢复目录>'
+```
+
+它把 `-Path` 及其每一层上级目录都读一遍，对缺 `WRITE_DAC`/`WRITE_OWNER` 的目录**先备份 DACL** 再补一条当前用户的 FullControl allow ACE（同时清理 `S-1-15-2-*` 应用包授权项），改完**重新读回校验**，最后打印逐条回滚命令。本次结果：`RECAP` 中 workspace 一条 `grant` 为 `verified`、`nextAction=verify_original_confined_operation`，重跑受限命令即恢复（`confined-ok`）。
+
+**踩到的两个附加坑**：
+
+1. **本机 Windows PowerShell 禁止运行脚本**（`& script.ps1` 报"在此系统上禁止运行脚本"）→ 正解是**同一进程内**临时放开：`Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force` 后再 `& 脚本`（Process 作用域随进程消失，不动机器/用户策略）。
+2. **判断修复只看 `verification` 记录，不看 `completed` 动作**："操作完成了" ≠ "权限真的变了"；`RECAP` 行才是结论摘要（工具输出只保留尾部）。修完**必须重跑原来失败的那条受限命令**才算闭环。
+
+**别做的事**：手改 ACL / 改所有者 / 递归重置子项 / 用 UAC、runas 提权运行 —— 脚本已备份并给了回滚命令，手工介入会把"可回滚"状态破坏掉。**注意机制边界**：这是**环境层**（Windows 文件权限）问题，与"工作区内含 `runtime/tmp` 导致 ACL temp 冲突"是两个不同的坑（后者见 skill 2.5）。
+
 ### 系统托盘坑（tkinter + Win32，2026-08/09 实证）
 
 1. **托盘右键菜单弹不出来，最常见根因不是 Win32 代码，而是"构建器忘了注入"**（2026-09-14 实测）：`SysTrayIcon.set_menu_builder(build_tray_menu)` 定义了 builder 却漏调用，`poll()` 里 `_menu_builder is None`，菜单永远弹不出。排查：先确认 `run_gui` 已调用 `set_menu_builder`、`_menu_builder` 非 None，再怀疑 Win32 层（`TrackPopupMenu` 的句柄 / 前台窗口）。**注：原先用于定位此问题的 `tray_menu.log` 诊断日志已于 2026-09-23 移除**（`_tray_log` 属托盘调试期临时产物，已一并删除）；需要时临时加 `append_log` 复现，别再找 `tray_menu.log`。
@@ -565,6 +586,8 @@ launcher.py 侧注意事项（插件集成相关）：
 * launcher 启动时会对 node\_modules 里的插件做完整性校验（hash 比对），发现"被污染"会删掉从 `file:plugins/<插件名>` 重新 `dsh plugin add` 安装。修改插件源码后**直接重启 launcher 即可**，不用手动 copy。
 
 * 插件文件必须**无 BOM UTF-8**。launcher 跑 pnpm install 时如果 JSON/YAML 有 BOM 会报 `SyntaxError: Unexpected token '\uFEFF'`。
+
+* **非内置第三方插件**（npm 源装进 profile、不在 `plugins/`、不进绿色 zip）单独建档，不计入上面的「10 款内置插件」清单：`doc/dsh-context-plugin.md`（dsh-context v0.65.0，上下文洞察与管理）。维护要点：重装绿色版环境后需重新 `dsh plugin add`；launcher 的 `_bundled_plugin_dirs` 只扫 `plugins/`，不会碰它。
 
 ## 十、profile package.json 与 cordis hoisting
 

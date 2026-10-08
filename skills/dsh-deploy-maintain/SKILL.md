@@ -1,7 +1,7 @@
 ---
 name: dsh-deploy-maintain
 description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护、插件开发与避坑经验。覆盖便携 Node/dsh 安装、环境变量重定向、工作区 ACL 沙箱、更新备份、插件管理与 dsh 插件双端加载/路由注册等全套实操知识。"
-updated: "2026-09-29"
+updated: "2026-10-08"
 ---
 
 # DeepSeek Harness 绿色整合版 · 部署维护与插件开发
@@ -73,6 +73,7 @@ updated: "2026-09-29"
   2. `workspace.json` 只是**工作区注册表**（`{path,title,sessionIds,...}` + `archivedSessionIds` + 顺序 `workspaceIds`），不是会话配置。
   3. 沙箱判定读 `session.header.cwd`：cwd 是子目录的会话 ACL 通过；cwd 是程序根目录（内含 runtime/tmp）的老会话报冲突。
 - **自动解析（不写死）**：`workspace_conflicts_with_tmp(path)` 用 `os.path.commonpath` 判"临时目录是否为工作区严格子路径"（不同盘符 `ValueError` 按不冲突）；`resolve_default_workspace()` 优先级 = ① config `default_workspace` 显式值（冲突警告回退）→ ② 根目录不冲突用根目录 → ③ 冲突才取 `BASE_DIR/workspace`。
+- **【另一类 ACL 故障：沙箱授权写不进去 → 所有受限命令全挂】**症状是**任何** shell 命令立刻失败，报 `SetNamedSecurityInfoW failed (Win32 5): grantWrite(<工作区>)`（连什么都不改的命令也一样），而 `read`/`glob`/`grep` 这类**不需要工作区写授权**的文件后端操作一切正常 —— 极易误判成"命令写错/shell 坏了"。机制：沙箱起受限进程前要在工作区根上写 ACL 授予写权限，写 DACL 需要目标同时具备 `WRITE_DAC` **和 `WRITE_OWNER`**；实测受害目录 owner 是当前用户、`WRITE_DAC=true` 但 **`WRITE_OWNER=false`**（ACE 只给了 Administrators/SYSTEM 的 FullControl、Authenticated Users 的 Modify、Users 的 ReadAndExecute，没有一条给出 WRITE_OWNER）→ `SetNamedSecurityInfoW` 以 `ERROR_ACCESS_DENIED(5)` 失败。**修法 = 用本机 skill `diagnose-windows-sandbox-acl` 的脚本一条命令诊断+修复**（`-Path <失败路径> -AllowRoot <授权根> -Out <持久化恢复目录>`）：读目标及每层上级，对缺权限的目录先备份 DACL 再补当前用户 FullControl allow ACE，改完**重新读回校验**并打印逐条回滚命令。它要写权限，**受限令牌跑不了**（会把沙箱自身的限制误报成"缺权限"）→ 按 skill 要求为这**一条**命令申请一次更宽权限，非受限运行。**三个实测附加坑**：① 本机 Windows PowerShell 禁跑脚本时，用 `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force` 再 `& 脚本`（Process 作用域随进程消失，不动机器/用户策略）；② 判断修复**只看 `verification` 记录、不看 `completed` 动作**（"操作完成"≠"权限真变了"），`RECAP` 行才是结论摘要；③ 修完**必须重跑原来失败的那条受限命令**才算闭环（skill 的 `nextAction=verify_original_confined_operation`）。**别做**：手改 ACL/改所有者/递归重置子项/UAC 提权运行（脚本已备份+给回滚命令，手工介入会破坏可回滚状态）。注意与"工作区内含 `runtime/tmp` 导致 ACL temp 冲突"区分：那是路径冲突，这是 Windows 文件权限。
 
 ### 2.6 exe 打包（PyInstaller）
 
@@ -422,6 +423,8 @@ ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.regi
 | 客户端 fetch 404（服务端明明有路由） | 是否同 (kind,path) 注册两条（无 method 字段，重复注册抛 Duplicate 回滚全路由）→ 合并单 handler 按 req.method 分流 → 重启服务 |
 | 路由 403 | 自定义头没带对 / 跨域带不上自定义头 |
 | 会话 shell 报 ACL temp 冲突 | 临时目录在工作区内 → 换 `BASE_DIR/workspace` 或工作区外目录 |
+| 任何 shell 命令立刻失败报 `SetNamedSecurityInfoW failed (Win32 5): grantWrite(<工作区>)`，而 read/glob/grep 正常 | 工作区目录对当前用户缺 `WRITE_OWNER` → 用 skill `diagnose-windows-sandbox-acl` 的脚本**非受限**一条命令诊断+修复（申请一次更宽权限）→ 重跑原命令验证（见 2.5） |
+| `& xxx.ps1` 报「在此系统上禁止运行脚本」 | 同进程 `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force` 后再执行（不改机器/用户策略） |
 | "Failed to fetch"/服务 40 秒退 | stdin 读到 EOF → `stdin=PIPE` 保持打开 |
 | 日志 `Unexpected token '\ufeff'` | npm 包 package.json 带 UTF-8 BOM → 读 JSON 前去 BOM |
 | 改插件源码 WebUI 没变化 | pnpm 对 file: 是拷贝 → 同步运行副本/重装 + 重启服务 |
