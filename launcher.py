@@ -294,8 +294,8 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # 发布流程: 打 tag v{GREEN_VERSION} + Release 资产 DSH-GreenPortable-v{tag}.zip
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
-GREEN_VERSION = "1.0.44"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
-GREEN_VERSION_DATE = "2026年09月29日"               # 绿色版版本日期 (release_upload.py 会按构建当天回写)
+GREEN_VERSION = "1.0.45"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
+GREEN_VERSION_DATE = "2026年10月18日"               # 绿色版版本日期 (release_upload.py 会按构建当天回写)
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
 GREEN_RELEASE_MIRROR = ("https://mirror.nju.edu.cn/github-release/%s/latest"
@@ -5758,14 +5758,18 @@ class Launcher:
         if latest_index is None:
             return None
         block_text = "".join(lines[latest_index:])
-        # URL 形如 http://127.0.0.1:3080/?token=xxx (LAN 后缀在空格后, \S+ 不包含)
-        url_match = re.search(r"dsh web:\s*(\S+)", block_text)
-        if not url_match:
-            return None
-        token_match = re.search(r"[?&]token=([^&\s]+)", url_match.group(1))
-        if not token_match:
-            return None
-        return token_match.group(1)
+        # 注意 (2026-10-18): 局域网模式下新版 dsh 会先打印一行没有 token 的提示:
+        #   dsh web: listening on 0.0.0.0 over plain HTTP; restrict this port ...
+        # 之后才打印真正的认证地址:
+        #   dsh web: http://0.0.0.0:3080/?token=xxx
+        # 所以不能取第一个 "dsh web:" 匹配, 必须从后往前找带 token 的那条;
+        # 否则会把 "listening" 当成 URL, 解析不到 token → 回退裸地址 → 局域网 401。
+        url_matches = re.findall(r"dsh web:\s*(\S+)", block_text)
+        for candidate in reversed(url_matches):
+            token_match = re.search(r"[?&]token=([^&\s]+)", candidate)
+            if token_match:
+                return token_match.group(1)
+        return None
 
     def _web_auth_url(self, base_url, wait_seconds=8.0):
         """把裸地址升级为带 ?token= 的认证地址 (若本次启动打印了 token)。

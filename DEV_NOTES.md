@@ -149,6 +149,8 @@
    * 认证补丁锚点也变了：`requestRejection()` 只剩 `admit(request)` 委托，`authorizeIndex(req, res)` 变成 `authorizeIndex(request, response)` 并委托给 `browserAuth.authorizeIndex`。关 auth（`dsh_require_auth=False`）时要改 `admit()` 里 `if (this.browserAuth.isAuthenticated(request, secure)) return { peer: this.browserPeer };` 为直接返回 `browserPeer`，并在 `authorizeIndex` 开头 `return true;`。旧锚点找不到会静默跳过 → 用户以为关了认证但裸地址仍 401。
    * **验证方法（无需浏览器）**：`curl -H "Host: 127.0.0.1:<port>" -H "Origin: http://127.0.0.1" http://127.0.0.1:<port>/api` → 401 表示 Origin 比较已放行（无 Cookie 才 401），403 表示围栏仍拒绝；再用 `Host: <局域网IP>:<port>` 验证 `--trusted-host` 是否生效（401=已信任，403=未信任）。**别用首页 `/` 判断**：index 路由不走 Host 围栏，403 问题只在 `/api` 暴露。
 
+14. **局域网模式 dsh 会多打印一行 `dsh web: listening on 0.0.0.0 ...`（没有 token）**（2026-10-18 实证）。`_read_launch_token()` 原来用 `re.search(r"dsh web:\s*(\S+)")` 取**第一条**匹配，局域网模式下第一条是 `listening`，解析不到 token → `_web_auth_url()` 回退裸地址 → 界面 401、桌面窗口打不开，日志表现为「服务已就绪: http://127.0.0.1:3080」后面没有 `?token=`，且每条局域网地址都间隔 8 秒（等待 token 超时）。修复：用 `re.findall` 收集所有 `dsh web:` 后的 URL，**从后往前**找带 `token=` 的那条。本机模式不受影响，因为本机模式没有 `listening` 这一行，容易漏测。
+
 ### Windows 文件权限 / 沙箱授权坑（2026-10-08 实证）
 
 **症状**：会话里**任何** shell 命令都立刻失败，报 `Error: SetNamedSecurityInfoW failed (Win32 5): grantWrite(D:\DeepSeekHarnessLauncher\workspace)` —— 连 `Get-Location` 这种什么都不改的命令也一样；而 `read` / `glob` / `grep` 等走 DSH 文件后端、不需要工作区写授权的操作**一切正常**。极易误判成"命令写错 / 转义问题 / shell 坏了"。
