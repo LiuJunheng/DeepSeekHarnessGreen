@@ -14,7 +14,7 @@
 
 * **网络**：镜像自动检测（国内优先、失败回退官方）；更新检查优先 npm dist-tags，不畅再退 GitHub/Gitee。
 
-* **自更新**：两套**完全独立**通道——官方核心（`runtime/dsh/`，GUI「检查更新」）+ 绿色版外围（程序根目录，GUI「检查绿色版更新」）；更新前自动备份，失败给出手动地址。
+* **自更新**：两套**完全独立**通道——官方核心（`runtime/dsh/`，GUI「检查更新」）+ 绿色版外围（程序根目录，GUI「检查绿色版更新」）；核心升级默认自动备份（配置项 `auto_backup_on_dsh_upgrade`，GUI「常规设置」可关闭），失败给出手动地址。**注意**：该开关只影响 dsh 核心升级备份，不影响绿色版外围更新自身的 `runtime/update/backup` 机制；所有"会自动备份"的提示文案（升级确认底部、完成弹窗）必须随开关切换，避免误导。
 
 * **桌面壳**：默认独立桌面窗口（pywebview / WinForms / WebView2，标题「DeepSeek Harness 桌面版」），可一键切回网页窗口；桌面版固定单实例。
 
@@ -79,9 +79,11 @@
 
 * **关键补丁（全部幂等；install\_dsh 末尾 + start\_server 前各打一次，因 dsh 升级重装会还原 node\_modules 内文件）**：
 
-  * `patch_web_startup()`：放开绑定 `0.0.0.0`（局域网）。
+  * `patch_web_startup()`：放开绑定 `0.0.0.0`（局域网）。新版 dsh 有两道 wildcard 守卫，都要放行：`dsh-web-app/lib/startup.js` 的 CLI 校验 + `dsh-host-webserver/lib/index.js` 的 Config schema 校验；只放行 `0.0.0.0`，其它 wildcard（如 `::`）仍拒绝。
 
-  * `patch_lan_api_trust()`：信任围栏改 hostname 比较（Chrome 150+ 无端口 Origin 全 /api 403）。
+  * `patch_lan_api_trust()`：信任围栏改 hostname 比较（Chrome 150+ 无端口 Origin 全 /api 403）。v4（dsh 0.2.1-rc.2+）只改 `isSameAuthorityOrigin()` 里的一行比较，不再注入 `trustedHosts`。
+
+  * **局域网信任主机（2026-10-18）**：新版 dsh 已移除「绑定 0.0.0.0 时自动把 lanAddresses 并入 trustedHosts」，`dsh-web-app` 只透传显式 `--trusted-host`。因此 `build_server_command()` 在 `dsh_host=0.0.0.0` 且 `trusted_hosts` 为空时，自动把本机局域网 IPv4 逐个作为 `--trusted-host` 传入；显式填写则只信任填写的地址（保持原交互语义，且不再依赖运行时代码注入）。
 
   * `patch_frontend()`：注入心跳脚本 + `crypto.randomUUID` polyfill。
 
@@ -141,6 +143,12 @@
 
 12. **v0.1.6-alpha.2 typert-loader 新增硬校验: 所有 invocation result codec 必须有 `.create()` 工厂**（2026-09-17 实测）。旧插件手写的纯配置对象 `{ mode: "strict", typeSymbol, schema }` 不再够用, 必须改成统一走 `strictCodec(name, schema) => ({ mode, typeSymbol, schema, create: () => schema })` 工厂。典型症状: 插件树加载阶段直接崩, 堆栈里不一定有 node_modules 路径 (typert-loader 在 import 后立即校验), 错误消息形态为 `typert-loader: <包名> invocation "<包名>#xxx" result codec has no create() factory`。实测案例: dsh-cost-meter v1.7.16 裸对象被拒, 作者当天连出 13 个版本, v1.7.28 补上 `create: () => schema` 工厂后过校验。这类错误 launcher 自愈的 `_extract_bundle_from_log` 已新增 typert 消息精确匹配模式 (\"<包> invocation\" / \"typert-loader: <包>\") 覆盖。**第三方插件在 profile 的 dependencies/bundles 里, launcher 升级 dsh 核心时不会自动更新它, 用户需点一次「安装环境」让 pnpm 重建 profile 依赖树同步兼容版本**。
 
+13. **dsh 0.2.1-rc.2 的 trust / wildcard 结构大改（2026-10-18 实测，三处同时失效）**：
+   * `dsh-client-connection` 重写为 `isTrustedApiRequest(request, trustedHosts, bindHost, protocol)` + `isBindAddressAuthority`，旧锚点 `original_trust` / `original_privileged` / `original_route` 等全部消失；`webRuntime.lanAddresses` 服务也不存在了。**症状**：启动日志「跳过 client-connection 段1/段2 补丁: 目标代码结构不匹配」+「局域网补丁未生效」。处置：v4 只补 `isSameAuthorityOrigin()` 的 `originUrl.host === hostUrl.host` → `hostname` 比较；局域网信任改由 `build_server_command` 追加 `--trusted-host`。
+   * `dsh-web-app/lib/startup.js` 不再有 `options.host === "0.0.0.0"`，改成通用 `isWildcardHost(options.host)`；同时 `dsh-host-webserver` 的 Config schema 也用 `isWildcardAddress(parsed)` 抛错。**症状**：局域网模式启动直接报 `--host 0.0.0.0 is an unspecified (wildcard) address`（第一道）或 `webserver: host "0.0.0.0" is an unspecified (wildcard) address`（第二道）。处置：两道守卫都只放行字符串 `"0.0.0.0"`，其它 wildcard 继续拒绝。**只补一道不够**。
+   * 认证补丁锚点也变了：`requestRejection()` 只剩 `admit(request)` 委托，`authorizeIndex(req, res)` 变成 `authorizeIndex(request, response)` 并委托给 `browserAuth.authorizeIndex`。关 auth（`dsh_require_auth=False`）时要改 `admit()` 里 `if (this.browserAuth.isAuthenticated(request, secure)) return { peer: this.browserPeer };` 为直接返回 `browserPeer`，并在 `authorizeIndex` 开头 `return true;`。旧锚点找不到会静默跳过 → 用户以为关了认证但裸地址仍 401。
+   * **验证方法（无需浏览器）**：`curl -H "Host: 127.0.0.1:<port>" -H "Origin: http://127.0.0.1" http://127.0.0.1:<port>/api` → 401 表示 Origin 比较已放行（无 Cookie 才 401），403 表示围栏仍拒绝；再用 `Host: <局域网IP>:<port>` 验证 `--trusted-host` 是否生效（401=已信任，403=未信任）。**别用首页 `/` 判断**：index 路由不走 Host 围栏，403 问题只在 `/api` 暴露。
+
 ### Windows 文件权限 / 沙箱授权坑（2026-10-08 实证）
 
 **症状**：会话里**任何** shell 命令都立刻失败，报 `Error: SetNamedSecurityInfoW failed (Win32 5): grantWrite(D:\DeepSeekHarnessLauncher\workspace)` —— 连 `Get-Location` 这种什么都不改的命令也一样；而 `read` / `glob` / `grep` 等走 DSH 文件后端、不需要工作区写授权的操作**一切正常**。极易误判成"命令写错 / 转义问题 / shell 坏了"。
@@ -192,7 +200,7 @@
 
 8. 主题自适应：插件颜色改用 `var(--dsw-alias-*)`（CSS 变量自动随主题，**别加 JS 主题监听**）；锚定在固定浅色框里的内容整组固定（浅框 + 深字），只有框外页面级文字随主题。
 
-9. pywebview：**`webview.start()`** **之前绝不调** **`load_url()`**（打断原生窗口创建，静默回退浏览器）；换图标用 `webview.start(icon=)`（WinForms）；窗口就绪后的导航/初始化放 `webview.start(func)` 回调；打开去重手动/自动分开走。
+9. pywebview：**`webview.start()`** **之前绝不调** **`load_url()`**（打断原生窗口创建，静默回退浏览器）；换图标用 `webview.start(icon=)`（WinForms）；窗口就绪后的导航/初始化放 `webview.start(func)` 回调；打开去重手动/自动分开走。**WebView2 后端不支持 `window.open` 新窗口**——官方 DeepSeek 账号登录用 `window.open("about:blank", "_blank")` 预开标签页，再 `popup.location.replace(授权地址)` 跳扫码页，不处理会表现为"点登录没反应/无法跳转网页扫码"。正解：`create_window(js_api=DesktopShellApi())` 暴露 `open_external`，注入 `NEW_WINDOW_BRIDGE_JS` 覆盖 `window.open`（`about:blank` 返回带 `location.replace/assign` 的占位对象）并拦截 `<a target="_blank">`，把真实 URL 交系统默认浏览器；OAuth 回调地址是本机 `window.location.origin`（`/oauth/callback` 由 dsh webServer 注册，不走 BrowserAuth），扫码完成后登录态自动同步回 WebView。只放行 http/https，避免页面诱导打开 `file://`。
 
 10. **`sctx.settings.mutate`** **只认** **`set`/`unset`，不认** **`remove`**：`op:"remove"` 抛 schema 校验错误、异常冒泡成运行失败。所有"删除字段"的写法统一用 `unset`。
 
@@ -332,6 +340,8 @@
 * **官方 0.1.2 新增逐回合精确记账**：turn-tail 节点 `data.tokenUsage`（`TurnTokenUsage`：uncachedInputTokens/outputTokens/totalTokens/cacheRead/cacheWrite/reasoningTokens + routes 按 provider/model 归属，窗口证据不全时缺省）——消息行"实际消耗"的最权威来源（插件当前仍用 legacy 求和，二者对完整回合一致；后续可切换为官方记账）。
 
 * **官方 ContextMeter（输入框右侧环形仪表）与用量统计不冲突**：ContextMeter 显示当前会话**上下文窗口占用**（\~已用/窗口 + 系统/工具/消息三段，估算值，无费用）；本插件显示**实际计费 token + 费用估算 + 账户余额**（账单视角）。互补关系，见插件 README「与官方功能的区别」。
+
+* **余额来源优先级（2026-10-09，dsh 0.2.1+ 账号登录）**：`dsh-usage-stats` 余额查询为 **API Key 优先、账号登录兜底**——先 `readApiKey()` 调 `/user/balance`；**没有 API Key** 时再 `ctx.get("deepseekAccount")?.getBalance(clientMetadata)`（由 `dsh-base` 的 `deepseek-account` 提供）。API Key 存在但查询失败时**不回退账号登录**（避免把另一个账户的余额显示给用户）。`deepseekAccount` **不要写进 `inject`**——旧版 dsh 没有该服务，声明会让插件加载失败；改为请求时按需 `ctx.get`。前端按响应里的 `source: "account" | "apiKey"` 切换余额卡标题（「账号登录」/「DeepSeek 实时」）。
 
 1. **web token 认证开关（2026-08-31，需求 #49）**：DSH 0.1.2-alpha.2+ 的 BrowserAuth 是强制开启的（官方 Config 里没有 enableAuth 开关），关掉只能 patch。绿色版实现：`launcher.py` 加 `dsh_require_auth` config 字段（默认 True）+ GUI 网络设置区复选框（动态安全警告：0.0.0.0+关auth 时红框、127.0.0.1+关auth 时橙框提示风险极低）+ `patch_auth(require_auth=True/False)` 条件式补丁函数（双副本覆盖 core+shared、幂等、支持正向关闭+反向还原）。patch **只关 token/Cookie 层**（BrowserAuth.isAuthenticated 跳过），**保留 Host/Origin 围栏**（isTrustedApiRequest → 403）。所以 "关 token" ≠ 回到旧版 0.1.1-rc.2 裸奔（旧版两层都没），而是 401 那层的安全门拆了但 403 Host 防火墙还在。127.0.0.1 下 loopback 自动放行 403，实际差异为零；0.0.0.0 下等于"局域网任何人靠 Host header 就能直接访问界面"。两个精确 patch 点（官方打包纯 tab 缩进）：① `requestRejection()` 第二行 `return this.browserAuth.isAuthenticated(request) ? void 0 : 401` → 改 `return void 0;`；② `authorizeIndex()` 方法体开头插入 `return true;` 跳过 token/Cookie 校验。启动前 patch 链（两处：install\_dsh 安装后 + 启动服务前）根据 config 决定 patch 方向；`_web_auth_url()` 在 auth 关闭时直接返回裸地址短路，省掉 8s token 竞态等待。**还原方向**（用户改回 require\_auth=True）会把两处 patch 还原回官方原始代码，不留残留。dsh 升级重装会清除所有 patch，启动前自动重新应用。
 

@@ -146,6 +146,120 @@ async function readApiKey() {
 	return null;
 }
 
+/**
+ * 读取 DeepSeek 账号余额（官方账号登录态）。
+ *
+ * 背景: DSH 0.2.1 起 Web/桌面端支持直接登录 DeepSeek 账号, 账号余额由
+ * Host 的 deepseekAccount 服务提供 (见 @deepseek-ai/dsh-deepseek-account)。
+ * 本插件运行在 Host 侧, 可直接调用该服务, 不需要 API Key。
+ *
+ * 返回值约定:
+ *   null                         → 未登录 / 当前版本没有该服务 (调用方按"两者都没有"处理)
+ *   { ok: true, balance: {...} } → 账号已登录且余额读取成功
+ *   { ok: false, error: "..." }  → 账号已登录但余额读取失败
+ *                                  (不再回退到 API Key, 避免把另一个账户的余额显示给用户)
+ */
+async function readAccountBalance(ctx) {
+	let accountService;
+	try {
+		// 不写进 inject: 旧版 dsh 没有 deepseekAccount 服务, 声明 inject 会让插件
+		// 在旧版加载失败。这里在请求时按需获取, 取不到就回退 API Key。
+		accountService = ctx && typeof ctx.get === "function"
+			? ctx.get("deepseekAccount")
+			: undefined;
+	} catch {
+		accountService = undefined;
+	}
+	if (!accountService || typeof accountService.getBalance !== "function") {
+		return null;
+	}
+	const clientMetadata = {
+		// 该字段只作为平台请求头 x-client-version, 不参与余额计算。
+		version: process.env.DSH_CLIENT_VERSION || "0.2.1",
+		locale: "zh-CN",
+		timezoneOffsetSeconds: -new Date().getTimezoneOffset() * 60,
+	};
+	let outcome;
+	let timeoutHandle;
+	try {
+		outcome = await Promise.race([
+			accountService.getBalance(clientMetadata),
+			new Promise((resolve, reject) => {
+				timeoutHandle = setTimeout(
+					() => reject(new Error("账号余额查询超时")), 12000);
+			}),
+		]);
+	} catch (error) {
+		return {
+			ok: false,
+			error: "账号余额查询失败: " + String((error && error.message) || error),
+		};
+	} finally {
+		if (timeoutHandle !== undefined) {
+			clearTimeout(timeoutHandle);
+		}
+	}
+	// null = 未登录, 或查询期间凭据发生变化 → 交给 API Key 兜底
+	if (outcome === null || outcome === undefined) {
+		return null;
+	}
+	if (outcome.status !== "ready") {
+		return {
+			ok: false,
+			error: "账号已登录, 但余额查询失败 (可稍后重试)",
+		};
+	}
+	return {
+		ok: true,
+		balance: accountWalletsToBalance(outcome),
+	};
+}
+
+/**
+ * 把账号钱包数据转换成官方 /user/balance 的响应结构,
+ * 复用前端已有的余额卡渲染 (is_available + balance_infos)。
+ */
+function accountWalletsToBalance(outcome) {
+	const normalWallets = Array.isArray(outcome.value) ? outcome.value : [];
+	const bonusWallets = Array.isArray(outcome.bonusWallets) ? outcome.bonusWallets : [];
+	const currencies = [];
+	for (const wallet of normalWallets.concat(bonusWallets)) {
+		if (wallet && wallet.currency && currencies.indexOf(wallet.currency) === -1) {
+			currencies.push(wallet.currency);
+		}
+	}
+	const balanceInfos = currencies.map((currency) => {
+		const toppedUpBalance = sumWalletBalance(normalWallets, currency);
+		const grantedBalance = sumWalletBalance(bonusWallets, currency);
+		const totalBalance = (Number(toppedUpBalance) + Number(grantedBalance)).toFixed(2);
+		return {
+			currency: currency,
+			total_balance: totalBalance,
+			topped_up_balance: toppedUpBalance,
+			granted_balance: grantedBalance,
+		};
+	});
+	return {
+		is_available: true,
+		balance_infos: balanceInfos,
+	};
+}
+
+/** 汇总同一币种的钱包余额 (仅用于展示, 保留两位小数)。 */
+function sumWalletBalance(wallets, currency) {
+	let totalBalance = 0;
+	for (const wallet of wallets) {
+		if (!wallet || wallet.currency !== currency) {
+			continue;
+		}
+		const value = Number(wallet.balance);
+		if (Number.isFinite(value)) {
+			totalBalance += value;
+		}
+	}
+	return totalBalance.toFixed(2);
+}
+
 function sendJson(res, status, payload) {
 	const body = JSON.stringify(payload);
 	res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
@@ -982,7 +1096,8 @@ function apply(ctx) {
 		}
 	}), name + ": pricing refresh route");
 
-	// 余额查询: 后端用 DeepSeek API key 调 /user/balance, key 不出服务端、不暴露给前端
+	// 余额查询: 优先用 API Key 调 /user/balance; 没有 API Key 时回退官方账号登录态
+	// (Host deepseekAccount.getBalance)。凭据不出服务端、不暴露给前端。
 	ctx.effect(() => ctx.webServer.register({
 		kind: "exact",
 		path: ROUTE_BALANCE,
@@ -992,44 +1107,73 @@ function apply(ctx) {
 				res.end();
 				return;
 			}
+			// 记录当前分支, 仅供异常兜底标注来源
+			let currentSource = "apiKey";
 			try {
+				// 1) API Key 优先 (传统配置 / headless / 局域网远程的主路径)
 				const key = await readApiKey();
-				if (!key) {
-					sendJson(res, 200, { ok: false, configured: false, error: "未检测到 DeepSeek API Key，请先在设置面板配置" });
-					return;
-				}
-				const controller = new AbortController();
-				const timer = setTimeout(() => controller.abort(), 8000);
-				let response;
-				try {
-					response = await fetch(DEEPSEEK_BALANCE_URL, {
-						method: "GET",
-						headers: { Accept: "application/json", Authorization: "Bearer " + key },
-						signal: controller.signal,
-					});
-				} finally {
-					clearTimeout(timer);
-				}
-				if (!response.ok) {
-					let detail = "";
+				if (key) {
+					const controller = new AbortController();
+					const timer = setTimeout(() => controller.abort(), 8000);
+					let response;
 					try {
-						const body = await response.json();
-						if (body && body.error && body.error.message) detail = String(body.error.message);
-					} catch { /* 忽略解析失败 */ }
-					// 401/403 通常是非 DeepSeek key 或 key 已失效, 给平和提示, 不影响其它功能
-					const friendly = (response.status === 401 || response.status === 403)
-						? "当前账户非 DeepSeek，或 API Key 无效，无法读取余额（其余功能不受影响）"
-						: "查询余额失败(HTTP " + response.status + ")" + (detail ? " " + detail : "");
-					sendJson(res, 200, { ok: false, configured: true, http_status: response.status, error: friendly });
+						response = await fetch(DEEPSEEK_BALANCE_URL, {
+							method: "GET",
+							headers: { Accept: "application/json", Authorization: "Bearer " + key },
+							signal: controller.signal,
+						});
+					} finally {
+						clearTimeout(timer);
+					}
+					if (!response.ok) {
+						let detail = "";
+						try {
+							const body = await response.json();
+							if (body && body.error && body.error.message) detail = String(body.error.message);
+						} catch { /* 忽略解析失败 */ }
+						// 401/403 通常是非 DeepSeek key 或 key 已失效, 给平和提示, 不影响其它功能
+						const friendly = (response.status === 401 || response.status === 403)
+							? "当前账户非 DeepSeek，或 API Key 无效，无法读取余额（其余功能不受影响）"
+							: "查询余额失败(HTTP " + response.status + ")" + (detail ? " " + detail : "");
+						sendJson(res, 200, { ok: false, configured: true, source: "apiKey", http_status: response.status, error: friendly });
+						return;
+					}
+					const data = await response.json();
+					sendJson(res, 200, { ok: true, configured: true, source: "apiKey", balance: data });
 					return;
 				}
-				const data = await response.json();
-				sendJson(res, 200, { ok: true, configured: true, balance: data });
+				// 2) 没有 API Key → 回退账号登录态 (dsh 0.2.1+)
+				currentSource = "account";
+				const accountResult = await readAccountBalance(ctx);
+				if (accountResult !== null) {
+					if (accountResult.ok) {
+						sendJson(res, 200, {
+							ok: true,
+							configured: true,
+							source: "account",
+							balance: accountResult.balance,
+						});
+					} else {
+						sendJson(res, 200, {
+							ok: false,
+							configured: true,
+							source: "account",
+							error: accountResult.error,
+						});
+					}
+					return;
+				}
+				// 3) API Key 与账号登录都没有
+				sendJson(res, 200, {
+					ok: false,
+					configured: false,
+					error: "未检测到 DeepSeek API Key 或账号登录，请先在设置面板配置 API Key，或登录 DeepSeek 账号",
+				});
 			} catch (error) {
 				const reason = (error && error.name === "AbortError")
 					? "查询余额超时"
 					: "查询余额异常: " + String((error && error.message) || error);
-				sendJson(res, 200, { ok: false, configured: true, error: reason });
+				sendJson(res, 200, { ok: false, configured: true, source: currentSource, error: reason });
 			}
 		}
 	}), name + ": balance route");

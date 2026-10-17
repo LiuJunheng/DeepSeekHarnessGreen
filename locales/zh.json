@@ -55,9 +55,9 @@
     "labelframe": "数据维护 (需先停止服务, 恢复不删数据)",
     "session_manage": "会话管理",
     "session_hint": "弹出会话列表, 勾选(可全选)后可恢复(取消归档)或永久删除选中的会话(日志+注册表条目)",
-    "cleanup_update": "清理更新",
-    "cleanup_backup": "清理备份",
-    "cleanup_hint": "清空 runtime/update (更新暂存) 与 runtime/backup (旧版备份) 文件夹"
+    "cleanup_update": "清理更新缓存",
+    "cleanup_backup": "清理版本备份",
+    "cleanup_hint": "更新缓存 = 升级临时文件, 可随时清理; 版本备份 = 旧版 dsh 拷贝, 清理后无法回退"
   },
   "network": {
     "labelframe": "网络设置 (局域网远程访问)",
@@ -84,6 +84,7 @@
     "open_browser": "网页窗口 (系统浏览器)",
     "auto_open_label": "启动服务后自动打开界面 (按默认方式打开, 已打开则不重复开新页)",
     "taskbar_on_minimize_label": "最小化时保留任务栏图标 (取消勾选则最小化后仅托盘图标可见, 服务继续运行)",
+    "upgrade_backup_label": "升级 DSH 前自动备份 (推荐; 取消后更快, 但无法回退旧版)",
     "save_hint": "改动后即使不点保存, 启动服务或安装下载时也会自动按最新填入值落盘生效",
     "save_button": "保存设置",
     "port_invalid": "端口范围 1-65535",
@@ -798,6 +799,7 @@
       "title": "用量统计",
       "desc": "扫描本机全部会话日志，按模型汇总每次模型调用的 token 用量（输入 / 输出 / 缓存读取 / 缓存写入 / 思考推理）。费用按 DeepSeek 官方计费口径估算：输入（未命中缓存）+ 输入（命中缓存）+ 输出，各自 ÷1e6 × 单价；思考 token 已计入输出、不重复计费；高峰/低谷两档按官方规则计（北京周一至周五 9:00-12:00 / 14:00-18:00 为高峰，其余含周末为低谷，高峰为低谷 2 倍），今日消耗与热力图按每条消息发生时刻精确计费。价格可「从官方更新价格」自动同步，也可手动编辑并保存（仅存于本浏览器，手动保存覆盖官方价）。当前服务运行中的会话可能仍在写入，统计为截至刷新时的数据。",
       "label_balance": "余额（DeepSeek 实时）",
+      "label_balance_account": "余额（账号登录）",
       "label_total_balance": "总余额",
       "label_recharge_balance": "充值余额",
       "label_promo_balance": "赠金余额",
@@ -845,7 +847,7 @@
       "btn_querying": "查询中…",
       "btn_refresh_stats": "刷新统计",
       "btn_scanning": "扫描中…",
-      "hint_no_deepseek": "当前非 DeepSeek 账户，或未在设置面板配置 API Key，无法读取余额（余额查询仅对 DeepSeek 生效，其余功能不受影响）",
+      "hint_no_deepseek": "未检测到 DeepSeek API Key 或账号登录，或当前账户非 DeepSeek，无法读取余额（余额查询仅对 DeepSeek 生效，其余功能不受影响）",
       "hint_balance_fail": "余额查询失败",
       "hint_no_balance_detail": "DeepSeek 未返回余额明细",
       "hint_logs_large": "日志较大时会话多时扫描可能需要几秒",
@@ -891,16 +893,16 @@
     "view_npm_page": "查看 npm 页面"
   },
   "cleanup": {
-    "update_confirm_title": "清理更新",
-    "update_confirm_detail": "将清空更新暂存目录 (runtime/update),\n包括: 暂存的新版 zip、解压内容、覆盖前的旧文件备份、更新任务文件。\n\n若更新程序正在运行中, 被占用的文件会跳过, 不影响更新。是否继续?",
-    "backup_confirm_title": "清理备份",
-    "backup_confirm_detail": "将清空备份目录 (runtime/backup),\n包括: 更新 dsh 前自动备份的旧版本目录, 以及旧版散落的 dsh-backup-* 残留。\n\n清理后无法回退旧版本! 是否继续?",
-    "cancelled_update": "用户取消清理更新",
-    "cancelled_backup": "用户取消清理备份",
-    "update_done_title": "清理更新",
-    "backup_done_title": "清理备份",
-    "update_done_detail": "已清理更新目录, 共删除 {count} 项。",
-    "backup_done_detail": "已清理备份目录, 共删除 {count} 项。"
+    "update_confirm_title": "清理更新缓存",
+    "update_confirm_detail": "将清空更新缓存目录 (runtime/update),\n包括: 暂存的新版 zip、解压内容、覆盖前的旧文件备份、更新任务文件。\n\n这些只是升级过程的临时文件, 清理后不影响已安装版本。\n若更新程序正在运行中, 被占用的文件会跳过, 不影响更新。是否继续?",
+    "backup_confirm_title": "清理版本备份",
+    "backup_confirm_detail": "将清空版本备份目录 (runtime/backup),\n包括: 升级 dsh 前自动备份的旧版本目录, 以及旧版散落的 dsh-backup-* 残留。\n\n注意: 清理后将无法回退到旧版本! 是否继续?",
+    "cancelled_update": "用户取消清理更新缓存",
+    "cancelled_backup": "用户取消清理版本备份",
+    "update_done_title": "清理更新缓存",
+    "backup_done_title": "清理版本备份",
+    "update_done_detail": "已清理更新缓存目录, 共删除 {count} 项。",
+    "backup_done_detail": "已清理版本备份目录, 共删除 {count} 项。"
   },
   "install": {
     "fail_title": "安装失败",
@@ -973,10 +975,12 @@
     "manual_msg": "这是 DSH 绿色版的独立更新程序, 由启动器在更新时自动调用, 一般无需手动运行。\n\n",
     "fail_final_hint": "下载解压后, 把里面的文件覆盖到程序目录 (不要覆盖 config.json 与 runtime 文件夹)。"
   },
-  "warn.lan_api_not_patched": "[警告] client-connection 局域网补丁未生效: 局域网模式 /api 可能报 403 (本机模式不受影响); 可稍后重启服务重试, 或等 dsh 更新后再装一次环境",
+  "warn.lan_api_not_patched": "[警告] client-connection Origin 兼容补丁未生效: 带 Origin 的 /api 请求可能报 403; 可稍后重启服务重试, 或等 dsh 更新后再装一次环境",
   "update.done_title": "更新完成",
   "update.done_msg": "dsh 已更新到版本: {version}\n\n旧版本已备份到 runtime/backup, 可在「数据维护」里一键清理。",
+  "update.done_msg_no_backup": "dsh 已更新到版本: {version}\n\n本次未备份旧版本 (已在「常规设置」关闭「升级 DSH 前自动备份」)。",
   "upgrade_confirm.footer": "升级前会自动备份当前版本到 runtime/backup/dsh-<版本>,\n旧版本备份不会自动删除, 可随时在「数据维护」里一键清理。",
+  "upgrade_confirm.footer_no_backup": "已关闭「升级 DSH 前自动备份」(常规设置), 升级后无法回退旧版本, 请确认新版可用再升级。",
   "source_hint.gitee_preferred": "\n\n本次更新来自 Gitee 镜像源 (国内源优先, 发布版 zip 直连, 与 GitHub 发货内容一致)。",
   "source_hint.gitee_fallback": "\n\n注意: GitHub 通道连不通, 本次更新来自 Gitee 镜像源 (发布版 zip / 整仓快照, 与 GitHub 发货内容一致)。",
   "update.failed_title": "更新失败",

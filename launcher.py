@@ -180,6 +180,9 @@ DEFAULT_CONFIG = {
     # 托盘图标始终常驻 (不受此开关影响); 只控制启动器主窗口最小化后的行为。
     # desktop-shell.py 的桌面窗口图标独立存在, 也不受此开关影响。
     "show_taskbar_on_minimize": True,
+    # 升级 dsh 核心前是否自动备份当前版本到 runtime/backup (默认开启)。
+    # 关闭后改为"直接覆盖安装": 升级更快、不额外占用磁盘, 但出问题时无法回退旧版。
+    "auto_backup_on_dsh_upgrade": True,
     # 注: 绿色版版本号统一以 GREEN_VERSION 常量为准 (唯一来源, 见 green_local_version)。
     # 曾把 "green_version" 默认值写在这里, 发布新版本时与常量不同步,
     # 导致本地一直显示旧版本号并反复提示更新 (见 DEV_NOTES 需求 #20)。
@@ -969,8 +972,8 @@ class Launcher:
         # 统一重打全部官方文件补丁: dsh 重装会还原 node_modules 内文件, 补丁必须重打。
         # 7 个补丁各自幂等, 调用序列与说明见 _apply_all_patches。
         lan_api_patched = self._apply_all_patches()
-        # 局域网 /api 补丁 (pickDirectory 等特权 API 不再 403) 失败时给出醒目提示,
-        # 不让用户"装了才发现局域网用不了" (2026-08-17, 避坑 #56)。
+        # Origin 兼容补丁 (Chrome 150+ 无端口 Origin 会让 /api 全 403) 失败时给出醒目提示,
+        # 不让用户"装上才发现用不了" (2026-08-17, 避坑 #56)。
         if not lan_api_patched:
             self.log(i18n.t('warn.lan_api_not_patched'))
         return True
@@ -1257,7 +1260,7 @@ class Launcher:
             return None
 
     def update_dsh(self, target_version=None):
-        """更新 dsh 到目标版本: 先备份旧版, 再强制重装指定版本
+        """更新 dsh 到目标版本: 按配置先备份旧版 (默认开启), 再强制重装指定版本
         target_version: None 时装 latest (与旧行为一致); 否则装 target_version 对应版本。
         返回更新后的版本号; 失败抛出异常"""
         if target_version is None:
@@ -1271,10 +1274,21 @@ class Launcher:
             package_spec = "%s@%s" % (self.config["dsh_package"], target_version)
             self.log("当前版本: %s, 将更新到指定版本: %s"
                      % (self.dsh_version(), target_version))
-        backup_dir = self.backup_dsh()
-        if backup_dir is None:
-            raise RuntimeError("备份旧版本失败, 已取消更新 (避免数据丢失)")
-        # 备份成功后, 强制重装目标版本 (prepare_dsh 的 force 会跳过已存在检查)
+        # 升级前自动备份 (可在「常规设置」关闭)。
+        # 开启时: 备份失败会取消更新, 避免无备份状态下覆盖导致无法回退;
+        # 关闭时: 直接覆盖安装, 出问题将无法回退旧版 (由用户自行承担)。
+        auto_backup = bool(self.config.get("auto_backup_on_dsh_upgrade", True))
+        backup_dir = None
+        if auto_backup:
+            backup_dir = self.backup_dsh()
+            if backup_dir is None:
+                raise RuntimeError(
+                    "备份旧版本失败, 已取消更新 (避免数据丢失)。"
+                    "如确认不需要备份, 可在「常规设置」取消勾选"
+                    "「升级 DSH 前自动备份」后重试")
+        else:
+            self.log("[提示] 已关闭升级前自动备份, 直接覆盖安装 (出问题将无法回退旧版)")
+        # 备份完成 (或已关闭备份) 后, 强制重装目标版本 (prepare_dsh 的 force 会跳过已存在检查)
         if not self.prepare_dsh(force=True, package_spec=package_spec):
             raise RuntimeError("dsh 重装失败, 更新已取消")
         # ---- 升级后自愈 (2026-08-31, 需求): 新核心可能与旧插件/依赖不兼容, 自动修复 ----
@@ -1285,7 +1299,8 @@ class Launcher:
         except Exception as error:
             self.log("[警告] dsh 升级后自愈失败 (可手动重启服务或重新安装环境): %s" % error)
         self.log("更新完成, 当前版本: %s" % self.dsh_version())
-        self.log("旧版本备份在: %s (可手动删除)" % backup_dir)
+        if backup_dir is not None:
+            self.log("旧版本备份在: %s (可手动删除)" % backup_dir)
         return self.dsh_version()
 
     # ---------- 升级后自愈 (dsh 核心升级 -> profile 依赖/插件兼容性自动修复) ----------
@@ -2058,7 +2073,7 @@ class Launcher:
             self.log("更新目录不存在, 无需清理: %s" % GREEN_UPDATE_DIR)
             return 0
         removed_count = self._clear_directory_contents(GREEN_UPDATE_DIR)
-        self.log("已清理更新目录: %s (删除 %d 项)" % (GREEN_UPDATE_DIR, removed_count))
+        self.log("已清理更新缓存目录: %s (删除 %d 项)" % (GREEN_UPDATE_DIR, removed_count))
         return removed_count
 
     def cleanup_backup_files(self):
@@ -2075,7 +2090,7 @@ class Launcher:
                     if os.path.isdir(legacy_path):
                         shutil.rmtree(legacy_path, ignore_errors=True)
                         removed_count += 1
-        self.log("已清理备份目录: %s (删除 %d 项)" % (BACKUP_DIR, removed_count))
+        self.log("已清理版本备份目录: %s (删除 %d 项)" % (BACKUP_DIR, removed_count))
         return removed_count
 
     def _clear_directory_contents(self, target_dir):
@@ -4523,48 +4538,118 @@ class Launcher:
         if dsh_host:
             command.extend(["--host", dsh_host])
         # 受信任主机: 逐条追加 --trusted-host。
-        # 语义 (patch_lan_trust 已配合): 不填=绑定 0.0.0.0 时自动信任全部局域网;
+        # 语义: 不填=绑定 0.0.0.0 时自动信任本机全部局域网 IPv4;
         # 填了任意一个=只信任显式填写的地址(host 或 host:port), 不再自动全局域网放行。
+        # 2026-10-18: 新版 dsh 取消了「绑定 0.0.0.0 时自动把 lanAddresses 并入
+        # trustedHosts」的官方逻辑 (web-app 只透传显式 --trusted-host), 因此这里由
+        # 启动器补齐, 继续满足「留空=自动信任局域网」的既有交互; 不再依赖运行时代码注入。
+        trusted_hosts = []
         for trusted_host in self.config.get("trusted_hosts", []) or []:
             trusted_host = str(trusted_host).strip()
             if trusted_host:
-                command.extend(["--trusted-host", trusted_host])
+                trusted_hosts.append(trusted_host)
+        if dsh_host == "0.0.0.0" and not trusted_hosts:
+            trusted_hosts = self.lan_addresses()
+            if trusted_hosts:
+                self.log("局域网模式未填写信任主机, 自动信任本机局域网地址: %s"
+                         % ", ".join(trusted_hosts))
+        for trusted_host in trusted_hosts:
+            command.extend(["--trusted-host", trusted_host])
         return command
 
     def patch_web_startup(self):
-        """补丁 dsh web 启动器: 放开 --host 0.0.0.0 (局域网远程访问用, 幂等可重复)。
-        官方默认拒绝 0.0.0.0 (会向局域网暴露远程工具执行能力); 本启动器仅在用户
-        显式选择「局域网」绑定且了解风险后启用。dsh 升级重装后由 install_dsh()
-        自动重新补丁。返回 True 表示就绪(或已是最新)。"""
-        startup_path = os.path.join(DSH_DIR, "node_modules", "@deepseek-ai",
-                                    "dsh-web-app", "lib", "startup.js")
-        if not os.path.isfile(startup_path):
-            return False
-        marker = 'options.host === "0.0.0.0"'
-        try:
-            with open(startup_path, "r", encoding="utf-8") as file_handle:
-                text = file_handle.read()
-        except OSError:
-            return False
-        if marker not in text:
-            return True
-        new_text = text.replace(
-            marker, 'false /* dsh-launcher: 已放开 0.0.0.0 以支持局域网访问 */')
-        try:
-            with open(startup_path, "w", encoding="utf-8") as file_handle:
-                file_handle.write(new_text)
-        except OSError:
-            return False
-        self.log("已补丁 dsh web 启动器: 放开 --host 0.0.0.0 (局域网访问)")
-        return True
+        """补丁 dsh web 启动器与 webserver: 放开 --host 0.0.0.0 (局域网远程访问用, 幂等可重复)。
+        官方默认拒绝 wildcard 绑定 (会向局域网暴露远程工具执行能力), 有两道守卫:
+          1. dsh-web-app/lib/startup.js 的 CLI 校验 (isWildcardHost → program.error);
+          2. dsh-host-webserver/lib/index.js 的 Config schema 校验 (isWildcardAddress → throw)。
+        2026-10-18: 新版 dsh 把原 `options.host === "0.0.0.0"` 改成了通用 wildcard 判定,
+        旧锚点失效, 这里改为「只放行 0.0.0.0, 其它 wildcard (如 ::) 仍然拒绝」。
+        两个包在 core / shared 两个副本位置都可能存在, 均需覆盖。
+        本启动器仅在用户显式选择「局域网」绑定且了解风险后才会传 0.0.0.0。
+        dsh 升级重装后由 _apply_all_patches 自动重新补丁。返回 True 表示就绪(或已是最新)。"""
+        any_ok = False
+
+        # ---------- 守卫 1: CLI 校验 (dsh-web-app/lib/startup.js) ----------
+        startup_paths = [
+            os.path.join(DSH_DIR, "node_modules", "@deepseek-ai",
+                         "dsh-web-app", "lib", "startup.js"),
+            os.path.join(DSH_HOME_DIR, "profiles", "node_modules",
+                         "@deepseek-ai", "dsh-web-app", "lib", "startup.js"),
+        ]
+        startup_original = ("if (options.host !== void 0 && isWildcardHost(options.host)) "
+                            "program.error(")
+        startup_patched = ("if (options.host !== void 0 && isWildcardHost(options.host) "
+                           '&& options.host !== "0.0.0.0") program.error(')
+        for startup_path in startup_paths:
+            if not os.path.isfile(startup_path):
+                continue
+            try:
+                with open(startup_path, "r", encoding="utf-8") as file_handle:
+                    text = file_handle.read()
+            except OSError:
+                continue
+            if startup_patched in text:
+                any_ok = True       # 已打, 幂等跳过
+                continue
+            if startup_original not in text:
+                self.log("[警告] dsh web 启动器 wildcard 校验结构不匹配, "
+                         "--host 0.0.0.0 可能被拒绝 @ %s" % startup_path)
+                continue
+            new_text = text.replace(startup_original, startup_patched, 1)
+            try:
+                with open(startup_path, "w", encoding="utf-8") as file_handle:
+                    file_handle.write(new_text)
+                any_ok = True
+            except OSError:
+                continue
+
+        # ---------- 守卫 2: WebServer 配置校验 (dsh-host-webserver/lib/index.js) ----------
+        webserver_paths = [
+            os.path.join(DSH_DIR, "node_modules", "@deepseek-ai",
+                         "dsh-host-webserver", "lib", "index.js"),
+            os.path.join(DSH_HOME_DIR, "profiles", "node_modules",
+                         "@deepseek-ai", "dsh-host-webserver", "lib", "index.js"),
+        ]
+        webserver_original = "if (isWildcardAddress(parsed)) throw new Error("
+        webserver_patched = ('if (isWildcardAddress(parsed) && value !== "0.0.0.0") '
+                             "throw new Error(")
+        for webserver_path in webserver_paths:
+            if not os.path.isfile(webserver_path):
+                continue
+            try:
+                with open(webserver_path, "r", encoding="utf-8") as file_handle:
+                    text = file_handle.read()
+            except OSError:
+                continue
+            if webserver_patched in text:
+                any_ok = True       # 已打, 幂等跳过
+                continue
+            if webserver_original not in text:
+                self.log("[警告] dsh webserver wildcard 校验结构不匹配, "
+                         "--host 0.0.0.0 可能被拒绝 @ %s" % webserver_path)
+                continue
+            new_text = text.replace(webserver_original, webserver_patched, 1)
+            try:
+                with open(webserver_path, "w", encoding="utf-8") as file_handle:
+                    file_handle.write(new_text)
+                any_ok = True
+            except OSError:
+                continue
+
+        if any_ok:
+            self.log("已补丁 dsh web 启动器: 放开 --host 0.0.0.0 (其它 wildcard 仍拒绝)")
+        return any_ok
 
     def patch_lan_trust(self):
-        """补丁 dsh web 的 resolveLanTrust: 实现「受信任主机」的精确语义 (幂等可重复)。
-        官方实现绑定 0.0.0.0 时无条件把全部局域网 IPv4 加入信任列表 (trustedHosts =
-        [...lanAddresses, ...extra]), 导致用户填写了 trusted_hosts 后仍全局域网放行,
-        "填了也白填"。本补丁改为: trusted_hosts 为空时保持默认(自动信任全部局域网);
-        trusted_hosts 非空时不再自动信任局域网, 只信任用户显式填写的地址(host 或 host:port)。
-        dsh 升级重装后由 install_dsh() 自动重新补丁。返回 True 表示就绪(或已是最新)。"""
+        """兼容旧版 dsh: 补丁 dsh web 的 resolveLanTrust「受信任主机」精确语义。
+        旧版官方实现绑定 0.0.0.0 时无条件把全部局域网 IPv4 加入信任列表
+        (trustedHosts = [...lanAddresses, ...extra]), 导致用户填写 trusted_hosts 后仍
+        全局域网放行, "填了也白填"。本补丁改为: trusted_hosts 为空时保持默认(自动信任
+        全部局域网); 非空时只信任显式填写的地址。
+        2026-10-18: 新版 dsh 已移除 lanAddresses 自动信任, 只透传显式 --trusted-host,
+        本补丁在新版上找不到锚点, 直接按「已就绪」返回; 「留空=自动信任局域网」的语义
+        改由 build_server_command 自动追加 --trusted-host 实现。保留本函数是为了兼容
+        仍停留在旧版 dsh 的环境。返回 True 表示就绪(或已是最新)。"""
         index_path = os.path.join(DSH_DIR, "node_modules", "@deepseek-ai",
                                   "dsh-web-app", "lib", "index.js")
         if not os.path.isfile(index_path):
@@ -4663,28 +4748,28 @@ class Launcher:
         return any_ok
 
     def patch_lan_api_trust(self):
-        """补丁 dsh client-connection 的 /api 信任围栏 (两段式, 幂等可重复, 双副本覆盖)。
-        背景 (2026-08-17 实测): dsh 官方把 client-connection 的 /api 通道与特权方法
-        (host.pickDirectory 等 PRIVILEGED_METHODS) 默认 pin 死在 loopback——局域网模式
-        (0.0.0.0) 下用局域网 IP / 本机局域网 IP 访问 WebUI 时, 所有 /api 请求都返回
-        HTTP 403, 报 "transport failure for /api/host.pickDirectory: HTTP 403"。
+        """补丁 dsh client-connection 的 /api 信任围栏 (幂等可重复, 双副本覆盖)。
+        背景 (2026-08-17 实测): dsh 官方把 client-connection 的 /api 通道默认 pin 死在
+        loopback——局域网模式 (0.0.0.0) 下用局域网 IP / 本机局域网 IP 访问 WebUI 时,
+        所有 /api 请求都返回 HTTP 403, 报 "transport failure for /api/host.pickDirectory:
+        HTTP 403"。
         dsh-client-connection 在两个位置都有副本:
           core   : DSH_DIR/node_modules/... —— 宿主核心自带的
           shared : DSH_HOME_DIR/profiles/node_modules/... —— profile 通过 pnpm 软链引用的共享副本
         dsh 运行时实际加载的是 shared 副本, 但两个副本可能独立存在, 两个都要 patch。
-        两段式拆分 (更灵活, 可随官方演进逐步停用; 任一段结构不匹配只跳过该段并告警,
-        绝不整块跳过或破坏运行):
-          段1 (hostname 兼容): 只把 Origin 同源比较从 host(带端口) 放开为 hostname(忽略
-            端口)。这是 Chrome 150+ 无端口 Origin 引出的官方 bug——本机与局域网带 Origin
-            的请求都走同一处比较; 官方若已自行放宽/修复, 本段幂等自动跳过, 不误伤其它。
-          段2 (局域网 trustedHosts): 未显式配置信任主机时, 自动把 dsh-web-app 提供的
-            lanAddresses 并入信任列表, 并给被拒的 403 出口加诊断日志。仅在局域网模式下
-            需要; DSH 官方本就将 trustedHosts 暴露为插件级 config.trustedHosts schema
-            (零改官方可注入), 未来可把本段收敛为纯配置注入。
+
+        补丁内容随官方结构演进分两代:
+          v4 (2026-10-18, dsh 0.2.1-rc.2+): 官方重写为 isSameAuthorityOrigin(origin, host),
+            仍用 originUrl.host(带端口) === hostUrl.host 比较。这里只把该比较放开为
+            hostname(忽略端口), 修复 Chrome 150+ 无端口 Origin 导致的 /api 全 403。
+            新版已不再有 apply() 作用域内的 trustedHosts 注入点, 局域网信任改由启动器
+            在命令行显式追加 --trusted-host 实现 (见 build_server_command), 本函数不再注入。
+          v1~v3 (旧版 dsh): 保留原有「Origin hostname 兼容 + 局域网 trustedHosts 注入」
+            两段式逻辑, 兼容仍停留在旧版的环境。
+
         CSRF 防护 (sec-fetch-site / origin 同 hostname) 与 DNS-rebinding 防护均保留。
-        说明: register() 是类方法, 闭包访问不到 apply() 内的 log403, 故用内联
-        console.error; 其余出口 (route/websocket/fetchHandler) 在 apply 作用域内可用。
-        dsh 升级重装后由 install_dsh() 自动重新补丁。返回 True 表示至少一个副本成功就绪。"""
+        dsh 升级重装后由 _apply_all_patches 自动重新补丁。
+        返回 True 表示至少一个副本成功就绪 (或已是最新)。"""
         # dsh-client-connection 在两个位置都有副本:
         #   core   : DSH_DIR/node_modules/... —— 宿主核心自带的
         #   shared : DSH_HOME_DIR/profiles/node_modules/... —— profile 通过 pnpm 软链引用的共享副本
@@ -4706,6 +4791,36 @@ class Launcher:
                     text = file_handle.read()
             except OSError:
                 continue
+
+            # ---------- 新版 dsh (0.2.1-rc.2+): 只做 Origin hostname 兼容 ----------
+            # 官方把同源比较重写进 isSameAuthorityOrigin(), 锚点从 try/catch 变成两行:
+            #   const hostUrl = parseAuthority(host, scheme);
+            #   return hostUrl !== void 0 && originUrl.host === hostUrl.host;
+            # 新版没有 apply() 作用域内的 trustedHosts 注入点, 局域网信任改由启动器
+            # 命令行 --trusted-host 传入, 故这里只补 Origin 比较。
+            v4_original_origin = ("\tconst hostUrl = parseAuthority(host, scheme);\n"
+                                  "\treturn hostUrl !== void 0 && originUrl.host === hostUrl.host;")
+            v4_patched_origin = ("\tconst hostUrl = parseAuthority(host, scheme);\n"
+                                 "\t// dsh-launcher patch v4 (2026-10-18): 只比较 hostname, 忽略端口。\n"
+                                 "\t// Chrome 150+ 对 http://127.0.0.1:<port> 页面的同源请求会发送不带端口的\n"
+                                 "\t// Origin (http://127.0.0.1), 官方用 host(带端口) 比较会判为不同源 → 全部\n"
+                                 "\t// /api 403。端口不是 CSRF / DNS-rebinding 边界, 忽略它不影响安全语义。\n"
+                                 "\treturn hostUrl !== void 0 && originUrl.hostname === hostUrl.hostname;")
+            if "originUrl.hostname === hostUrl.hostname" in text:
+                any_ok = True       # 已打 (或官方已自行放宽), 幂等跳过
+                continue
+            if v4_original_origin in text:
+                new_text = text.replace(v4_original_origin, v4_patched_origin, 1)
+                try:
+                    with open(connection_path, "w", encoding="utf-8") as file_handle:
+                        file_handle.write(new_text)
+                except OSError:
+                    continue
+                any_ok = True
+                self.log("已补丁 dsh client-connection (v4): Origin 同源比较忽略端口")
+                continue
+
+            # ---------- 旧版 dsh (v1~v3) 结构 ----------
             # 幂等检查 (v4, 2026-08-31): 只要具备 hostname 兼容比较(段1)即视为已打。
             # 段1 才是修复 Chrome150+ 无端口 Origin 导致 /api 全 403 的关键; log403 是
             # 旧版 dsh 结构的 段2 诊断日志, 新版结构未必存在, 不再作为幂等必要条件,
@@ -4879,22 +4994,46 @@ class Launcher:
     # 幂等: 搜 "dsh-launcher auth patch" 判断当前状态, 已打则跳过, 未打则补, 用户改回
     # require_auth=True 时自动还原原始代码。双副本覆盖 (core + shared), 与其它 patch 一致。
 
-    # ---- 关闭 auth 时要 patch 的精确锚点 (官方打包纯 tab 缩进) ----
-    _AUTH_PATCH_ORIGINAL_1 = "\t\treturn this.browserAuth.isAuthenticated(request) ? void 0 : 401;"
+    # ---- 关闭 auth 时要 patch 的精确锚点 (新版 dsh 0.2.1-rc.2+, 官方打包纯 tab 缩进) ----
+    # 新版把 BrowserAuth 校验收进 admit(): 先过 Host/Origin 围栏, 再校验 Cookie。
+    # 关 auth 时直接在围栏之后返回共享 browserPeer, 与旧版 requestRejection 放行等价。
+    _AUTH_PATCH_ORIGINAL_1 = ("\t\tif (this.browserAuth.isAuthenticated(request, secure)) "
+                              "return { peer: this.browserPeer };")
     _AUTH_PATCH_NEW_1 = (
+        "\t\t// dsh-launcher auth patch (2026-10-18): 跳过 BrowserAuth 校验, "
+        "只保留 Host/Origin 围栏 (isTrustedApiRequest → 403). "
+        "用户 config dsh_require_auth=False 主动要求关闭 token 认证.\n"
+        "\t\treturn { peer: this.browserPeer };"
+    )
+    _AUTH_PATCH_ORIGINAL_2 = ("\tauthorizeIndex(request, response) {\n"
+                              "\t\treturn this.browserAuth.authorizeIndex(request, response, "
+                              'this.ctx.get("webServer")?.protocol === "https:");')
+    _AUTH_PATCH_NEW_2 = (
+        "\tauthorizeIndex(request, response) {\n"
+        "\t\t// dsh-launcher auth patch (2026-10-18): 直接放行, 跳过 token/Cookie 校验. "
+        "与 admit() 里的 browserAuth 跳过配套. 用户 config dsh_require_auth=False.\n"
+        "\t\treturn true;\n"
+        "\t\treturn this.browserAuth.authorizeIndex(request, response, "
+        'this.ctx.get("webServer")?.protocol === "https:");'
+    )
+    # ---- 旧版 dsh 的锚点 (兼容停留旧版的环境; 新版找不到会自动跳过) ----
+    _AUTH_PATCH_LEGACY_ORIGINAL_1 = "\t\treturn this.browserAuth.isAuthenticated(request) ? void 0 : 401;"
+    _AUTH_PATCH_LEGACY_NEW_1 = (
         "\t\t// dsh-launcher auth patch (2026-08-31): 跳过 BrowserAuth 校验, "
         "只保留 Host/Origin 围栏 (isTrustedApiRequest → 403). "
         "用户 config dsh_require_auth=False 主动要求关闭 token 认证.\n"
         "\t\treturn void 0;"
     )
-    _AUTH_PATCH_ORIGINAL_2 = "\tauthorizeIndex(req, res) {\n\t\t/* v8 ignore next -- node:http always supplies url on server requests. */\n\t\tconst url = new URL(req.url ?? \"/\", \"http://dsh.invalid\");"
-    _AUTH_PATCH_NEW_2 = (
+    _AUTH_PATCH_LEGACY_ORIGINAL_2 = ("\tauthorizeIndex(req, res) {\n"
+                                     "\t\t/* v8 ignore next -- node:http always supplies url on server requests. */\n"
+                                     '\t\tconst url = new URL(req.url ?? "/", "http://dsh.invalid");')
+    _AUTH_PATCH_LEGACY_NEW_2 = (
         "\tauthorizeIndex(req, res) {\n"
         "\t\t// dsh-launcher auth patch (2026-08-31): 直接放行, 跳过 token/Cookie 校验. "
         "与 requestRejection 里的 browserAuth 跳过配套. 用户 config dsh_require_auth=False.\n"
         "\t\treturn true;\n"
         "\t\t/* v8 ignore next -- node:http always supplies url on server requests. */\n"
-        "\t\tconst url = new URL(req.url ?? \"/\", \"http://dsh.invalid\");"
+        '\t\tconst url = new URL(req.url ?? "/", "http://dsh.invalid");'
     )
 
     def patch_auth(self, require_auth=True):
@@ -4948,12 +5087,18 @@ class Launcher:
                 if not has_patch:
                     any_ok = True   # 已是原始状态, 幂等跳过
                     continue
-                # 还原 patch 1: requestRejection
+                # 还原 patch 1: admit() (新版) / requestRejection (旧版)
                 if self._AUTH_PATCH_NEW_1 in text:
                     text = text.replace(self._AUTH_PATCH_NEW_1, self._AUTH_PATCH_ORIGINAL_1, 1)
-                # 还原 patch 2: authorizeIndex
+                elif self._AUTH_PATCH_LEGACY_NEW_1 in text:
+                    text = text.replace(self._AUTH_PATCH_LEGACY_NEW_1,
+                                        self._AUTH_PATCH_LEGACY_ORIGINAL_1, 1)
+                # 还原 patch 2: authorizeIndex (新版 / 旧版)
                 if self._AUTH_PATCH_NEW_2 in text:
                     text = text.replace(self._AUTH_PATCH_NEW_2, self._AUTH_PATCH_ORIGINAL_2, 1)
+                elif self._AUTH_PATCH_LEGACY_NEW_2 in text:
+                    text = text.replace(self._AUTH_PATCH_LEGACY_NEW_2,
+                                        self._AUTH_PATCH_LEGACY_ORIGINAL_2, 1)
                 # 残留检查: 如果还有其它 auth patch 标记, 可能是旧版 patch 格式, 一并清理
                 if "dsh-launcher auth patch" in text:
                     self.log("[警告] auth patch 还原后仍存在 'dsh-launcher auth patch' 标记, "
@@ -4963,16 +5108,23 @@ class Launcher:
                 if has_patch:
                     any_ok = True   # 已是 patch 状态, 幂等跳过
                     continue
-                # patch 1: requestRejection —— 跳 browserAuth, 保留 Host/Origin 围栏
+                # patch 1: admit() (新版) / requestRejection (旧版) —— 跳 browserAuth,
+                # 保留 Host/Origin 围栏
                 if self._AUTH_PATCH_ORIGINAL_1 in text:
                     text = text.replace(self._AUTH_PATCH_ORIGINAL_1, self._AUTH_PATCH_NEW_1, 1)
+                elif self._AUTH_PATCH_LEGACY_ORIGINAL_1 in text:
+                    text = text.replace(self._AUTH_PATCH_LEGACY_ORIGINAL_1,
+                                        self._AUTH_PATCH_LEGACY_NEW_1, 1)
                 else:
-                    self.log("[警告] auth patch: 未找到 requestRejection 原始锚点, "
+                    self.log("[警告] auth patch: 未找到 requestRejection/admit 原始锚点, "
                              "结构不匹配跳过 @ %s" % connection_path)
                     continue
                 # patch 2: authorizeIndex —— 直接 return true 跳过 token/Cookie 校验
                 if self._AUTH_PATCH_ORIGINAL_2 in text:
                     text = text.replace(self._AUTH_PATCH_ORIGINAL_2, self._AUTH_PATCH_NEW_2, 1)
+                elif self._AUTH_PATCH_LEGACY_ORIGINAL_2 in text:
+                    text = text.replace(self._AUTH_PATCH_LEGACY_ORIGINAL_2,
+                                        self._AUTH_PATCH_LEGACY_NEW_2, 1)
                 else:
                     self.log("[警告] auth patch: 未找到 authorizeIndex 原始锚点, "
                              "结构不匹配跳过 @ %s" % connection_path)
@@ -5424,11 +5576,11 @@ class Launcher:
         # 统一重打全部官方文件补丁 (兜底: 防手工替换 node_modules 后补丁失效)。
         # 7 个补丁各自幂等, 调用序列与说明见 _apply_all_patches。
         lan_api_patched = self._apply_all_patches()
-        # 确保 /api 通道在局域网模式下可用 (pickDirectory 等特权 API 不再 403);
-        # 失败时给出醒目提示, 避免"局域网模式下静默 403" (2026-08-17, 避坑 #56)。
+        # 确保带 Origin 的 /api 请求不会被误判 403 (Chrome 150+ 无端口 Origin);
+        # 失败时给出醒目提示, 避免"静默 403" (2026-08-17, 避坑 #56)。
         if not lan_api_patched:
-            self.log("[警告] client-connection 局域网补丁未生效: 局域网模式 /api 可能报 403 "
-                     "(本机模式不受影响); 可重启服务重试")
+            self.log("[警告] client-connection Origin 兼容补丁未生效: 带 Origin 的 /api 请求"
+                     "可能报 403 (可稍后重启服务重试)")
 
         # 局域网模式下为 Web 端口自动放行防火墙 (按端口放行, 任意电脑绿色版可用, 幂等)
         if self.config.get("dsh_host", "127.0.0.1") == "0.0.0.0":
@@ -8500,11 +8652,11 @@ def run_gui():
                     i18n.t('cleanup.update_done_title'),
                     i18n.t('cleanup.update_done_detail', count=removed_count)))
                 root.after(0, lambda: append_log(
-                    "已清理更新目录, 删除 %d 项" % removed_count))
+                    "已清理更新缓存目录, 删除 %d 项" % removed_count))
             except Exception as error:
                 root.after(0, lambda: messagebox.showerror(
                     i18n.t('cleanup.update_done_title'),
-                    "清理更新目录失败: %s" % error))
+                    "清理更新缓存目录失败: %s" % error))
             finally:
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=worker, daemon=True).start()
@@ -8529,11 +8681,11 @@ def run_gui():
                     i18n.t('cleanup.backup_done_title'),
                     i18n.t('cleanup.backup_done_detail', count=removed_count)))
                 root.after(0, lambda: append_log(
-                    "已清理备份目录, 删除 %d 项" % removed_count))
+                    "已清理版本备份目录, 删除 %d 项" % removed_count))
             except Exception as error:
                 root.after(0, lambda: messagebox.showerror(
                     i18n.t('cleanup.backup_done_title'),
-                    "清理备份目录失败: %s" % error))
+                    "清理版本备份目录失败: %s" % error))
             finally:
                 root.after(0, lambda: set_busy(False))
         threading.Thread(target=worker, daemon=True).start()
@@ -8547,8 +8699,13 @@ def run_gui():
         def update_worker():
             try:
                 new_version = app.update_dsh(target_version=target_version)
+                # 未开启自动备份时, 完成提示不能声称"旧版本已备份"
+                done_message_key = ('update.done_msg'
+                                    if app.config.get("auto_backup_on_dsh_upgrade", True)
+                                    else 'update.done_msg_no_backup')
                 root.after(0, lambda: messagebox.showinfo(
-                    i18n.t('update.done_title'), i18n.t('update.done_msg', version=new_version)))
+                    i18n.t('update.done_title'),
+                    i18n.t(done_message_key, version=new_version)))
             except Exception as error:
                 root.after(0, lambda: messagebox.showerror(i18n.t('update.failed_title'), str(error)))
             finally:
@@ -8602,10 +8759,14 @@ def run_gui():
 
         footer_frame = ttk.Frame(detail_dialog, padding=12)
         footer_frame.pack(fill="x")
+        # 底部说明随「升级前自动备份」开关变化, 避免关闭备份后仍宣称会自动备份
+        footer_message_key = ('upgrade_confirm.footer'
+                              if app.config.get("auto_backup_on_dsh_upgrade", True)
+                              else 'upgrade_confirm.footer_no_backup')
         _iw_6632 = ttk.Label(footer_frame, justify="left", foreground="#888888",
-                  text=i18n.t('upgrade_confirm.footer'))
+                  text=i18n.t(footer_message_key))
         _iw_6632.pack(anchor="w")
-        _i18n_widgets.append((_iw_6632, 'text', 'upgrade_confirm.footer'))
+        _i18n_widgets.append((_iw_6632, 'text', footer_message_key))
         button_row = ttk.Frame(footer_frame)
         button_row.pack(side="right")
         _iw_6528 = ttk.Button(button_row, text=i18n.t('close_dialog.cancel'), command=detail_dialog.destroy)
@@ -9504,6 +9665,17 @@ def run_gui():
                                               padx=8, pady=4, sticky="w")
     _i18n_widgets.append((taskbar_checkbox, 'text', 'settings.taskbar_on_minimize_label'))
 
+    # 升级 dsh 核心前是否自动备份当前版本 (2026-10-09, 需求):
+    # 默认开启, 保留回退能力; 关闭后升级更快且不占额外磁盘, 但无法回退旧版。
+    upgrade_backup_var = tk.BooleanVar(
+        value=bool(app.config.get("auto_backup_on_dsh_upgrade", True)))
+    upgrade_backup_checkbox = ttk.Checkbutton(settings_frame,
+                     text=i18n.t('settings.upgrade_backup_label'),
+                     variable=upgrade_backup_var)
+    upgrade_backup_checkbox.grid(row=4, column=0, columnspan=4,
+                                              padx=8, pady=4, sticky="w")
+    _i18n_widgets.append((upgrade_backup_checkbox, 'text', 'settings.upgrade_backup_label'))
+
     def sync_gui(silent=False):
         """把界面当前填入的值("所见")同步进 config 并落盘("所得")。
 
@@ -9542,6 +9714,7 @@ def run_gui():
         app.config["open_method"] = open_method_combo._i18n_internal
         app.config["auto_open_browser"] = bool(auto_open_var.get())
         app.config["show_taskbar_on_minimize"] = bool(taskbar_var.get())
+        app.config["auto_backup_on_dsh_upgrade"] = bool(upgrade_backup_var.get())
         app.save_config()
         return True
 

@@ -58,19 +58,22 @@
 |------|------|
 | `GET /__dsh/usage-stats/list` | 全部会话的用量汇总（每会话按模型聚合）+ 顶层 `price` / `today` / `days`（近 180 天按日聚合，含峰谷分档费用）；解码失败会带 `error` 字段 |
 | `GET /__dsh/usage-stats/detail?id=<会话ID>` | 单个会话的逐回合明细 + 全会话汇总 |
-| `GET /__dsh/usage-stats/balance` | DeepSeek 账户真实余额（后端持 Key 调官方 `/user/balance`） |
+| `GET /__dsh/usage-stats/balance` | DeepSeek 账户真实余额（优先账号登录态；未登录时回退 API Key） |
 | `GET /__dsh/usage-stats/pricing` | 当前价格表（含 `source`=官方/内置、`fetchedAt`、`currentTier`=当前时段高峰/低谷） |
 | `GET /__dsh/usage-stats/pricing-refresh` | 强制重新拉取官方定价页并更新价格表 |
 
 均要求自定义头 `X-DSH-Usage-Stats: 1` 防跨站触发（跨域请求无法携带该头）。
 
-## DeepSeek 真实余额（实扣非估算，2026-08-25）
+## DeepSeek 真实余额（实扣非估算，2026-08-25；2026-10-09 起 API Key 优先）
 
-- **请求**：后端读取配置的 API Key，向官方 `GET https://api.deepseek.com/user/balance` 发起请求（`Authorization: Bearer <key>`），返回 `is_available` + `balance_infos[]`（`currency` / `total_balance` / `granted_balance` / `topped_up_balance`，单位为元）。**Key 只存在于服务端**，不出后端、不暴露给浏览器。
-- **Key 来源（取值优先级）**：① 运行进程环境变量 `DEEPSEEK_API_KEY`；② `DSH_HOME/.credentials.yaml` 的 `refs.DEEPSEEK_API_KEY`（用户在 WebUI 设置面板配置后由 harness 持久化到该 yaml）。两者都没有则提示「未配置 Key」。
-- **展示位置**：设置页「用量统计」页顶余额卡 + 消息行「本次token」末尾（**对话结束后显示**，与预估消耗一起）。
+- **余额来源（取值优先级）**：
+  1. **API Key 优先**（传统配置 / headless / 局域网远程的主路径）：后端读取 `DEEPSEEK_API_KEY`，向官方 `GET https://api.deepseek.com/user/balance` 发起请求（`Authorization: Bearer <key>`）；响应带 `source: "apiKey"`。
+  2. **账号登录兜底**（没有 API Key 时，dsh 0.2.1+）：Host 侧调用 `deepseekAccount.getBalance()`，直接读取账号的充值/赠金钱包，**不需要 API Key**；响应带 `source: "account"`。
+- **Key 来源（仅 API Key 分支）**：① 运行进程环境变量 `DEEPSEEK_API_KEY`；② `DSH_HOME/.credentials.yaml` 的 `refs.DEEPSEEK_API_KEY`（用户在 WebUI 设置面板配置后由 harness 持久化到该 yaml）。两者都没有则尝试账号登录兜底。
+- **凭据安全**：账号 token 与 API Key 都只在 Host 侧使用，不出后端、不暴露给浏览器。
+- **展示位置**：设置页「用量统计」页顶余额卡（标题会标出「DeepSeek 实时」或「账号登录」）+ 消息行「本次token」末尾（**对话结束后显示**，与预估消耗一起）。
 - **缓存**：消息行余额 5 分钟缓存一次（模块级，避免多个回合反复请求）；设置页余额卡可选「刷新余额」强制更新。
-- **失败处理**：未配置 Key / 网络异常 / 超时(8s) / HTTP 非 2xx，均返回明确提示文案，不阻塞页面其它功能。
+- **失败处理**：API Key 存在但查询失败时**不回退账号登录**（避免显示另一个账户的余额）；没有 API Key 且账号未登录 / 网络异常 / 超时（账号 12s、API Key 8s）/ HTTP 非 2xx，均返回明确提示文案，不阻塞页面其它功能。
 
 ## 主题与配色（深浅主题，2026-08-25）
 

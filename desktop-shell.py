@@ -97,8 +97,102 @@ PLACEHOLDER_HTML = """<!doctype html>
 </html>"""
 
 
+# 新窗口桥接脚本 (2026-10-09, 适配官方 DeepSeek 账号登录):
+# 官方 Web 登录用 window.open("about:blank", "_blank") 预开标签页, 随后
+# popup.location.replace(授权地址) 跳转到扫码页。pywebview 的 WebView2 后端
+# 不支持 window.open 弹窗, 导致"点登录没反应"。
+# 这里拦截 window.open 与 <a target="_blank">, 把真实 URL 交给系统默认浏览器;
+# OAuth 回调地址是本机 dsh 服务 (window.location.origin), 扫码完成后登录态
+# 会通过原有数据流同步回桌面窗口, 不需要在 WebView 内完成授权。
+NEW_WINDOW_BRIDGE_JS = r"""
+(function() {
+    if (window.__dshShellNewWindowBridge) return;
+    window.__dshShellNewWindowBridge = true;
+
+    var pendingUrls = [];
+
+    function apiReady() {
+        return !!(window.pywebview && window.pywebview.api
+                  && typeof window.pywebview.api.open_external === "function");
+    }
+
+    function flushPending() {
+        if (!apiReady()) {
+            if (pendingUrls.length > 0) setTimeout(flushPending, 500);
+            return;
+        }
+        var queued = pendingUrls.slice();
+        pendingUrls.length = 0;
+        for (var i = 0; i < queued.length; i++) {
+            try { window.pywebview.api.open_external(queued[i]); } catch (e) {}
+        }
+    }
+
+    function openExternal(url) {
+        var targetUrl = String(url || "");
+        if (targetUrl === "" || targetUrl === "about:blank") return false;
+        if (apiReady()) {
+            try {
+                window.pywebview.api.open_external(targetUrl);
+                return true;
+            } catch (e) {}
+        }
+        // 桥接尚未就绪时先排队, 稍后自动补开
+        pendingUrls.push(targetUrl);
+        setTimeout(flushPending, 300);
+        return false;
+    }
+
+    // 1) 拦截 window.open: 官方登录先开 about:blank, 再 popup.location.replace(授权地址)
+    window.open = function(url, name, features) {
+        var targetUrl = String(url || "");
+        if (targetUrl === "" || targetUrl === "about:blank") {
+            var placeholder = {
+                closed: false,
+                opener: null,
+                focus: function() {},
+                blur: function() {},
+                close: function() { placeholder.closed = true; },
+                location: {
+                    replace: function(nextUrl) { openExternal(nextUrl); },
+                    assign: function(nextUrl) { openExternal(nextUrl); },
+                    set href(nextUrl) { openExternal(nextUrl); }
+                }
+            };
+            return placeholder;
+        }
+        openExternal(targetUrl);
+        return null;
+    };
+
+    // 2) 拦截 <a target="_blank"> (登录备用链接、计费/用量入口)
+    document.addEventListener("click", function(event) {
+        var node = event.target;
+        while (node && node !== document) {
+            if (node.tagName === "A") {
+                var target = node.getAttribute("target");
+                var href = node.href;
+                if ((target === "_blank" || target === "_new") && href) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openExternal(href);
+                    return;
+                }
+                break;
+            }
+            node = node.parentNode;
+        }
+    }, true);
+
+    console.log("[DSH-Shell] new-window bridge installed (external browser)");
+})();
+"""
+
+
 def read_server_address():
     """从 config.json 读取 dsh_host / dsh_port；失败或缺失时用默认值。
+
+    说明: 地址统一从绿色版根目录 config.json 读取, 随绿色版整体迁移自动跟随。
 
     Returns:
         (str, int): 形如 (host, port)。
@@ -458,6 +552,39 @@ def _build_i18n_bridge_js():
         return ""
 
 
+class DesktopShellApi:
+    """暴露给 WebView2 页面的最小 JS API。
+
+    目前只提供 open_external: 把官方账号登录、计费/用量页等新窗口请求
+    转交系统默认浏览器。OAuth 回调地址是本机 dsh 服务, 登录完成后账号
+    状态会通过原有数据流同步回桌面窗口, 不需要在 WebView 内完成授权。
+    """
+
+    def open_external(self, url):
+        """在系统默认浏览器打开 http/https 链接; 其他协议一律拒绝。
+
+        Args:
+            url (str): 待打开的绝对 URL。
+        Returns:
+            bool: True 表示已交给系统浏览器。
+        """
+        target_url = str(url or "").strip()
+        try:
+            parsed = urllib.parse.urlparse(target_url)
+        except ValueError:
+            return False
+        # 只允许 http/https, 避免 file:// 等本地协议被页面诱导打开
+        if parsed.scheme not in ("http", "https"):
+            return False
+        try:
+            webbrowser.open(target_url)
+            print("[DSH Shell] 已在系统浏览器打开:", target_url, flush=True)
+            return True
+        except Exception as error:  # noqa: BLE001 - 打不开浏览器不应影响窗口
+            print("[DSH Shell] 系统浏览器打开失败:", repr(error), flush=True)
+            return False
+
+
 def open_in_shell_window(server_url, port, icon_path):
     """用 pywebview 弹出内嵌 WebView2 的独立桌面窗口并阻塞到窗口关闭。
 
@@ -488,6 +615,7 @@ def open_in_shell_window(server_url, port, icon_path):
         min_size=(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT),
         resizable=True,
         text_select=True,   # 关键: pywebview 默认 text_select=False 会禁用 WebView2 内所有文本选择!
+        js_api=DesktopShellApi(),   # 提供 open_external, 供新窗口桥接把登录页交给系统浏览器
     )
 
     i18n_bridge_js = _build_i18n_bridge_js()
@@ -549,6 +677,17 @@ def open_in_shell_window(server_url, port, icon_path):
         except Exception as exc:
             print(f'[DSH-Shell] text-select inject failed: {exc}')
 
+    def _inject_new_window_bridge():
+        """注入 window.open / target=_blank 拦截, 把登录等新窗口转交系统浏览器。
+
+        pywebview 的 WebView2 后端不支持弹出新窗口, 官方 DeepSeek 账号登录
+        依赖 window.open + popup.location.replace, 不注入会导致"点登录没反应"。
+        """
+        try:
+            window_handle.evaluate_js(NEW_WINDOW_BRIDGE_JS)
+        except Exception as exc:
+            print(f'[DSH-Shell] new-window bridge inject failed: {exc}')
+
     def _start_persistent_injector():
         """启动后台线程, 持续注入 bridge 直到窗口关闭.
 
@@ -568,6 +707,7 @@ def open_in_shell_window(server_url, port, icon_path):
                     time.sleep(10)
                 _inject_i18n()
                 _inject_text_select()
+                _inject_new_window_bridge()
         threading.Thread(target=inject_loop, daemon=True).start()
 
     # ===== 关键: 绑定 pywebview 事件, 在正确的 window 上下文里注入 =====
@@ -579,11 +719,13 @@ def open_in_shell_window(server_url, port, icon_path):
         """页面加载完成后注入 bridge + text-select fix (正确的 window 上下文)."""
         _inject_i18n()
         _inject_text_select()
+        _inject_new_window_bridge()
 
     def _on_page_before_load(url):
         """页面开始加载时就尝试注入 (可能在 JS 执行前, 最优时序)."""
         _inject_i18n()
         _inject_text_select()
+        _inject_new_window_bridge()
 
     try:
         window_handle.events.loaded += _on_page_loaded

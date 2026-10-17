@@ -12,7 +12,7 @@ updated: "2026-10-08"
 ## 一、适用场景
 
 - **部署**：在任意 Windows/Linux 机器搭建 dsh 绿色整合环境——便携 Node + 本地安装 dsh + 数据全落程序目录，不污染用户主目录、不装系统 Python/Node。
-- **维护**：检查/更新 dsh（先备份后重装）、可视化插件管理（搜索/安装/移除/本地文件夹安装）、数据维护（永久删除/恢复归档会话）、绿色版自更新（双通道）。
+- **维护**：检查/更新 dsh（默认先备份后重装，可在常规设置关闭备份）、可视化插件管理（搜索/安装/移除/本地文件夹安装）、数据维护（永久删除/恢复归档会话）、绿色版自更新（双通道）。
 - **插件开发**：开发双端加载的 dsh 插件（宿主端路由 + WebUI 客户端入口），排查"服务端在、客户端不显示 / 路由 404/405 / 装了不生效"等经典故障。
 - 配套：`python-tkinter-desktop-dev`（tkinter GUI 通用规范）、`trae-skill-creation`（Skill 打包规范）。
 
@@ -433,19 +433,25 @@ ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.regi
 | `--dump-config` 看不到自定义插件层 | 先 `$env:DSH_HOME=runtime\dsh-home` 再 dump |
 | 会话突然全部 400（孤儿 tool_calls 毒化） | 「会话回退」插件分析 → 在崩溃回合前已完成回合「回退到此」派生续接 |
 | 界面空白（GUI） | `ttk.Panedwindow` 漏 `.add()`；滚动条被列宽挤成 1x1 |
+| 升级不想备份旧 dsh / 备份占用大 | 常规设置关闭「升级 DSH 前自动备份」（`auto_backup_on_dsh_upgrade=false`）；关闭后升级确认底部与完成弹窗会自动改为"未备份"文案，别只改一处 |
+| 分不清「清理更新缓存」和「清理版本备份」 | 更新缓存 = `runtime/update` 升级临时文件，可随时清；版本备份 = `runtime/backup` 旧 dsh 拷贝，清理后无法回退 |
 | 多次重启累积 WebUI 标签页 | `dist/index.html` 无 `dsh-launcher-ui-beacon`（patch_frontend 没跑/旧 exe）；有心跳仍开新页查 3081 占用/token |
 | 「检查绿色版更新」查不到 | 网络 api.github.com / 镜像；Release tag 带 v 前缀；资产名以 `DSH-GreenPortable-v` 开头（`green_find_zip_asset` 用 `startswith()`，旧前缀 `DSH_Launcher_GreenPortable_Online_` 的存量版本仍可匹配） |
 | 更新后启动器没被替换 | 独立更新程序 `DSH_Update.exe --apply`：查 `runtime/update/backup/`、`update_job.json`、server.log |
 | 桌面窗口起不来显示"连接失败" | 避免 `start()` 前 `load_url()` 致 Main window failed 后回退浏览器 → 提示页放 create_window 初始地址，导航放 `start(func)` 回调；用控制台 python 跑看 traceback |
 | 桌面窗口图标是默认 | 往 `webview.start(icon=路径)` 传 icon（WinForms 支持，`self.Icon=Icon(icon)`）；别信"仅 GTK/QT"文档；`WM_SETICON` 依赖 FindWindowW 而 WebView2 用页面 title 覆盖窗体标题，常失效 |
-| 远程打不开 WebUI/进程立即退 | `dsh_host=0.0.0.0` → `startup.js` 补丁是否生效 → `install_dsh()` 后调了 patch_web_startup |
+| 桌面版点登录无反应 / 无法跳网页扫码 | pywebview 的 WebView2 不支持 `window.open` → `create_window(js_api=...)` 暴露 `open_external` + 注入 JS 覆盖 `window.open`（`about:blank` 返回带 `location.replace` 的占位对象）与 `<a target="_blank">`，转系统浏览器；OAuth 回调走本机 origin，登录态自动同步 |
+| 远程打不开 WebUI/进程立即退 | `dsh_host=0.0.0.0` → 两道 wildcard 守卫都要放行：`dsh-web-app/lib/startup.js`（`isWildcardHost`）与 `dsh-host-webserver/lib/index.js`（`isWildcardAddress`）；调 `patch_web_startup()` 并确认 core/shared 两份都打了 |
 | 远程能聊天但改设置 403 | 正常——PRIVILEGED_METHODS 仅回环可调，官方安全保护 |
-| 填了受信任主机没生效 | `trusted_hosts` 应为数组（config.json `["ip:port"]`）→ build_server_command 生成 --trusted-host；官方绑定 0.0.0.0 无条件全局域网放行，需 patch_lan_trust 才"填了=只信任填写的" |
+| 填了受信任主机没生效 / 局域网 /api 403 | 新版 dsh 只认显式 `--trusted-host`（不再自动并入 lanAddresses）：`build_server_command` 在留空时自动追加本机局域网 IPv4，填写时只信任填写的；`patch_lan_trust` 仅兼容旧版 |
+| 升级后出现"跳过 client-connection 补丁/结构不匹配" | 官方重写 `isSameAuthorityOrigin()`；v4 锚点是 `const hostUrl = parseAuthority(host, scheme);\n\treturn hostUrl !== void 0 && originUrl.host === hostUrl.host;`；验证用 `curl -H "Origin: http://127.0.0.1" .../api`（401=已放行，403=未放行），别用首页判断 |
+| 关了 web token 认证但裸地址仍 401 | 新版锚点在 `admit()`（`if (this.browserAuth.isAuthenticated(request, secure)) return { peer: this.browserPeer };`）与 `authorizeIndex(request, response)`；旧锚点已不存在，patch_auth 会静默跳过 |
 | 模型选择器无 Ollama/报 No API key | 查 `llm-pi-ai.providers.<id>` 已写（重启服务持久）；免鉴权服务带占位 `headers.Authorization`；thinking 模型等待式思考正常 |
 | Ollama 能对话从不调工具 | **compat 缺失**（OpenAI 兼容端点不认官方方言）→ 配置带 `compat:{...}`；查 settings.yaml 的 providers.<id>.compat |
 | 对话停"Deep diving…"很久 | thinking 模型先思考后出正文（本地冷启动+思考十几秒~几十秒）；`GET /api/ps` 确认已加载 |
 | bat 双击闪退但代码看着没问题 | 抓行为用 `subprocess.run(["cmd","/c",bat], capture_output=True)`（别用 PS Start-Process 重定向，与 pause 交互冲突）；字节级检查 ASCII 无 BOM CRLF |
 | 清理更新/备份时 UI 冻结 | tkinter 主线程跑了 `shutil.rmtree` 大目录 → 包进 `threading.Thread(daemon=True)`，UI 更新用 `root.after(0, lambda: ...)` 回主线程 |
+| 账号登录后余额卡提示"未配置 Key" | 余额来源为 API Key 优先、账号登录兜底：先 `readApiKey()`，没有 Key 再 `ctx.get("deepseekAccount")?.getBalance(...)`（dsh 0.2.1+）；`deepseekAccount` 别写进 `inject`（旧版无此服务会加载失败） |
 | 想删零引用代码但怕误删活代码 | 见下方「死代码审计方法」；**框架回调搜不到调用点但都是活代码，必须白名单排除** |
 
 **死代码审计方法（维护向，零依赖）**：用 `ast` 收集全部 `def`/`class` 及其行号，再逐行 `re.search(r'\b名\b', 行.split('#')[0])` 计数，**跳过定义行本身与整行注释**，计数为 0 即死代码候选。**必须白名单排除**（否则会误删）：

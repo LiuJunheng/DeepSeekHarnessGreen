@@ -14,7 +14,7 @@ A one-click local launcher that wraps DeepSeek Harness (`dsh`) into a **double-c
 - **🖥️ Desktop App Experience**: Opens as a **standalone desktop window** by default (embedded WebView2 — feels like a native app, fully independent from your browser). One click switches back to the **original WebUI** in your system browser. Toggle between desktop window and browser window anytime; default can be changed in Settings.
 - **🌱 Truly Portable**: Node, dsh, npm/pnpm caches, session data, temp files — **everything lives under `runtime/` in this folder**. No writes to `~/.npm`, no system installs, no registry changes. Built-in portable Node and Python. Mirrors default to China; auto-falls back to official sources. Copy the entire folder to any machine — keep using it immediately.
 - **📦 10 Built-in Plugins**: Session rewind/import, usage stats, file browser, archive cleanup, sidebar, background media, **Ollama local LLM integration**, **Zuzong Memory Bank (cross-session auto-memory, default OFF since v3)**, **user rules injection (similar to TRAE rules, editable in WebUI since v4)**, and more. See [Built-in Plugins](#built-in-plugins).
-- **🔁 Two Independent Update Channels**: The official `dsh` core and the green-portable shell update independently — each checks its own source, backs up before overwriting, and never touches your settings or sessions.
+- **🔁 Two Independent Update Channels**: The official `dsh` core and the green-portable shell update independently — each checks its own source. Core upgrades auto-back up by default (can be disabled in General Settings), and never touch your settings or sessions.
 - **🏠 LAN Remote Access**: One click to bind to `0.0.0.0` and **auto-create Windows Firewall rule** — open the WebUI from your phone or other computers on the same LAN.
 - **🌐 Chinese / English Interface**: One-click toggle in the top-right corner. All buttons, dropdowns, dialogs and status text refresh in real time — no restart needed. Language preference auto-saves to `config.json`.
 
@@ -37,7 +37,7 @@ A one-click local launcher that wraps DeepSeek Harness (`dsh`) into a **double-c
 | Install Environment | Downloads portable Node + installs dsh + deploys built-in Python |
 | Start / Stop Service | Launches / stops the dsh service (auto-opens UI with your default mode) |
 | Desktop Window / Browser Window | Manually opens UI: **Desktop** = embedded WebView2 standalone window; **Browser** = system browser with the original WebUI (change default in Settings) |
-| Check for Updates | Checks the **official dsh** (dynamic list: npm stable/pre-release + all GitHub tags). Auto-backups old version before updating. |
+| Check for Updates | Checks the **official dsh** (dynamic list: npm stable/pre-release + all GitHub tags). Auto-backups the old version by default (can be disabled in General Settings). |
 | Check Green Update | Checks **this launcher shell** (launcher.exe / plugins / docs). Updates are handled by the independent `DSH_Update.exe` — overlays files and restarts. |
 | Plugin Manager | View / search / install / remove plugins (npm + GitHub topics, or local plugin folders). |
 | Data Maintenance | With service stopped: restore (un-archive) or permanently delete archived sessions. |

@@ -967,9 +967,13 @@ window.__ModuleLoader__.load({
 						]);
 					}
 				}
+				// 账号登录与 API Key 的余额来源不同, 标题上明确标出, 避免用户混淆
+				const balanceTitle = balance.source === "account"
+					? _dsht("plugin.usage_stats.label_balance_account", "余额（账号登录）")
+					: _dsht("plugin.usage_stats.label_balance", "余额（DeepSeek 实时）");
 				return react.createElement("div", { key: "balcard", style: cardStyle }, [
 					react.createElement("div", { key: "h", style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 } }, [
-						react.createElement("span", { key: "t", style: { fontSize: 13, fontWeight: 600, color: "var(--dsw-alias-label-primary)" } }, _dsht("plugin.usage_stats.label_balance", "余额（DeepSeek 实时）")),
+						react.createElement("span", { key: "t", style: { fontSize: 13, fontWeight: 600, color: "var(--dsw-alias-label-primary)" } }, balanceTitle),
 						react.createElement("button", { key: "r", type: "button", disabled: balanceBusy, onClick: () => loadBalance(true), style: { ...btn, fontSize: 11, padding: "2px 8px" } },
 							balanceBusy ? _dsht("plugin.usage_stats.btn_querying", "查询中…") : _dsht("plugin.usage_stats.btn_refresh_balance", "刷新余额")),
 					]),
