@@ -331,7 +331,63 @@ except urllib.error.HTTPError as e:
 
 ---
 
-## 十、GSC 提交与排错流程
+## 十、软 404 与 URL 形态一致性（必查）
+
+### 1. 软 404：地址写错永远不报错
+
+某些托管（实测 Cloudflare Pages 项目）在没有 `404.html` 时，**任意不存在的路径会返回 200 + 首页 HTML**，而不是 404。
+
+后果：
+
+- GSC 里 sitemap 地址多一个尾斜杠、大小写错、写成 `sitemap_index.xml`，都会拿到 200 HTML
+- GSC 只能报 "Couldn't fetch / Sitemap could not be read / type: Unknown"，**永远不会提示 404**
+- 大量软 404 还会污染索引
+
+修复：在输出根目录放一个 `404.html`（Cloudflare Pages 会用它并返回真正的 404 状态）。
+
+验证（修复后这些都应返回 404）：
+
+```
+/sitemap.xml/
+/Sitemap.xml
+/sitemap_index.xml
+/nonexistent-abc-987
+```
+
+### 2. sitemap 与 canonical / hreflang 必须同形态
+
+Google 的优先级：**canonical > hreflang > sitemap**。
+
+如果 sitemap 写 `/zh/about.html`，而页面 canonical 写 `/zh/about`：
+
+- URL 会被判为"规范网页的替代网页"（Alternate page with proper canonical tag），不被收录
+- hreflang 集群要求每个成员有**自指**标签；形态不一致会导致整个三语互指失效
+
+正确做法：**全站统一一种形态**。Cloudflare Pages 上推荐无扩展名（`.html` 会 308）。
+
+### 3. GSC 登记地址必须一字不差
+
+- 不要带尾斜杠：`/sitemap.xml` 不是 `/sitemap.xml/`
+- 大小写敏感：`sitemap.xml` 不是 `Sitemap.xml`
+- 不要用 `www.`（若 www 是 301）
+- 不要写 `sitemap_index.xml` / `sitemaps.xml`（除非真的存在）
+- 用「网域」属性（`example.com`），不要用带 www 的 URL 前缀属性
+
+### 4. 编码一致性
+
+不要一部分页面有 BOM、一部分没有。统一 **UTF-8 无 BOM + LF**。
+
+验证：遍历所有 `.html/.xml/.txt`，`raw[:3] != EF BB BF` 且 `b"\r\n" not in raw`。
+
+### 5. robots.txt 只声明一条 Sitemap
+
+同时声明 `.xml` 和 `.txt` 会让 GSC 出现两条记录，其中一条状态异常时容易误判。只留：
+
+```
+Sitemap: https://example.com/sitemap.xml
+```
+
+## 十一、GSC 提交与排错流程
 
 1. **先删除旧 sitemap 条目**（失败的抓取结果会缓存，不删会一直显示失败）
 2. 重新提交 `https://yourdomain.com/sitemap.xml`
@@ -344,19 +400,80 @@ except urllib.error.HTTPError as e:
 
 | 报告 | 含义 | 处理 |
 |------|------|------|
-| Couldn't fetch | sitemap 本身不可访问（状态/重定向/被拦） | 查第三节 1/2/8 |
+| Couldn't fetch | 可能是抓取失败，也可能只是**还没处理**（pending） | 先查第三节 1/2/8；站点侧全部通过则按 pending 处理，等 1–2 周 |
 | Couldn't read | Content-Type / BOM / XML 解析问题 | 查第三节 2/3/4 |
 | Sitemap contains URLs which are redirects | `<loc>` 有 301/308 | 改用最终 200 地址 |
 | URLs not found (404) | `<loc>` 指向不存在页面 | 修正或删除 |
 | 0 discovered URLs | 解析失败或格式错误 | 重跑验证脚本 |
 
+## 十二、`Couldn't fetch` 的真相：pending / 误报
+
+Google Search Central 的 Diamond Product Expert 有一个置顶说明（2022，至今仍适用）：
+
+> **"Couldn't fetch" 或 "Sitemap could not be read" 往往只是表示 Google 还没处理你的 sitemap，而不是抓取出错。**
+> Google 处理 sitemap 是 **best effort**，有巨大积压；有的很快，有的**可能几个月**都不处理。
+> 如果真的抓取失败，你会看到**更具体的错误**（404、5xx、解析错误等）。
+> 提交 sitemap 只是"提示"，Google **不保证**一定下载或使用。
+
+### 判断流程
+
+```
+站点侧检查全部通过（200 / text/xml / 无 BOM / 无重定向 / robots 允许 / canonical 一致）
+        │
+        ├─ GSC 只有 "Couldn't fetch"，没有具体错误码
+        │     → 大概率是 pending，不要继续改站点；等 1–2 周
+        │
+        ├─ 出现具体错误（404 / 5xx / Parsing error / redirects）
+        │     → 才是真正的抓取问题，按第三节排查
+        │
+        └─ 用 Rich Results Tester（Desktop bot）能拿到 XML
+              → 证明 Google 可抓取，继续等
+```
+
+### 可用工具
+
+- **Rich Results Tester**（选 Desktop bot）：看 "Page fetch: Successful" / XML 源码，最接近真实 sitemap 抓取
+- **Search Console API** `sitemaps.list`：`isPending: true` + `errors: 0` = 没失败，只是没处理
+- **URL Inspection** 的 Live Test：成功只说明可抓取，不代表 sitemap 已被处理
+
+### 不要做
+
+- 不要反复删除/重加同一个 URL（会重置 pending）
+- 不要因为 "Couldn't fetch" 就大改站点（很可能本来就没问题）
+- 不要期待立刻生效；Google 不保证处理时间
+
+## 十三、换 URL Workaround（GSC 按 URL 缓存失败）
+
+GSC 会**按精确 URL 缓存失败记录**。同一个 URL 可能长期停留在旧状态，换一个"GSC 没见过的 URL"往往能触发重新抓取。
+
+### 有效写法（社区验证）
+
+| 写法 | 示例 | 注意 |
+|------|------|------|
+| 查询参数 | `/sitemap.xml?gsc_check=20261025` | **最推荐**；内容完全一致即可 |
+| 改名 | `/sitemap2.xml` | GSC 当作全新资源 |
+| 嵌套路径 | `/sitemap/sitemap.xml` | 需要部署新文件 |
+| 末尾斜杠 | `/sitemap.xml/` | ⚠️ 有 `404.html` 的站点会返回 404，不能用 |
+
+### 已验证的案例
+
+- `trevo.work`：裸 URL `isPending: true`，加 `?gsc_check=...` 后 Success、3678 URLs，两个响应字节级相同
+- Next.js #75836：多人用"加参数 / 改名 / 末尾斜杠"成功；也有人全部无效，只能等
+
+### 注意事项
+
+- Workaround 不是修复，只是**绕开旧缓存记录**
+- 裸 URL 那条**保留不要删**，等它自己转成功
+- 不要一次提交很多变体，选一个即可
+
 ---
 
-## 十一、上线前 Sitemap Checklist
+## 十四、上线前 Sitemap Checklist
 
 - [ ] 文件是 UTF-8 **无 BOM**
 - [ ] 行尾纯 **LF**
 - [ ] 标准 XML 解析器能解析
+- [ ] **命名空间是 `http://`，不是 `https://`**（Google 不认 https 命名空间）
 - [ ] `<loc>` 全部是**最终 200 地址**（无 `.html`、无尾斜杠跳转）
 - [ ] 用"不跟随重定向"的客户端逐个测过，**0 个 301/302/308**
 - [ ] sitemap 自身 URL 返回 200，不重定向
@@ -366,10 +483,12 @@ except urllib.error.HTTPError as e:
 - [ ] canonical / hreflang / 站内链接与 sitemap 的 URL 风格**完全一致**
 - [ ] 无 UA 请求不被 WAF 拦截
 - [ ] GSC 删除旧条目后重新提交
+- [ ] **没有反复重提交同一个 URL**（会重置 pending）
+- [ ] **站点侧全部通过后，接受 pending，等待 1–2 周**（不要继续大改）
 
 ---
 
-## 十二、一句话总结
+## 十五、一句话总结
 
 > **sitemap 读不了，先别改 XML；打开"不跟随重定向"的客户端，把每条 `<loc>` 和 sitemap 自身的状态码打出来看。**
 > **在 Cloudflare Pages 上，`.html` 一律等于 308，全站必须统一用无扩展名地址。**

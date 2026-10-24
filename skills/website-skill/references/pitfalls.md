@@ -75,4 +75,28 @@
 
 28. **GSC 会缓存旧的失败结果** — 修好 sitemap 后，必须先在 GSC **删除旧条目**，再重新提交同一个 URL；否则可能长时间仍显示 "Couldn't read"。
 
+29. **软 404：任意不存在路径返回 200 + 首页 HTML** — Cloudflare Pages 项目在没有 `404.html` 时会这样（实测 `/sitemap.xml/`、`/Sitemap.xml`、`/sitemap_index.xml`、`/nonexistent-abc-987` 全部 200 + 首页）。后果：GSC 里 sitemap 地址只要多一个尾斜杠、大小写错、写错文件名，拿到的就是 HTML，GSC 只能报 "Couldn't read / type Unknown"，**永远不会提示 404**，极难排查。修复：在输出根目录放 `404.html`，让未知路径返回真正的 404。
+
+30. **sitemap 与 canonical / hreflang 形态必须一致** — Google 优先级是 **canonical > hreflang > sitemap**。sitemap 写 `/zh/about.html`、canonical 写 `/zh/about` 时，URL 会被判为"规范网页的替代网页"（Alternate page with proper canonical tag），不收录；同时 hreflang 要求每个成员有自指标签，形态不一致会让整个三语互指失效。**全站统一一种形态**（Cloudflare Pages 推荐无扩展名）。
+
+31. **GSC 提交地址必须一字不差** — 不带尾斜杠、大小写正确、不用 `www`（会 301）、不写 `sitemap_index.xml`。配合第 29 条软 404，错误地址不会报 404，只会报"读不了"。建议用「网域」属性提交。
+
+32. **BOM 不一致** — 一部分页面有 UTF-8 BOM、一部分没有（PowerShell 写文件留下的）。统一为 **UTF-8 无 BOM + LF**；验证 `raw[:3] != EF BB BF` 且 `b"\r\n" not in raw`。
+
+33. **robots.txt 同时声明 xml + txt** — GSC 会出现两条 sitemap 记录，其中一条状态异常时容易误判。只保留一条 XML 的 `Sitemap:`。
+
+34. **`Couldn't fetch` / `Sitemap could not be read` 常常是 "还没处理"，不是抓取失败** — Google 的 Diamond Product Expert 置顶说明：Google 处理 sitemap 是 best effort，有巨大积压，可能几天到几个月；真正失败会给更具体的错误码。站点侧全部通过、又没有具体错误时，**不要继续大改站点**，等 1–2 周。
+
+35. **GSC 按精确 URL 缓存失败记录** — 同一个 URL 会长期停留在旧状态。换一个"GSC 没见过的 URL"常能触发重新抓取：查询参数（`?gsc_check=...`）、改名（`sitemap2.xml`）、嵌套路径。注意：有 `404.html` 的站点，末尾加 `/` 会返回 404，不能用。
+
+36. **sitemap 命名空间必须是 `http://`，不能是 `https://`** — Google 的 sitemap 解析器不认 `https://www.sitemaps.org/schemas/sitemap/0.9`。Next.js 曾出现此回归 bug（15.4.4 修复）。生成后务必检查 `<urlset xmlns="http://...">`。
+
+37. **不要反复重提交同一个 sitemap URL** — 会重置 pending 状态，反而不利。站点侧没问题时保留现有记录，等它自己转成功。
+
+38. **Cloudflare Pages 可能集体出现 "200 + 合法 XML 但 GSC 报 Couldn't fetch"** — 2026-10 多个 Pages 站点同症状，robots/URL/canonical 全部正常、URL Inspection 也成功，站点侧找不到原因。先确认站点侧全部通过，再判断为平台/Google 侧问题，避免过度改造。
+
+39. **Sitemap 只是提示，不是收录必要条件** — Googlebot 通过站内链接也能抓全站，小站尤其如此。不要把收录完全押在 sitemap 状态上；内容质量和内链才是根本。
+
+40. **`X-Robots-Tag: noindex` 不阻止 sitemap 被处理** — sitemap 本身 noindex 是正常的（Product Expert 明确说明）。真正的问题是 WAF/CDN 对 Googlebot 返回 HTML、挑战页或空响应，而不是 XML。
+
 → 完整排查手册见 `references/sitemap-standards.md`

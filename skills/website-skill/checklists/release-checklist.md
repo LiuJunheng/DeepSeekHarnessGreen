@@ -19,6 +19,7 @@
 - [ ] sitemap 自身 URL 200、不重定向
 - [ ] Content-Type = `text/xml`（`_headers` 已写进文件，部署后线上验证）
 - [ ] GSC 里若有旧失败条目，先删除再重新提交
+- [ ] 确认输出根目录有 `404.html`，未知路径返回 404（不是 200 首页）
 - [ ] 详见 `references/sitemap-standards.md`
 
 ## 本地验证（Ctrl+Shift+R 硬刷新）

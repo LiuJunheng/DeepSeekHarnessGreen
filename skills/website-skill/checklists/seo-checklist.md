@@ -20,6 +20,7 @@
 - [ ] `<link rel="alternate" hreflang="x-default" href="fallback URL">`
 - [ ] x-default 规则：首页 → 根 `/`；子页 → `/en/`
 - [ ] **所有 canonical / hreflang 都是无扩展名地址**（Cloudflare Pages 上 `.html` 会 308）
+- [ ] **sitemap 与 canonical / hreflang 的 URL 形态完全一致**（不能一个带 `.html` 一个不带）
 - [ ] sitemap.xml 的 xhtml:link 和 HTML 里的 hreflang **完全一致**（若使用 xhtml:link）
 
 ## robots / sitemap
@@ -34,6 +35,9 @@
 - [ ] sitemap 自身 URL 返回 200、不重定向
 - [ ] sitemap Content-Type 是 `text/xml`（`_headers` 已写进文件并部署）
 - [ ] 无 UA 请求不被 Cloudflare WAF / Bot Fight Mode 拦截
+- [ ] robots.txt **只声明一条** `Sitemap:`（不要同时 xml + txt）
+- [ ] **未知路径返回真正的 404**（不是 200 + 首页）：`/sitemap.xml/`、`/Sitemap.xml`、`/nonexistent-abc` 都应是 404
+- [ ] 全站 HTML 统一 UTF-8 无 BOM + LF（不能一部分有 BOM）
 
 ## 爬虫保底
 

@@ -4,4 +4,4 @@ https://deepseek-harness-green.pages.dev/*
 
 # Google Search Console 的 sitemap 抓取器需要 text/xml
 /sitemap.xml
-  Content-Type: text/xml
+  Content-Type: text/xml; charset=utf-8

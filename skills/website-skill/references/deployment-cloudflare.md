@@ -37,6 +37,19 @@ Cloudflare Pages 默认启用 Pretty URLs，会把 `.html` 地址重定向到无
 
 **验证方法**：用不跟随重定向的 HTTP 客户端逐条测。Python `urllib` 默认不跟随 308，正好能暴露问题；`curl -L` 会自动跟，反而看不出来。
 
+## 自定义 404 页（必须）
+
+Cloudflare Pages 项目在**没有 `404.html`** 时，会对任意不存在的路径返回 **200 + 首页 HTML**（软 404）。
+
+后果：
+
+- GSC 里 sitemap 地址写错（多尾斜杠、大小写错、写成 `sitemap_index.xml`）**永远不报 404**，只报 "Couldn't fetch / Couldn't read"
+- 大量软 404 会污染索引
+
+修复：在输出根目录放 `pages/404.html`。Pages 会自动用它并返回真正的 404 状态。
+
+注意：404 页会在任意路径下渲染，所以页内资源/链接必须用**根绝对路径**（`/assets/...`、`/zh/`），不能用 `./` 相对路径；最稳妥是把 CSS 直接内联。
+
 ## 子域名 noindex（防重复内容）
 
 Cloudflare Pages 默认给项目分配 `xxx.pages.dev` 子域名。自定义域名和子域名同时可访问会被 Google 判定为重复内容。

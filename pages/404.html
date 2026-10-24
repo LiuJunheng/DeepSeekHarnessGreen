@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>404 · 页面不存在 | Page Not Found</title>
+  <style>
+    :root {
+      --bg-deep: #030617;
+      --bg-mid: #071029;
+      --accent: #39d3ff;
+      --text: #e8f0ff;
+      --muted: #8fa4c8;
+      --border: rgba(100, 180, 255, 0.18);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 20% 20%, rgba(57, 211, 255, 0.08), transparent 40%),
+        radial-gradient(circle at 80% 80%, rgba(74, 158, 255, 0.08), transparent 40%),
+        linear-gradient(160deg, var(--bg-deep), var(--bg-mid));
+    }
+    .panel {
+      width: 100%;
+      max-width: 620px;
+      padding: 40px 32px;
+      text-align: center;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: rgba(11, 26, 58, 0.45);
+      backdrop-filter: blur(10px);
+    }
+    .code {
+      margin: 0;
+      font-size: 76px;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: 4px;
+      background: linear-gradient(90deg, var(--accent), #4a9eff);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    h1 { margin: 18px 0 10px; font-size: 20px; font-weight: 600; }
+    p { margin: 6px 0; color: var(--muted); font-size: 14px; line-height: 1.7; }
+    .links {
+      margin-top: 26px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+    }
+    .links a {
+      padding: 9px 16px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--text);
+      text-decoration: none;
+      font-size: 13px;
+      transition: border-color 0.2s, color 0.2s;
+    }
+    .links a:hover { border-color: var(--accent); color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main class="panel">
+    <p class="code">404</p>
+    <h1>页面不存在 · Page Not Found</h1>
+    <p>你访问的地址不存在或已被移除。</p>
+    <p>The page you requested does not exist or has been removed.</p>
+    <p lang="zh-Hant">您造訪的頁面不存在或已被移除。</p>
+    <nav class="links" aria-label="返回站点">
+      <a href="/">首页 / Home</a>
+      <a href="/zh/">简体中文</a>
+      <a href="/zh-Hant/">繁體中文</a>
+      <a href="/en/">English</a>
+    </nav>
+  </main>
+</body>
+</html>

@@ -1,7 +1,7 @@
 ---
 name: website-skill
 description: "通用静态网站开发规范：纯原生 HTML/CSS/JS、多语言架构、SEO、Sitemap 排查、Cloudflare Pages 部署（.html 308）、广告接入、Markdown 渲染安全、分页爬虫兼容。新建/维护站点或 GSC 报 sitemap 读不了时加载。"
-updated: "2026-10-24"
+updated: "2026-10-25"
 ---
 
 # 通用静态网站开发与运维规范
@@ -114,8 +114,17 @@ renderInline 执行顺序**不能乱**：
 | 19 | x-default 指向不存在的根级页面（软 200） | 与 HTML 的 x-default 保持一致 |
 | 20 | 批量改锚点丢了 `#`（`./#faq` → `./faq`） | 替换后逐条验证 45 个锚点 |
 | 21 | 无 UA 请求被 Cloudflare 403 | 检查 Bot Fight Mode / WAF 是否拦 Googlebot |
+| 22 | **软 404：任意路径都返回 200 + 首页** | 输出根目录放 `404.html`，让错误地址真 404 |
+| 23 | **sitemap 与 canonical 形态不一致** | 全站统一；Google 优先级 canonical > hreflang > sitemap |
+| 24 | GSC 地址多尾斜杠/大小写错/用 www | 一字不差；用「网域」属性提交 |
+| 25 | 部分页面有 BOM、部分没有 | 统一 UTF-8 无 BOM + LF |
+| 26 | robots.txt 声明了 xml + txt 两条 Sitemap | 只保留 XML 一条 |
+| 27 | **"Couldn't fetch" 就大改站点** | 多数是 pending（还没处理），站点侧通过就等 1–2 周 |
+| 28 | GSC 按精确 URL 缓存失败记录 | 换查询参数 / 新文件名，绕开旧记录 |
+| 29 | sitemap 命名空间写成 `https://` | 必须 `http://`，Google 不认 https 命名空间 |
+| 30 | 反复重提交同一个 sitemap URL | 会重置 pending，保留现有记录等待 |
 
-→ 完整避坑经验（28 条）见 `references/pitfalls.md`
+→ 完整避坑经验（40 条）见 `references/pitfalls.md`
 
 ## 九、发版后必做清单
 
@@ -193,6 +202,27 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 判定标准：sitemap 200 + Content-Type 正确 + 0 个 BOM + 0 个 CRLF + 0 个重定向 + 0 个非 200。
 
+### 7. 软 404 会让"地址写错"永远不报 404
+
+没有 `404.html` 时，Cloudflare Pages 对任意不存在路径返回 **200 + 首页 HTML**。
+GSC 里 sitemap 地址多一个尾斜杠 / 大小写错 / 写成 `sitemap_index.xml`，拿到的都是 HTML，
+只会报 "Couldn't read / type Unknown"，**永远不提示 404**，极难排查。
+
+→ 输出根目录必须放 `404.html`，让未知路径返回真正的 404。
+
+### 8. sitemap 必须与 canonical / hreflang 同形态
+
+Google 优先级：**canonical > hreflang > sitemap**。
+sitemap 写 `.html`、canonical 写无后缀 → 会被判为"替代网页"不收录，hreflang 自指也失效。
+**全站统一一种形态**（Cloudflare Pages 推荐无扩展名）。
+
+### 9. `Couldn't fetch` 可能只是"还没处理"
+
+站点侧全部通过（200 / text/xml / 无 BOM / 无重定向 / robots 允许 / canonical 一致），
+GSC 又只给 "Couldn't fetch"、没有具体错误码时，**大概率是 Google 的 pending 状态**
+（best effort，可能几天到几个月）。不要继续大改站点，等 1–2 周；
+可用 **Rich Results Tester（Desktop bot）** 确认 Google 能抓到 XML。
+
 → **完整排查手册、真实案例复盘、可复制验证脚本见 `references/sitemap-standards.md`**
 
 ---
@@ -215,7 +245,7 @@ skills/website-skill/
 │   ├── deployment-cloudflare.md     ← Cloudflare Pages 部署方案
 │   ├── sitemap-standards.md         ← ★ Sitemap 读不了的完整排查手册（重点）
 │   ├── seo-standards.md             ← 完整 SEO 清单
-│   ├── pitfalls.md                  ← 28 条避坑经验完整版
+│   ├── pitfalls.md                  ← 40 条避坑经验完整版
 │   ├── ad-standards.md              ← AdSense 接入规范
 │   └── code-style.md                ← 代码规范
 └── templates/

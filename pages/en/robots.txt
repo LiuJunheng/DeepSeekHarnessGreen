@@ -1,6 +1,4 @@
 User-agent: *
 Allow: /
 
-# Both XML (primary) and TXT (fallback) sitemaps for redundancy
 Sitemap: https://dsh-green.website/sitemap.xml
-Sitemap: https://dsh-green.website/sitemap.txt
