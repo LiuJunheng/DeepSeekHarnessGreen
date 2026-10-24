@@ -1,0 +1,9 @@
+{
+  "meta": {
+    "title": "Skill Center",
+    "description": "Left-sidebar skill entry, grouped official/personal skill management, and a composer skill picker. Personal skills live in DSH_HOME/skills, managed separately from official skills."
+  },
+  "panel": {
+    "title": "Skills"
+  }
+}

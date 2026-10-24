@@ -1,0 +1,9 @@
+# dsh-skill-center bundle patch: 把本插件插入 profile 插件树。
+# 格式与本项目其他内置插件（dsh-rules / dsh-sidebar-extend 等）完全一致:
+#   - insert: 新增一行插件行（id 是行标识，name 是包名）。
+# dsh plugin / 启动器 reconcile 时会据此把 dsh-skill-center 加入
+# profile 的 dsh.profile.bundles 层列表，服务启动时才真正加载。
+- insert:
+    - id: skill-center
+      name: dsh-skill-center
+      displayName: 技能中心

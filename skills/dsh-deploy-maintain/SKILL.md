@@ -1,7 +1,7 @@
 ---
 name: dsh-deploy-maintain
 description: "DeepSeek Harness 绿色整合版启动器的部署、日常维护、插件开发与避坑经验。覆盖便携 Node/dsh 安装、环境变量重定向、工作区 ACL 沙箱、更新备份、插件管理与 dsh 插件双端加载/路由注册等全套实操知识。"
-updated: "2026-10-08"
+updated: "2026-10-24"
 ---
 
 # DeepSeek Harness 绿色整合版 · 部署维护与插件开发
@@ -484,3 +484,65 @@ ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.regi
 2. **再搭启动**：便携 Node → `lib/bin.js` → `stdin=PIPE` → 就绪检测 → `--no-open` + 统一 `open_ui` 接管。
 3. **后做维护**：检查更新（备份优先）→ 插件管理（pnpm 便携化 + reconcile 兜底）→ 数据维护 → 绿色版自更新（双通道 + 独立更新程序）。
 4. **最后开发插件**：先宿主 index.js（路由）再客户端 client.js，双端声明齐全 → 设 DSH_HOME dump-config 验证树 → 抓 `__DSH_BOOT__` 验证客户端 → 实测路由。
+
+## 八、DSH 技能（skill）子系统与「技能中心」插件（2026-10）
+
+> 通用知识，适用于任何要在 DSH 里做 skill 相关 UI/能力的需求；实现样例见本项目内置插件 `plugins/dsh-skill-center/`，设计记录见 `doc/skill-center-plugin.md`。
+
+### 8.1 原生 skill 子系统由哪些包组成
+
+| 包 | 职责 |
+|---|---|
+| `@deepseek-ai/dsh-skill` | 注册表服务 `ctx.skills`：`list(options)` / `snapshot()` / `get(name, options)`；合并多提供方、按层裁决重名 |
+| `@deepseek-ai/dsh-skill-filesystem` | 本地发现提供方：扫描 5 类根、解析 frontmatter、watcher 失效目录 |
+| `@deepseek-ai/dsh-tool-skill` | 模型侧：`skill` 工具 + 会话内 `<available_skills>` 目录（持久 user-role 消息）+ `/name` 用户显式调用的 pre-step 注入 |
+| `@deepseek-ai/dsh-client-ui-skill` | Web 侧：输入框 `/` 菜单 source、`Skill` 工具行卡片、点名字在右栏预览 SKILL.md |
+| `dsh-skill-badge` / `dsh-skill-office` / `dsh-experimental-badge-skill-bundle` | 随包提供的官方 skill（徽章、Office 工作流） |
+
+**原生没有「技能」页面/入口**——这是很多用户以为"DSH 没有 skill 功能"的原因；入口只有 `/` 菜单、`/name` 调用卡片、右栏预览。
+
+### 8.2 磁盘布局与发现规则（必须记住）
+
+- 扫描根（rank 从高到低）：`<项目根>/.dsh/skills`(100) → `<项目根>/.agents/skills`(200) → `customSkillDirs`(300) → `<DSH_HOME>/skills`(400) → `~/.agents/skills`(500) → `bundledSkillDir`(600)。
+- **只发现一层**：`<root>/<name>/SKILL.md` 或 `<root>/<name>.md`；**不支持嵌套 `**/SKILL.md`**。
+- 项目根 = 最近含 `.git` 的祖先，没有则用 cwd。
+- SKILL.md：`---` 包裹的 frontmatter，`name`（kebab-case）与 `description` 必填；可选 `whenToUse`、`metadata`、`disable-model-invocation`、`user-invocable`（严格布尔）；`name` 必须与目录/文件名一致。
+- 调用策略：`modelInvocable=false` 只对用户 `/name` 可见；`userInvocable=false` 只对模型目录可见（`/name` 不会加载）。
+- **停用技能必须移到扫描根之外**（如 `$DSH_HOME/skill-center/disabled/<name>`）：provider 只跳过 `.system` 子目录，`skills/.disabled/` 会被当作 skill 条目扫描并产生告警。
+- 官方技能可能位于 **preset 作用域**：host 侧要 `ctx.skills.list({scope: agent})` 才能列出；全局列表只含全局层。
+- **preset 随包技能的 `source` 报 `custom`**（preset 用 customSkillDirs 挂载随包技能），只有 `path` 落在 `<DSH安装>/node_modules/@deepseek-ai/` 下能区分它与用户自建 custom 技能；做「官方/个人」分组别只看 source。
+- 热加载：launcher `--install-plugin` 新增 bundle 会被运行中的 dsh 热加载（`__DSH_BOOT__` entries 立即出现、HTTP 路由可测），但**改已装插件的宿主代码不会自动重载**，需 remove+add 重装或重启。
+
+### 8.3 可用的 UI 插槽（0.2.1-rc.3 实测）
+
+| 插槽 | 用法 |
+|---|---|
+| `sidebar.panellist` | 左侧面板行：`{id, order, label:()=>string}`，组件给 glyph；点击由 shell 负责选中面板 |
+| `main` | keyed 中央面板：`{key: 与 panellist 相同的 id}`，组件即页面（离开面板时卸载） |
+| `conversation.input.left` | 输入框工具行左侧（list）：ownerProps 提供 `inputActions.setDraft(text)` 与 `input.draft/draftRev`；插入 `/name ` 文本即等价于用户手打（`/` 引用是纯文本 + lexicon 高亮） |
+
+样式遵循宿主主题 token（`--dsw-alias-*`），不要 import `@deepseek-ai/dsh-client-*`（会随版本漂移、抛错会空白整个 slot）。插件里请自绘控件并复制宿主样式。
+
+### 8.4 双端插件骨架约定（本项目内置插件通用）
+
+- `package.json`：`main` + `exports["./client"]` + `dsh.bundle.patch` + `dsh.client:{platform:"web",inject:["slots"]}`；`files` 含 lib/patch/locale/icon/README。
+- 宿主 `lib/index.js`：`export const inject = ['webServer']`；`export async function apply(ctx)`；路由必须 `ctx.effect(() => webServer.register({ kind:'exact', path, handler }))`，否则注册后被立即清理（405）。
+- 客户端 `lib/client.js`：`window.__ModuleLoader__.load({ id, factory })`，factory 返回 `module.exports` 并挂 `exports.apply` / `exports.inject`；`ctx.slots.inject(slot, () => ctx.slots.register({name:slot,...}, Component))`。
+- 安装：`plugins/<name>/` 被 launcher `bundled_plugin_dirs()` 自动发现，以 `file:` 安装并 reconcile 进 `dsh.profile.bundles`；**装完必须重启 dsh 才加载 host 行**；已装用户走「插件管理 → 一键安装内置插件 / 一键更新内置插件」。
+
+### 8.5 测试方法（无浏览器/无 DSH 环境也能验）
+
+- **宿主端**：假 `ctx`（`webServer.register` 收集 handler、`ctx.skills` 打桩、`ctx.effect` 立即执行）+ 临时 `DSH_HOME`；用 `Readable.from` 伪造 req、收集 res.body，逐路由断言正常与错误码。
+- **客户端**：假 `window.__ModuleLoader__`、假 `document`、假 React（`useState` 按脚本化初始值返回、`useEffect/useRef` 空实现）；先验 `apply` 注册的 slot 集合与 label，再逐组件渲染并断言关键文案（含"仅模型可调用"等过滤逻辑）。
+- 语法：`runtime/node/node-v*/node.exe --check lib/*.js`；JSON/locale 用 node 解析校验。
+
+### 8.6 高发坑
+
+1. 路由 handler 签名统一 `(ctx, body)`——单参 handler 会把 ctx 当 body，症状是 `NAME_INVALID: 技能名不能为空`。
+2. `ctx.slots.inject` 回调**不是立即执行**（声明就绪时才调用）；单测要主动调用 `cb()`。
+3. `sidebar.panellist` 与 `main` 必须成对且同 id，否则点击无面板。
+4. 停用目录不能放在扫描根内（见 8.2）。
+5. 会话内技能列表要带 `sessionId`（客户端取 `ctx.sessions.list.getSnapshot().current`），host 用 `ctx.agents.get(id)` 作 scope，否则 preset 层官方技能缺失。
+6. 客户端 i18n：可自包含 zh/en 词典（按 `<html lang>`），同时监听 `dsh-i18n-change` 重渲染；启动器 3081 的 `__dsh_i18n_bridge.js` 只在桌面壳/启动器运行时可用，纯浏览器场景要有回退。
+7. ZIP 导入（TRAE / WorkBuddy 同款需求）用 `node:zlib` + 手写中央目录解析即可，不必引第三方库：扫尾部 EOCD（注意注释上限 65535）→ 读 0x02014b50 条目 → 按 local header（30+nameLen+extraLen）取数据 → store 直取 / deflate 用 `inflateRawSync`；仅支持 store/deflate，拒绝 ZIP64/分卷/加密。安全必须做：条目名规范化（拒绝对路径/`..`/空段/NUL）、解压目标 `isInside` 校验（zip-slip）、拒绝符号链接条目（Unix mode 高 16 位 0xA000）、重复条目、单文件/总大小/压缩比上限（zip bomb）。布局识别支持 `<name>/SKILL.md`、根 `SKILL.md`、单层包装、`skills/<name>/SKILL.md`（多技能）、`<name>.md`。单测可手工构造 store 方法 ZIP（不校验 CRC 也能过本项目解析）。注意：TRAE / WorkBuddy 导出的 zip 常带**显式目录条目**（如 `trae-skill-creation/`、`templates/`），解析时必须在路径校验**之前**识别并跳过，否则尾部空段会被误判为非法路径（本项目初版就踩了这个坑，用真实用户 zip 一测即暴露）；同时应容忍 `./` 前缀段，并拒绝盘符（`C:`）。
+8. 客户端文件导入别假设有系统文件/目录对话框：DSH 0.2.1-rc.3 **没有 `uiWorkspace/pickDirectory` 服务**（调用静默失败，按钮毫无反应），`<input webkitdirectory>` 在桌面 WebView2 里选目录后 **FileList 为空**（提示"没有文件"）。可靠方案只有：`<input type="file">` 选 ZIP + document 级拖拽 ZIP + 粘贴路径交给宿主。拖拽监听挂 `document`（`dragover` 仅 `types` 含 `Files` 时 preventDefault），页面放**常驻**「可拖拽」提示。
