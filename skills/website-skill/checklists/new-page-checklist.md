@@ -14,17 +14,20 @@
 - [ ] `<meta charset="UTF-8">`
 - [ ] `<title>`（页面名 - 站点名）
 - [ ] `<meta name="description" content="...">`
-- [ ] canonical 自指（绝对 URL）
-- [ ] 4 条 hreflang + 1 条 x-default
-- [ ] x-default 指向 `/en/新页面.html`（子页 → /en/ fallback）
+- [ ] canonical 自指（绝对 URL，**无 `.html`**，如 `/zh/tutorial`）
+- [ ] 4 条 hreflang + 1 条 x-default（**全部无 `.html`**）
+- [ ] x-default 指向 `/en/新页面`（子页 → /en/ fallback）
 - [ ] 站长验证标签（百度 / AdSense / 搜狗）
 - [ ] AdSense adsbygoogle.js
 - [ ] style.css?v + app.js?v（版本号与全站一致）
 
+> 磁盘文件名可以是 `tutorial.html`，但**对外 URL 一律 `/zh/tutorial`**（Cloudflare Pages Pretty URLs 会把 `.html` 308 掉）。
+
 ## sitemap.xml
 
-- [ ] 新增 3 个 `<url>`（三语各一条）
-- [ ] 每个 `<url>` 带 4 个 `<xhtml:link>` 互指
+- [ ] 新增 3 个 `<url>`（三语各一条，URL **无 `.html`**）
+- [ ] 每条 `<loc>` 实测返回 200 且不重定向
+- [ ] 若用 `<xhtml:link>` 互指，每条 alternate 也必须 200
 - [ ] `<lastmod>` 填今天日期
 
 ## 导航 / Footer

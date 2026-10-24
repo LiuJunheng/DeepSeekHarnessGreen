@@ -51,3 +51,28 @@
 20. **Schema.org SoftwareApplication 没有 applicationSubCategory 字段** — 用了 Google 会静默忽略，别浪费。`softwareVersion` 虽然 Schema.org 有但每次发版要手动同步，**建议省略**（Google 富文本展示不强制依赖）。
 
 21. **ad-slot 容器样式投放后要调整** — AdSense `<ins>` 自带尺寸会自动填充，投放前的虚线占位边框 / 背景要去掉。CSS 里用注释区分占位 vs 投放后。
+
+## 六、sitemap / URL（最容易反复踩）
+
+22. **sitemap 读不了，先别改 XML 格式** — 90% 的人第一反应是重写 XML，结果毫无作用。只要标准 XML 解析器能解析，格式就不是原因。真正原因按命中率：① sitemap 自身重定向 ② Content-Type 不对 ③ BOM ④ 每条 `<loc>` 非 200（最常见）⑤ WAF 拦截 ⑥ GSC 属性不匹配。
+
+23. **Cloudflare Pages 上 `.html` 一律 308** — `/zh/about.html` → 308 → `/zh/about`；`/zh/index.html` → 308 → `/zh/`；`/zh/changelog.html` → 308 → `/zh/changelog`。**全站必须统一无扩展名**：sitemap `<loc>`、canonical、hreflang、站内导航、footer、JS 跳转。漏一处就多一个 308。注意 Python `urllib` 默认**不跟随 308**，正好可以用来暴露问题；`curl -L` 会自动跟，反而看不出来。
+
+24. **`_headers` 文档写了但文件里没有** — 曾经文档写明 `/sitemap.xml → text/xml`，实际文件里只有 pages.dev 的 noindex，线上一直是 `application/xml`。改完必须 **Read 文件确认 + 线上验证响应头**。正确写法：
+
+    ```txt
+    /sitemap.xml
+      Content-Type: text/xml
+    ```
+
+    路径以 `/` 开头，header 行 2 空格缩进，随 `pages/` 一起部署才生效。
+
+25. **x-default 指向不存在的根级页面会返回软 200** — sitemap 里写 `https://example.com/about.html`，但根目录没有该文件，线上却返回 200（软 404）。比真 404 更危险：爬虫以为页面存在。x-default 必须与 HTML 的 `x-default` 完全一致，且每条 alternate 都要 200。
+
+26. **批量改 `index.html#anchor` 时极易丢掉 `#`** — 正确：`index.html#faq` → `./#faq`；错误写法 `"./" + val[len("index.html#"):]` 会得到 `./faq`（404）。批量替换后必须用链接解析器逐条验证，不要只看替换数量。
+
+27. **无 UA 请求被 Cloudflare 403 是 WAF 拦截信号** — 实测 `UA=None → 403`、`Googlebot UA → 200`。GSC 报 "Couldn't fetch" 时，去 Security → Bots 检查 Bot Fight Mode / WAF 是否挑战官方爬虫。
+
+28. **GSC 会缓存旧的失败结果** — 修好 sitemap 后，必须先在 GSC **删除旧条目**，再重新提交同一个 URL；否则可能长时间仍显示 "Couldn't read"。
+
+→ 完整排查手册见 `references/sitemap-standards.md`

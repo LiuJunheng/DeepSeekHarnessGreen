@@ -1,3 +1,7 @@
 # Prevent *.pages.dev from being indexed (duplicate content)
 https://deepseek-harness-green.pages.dev/*
   X-Robots-Tag: noindex
+
+# Google Search Console 的 sitemap 抓取器需要 text/xml
+/sitemap.xml
+  Content-Type: text/xml

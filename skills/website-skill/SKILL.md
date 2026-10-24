@@ -1,7 +1,7 @@
 ---
 name: website-skill
-description: "通用静态网站开发规范：纯原生 HTML/CSS/JS、多语言架构、SEO 优化、Cloudflare Pages 部署、广告接入、Markdown 渲染安全、分页爬虫兼容。新建或维护任何静态网站时自动加载。"
-updated: "2026-09-15"
+description: "通用静态网站开发规范：纯原生 HTML/CSS/JS、多语言架构、SEO、Sitemap 排查、Cloudflare Pages 部署（.html 308）、广告接入、Markdown 渲染安全、分页爬虫兼容。新建/维护站点或 GSC 报 sitemap 读不了时加载。"
+updated: "2026-10-24"
 ---
 
 # 通用静态网站开发与运维规范
@@ -108,8 +108,14 @@ renderInline 执行顺序**不能乱**：
 | 13 | 所有 HTML 版本号改了一半就 push | grep 全量验证一致性 |
 | 14 | Python 预渲染器忘了 htmlEscape | 用同一个函数（或逐行对照） |
 | 15 | AdSense 爬虫不跑 JS，广告位靠 JS 插入 | 广告位容器必须是静态 HTML |
+| 16 | **sitemap 读不了就反复改 XML 格式** | 格式几乎从不是原因，先测每条 `<loc>` 状态码 |
+| 17 | **Cloudflare Pages 上 `.html` 全是 308** | 全站统一无扩展名 URL（sitemap/canonical/hreflang/内链/JS） |
+| 18 | `_headers` 文档写了但文件里没有 | 读文件确认 + 线上验证响应头 |
+| 19 | x-default 指向不存在的根级页面（软 200） | 与 HTML 的 x-default 保持一致 |
+| 20 | 批量改锚点丢了 `#`（`./#faq` → `./faq`） | 替换后逐条验证 45 个锚点 |
+| 21 | 无 UA 请求被 Cloudflare 403 | 检查 Bot Fight Mode / WAF 是否拦 Googlebot |
 
-→ 完整避坑经验（21 条）见 `references/pitfalls.md`
+→ 完整避坑经验（28 条）见 `references/pitfalls.md`
 
 ## 九、发版后必做清单
 
@@ -122,6 +128,72 @@ renderInline 执行顺序**不能乱**：
 7. 观察 2-3 天收录数
 
 → 完整 checklist 见 `checklists/release-checklist.md`
+
+## 十、Sitemap 与 URL 规范（血泪教训，必读）
+
+这是本项目**反复失败最多次**的地方。核心认知：
+
+### 1. sitemap 读不了，先别改 XML
+
+XML 只要标准解析器能解析，格式就没问题。真正原因按命中率排查：
+
+```
+① sitemap 自身是否 200、是否重定向
+② Content-Type 是否 text/xml
+③ 是否带 BOM / 是否 UTF-8 / 行尾
+④ 每条 <loc> 是否 200（重点！）
+⑤ robots.txt 是否拦了
+⑥ Cloudflare / WAF 是否拦 Googlebot（无 UA 403 是信号）
+⑦ GSC 属性是否匹配
+```
+
+### 2. Cloudflare Pages：`.html` 一律 308
+
+| 磁盘文件 | 真实 URL |
+|---------|---------|
+| `pages/about.html` | `/about` |
+| `pages/zh/index.html` | `/zh/` |
+| `pages/zh/changelog.html` | `/zh/changelog` |
+
+**全站必须统一无扩展名**：sitemap `<loc>`、canonical、hreflang、站内导航、footer、JS 跳转。
+漏一处就多一个 308。
+
+锚点写法：`index.html#faq` → `./#faq`（**别丢 `#`**）。
+
+### 3. 编码与行尾硬要求
+
+- UTF-8、**无 BOM**（前 3 字节不能是 `EF BB BF`）
+- **纯 LF**（`\r\n` 数量必须为 0）
+- Python 写法：`open(path, "w", encoding="utf-8", newline="\n")`
+- 不要用 PowerShell `Set-Content` / `Out-File` 生成
+
+### 4. `_headers` 必须真的写进文件
+
+```txt
+/sitemap.xml
+  Content-Type: text/xml
+```
+
+文档写了 ≠ 文件里有。改完必须读文件 + 线上验响应头。
+
+### 5. 多语言 xhtml:link 的风险
+
+能用简单格式就先简单格式（hreflang 在 HTML 里也有效）。
+若用 xhtml:link：每条 alternate 必须 200、不能 404/308、x-default 必须与 HTML 一致。
+
+### 6. 验证脚本（上线前必跑）
+
+用**不跟随重定向**的客户端逐条测每个 `<loc>`：
+
+```python
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+```
+
+判定标准：sitemap 200 + Content-Type 正确 + 0 个 BOM + 0 个 CRLF + 0 个重定向 + 0 个非 200。
+
+→ **完整排查手册、真实案例复盘、可复制验证脚本见 `references/sitemap-standards.md`**
 
 ---
 
@@ -141,8 +213,9 @@ skills/website-skill/
 │   ├── pagination-seo.md            ← 分页/无限滚动 SEO 安全实现
 │   ├── markdown-escape.md           ← Markdown 渲染 HTML escape 完整代码
 │   ├── deployment-cloudflare.md     ← Cloudflare Pages 部署方案
+│   ├── sitemap-standards.md         ← ★ Sitemap 读不了的完整排查手册（重点）
 │   ├── seo-standards.md             ← 完整 SEO 清单
-│   ├── pitfalls.md                  ← 21 条避坑经验完整版
+│   ├── pitfalls.md                  ← 28 条避坑经验完整版
 │   ├── ad-standards.md              ← AdSense 接入规范
 │   └── code-style.md                ← 代码规范
 └── templates/

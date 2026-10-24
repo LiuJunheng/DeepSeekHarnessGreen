@@ -2,11 +2,21 @@
 
 ## sitemap.xml
 
+> **读不了时先看 `references/sitemap-standards.md`，不要反复改 XML 格式。**
+
+- [ ] 文件 UTF-8 **无 BOM**（前 3 字节不是 `EF BB BF`）
+- [ ] 行尾**纯 LF**（`\r\n` 数量 = 0）
+- [ ] 标准 XML 解析器能解析（格式本身几乎从不是问题）
+- [ ] **每条 `<loc>` 都是最终 200 地址，不经过 301/302/308**
+- [ ] **Cloudflare Pages 上必须用无扩展名 URL**（`.html` 会 308）
+- [ ] sitemap 自身 URL 返回 200，不重定向
+- [ ] Content-Type 为 `text/xml`（`_headers` 覆盖）
 - [ ] **`<lastmod>` 是唯一影响 Google 抓取优先级的字段**（changefreq / priority 基本被忽略）
-- [ ] 多语言站点加 `<xhtml:link rel="alternate" hreflang="…">` 互指（Google 官方推荐的标准做法）
-- [ ] 每次 push 后把所有 URL 的 `<lastmod>` 统一填最新 commit 日期
-- [ ] sitemap 和 HTML 里的 x-default 必须一致（否则 Google 混乱）
-- [ ] 路径用绝对 URL：`https://yourdomain.com/zh/page.html`
+- [ ] 每次 push 后把所有 URL 的 `<lastmod>` 统一填最新日期（`YYYY-MM-DD`）
+- [ ] `canonical` / `hreflang` / 站内链接 与 sitemap 的 URL 风格完全一致
+- [ ] 多语言若用 `<xhtml:link>`：每条 alternate 必须 200，x-default 与 HTML 一致
+- [ ] robots.txt 的 `Sitemap:` 指向当前域名绝对 URL
+- [ ] 无 UA 请求不被 WAF / Bot Fight Mode 拦截
 
 ## robots.txt
 

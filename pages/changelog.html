@@ -18,11 +18,11 @@
   <meta name="robots" content="noindex,nofollow">
   <title>DeepSeek Harness (DSH) Changelog · Choose Language</title>
   <meta name="description" content="DeepSeek Harness (DSH) 桌面绿色整合版启动器更新日志——自动同步 GitHub Release，无需人工维护。">
-  <link rel="canonical" href="https://dsh-green.website/changelog.html">
-  <link rel="alternate" hreflang="zh-CN" href="https://dsh-green.website/zh/changelog.html">
-  <link rel="alternate" hreflang="zh-TW" href="https://dsh-green.website/zh-Hant/changelog.html">
-  <link rel="alternate" hreflang="en" href="https://dsh-green.website/en/changelog.html">
-  <link rel="alternate" hreflang="x-default" href="https://dsh-green.website/en/changelog.html">
+  <link rel="canonical" href="https://dsh-green.website/changelog">
+  <link rel="alternate" hreflang="zh-CN" href="https://dsh-green.website/zh/changelog">
+  <link rel="alternate" hreflang="zh-TW" href="https://dsh-green.website/zh-Hant/changelog">
+  <link rel="alternate" hreflang="en" href="https://dsh-green.website/en/changelog">
+  <link rel="alternate" hreflang="x-default" href="https://dsh-green.website/en/changelog">
   <link rel="stylesheet" href="./assets/style.css?v=3.8">
   <script>
     (function() {
@@ -33,14 +33,14 @@
       var target = null;
       if (saved) {
         var norm = NORMALIZE[saved] || saved;
-        if (norm === 'zh' || norm === 'zh-Hant' || norm === 'en') target = './' + norm + '/changelog.html';
+        if (norm === 'zh' || norm === 'zh-Hant' || norm === 'en') target = './' + norm + '/changelog';
       }
       if (!target) {
         var langs = navigator.languages ? navigator.languages.slice() : [navigator.language || 'en'];
         var nl = langs.map(function(l) { return l.toLowerCase(); });
-        if (nl.some(function(l) { return l === 'zh-tw' || l === 'zh-hk' || l === 'zh-mo' || l.indexOf('zh-hant') === 0; })) target = './zh-Hant/changelog.html';
-        else if (nl.some(function(l) { return l.indexOf('zh') === 0; })) target = './zh/changelog.html';
-        else target = './en/changelog.html';
+        if (nl.some(function(l) { return l === 'zh-tw' || l === 'zh-hk' || l === 'zh-mo' || l.indexOf('zh-hant') === 0; })) target = './zh-Hant/changelog';
+        else if (nl.some(function(l) { return l.indexOf('zh') === 0; })) target = './zh/changelog';
+        else target = './en/changelog';
       }
       window.location.replace(target);
     })();
@@ -54,9 +54,9 @@
     <h1>Changelog · 选择语言</h1>
     <p>Redirecting… 浏览器将根据语言自动跳转，或手动点击下方链接：</p>
     <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:16px;">
-      <a href="./zh/changelog.html" class="btn btn-primary" onclick="try{localStorage.setItem('dshe-lang-preference','zh');}catch(e){}" style="min-width:140px;text-align:center;">简体中文</a>
-      <a href="./zh-Hant/changelog.html" class="btn btn-primary" onclick="try{localStorage.setItem('dshe-lang-preference','zh-Hant');}catch(e){}" style="min-width:140px;text-align:center;">繁體中文</a>
-      <a href="./en/changelog.html" class="btn btn-primary" onclick="try{localStorage.setItem('dshe-lang-preference','en');}catch(e){}" style="min-width:140px;text-align:center;">English</a>
+      <a href="./zh/changelog" class="btn btn-primary" onclick="try{localStorage.setItem('dshe-lang-preference','zh');}catch(e){}" style="min-width:140px;text-align:center;">简体中文</a>
+      <a href="./zh-Hant/changelog" class="btn btn-primary" onclick="try{localStorage.setItem('dshe-lang-preference','zh-Hant');}catch(e){}" style="min-width:140px;text-align:center;">繁體中文</a>
+      <a href="./en/changelog" class="btn btn-primary" onclick="try{localStorage.setItem('dshe-lang-preference','en');}catch(e){}" style="min-width:140px;text-align:center;">English</a>
     </div>
   </main>
 </body>

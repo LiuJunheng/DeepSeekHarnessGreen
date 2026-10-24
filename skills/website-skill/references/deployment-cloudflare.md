@@ -11,6 +11,32 @@ Root directory:      ./
 
 Cloudflare Pages 拉取 Gitee/GitHub 仓库，webhook 触发自动部署（~30 秒）。
 
+## Pretty URLs：`.html` 一律 308（重要！）
+
+Cloudflare Pages 默认启用 Pretty URLs，会把 `.html` 地址重定向到无扩展名：
+
+| 磁盘文件 | 请求 `.html` | 真实 200 地址 |
+|---------|-------------|--------------|
+| `index.html` | `/index.html` → 308 | `/` |
+| `about.html` | `/about.html` → 308 | `/about` |
+| `zh/index.html` | `/zh/index.html` → 308 | `/zh/` |
+| `zh/changelog.html` | `/zh/changelog.html` → 308 | `/zh/changelog` |
+
+**推论：全站 URL 必须统一无扩展名**，否则每处 `.html` 都是一个 308：
+
+- sitemap 的 `<loc>`
+- `<link rel="canonical">`
+- 所有 `hreflang` 的 `href`
+- 站内导航 / footer / 返回首页链接
+- JS 语言跳转字符串
+
+**相对链接注意**：
+- 同目录页面：`href="about"` → `/zh/about` ✅
+- 返回首页：`href="./"` → `/zh/` ✅（不要写 `href="index"`）
+- 带锚点：`index.html#faq` → `./#faq`（**别丢 `#`**）
+
+**验证方法**：用不跟随重定向的 HTTP 客户端逐条测。Python `urllib` 默认不跟随 308，正好能暴露问题；`curl -L` 会自动跟，反而看不出来。
+
 ## 子域名 noindex（防重复内容）
 
 Cloudflare Pages 默认给项目分配 `xxx.pages.dev` 子域名。自定义域名和子域名同时可访问会被 Google 判定为重复内容。

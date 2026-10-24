@@ -1,132 +1,99 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
-        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://dsh-green.website/</loc>
-    <lastmod>2026-09-10</lastmod>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://dsh-green.website/"/>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://dsh-green.website/zh/"/>
-    <xhtml:link rel="alternate" hreflang="zh-TW" href="https://dsh-green.website/zh-Hant/"/>
-    <xhtml:link rel="alternate" hreflang="en" href="https://dsh-green.website/en/"/>
+    <lastmod>2026-10-24</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
   </url>
   <url>
     <loc>https://dsh-green.website/zh/</loc>
-    <lastmod>2026-09-10</lastmod>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://dsh-green.website/"/>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://dsh-green.website/zh/"/>
-    <xhtml:link rel="alternate" hreflang="zh-TW" href="https://dsh-green.website/zh-Hant/"/>
-    <xhtml:link rel="alternate" hreflang="en" href="https://dsh-green.website/en/"/>
+    <lastmod>2026-10-24</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
   </url>
   <url>
-    <loc>https://dsh-green.website/zh/about.html</loc>
-    <lastmod>2026-09-10</lastmod>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://dsh-green.website/about.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://dsh-green.website/zh/about.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-TW" href="https://dsh-green.website/zh-Hant/about.html"/>
-    <xhtml:link rel="alternate" hreflang="en" href="https://dsh-green.website/en/about.html"/>
+    <loc>https://dsh-green.website/zh/changelog</loc>
+    <lastmod>2026-10-24</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://dsh-green.website/zh/privacy.html</loc>
-    <lastmod>2026-09-10</lastmod>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://dsh-green.website/privacy.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://dsh-green.website/zh/privacy.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-TW" href="https://dsh-green.website/zh-Hant/privacy.html"/>
-    <xhtml:link rel="alternate" hreflang="en" href="https://dsh-green.website/en/privacy.html"/>
+    <loc>https://dsh-green.website/zh/compare</loc>
+    <lastmod>2026-10-24</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://dsh-green.website/zh/changelog.html</loc>
-    <lastmod>2026-09-10</lastmod>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://dsh-green.website/changelog.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://dsh-green.website/zh/changelog.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-TW" href="https://dsh-green.website/zh-Hant/changelog.html"/>
-    <xhtml:link rel="alternate" hreflang="en" href="https://dsh-green.website/en/changelog.html"/>
+    <loc>https://dsh-green.website/zh/about</loc>
+    <lastmod>2026-10-24</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
   </url>
   <url>
-    <loc>https://dsh-green.website/zh/compare.html</loc>
-    <lastmod>2026-09-10</lastmod>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://dsh-green.website/compare.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://dsh-green.website/zh/compare.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-TW" href="https://dsh-green.website/zh-Hant/compare.html"/>
-    <xhtml:link rel="alternate" hreflang="en" href="https://dsh-green.website/en/compare.html"/>
+    <loc>https://dsh-green.website/zh/privacy</loc>
+    <lastmod>2026-10-24</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
   </url>
   <url>
     <loc>https://dsh-green.website/zh-Hant/</loc>
-    <lastmod>2026-09-10</lastmod>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://dsh-green.website/"/>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://dsh-green.website/zh/"/>
-    <xhtml:link rel="alternate" hreflang="zh-TW" href="https://dsh-green.website/zh-Hant/"/>
-    <xhtml:link rel="alternate" hreflang="en" href="https://dsh-green.website/en/"/>
+    <lastmod>2026-10-24</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
   </url>
   <url>
-    <loc>https://dsh-green.website/zh-Hant/about.html</loc>
-    <lastmod>2026-09-10</lastmod>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://dsh-green.website/about.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://dsh-green.website/zh/about.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-TW" href="https://dsh-green.website/zh-Hant/about.html"/>
-    <xhtml:link rel="alternate" hreflang="en" href="https://dsh-green.website/en/about.html"/>
+    <loc>https://dsh-green.website/zh-Hant/changelog</loc>
+    <lastmod>2026-10-24</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://dsh-green.website/zh-Hant/privacy.html</loc>
-    <lastmod>2026-09-10</lastmod>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://dsh-green.website/privacy.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://dsh-green.website/zh/privacy.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-TW" href="https://dsh-green.website/zh-Hant/privacy.html"/>
-    <xhtml:link rel="alternate" hreflang="en" href="https://dsh-green.website/en/privacy.html"/>
+    <loc>https://dsh-green.website/zh-Hant/compare</loc>
+    <lastmod>2026-10-24</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://dsh-green.website/zh-Hant/changelog.html</loc>
-    <lastmod>2026-09-10</lastmod>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://dsh-green.website/changelog.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://dsh-green.website/zh/changelog.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-TW" href="https://dsh-green.website/zh-Hant/changelog.html"/>
-    <xhtml:link rel="alternate" hreflang="en" href="https://dsh-green.website/en/changelog.html"/>
+    <loc>https://dsh-green.website/zh-Hant/about</loc>
+    <lastmod>2026-10-24</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
   </url>
   <url>
-    <loc>https://dsh-green.website/zh-Hant/compare.html</loc>
-    <lastmod>2026-09-10</lastmod>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://dsh-green.website/compare.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://dsh-green.website/zh/compare.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-TW" href="https://dsh-green.website/zh-Hant/compare.html"/>
-    <xhtml:link rel="alternate" hreflang="en" href="https://dsh-green.website/en/compare.html"/>
+    <loc>https://dsh-green.website/zh-Hant/privacy</loc>
+    <lastmod>2026-10-24</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
   </url>
   <url>
     <loc>https://dsh-green.website/en/</loc>
-    <lastmod>2026-09-10</lastmod>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://dsh-green.website/"/>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://dsh-green.website/zh/"/>
-    <xhtml:link rel="alternate" hreflang="zh-TW" href="https://dsh-green.website/zh-Hant/"/>
-    <xhtml:link rel="alternate" hreflang="en" href="https://dsh-green.website/en/"/>
+    <lastmod>2026-10-24</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
   </url>
   <url>
-    <loc>https://dsh-green.website/en/about.html</loc>
-    <lastmod>2026-09-10</lastmod>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://dsh-green.website/about.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://dsh-green.website/zh/about.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-TW" href="https://dsh-green.website/zh-Hant/about.html"/>
-    <xhtml:link rel="alternate" hreflang="en" href="https://dsh-green.website/en/about.html"/>
+    <loc>https://dsh-green.website/en/changelog</loc>
+    <lastmod>2026-10-24</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://dsh-green.website/en/privacy.html</loc>
-    <lastmod>2026-09-10</lastmod>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://dsh-green.website/privacy.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://dsh-green.website/zh/privacy.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-TW" href="https://dsh-green.website/zh-Hant/privacy.html"/>
-    <xhtml:link rel="alternate" hreflang="en" href="https://dsh-green.website/en/privacy.html"/>
+    <loc>https://dsh-green.website/en/compare</loc>
+    <lastmod>2026-10-24</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://dsh-green.website/en/changelog.html</loc>
-    <lastmod>2026-09-10</lastmod>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://dsh-green.website/changelog.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://dsh-green.website/zh/changelog.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-TW" href="https://dsh-green.website/zh-Hant/changelog.html"/>
-    <xhtml:link rel="alternate" hreflang="en" href="https://dsh-green.website/en/changelog.html"/>
+    <loc>https://dsh-green.website/en/about</loc>
+    <lastmod>2026-10-24</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
   </url>
   <url>
-    <loc>https://dsh-green.website/en/compare.html</loc>
-    <lastmod>2026-09-10</lastmod>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://dsh-green.website/compare.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://dsh-green.website/zh/compare.html"/>
-    <xhtml:link rel="alternate" hreflang="zh-TW" href="https://dsh-green.website/zh-Hant/compare.html"/>
-    <xhtml:link rel="alternate" hreflang="en" href="https://dsh-green.website/en/compare.html"/>
+    <loc>https://dsh-green.website/en/privacy</loc>
+    <lastmod>2026-10-24</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
   </url>
 </urlset>

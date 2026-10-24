@@ -11,9 +11,15 @@
 ## sitemap 更新
 
 - [ ] sitemap.xml 所有 `<lastmod>` 统一填最新日期（YYYY-MM-DD）
-- [ ] 如果加了新页面，新增 3 个 `<url>`（三语），每个带 4 个 xhtml:link 互指
+- [ ] 如果加了新页面，新增 3 个 `<url>`（三语）；若用 xhtml:link，每条都要 200
 - [ ] 如果删了页面，从 sitemap 移除对应条目
-- [ ] 用浏览器直接打开 sitemap.xml 检查 XML 格式正确
+- [ ] 文件 UTF-8 **无 BOM**、行尾**纯 LF**
+- [ ] **每条 `<loc>` 返回 200 且不经过 301/302/308**（用不跟随重定向的客户端逐条测）
+- [ ] **sitemap 和 canonical / hreflang / 站内链接的 URL 风格一致（全部无 `.html`）**
+- [ ] sitemap 自身 URL 200、不重定向
+- [ ] Content-Type = `text/xml`（`_headers` 已写进文件，部署后线上验证）
+- [ ] GSC 里若有旧失败条目，先删除再重新提交
+- [ ] 详见 `references/sitemap-standards.md`
 
 ## 本地验证（Ctrl+Shift+R 硬刷新）
 

@@ -66,6 +66,21 @@ pages/
 - `file://` 打开 → 跳到磁盘根目录
 - 线上访问 → 跳到错误的子域（比如没有 `/zh` 前缀）
 
+### URL 风格铁律：Cloudflare Pages 上不要用 `.html`
+
+磁盘上可以是 `about.html`，但**对外 URL 一律不带扩展名**：
+
+| 用途 | 正确写法 | 错误写法 |
+|------|---------|---------|
+| canonical | `https://example.com/zh/about` | `.../zh/about.html`（308） |
+| hreflang | `https://example.com/en/about` | `.../en/about.html`（308） |
+| sitemap `<loc>` | `https://example.com/zh/about` | `.../zh/about.html`（308） |
+| 同目录导航 | `href="about"` | `href="about.html"`（308） |
+| 返回首页 | `href="./"` | `href="index.html"`（308） |
+| 带锚点 | `href="./#faq"` | `href="index.html#faq"`（308，且易丢 `#`） |
+
+> 详见 `references/deployment-cloudflare.md` 的 Pretty URLs 一节和 `references/sitemap-standards.md`。
+
 ## 浏览器语言检测
 
 ```javascript

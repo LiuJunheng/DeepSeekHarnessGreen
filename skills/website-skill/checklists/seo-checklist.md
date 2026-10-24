@@ -19,15 +19,21 @@
 - [ ] `<link rel="alternate" hreflang="en" href="en 版 URL">`
 - [ ] `<link rel="alternate" hreflang="x-default" href="fallback URL">`
 - [ ] x-default 规则：首页 → 根 `/`；子页 → `/en/`
-- [ ] sitemap.xml 的 xhtml:link 和 HTML 里的 hreflang **完全一致**
+- [ ] **所有 canonical / hreflang 都是无扩展名地址**（Cloudflare Pages 上 `.html` 会 308）
+- [ ] sitemap.xml 的 xhtml:link 和 HTML 里的 hreflang **完全一致**（若使用 xhtml:link）
 
 ## robots / sitemap
 
 - [ ] robots.txt 纯 ASCII，无 BOM
 - [ ] robots.txt 的 `Sitemap:` 指向当前域名绝对 URL
 - [ ] sitemap.xml 所有 `<lastmod>` 已更新
-- [ ] sitemap.xml XML 格式正确（浏览器可打开）
-- [ ] sitemap Content-Type 是 text/xml（_headers 覆盖）
+- [ ] sitemap.xml UTF-8 **无 BOM**、行尾**纯 LF**
+- [ ] sitemap.xml 标准 XML 解析器可解析
+- [ ] **每条 `<loc>` 返回 200 且不经过 301/302/308**（用不跟随重定向的客户端逐条测）
+- [ ] **sitemap 里的 URL 全部无 `.html` 扩展名**
+- [ ] sitemap 自身 URL 返回 200、不重定向
+- [ ] sitemap Content-Type 是 `text/xml`（`_headers` 已写进文件并部署）
+- [ ] 无 UA 请求不被 Cloudflare WAF / Bot Fight Mode 拦截
 
 ## 爬虫保底
 

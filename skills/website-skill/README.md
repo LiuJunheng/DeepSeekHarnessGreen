@@ -25,9 +25,10 @@ website-skill/
 │   ├── multilingual-architecture.md ← 多语言架构全规范（hreflang / 路径 / 繁体转换）
 │   ├── pagination-seo.md            ← 分页/无限滚动 SEO 安全（三层架构 + 代码示例）
 │   ├── markdown-escape.md           ← Markdown 渲染 HTML escape 完整代码（JS + Python）
-│   ├── deployment-cloudflare.md     ← Cloudflare Pages 部署方案（_headers / CNAME / 301 跳转）
+│   ├── deployment-cloudflare.md     ← Cloudflare Pages 部署方案（Pretty URLs / _headers / CNAME / 301）
+│   ├── sitemap-standards.md         ← ★ Sitemap「Google 读不了」完整排查手册（真实案例 + 验证脚本）
 │   ├── seo-standards.md             ← 完整 SEO 清单
-│   ├── pitfalls.md                  ← 21 条高频踩坑经验完整版
+│   ├── pitfalls.md                  ← 28 条高频踩坑经验完整版
 │   ├── ad-standards.md              ← AdSense 接入规范
 │   └── code-style.md                ← 代码规范
 └── templates/
@@ -41,8 +42,12 @@ website-skill/
 3. **分页不清空容器**：不要 `innerHTML = ""`，爬虫保底
 4. **Markdown 必须 htmlEscape**：所有输出先 escape 再渲染
 5. **JS 相对路径铁律**：`./zh/` 不能 `/zh/`
+6. **URL 无扩展名铁律**：Cloudflare Pages 上 `.html` 一律 308，sitemap/canonical/hreflang/内链全部无扩展名
+7. **sitemap 读不了先测状态码**：不要反复改 XML 格式，用不跟随重定向的客户端逐条测 `<loc>`
 
-## 15 条高频避坑（完整版在 references/pitfalls.md）
+> sitemap 排查完整手册见 `references/sitemap-standards.md`（这是本项目失败最多次的地方）。
+
+## 高频避坑（完整 28 条在 references/pitfalls.md）
 
 | # | 坑 | 解法 |
 |---|---|---|
@@ -78,7 +83,10 @@ SKILL.md 的 frontmatter description 说清楚了调用时机：
 - 改了 CSS/JS → 记得版本号同步
 - 做 Markdown 渲染 → 记得 htmlEscape
 - 改了分页/无限滚动 → 记得不清空容器
+- **改 sitemap / GSC 报"读不了" → 先读 `references/sitemap-standards.md`，不要盲改 XML**
+- **改了 URL 风格 / 页面结构 → 全站统一无扩展名（sitemap + canonical + hreflang + 内链）**
 
 ## 版本历史
 
+- v=1.1（2026-10-24）：新增 `references/sitemap-standards.md`（Sitemap「Google 读不了」完整排查手册）；补充 Cloudflare Pages Pretty URLs 的 `.html` 308 规则；全站 URL 统一无扩展名；避坑经验扩到 28 条
 - v=1.0（2026-09-15）：首次创建，沉淀自一个完整的多语言静态网站项目
