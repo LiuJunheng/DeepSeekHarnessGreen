@@ -487,7 +487,7 @@ ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.regi
 
 ## 八、DSH 技能（skill）子系统与「技能中心」插件（2026-10）
 
-> 通用知识，适用于任何要在 DSH 里做 skill 相关 UI/能力的需求；实现样例见本项目内置插件 `plugins/dsh-skill-center/`，设计记录见 `doc/skill-center-plugin.md`。
+> 通用知识，适用于任何要在 DSH 里做 skill 相关 UI/能力的需求；实现样例与维护要点见本项目内置插件 `plugins/dsh-skill-center/README.md`。
 
 ### 8.1 原生 skill 子系统由哪些包组成
 
