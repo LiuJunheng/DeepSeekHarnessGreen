@@ -54,6 +54,156 @@
     <div id="changelog-loading" class="changelog-state">Loading release history...</div>
     <div id="changelog-error" class="changelog-state changelog-state-error" hidden>Failed to load. Please try again later, or visit the <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases" target="_blank" rel="noopener">GitHub Releases page</a> directly.</div>
     <div id="changelog-list" class="changelog-list">
+<section class="changelog-item" data-tag="v1.0.46" data-embedded="true">
+  <header class="changelog-header">
+    <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.46" target="_blank" rel="noopener" class="changelog-tag">v1.0.46</a>
+    <span class="changelog-date">2026-10-24</span>
+  </header>
+  <div class="changelog-body"><p><a href="#cn-1.0.46" target="_blank" rel="noopener">中文</a> | <a href="#en-1.0.46" target="_blank" rel="noopener">English</a></p>
+<p>&lt;a id=&quot;cn-1.0.46&quot;&gt;&lt;/a&gt;</p>
+<p>&gt; 覆盖 1 个功能 commit + 站点/依赖同步，上一版本是 v1.0.45</p>
+<h3>新增功能</h3>
+<ul>
+<li><strong>技能中心插件（dsh-skill-center）</strong>：给 WebUI 补上官方缺失的技能管理入口，纯插件、零依赖、无构建步骤。</li>
+<li><strong>左侧栏「技能」入口</strong>：打开中央「技能中心」页面，按 <strong>官方技能（只读）/ 我的技能（可管理）/ 其他来源（只读）/ 已停用</strong> 分组展示，支持搜索与 <code>SKILL.md</code> 预览。</li>
+<li><strong>聊天输入框「技能」选择器</strong>：可搜索的技能列表，点选后把 <code>/name</code> 插入草稿，发送时走原生显式调用链路（出现 Instructions 卡片），不用手打斜杠。</li>
+<li><strong>个人技能管理</strong>：新建、编辑保存（原子写）、停用 / 启用、删除（进回收站）、在文件管理器中打开目录；个人技能存 <code>runtime/dsh-home/skills</code>，与官方技能物理隔离，不复制、不改官方文件。</li>
+<li><strong>ZIP 导入</strong>：支持一次导入多个技能（<code>&lt;name&gt;/SKILL.md</code>、根级 <code>SKILL.md</code>、单层包装目录、<code>skills/&lt;name&gt;/SKILL.md</code>、根级 <code>&lt;name&gt;.md</code>），兼容 TRAE / WorkBuddy 导出的压缩包（显式目录条目、<code>./</code> 前缀），也可把 ZIP 直接拖到页面上导入。</li>
+<li><strong>安全保障</strong>：拒绝 zip-slip（绝对路径 / <code>..</code>）、ZIP 炸弹（压缩比 &gt;200）、加密 ZIP、ZIP64、分卷与符号链接条目；单 <code>SKILL.md</code> ≤256KB、单 bundle ≤8MB / ≤200 文件；路由仅本机回环。</li>
+<li><strong>同名冲突</strong>：默认失败；勾选「覆盖」后旧技能进回收站，同名官方技能需显式勾选「允许遮蔽」。</li>
+</ul>
+<h3>技术架构</h3>
+<ul>
+<li>双端插件包（<code>dsh.bundle.patch</code> + <code>dsh.client</code>），与绿色版其他内置插件一致：</li>
+<li>宿主端 <code>lib/index.js</code> 注册 9 条 <code>/__dsh/skill-center/*</code> 路由，用 <code>ctx.skills</code> 读官方技能、用 Node <code>fs</code> 管理个人技能；</li>
+<li>客户端 <code>lib/client.js</code> 注册 3 个插槽：<code>sidebar.panellist</code>（左侧入口）、<code>main</code>（中央页面）、<code>conversation.input.left</code>（输入框按钮与选择器）；</li>
+<li>客户端不依赖任何 <code>@deepseek-ai/dsh-client-*</code> 包，样式使用 <code>--dsw-alias-*</code> 主题 token；插槽缺失时只 <code>console.warn</code> 跳过，不影响其他插件。</li>
+</ul>
+<h3>内部改动（对外行为无变化）</h3>
+<ul>
+<li>内置插件 <code>dsh-memory</code> / <code>dsh-session-rewind</code> 的 <code>@deepseek-ai/*</code> 依赖同步到宿主版本 <code>0.2.1-rc.3</code>（启动器自愈回写）。</li>
+<li>官网三语首页补充「技能中心」插件卡片，插件数量文案同步为 12 款。</li>
+</ul>
+<h3>版本更新</h3>
+<ul>
+<li>GREEN_VERSION: 1.0.45 → 1.0.46</li>
+</ul>
+<h3>升级建议</h3>
+<ul>
+<li>绿色版覆盖安装即可；技能中心随包内置，安装环境后自动出现在左侧栏。</li>
+<li>个人技能保存在 <code>runtime/dsh-home/skills</code>，升级不会丢失；删除的技能在 <code>runtime/dsh-home/skill-center/trash/</code> 可手动恢复。</li>
+</ul>
+<p>&lt;a id=&quot;en-1.0.46&quot;&gt;&lt;/a&gt;</p>
+<p>&gt; 1 feature commit plus site/dependency sync; previous version is v1.0.45</p>
+<h3>New Features</h3>
+<ul>
+<li><strong>Skill Center plugin (dsh-skill-center)</strong>: fills the gap left by the official WebUI — a proper skill management entry, as a pure plugin with zero dependencies and no build step.</li>
+<li><strong>Left-sidebar &quot;Skills&quot; entry</strong>: opens the central Skill Center page, grouped into <strong>Official skills (read-only) / My skills (manageable) / Other sources (read-only) / Disabled</strong>, with search and <code>SKILL.md</code> preview.</li>
+<li><strong>Composer &quot;Skills&quot; picker</strong>: searchable list of user-invocable skills; clicking inserts <code>/name </code> into the draft and sends through the native explicit-invocation path (Instructions card appears) — no need to type the slash manually.</li>
+<li><strong>Personal skill management</strong>: create, edit and save (atomic write), disable / enable, remove (to trash), open the folder in the file manager. Personal skills live in <code>runtime/dsh-home/skills</code>, physically separated from official skills — nothing is copied and no official file is modified.</li>
+<li><strong>ZIP import</strong>: import one or more skills at once (<code>&lt;name&gt;/SKILL.md</code>, root-level <code>SKILL.md</code>, single wrapper directory, <code>skills/&lt;name&gt;/SKILL.md</code>, root-level <code>&lt;name&gt;.md</code>), compatible with TRAE / WorkBuddy exports (explicit directory entries, <code>./</code> prefixes); you can also drop a ZIP onto the page.</li>
+<li><strong>Safety</strong>: rejects zip-slip (absolute paths / <code>..</code>), ZIP bombs (compression ratio &gt; 200), encrypted ZIPs, ZIP64, multi-volume and symlink entries; single <code>SKILL.md</code> ≤ 256KB, single bundle ≤ 8MB / ≤ 200 files; routes are loopback-only.</li>
+<li><strong>Name conflicts</strong>: fail by default; with &quot;Overwrite&quot; the old skill goes to trash, and shadowing an official skill requires explicitly checking &quot;Allow shadowing&quot;.</li>
+</ul>
+<h3>Technical Architecture</h3>
+<ul>
+<li>Dual-end plugin package (<code>dsh.bundle.patch</code> + <code>dsh.client</code>), consistent with the other bundled plugins:</li>
+<li>Host side <code>lib/index.js</code> registers 9 <code>/__dsh/skill-center/*</code> routes, reading official skills via <code>ctx.skills</code> and managing personal skills with Node <code>fs</code>;</li>
+<li>Client side <code>lib/client.js</code> registers 3 slots: <code>sidebar.panellist</code> (left entry), <code>main</code> (central page), <code>conversation.input.left</code> (composer button and picker);</li>
+<li>The client imports no <code>@deepseek-ai/dsh-client-*</code> packages and styles itself with <code>--dsw-alias-*</code> theme tokens; if a slot is missing it only logs <code>console.warn</code> and skips, without affecting other plugins.</li>
+</ul>
+<h3>Internal Changes (no user-visible behavior change)</h3>
+<ul>
+<li>Bundled plugins <code>dsh-memory</code> / <code>dsh-session-rewind</code> have their <code>@deepseek-ai/*</code> dependencies synced to the host version <code>0.2.1-rc.3</code> (launcher self-healing rewrite).</li>
+<li>The trilingual site home page now includes a Skill Center plugin card, and the plugin-count copy is updated to 12.</li>
+</ul>
+<h3>Version Bump</h3>
+<ul>
+<li>GREEN_VERSION: 1.0.45 → 1.0.46</li>
+</ul>
+<h3>Upgrade Notes</h3>
+<ul>
+<li>Green edition: overwrite install is sufficient. Skill Center ships bundled and appears in the left sidebar after the environment is installed.</li>
+<li>Personal skills are kept in <code>runtime/dsh-home/skills</code> and survive upgrades; removed skills can be recovered manually from <code>runtime/dsh-home/skill-center/trash/</code>.</li>
+</ul></div>
+  <div class="changelog-download">
+    <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.46/DSH-GreenPortable-v1.0.46.zip" target="_blank" rel="noopener" class="btn btn-primary">DSH-GreenPortable-v1.0.46.zip</a>
+  </div>
+</section>
+<section class="changelog-item" data-tag="v1.0.45" data-embedded="true">
+  <header class="changelog-header">
+    <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.45" target="_blank" rel="noopener" class="changelog-tag">v1.0.45</a>
+    <span class="changelog-date">2026-10-17</span>
+  </header>
+  <div class="changelog-body"><p><a href="#cn-1.0.45" target="_blank" rel="noopener">中文</a> | <a href="#en-1.0.45" target="_blank" rel="noopener">English</a></p>
+<p>&lt;a id=&quot;cn-1.0.45&quot;&gt;&lt;/a&gt;</p>
+<p>&gt; 覆盖 3 个 commit（另含本次未提交修复）/ 上一版本 v1.0.44</p>
+<h3>新增功能</h3>
+<ul>
+<li><strong>升级前自动备份开关</strong>：常规设置新增「升级 DSH 前自动备份」（默认开启）。关闭后升级不再生成 <code>runtime/backup</code> 旧版备份，适合磁盘紧张或习惯手动备份的用户；关闭时升级确认框与完成提示会同步改为「未备份」文案。</li>
+<li><strong>推荐插件新增 <code>dsh-context</code></strong>：可在 WebUI 面板实时查看当前会话上下文的 token 构成与历史变化。</li>
+</ul>
+<h3>修复</h3>
+<ul>
+<li><strong>适配 dsh 0.2.1-rc.2，局域网模式重新可用</strong>：</li>
+<li>官方新版把 <code>--host 0.0.0.0</code> 的放开点改成两道 wildcard 校验（<code>dsh-web-app</code> 命令行 + <code>dsh-host-webserver</code> 配置），旧补丁失效会导致局域网模式直接启动失败。现已同时适配两道校验。</li>
+<li>官方新版不再自动把本机局域网 IP 加入 <code>trustedHosts</code>。启动器现在会在「受信任主机」留空时自动追加 <code>--trusted-host</code>；填写后仍只信任填写的地址。</li>
+<li>修复 Chrome 150+ 无端口 Origin 导致 <code>/api</code> 全 403 的补丁锚点，在新版 dsh 下继续生效。</li>
+<li><strong>局域网模式认证地址缺少 token</strong>：新版 dsh 会先打印一行 <code>dsh web: listening on 0.0.0.0 ...</code>，旧解析逻辑误取该行，导致服务地址与局域网地址都不带 <code>?token=</code>，打开即 401。现已改为从后往前查找带 token 的地址。</li>
+<li><strong>桌面版无法跳转 DeepSeek 账号扫码页</strong>：WebView2 不支持 <code>window.open</code>，现统一转交系统浏览器打开，登录后可正常回调。</li>
+<li><strong>用量统计余额</strong>：改为 API Key 优先、DeepSeek 账号登录兜底；只登录账号未配置 Key 时余额卡片也能显示。</li>
+</ul>
+<h3>优化</h3>
+<ul>
+<li>「清理更新缓存」与「清理版本备份」文案区分，避免误删。</li>
+<li>内置插件 peer 依赖同步到 dsh 0.2.1-rc.2。</li>
+</ul>
+<h3>版本更新</h3>
+<ul>
+<li>GREEN_VERSION: 1.0.44 → 1.0.45</li>
+</ul>
+<h3>升级建议</h3>
+<ul>
+<li>绿色版覆盖安装即可，设置与会话不受影响。</li>
+<li>局域网模式建议以管理员身份运行一次启动器，让防火墙规则生效；受信任主机留空 = 自动信任本机全部局域网 IP。</li>
+<li>如果仍停留在旧版 dsh 核心，本次改动同样兼容，不需要额外操作。</li>
+</ul>
+<p>&lt;a id=&quot;en-1.0.45&quot;&gt;&lt;/a&gt;</p>
+<p>&gt; Covers 3 commits (plus the uncommitted fixes in this release) / previous version v1.0.44</p>
+<h3>New Features</h3>
+<ul>
+<li><strong>Auto-backup toggle before DSH upgrades</strong>: General Settings now has &quot;Auto-backup before upgrading DSH&quot; (enabled by default). When disabled, upgrades no longer create a <code>runtime/backup</code> copy — useful when disk space is tight or you prefer manual backups. The upgrade confirmation and completion dialogs switch to &quot;no backup&quot; wording accordingly.</li>
+<li><strong>New recommended plugin <code>dsh-context</code></strong>: inspect the current session's context token composition and history in a WebUI panel.</li>
+</ul>
+<h3>Bug Fixes</h3>
+<ul>
+<li><strong>DSH 0.2.1-rc.2 compatibility — LAN mode works again</strong>:</li>
+<li>The official release moved the <code>--host 0.0.0.0</code> allowance into two wildcard guards (CLI in <code>dsh-web-app</code> and config schema in <code>dsh-host-webserver</code>). The old patch no longer matched, so LAN mode failed to start. Both guards are now handled.</li>
+<li>The official release no longer adds local LAN IPs to <code>trustedHosts</code> automatically. The launcher now appends <code>--trusted-host</code> for every local LAN IPv4 when the Trusted Hosts field is empty; when you fill it in, only the listed addresses are trusted.</li>
+<li>Updated the Origin comparison patch anchor, so the Chrome 150+ port-less Origin issue no longer causes <code>/api</code> to return 403 on the new dsh.</li>
+<li><strong>Missing token in LAN mode URLs</strong>: the new dsh prints <code>dsh web: listening on 0.0.0.0 ...</code> before the real URL. The old parser picked that line, so both the service URL and LAN URLs had no <code>?token=</code> and opened with 401. The parser now scans backwards for the URL that actually carries a token.</li>
+<li><strong>Desktop app could not open the DeepSeek account QR page</strong>: WebView2 does not support <code>window.open</code>; the launcher now hands these links to the system browser, and OAuth callback completes normally.</li>
+<li><strong>Usage-stats balance</strong>: API Key is tried first, with DeepSeek account login as fallback. The balance card now works when only an account is signed in and no API Key is configured.</li>
+</ul>
+<h3>Improvements</h3>
+<ul>
+<li>Clearer wording that distinguishes &quot;Clear Update Cache&quot; from &quot;Clear Version Backups&quot;.</li>
+<li>Bundled plugin peer dependencies synced to dsh 0.2.1-rc.2.</li>
+</ul>
+<h3>Version Bump</h3>
+<ul>
+<li>GREEN_VERSION: 1.0.44 → 1.0.45</li>
+</ul>
+<h3>Upgrade Notes</h3>
+<ul>
+<li>Green edition: overwrite install is sufficient; your settings and sessions are preserved.</li>
+<li>LAN mode: run the launcher as administrator once so the firewall rule can be created. Leaving Trusted Hosts empty auto-trusts all local LAN IPs.</li>
+<li>If you are still on an older dsh core, these changes remain compatible — no extra action needed.</li>
+</ul></div>
+  <div class="changelog-download">
+    <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.45/DSH-GreenPortable-v1.0.45.zip" target="_blank" rel="noopener" class="btn btn-primary">DSH-GreenPortable-v1.0.45.zip</a>
+  </div>
+</section>
 <section class="changelog-item" data-tag="v1.0.44" data-embedded="true">
   <header class="changelog-header">
     <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.44" target="_blank" rel="noopener" class="changelog-tag">v1.0.44</a>
@@ -231,140 +381,6 @@
     <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.42/DSH-GreenPortable-v1.0.42.zip" target="_blank" rel="noopener" class="btn btn-primary">DSH-GreenPortable-v1.0.42.zip</a>
   </div>
 </section>
-<section class="changelog-item" data-tag="v1.0.41" data-embedded="true">
-  <header class="changelog-header">
-    <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.41" target="_blank" rel="noopener" class="changelog-tag">v1.0.41</a>
-    <span class="changelog-date">2026-09-21</span>
-  </header>
-  <div class="changelog-body"><p><a href="#cn-1.0.41" target="_blank" rel="noopener">中文</a> | <a href="#en-1.0.41" target="_blank" rel="noopener">English</a></p>
-<p>&lt;a id=&quot;cn-1.0.41&quot;&gt;&lt;/a&gt;</p>
-<p>&gt; 覆盖 4 个 commit / 6 个文件 / +991 -108 行, 上一版本是 v1.0.40。</p>
-<h3>新增功能（dsh-usage-stats 用量统计插件）</h3>
-<ul>
-<li><strong>官方价自动同步</strong>: 后端首次访问、或前端「刷新官方价格」时, 实时拉取 DeepSeek 官方定价页并解析, 失败静默回退内置表, 官方改价不再需要手工维护</li>
-<li><strong>峰谷计费</strong>: 按每条消息的计费时刻区分高峰/低谷档（高峰=低谷 2 倍; 周末全天低谷）, 估算费用更贴近真实账单</li>
-<li><strong>今日消耗卡</strong>: 设置页顶部展示今日（北京时区）总消耗——费用/输入/输出/缓存/推理/调用数, 并标注当前处于高峰还是低谷时段</li>
-<li><strong>近 180 天消耗热力图</strong>: GitHub 风格热力图, 按自然周对齐（周日为列首, 日期连续不错位）、空格子也有细边框清晰可分、支持横向滚动、悬停显示日期+费用+tokens、顶部标注月份</li>
-</ul>
-<h3>修复</h3>
-<ul>
-<li><strong>修复消息行「本次token / 费用 / 余额」在升级官方 v0.1.6 后静默不显示</strong>: turnTail 已从 chain 型改为 list 型插槽, 注册必须带 id, 缺 id 会被 SlotErrorBoundary 吞掉导致组件不渲染; 同时兼容了 owner 结构从 <code>matched.turn</code> 到 <code>turn</code> 对象的变更</li>
-<li><strong>修复热力图日期排序错位</strong>: 原&quot;每满 7 个切一列&quot;会把自然周从周中切开（日期跳跃）, 改为按自然周对齐</li>
-</ul>
-<h3>技术架构</h3>
-<ul>
-<li>官方定价页零依赖正则解析（高峰/低谷两档三桶）, 8 秒超时静默降级, 不阻塞任何页面功能</li>
-<li>峰谷判定: 高峰窗口北京周一至周五 9:00-12:00 / 14:00-18:00, 周末全谷（2026-08-22T16:00Z 生效）</li>
-<li>价格表 localStorage key 升级 v4→v5（两档结构）, 旧表不影响新默认值</li>
-</ul>
-<h3>版本更新</h3>
-<ul>
-<li>GREEN_VERSION: 1.0.40 → 1.0.41</li>
-</ul>
-<h3>升级建议</h3>
-<ul>
-<li>绿色版覆盖安装即可</li>
-<li>升级后建议在 设置 → 用量统计 点一次「刷新官方价格」拉取最新官方价</li>
-</ul>
-<p>&lt;a id=&quot;en-1.0.41&quot;&gt;&lt;/a&gt;</p>
-<p>&gt; Covers 4 commits / 6 files / +991 -108 lines, previous version is v1.0.40.</p>
-<h3>New Features (dsh-usage-stats plugin)</h3>
-<ul>
-<li><strong>Official price auto-sync</strong>: Backend fetches and parses the DeepSeek official pricing page on first access, or when the user clicks &quot;Refresh Official Price&quot;; silently falls back to built-in table on failure, no manual price maintenance needed</li>
-<li><strong>Peak/Off-Peak billing</strong>: Each message is billed at the correct tier based on its timestamp (peak = 2x off-peak; weekends are all off-peak), estimates now closer to the real bill</li>
-<li><strong>Today consumption card</strong>: Shows today's total consumption (Beijing time) at the top of the settings page — cost/input/output/cache/reasoning/call count, and marks whether the current time is in peak or off-peak hours</li>
-<li><strong>180-day consumption heatmap</strong>: GitHub-style heatmap aligned by natural week (Sunday start, continuous dates), empty cells still have thin borders making each grid visible, horizontally scrollable, hover shows date+cost+tokens, month labels on top</li>
-</ul>
-<h3>Fixes</h3>
-<ul>
-<li><strong>Fix message-line &quot;this-turn token / cost / balance&quot; silently disappearing after upgrading to official v0.1.6</strong>: turnTail changed from a chain slot to a list slot; registration must include an id, otherwise SlotErrorBoundary swallows the error and the component doesn't render. Also made compatible with the owner structure change from <code>matched.turn</code> to a <code>turn</code> object</li>
-<li><strong>Fix heatmap date ordering</strong>: the old &quot;split a column every 7 cells&quot; logic cut natural weeks mid-week (dates jumped); now aligned by natural week</li>
-</ul>
-<h3>Technical Architecture</h3>
-<ul>
-<li>Official pricing page parsed with zero-dependency regex (peak/off-peak two tiers × three buckets), 8s timeout with silent fallback, never blocks any page functionality</li>
-<li>Peak detection: peak windows Beijing Mon–Fri 9:00-12:00 / 14:00-18:00, weekends all off-peak (effective 2026-08-22T16:00Z)</li>
-<li>Price table localStorage key upgraded v4→v5 (two-tier structure), old table doesn't shadow new defaults</li>
-</ul>
-<h3>Version Bump</h3>
-<ul>
-<li>GREEN_VERSION: 1.0.40 → 1.0.41</li>
-</ul>
-<h3>Upgrade Notes</h3>
-<ul>
-<li>Green edition: overwrite install is sufficient</li>
-<li>After upgrading, click &quot;Refresh Official Price&quot; once in Settings → Usage Stats to pull the latest official prices</li>
-</ul></div>
-  <div class="changelog-download">
-    <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.41/DSH-GreenPortable-v1.0.41.zip" target="_blank" rel="noopener" class="btn btn-primary">DSH-GreenPortable-v1.0.41.zip</a>
-  </div>
-</section>
-<section class="changelog-item" data-tag="v1.0.40" data-embedded="true">
-  <header class="changelog-header">
-    <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/tag/v1.0.40" target="_blank" rel="noopener" class="changelog-tag">v1.0.40</a>
-    <span class="changelog-date">2026-09-17</span>
-  </header>
-  <div class="changelog-body"><p><a href="#cn-1.0.40" target="_blank" rel="noopener">中文</a> | <a href="#en-1.0.40" target="_blank" rel="noopener">English</a></p>
-<p>&lt;a id=&quot;cn-1.0.40&quot;&gt;&lt;/a&gt;</p>
-<p>&gt; 覆盖 12 个 commit / 34 个文件 / +2605 -940 行, 上一版本是 v1.0.39。</p>
-<h3>新增功能</h3>
-<ul>
-<li><strong>插件管理窗口支持第三方插件检查更新与批量更新</strong>: 刷新按钮自动并发 8 线程查 npm registry, 有更新的第三方插件名字前加 ★ 标记 + 整行红色; 更新选中按钮会自动检查再更新, 内置插件自动过滤 (10 个随绿色版走不显示 ★)</li>
-<li><strong>npm 查询全链路改用 HTTP GET registry JSON</strong>: 比起 node 子进程跑 npm view 更轻更快, 自动跟随镜像配置</li>
-<li><strong>启动器自愈逻辑识别 v0.1.6 typert codec 不兼容错误</strong>: 插件树加载阶段的 typert-loader 硬校验错误 (codec has no create / typert contributor / invocation result codec) 能从错误消息精确提取包名, 自动自愈不兼容插件</li>
-</ul>
-<h3>修复</h3>
-<ul>
-<li><strong>修复插件更新检查按钮禁用状态未恢复</strong>: 首次点击&quot;更新选中&quot;时 busy 状态泄露导致按钮永久禁用, proceed() 回调里先恢复 busy 再进入更新流程</li>
-<li><strong>修复官方 v0.1.6-alpha.2 typert codec 硬校验导致 dsh-cost-meter 崩溃</strong>: 内置 launcher 自愈 + 用户重装环境自动拉到 dsh-cost-meter 1.7.28+ (作者当天连出 13 个版本)</li>
-<li><strong>修复检查更新列表 npm 发布时间未显示</strong>: npm registry JSON 的 time 字段比 GitHub Release 还准, 已集成到 dsh 版本查询</li>
-</ul>
-<h3>技术架构</h3>
-<ul>
-<li><strong>插件更新后端自动过滤内置插件</strong>: bundled_plugin_dirs() 识别 plugins/ 下有源码的 10 个内置插件, check_plugin_updates / update_plugins 自动跳过, 避免用户误操作</li>
-</ul>
-<h3>版本更新</h3>
-<ul>
-<li>GREEN_VERSION: 1.0.39 → 1.0.40</li>
-<li>覆盖 v0.1.6-alpha.1 兼容性审计 (已确认零 breaking)</li>
-</ul>
-<h3>升级建议</h3>
-<ul>
-<li>绿色版覆盖安装即可</li>
-<li>装了 dsh-cost-meter 的用户重装环境拉到最新版 (1.7.28+)</li>
-</ul>
-<p>&lt;a id=&quot;en-1.0.40&quot;&gt;&lt;/a&gt;</p>
-<p>&gt; Covers 12 commits / 34 files / +2605 -940 lines, previous version v1.0.39.</p>
-<h3>New Features</h3>
-<ul>
-<li><strong>Plugin manager now supports third-party plugin update checking and batch updates</strong>: The refresh button auto-spawns 8 concurrent threads to query the npm registry; third-party plugins with pending updates get a ★ prefix on the name + red row highlight. The &quot;Update Selected&quot; button auto-checks before updating. Built-in plugins (10 items, shipped with the green build) are auto-filtered and never show ★.</li>
-<li><strong>npm queries switched from node subprocess to direct HTTP GET</strong>: Faster, no subprocess overhead, auto-respects mirror configuration (npmmirror / official).</li>
-<li><strong>Launcher self-heal recognizes v0.1.6 typert codec incompatibilities</strong>: New hard-check errors from the typert-loader at plugin-tree load time (&quot;codec has no create&quot;, &quot;typert contributor&quot;, &quot;invocation result codec&quot;) are now precisely extracted from error messages for auto-remediation.</li>
-</ul>
-<h3>Bug Fixes</h3>
-<ul>
-<li><strong>Fixed &quot;Update Selected&quot; button staying disabled</strong>: The busy-state leaked in the pre-check worker path. The proceed() callback now restores busy before entering the update flow.</li>
-<li><strong>Fixed dsh-cost-meter crash on v0.1.6-alpha.2</strong>: Official typert-loader added a hard check that all invocation result codecs must have a <code>.create()</code> factory. dsh-cost-meter v1.7.16 was rejected; the author shipped 13 versions that same day (v1.7.28+) to fix it. Launcher self-heal + user re-install resolve this.</li>
-<li><strong>Fixed npm publish timestamp not showing in the update list</strong>: The <code>time</code> field in the npm registry JSON is now integrated into DSH version queries — more accurate than GitHub Release timestamps.</li>
-</ul>
-<h3>Technical Architecture</h3>
-<ul>
-<li><strong>Plugin update backend auto-filters built-in plugins</strong>: <code>bundled_plugin_dirs()</code> identifies the 10 built-in plugins that ship with the green build. <code>check_plugin_updates</code> / <code>update_plugins</code> skip them automatically to avoid user confusion.</li>
-</ul>
-<h3>Version Bump</h3>
-<ul>
-<li>GREEN_VERSION: 1.0.39 → 1.0.40</li>
-<li>Covers v0.1.6-alpha.1 compatibility audit (confirmed zero breaking changes)</li>
-</ul>
-<h3>Upgrade Notes</h3>
-<ul>
-<li>Green edition: overwrite install is sufficient</li>
-<li>Users with dsh-cost-meter: re-run the installer to pull latest (v1.7.28+)</li>
-</ul></div>
-  <div class="changelog-download">
-    <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen/releases/download/v1.0.40/DSH-GreenPortable-v1.0.40.zip" target="_blank" rel="noopener" class="btn btn-primary">DSH-GreenPortable-v1.0.40.zip</a>
-  </div>
-</section>
 </div>
   </main>
   <footer class="footer">
@@ -377,6 +393,6 @@
       <a href="https://github.com/LiuJunheng/DeepSeekHarnessGreen" target="_blank" rel="noopener">GitHub</a>
     </div>
   </footer>
-  <script src="../assets/app.js?v=3.11" defer></script>
+  <script src="../assets/app.js?v=3.12" defer></script>
 </body>
 </html>

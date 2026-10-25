@@ -2,6 +2,10 @@
 https://deepseek-harness-green.pages.dev/*
   X-Robots-Tag: noindex
 
+# 静态资源目录不参与索引（防止 seed.json 等辅助文件被误收录）
+/assets/*
+  X-Robots-Tag: noindex
+
 # Google Search Console 的 sitemap 抓取器需要 text/xml
 /sitemap.xml
   Content-Type: text/xml; charset=utf-8

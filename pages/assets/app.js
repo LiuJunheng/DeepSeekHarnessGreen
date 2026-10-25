@@ -16,7 +16,7 @@
      (v2: TTL 24h→1h, 避免新版本发布后缓存滞后仍然下载旧版) */
   var GH_REPO = "LiuJunheng/DeepSeekHarnessGreen";
   var GITEE_REPO = "liujunheng/DeepSeekHarnessGreen";
-  var CACHE_KEY = "dshe-latest-release-v2";
+  var CACHE_KEY = "dshe-latest-release-v3";
   var CACHE_TTL_MS = 15 * 60 * 1000; // 15 分钟
 
   function readReleaseCache() {
@@ -234,7 +234,7 @@
   var allFilteredReleases = [];                 // 过滤后的全部 release（剔除 draft/prerelease）
   var releasesLoaded = false;                   // 是否已把全量数据拿到（seed + GitHub 合并完）
   var existingTagsFromHTML = {};                // HTML 内嵌静态种子已有的 tag_name -> 不重复渲染
-  var RELEASES_CACHE_KEY = "dshe-releases-v2";  // 换 key 清掉旧缓存
+  var RELEASES_CACHE_KEY = "dshe-releases-v3";  // 换 key 清掉旧缓存
   var RELEASES_CACHE_TTL_MS = 15 * 60 * 1000;
 
   function fetchReleasesFromCache() {
