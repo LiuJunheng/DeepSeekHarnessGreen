@@ -1274,3 +1274,40 @@ for name, def_lines in defs.items():
 - **`_i18n_widgets` 无界增长**：每次打开弹窗都 `append` 且销毁后不清理（既有行为，非本次引入）。`refresh_all_text` 有 try/except 兜底所以不报错，只是列表无限增长；若修需在弹窗销毁时移除注册项，属独立改动。
 - **保留不删**：`_gitee_*` 家族约 300 行手写 git smart-HTTP 协议（pkt-line / pack 解析 / delta 应用），复杂度高但**仍在用**（Gitee archive 有 JS 挑战页，必须走 git 协议）；`_NoTray` 是 pystray 初始化失败时的正常空对象兜底。
 
+## 九、局域网可见性权限（dsh-lan-visibility，2026-10-27）
+
+**需求**：局域网模式（`dsh_host=0.0.0.0`）下，给每个工作区/对话单独设置「仅本机可见」或「局域网可见」。
+**用户决策**（2026-10-27）：① 默认「仅本机可见」（隐私优先）；② 共享项局域网用户「可看可管理」；③ 暂不对自有插件路由（文件浏览器等）加回环闸；④ 按方案实施。
+
+**研究结论**：DSH Web 是单用户、无账号体系——本机与局域网浏览器全部是同一个 `owner` Peer。但官方 `@deepseek-ai/dsh-api-remote-access` 内置了完整的「非 owner 访问者」控制骨架（按 principal.kind 注册策略；网关对非 owner 调用/事件做 decide()；会话列表/搜索/事件流/工作区流用 allows() 过滤），当前无任何策略注册所以「休眠」。研究文档见根目录 `RESEARCH-lan-visibility.md`。
+
+**实现**（新内置插件 `plugins/dsh-lan-visibility/`，纯插件、不改官方文件）：
+- **连接层分流**：插件 apply 时包装 `connection.admit` / `connection.admitConnection`——认证（Host/Origin 围栏 + token/Cookie）通过后，非回环来源（`request.socket.remoteAddress` 非 127.0.0.1/::1/::ffff:127.0.0.1）改发 `principal.kind='lan'` 的 Peer；回环来源保持官方 owner 浏览器 Peer。WS 连接每连接独占一个 lan Peer，socket 关闭由网关调 release() 释放；POST /api 走共享 lan Peer。
+- **访问策略**：`remoteAccess.registerPolicy('lan', policy)`：
+  - `global` 资源只放行 `session/list`、`session/search`、`session/modelCatalog`、`workspace/follow`（其它全局动作——建会话/改设置/终端/文件/目录选择等——全拒）；
+  - 已共享工作区放行 workspace 命名空间全部动作；已共享会话（或所属工作区已共享）放行 session + workspace 命名空间全部动作（会话绑定需含 `workspace/follow` 动作，否则工作区流的 allows() 过滤会把会话剔掉）。
+  - 动作串从 `ctx.typert.local.list()` 动态枚举（`${namespace}/${method}`，与网关 decide() 的 action 一致），typert 不可用时用兜底表。
+- **侧车存储**：`$DSH_HOME/storages/lan_visibility.json`（原子写），`{ version:1, sessions:{id:"lan"|"local"}, workspaces:{id:"lan"|"local"} }`；未记录=仅本机；会话未记录时跟随所属工作区；会话显式 `local` 覆盖工作区共享。
+- **管理路由**（仅回环 + 自定义头 `x-dsh-lan-visibility: 1`）：`GET /__dsh/lan-visibility/list`（工作区/会话清单+可见性，含工作区记录里的非存活会话）、`POST /__dsh/lan-visibility/set`。改动后调 `remoteAccess.invalidate()` 刷新快照。
+- **客户端**：设置页「局域网可见性」分区（settings.section 插槽，仿 dsh-usage-stats 注入模式）：工作区/会话各一个「局域网可见」复选框；勾选即 POST 保存；中英双语标签。
+
+**关键避坑（已实证/已按此实现）**：
+1. **默认可见性在侧车文件缺失时必须是「仅本机」**——不能反着来，否则升级后旧数据全部对局域网可见（隐私回退）。
+2. **事件流的资源是 GLOBAL**：`api-session/added/removed/activity/status/error` 等转发事件没有声明会话资源读取器 → `eventResources` 返回 GLOBAL → 策略只能按 `event:*` 放行/拒绝。**当前实现：不把 `event:*` 放进 global 白名单**（局域网客户端收不到会话列表实时事件，列表刷新后更新；已共享会话内的 `session/follow` 聊天流不受影响——它按会话资源判权）。放行 `event:*` 会泄漏隐藏会话的标题/cwd 元数据，故不放。
+3. **`allows()` 用的是「当前调用的动作」**：例如 `session/list` 内部的 `allows(session)` 动作是 `session/list`；`workspace/follow` 内部对会话的 `allows(session)` 动作是 `workspace/follow`。因此**会话绑定的动作集必须是 session ∪ workspace ∪ global 白名单的并集**，否则工作区流里的会话会被误剔。
+4. **`/api/file` 等精确 Fetch 路由对非 owner 已 403**（官方 `createSharedFetchHandler` 行为），无需额外处理；但**自有插件路由（文件浏览器等）不在本插件的访问控制范围内**（用户决策：暂不处理）——这是已知绕过面，README 已注明。
+5. **本机语义**：回环来源=本机。从本机浏览器用局域网 IP 打开会被判为局域网来源（预期行为）；绿色版默认用 127.0.0.1 打开。
+6. **认证与可见性正交**：局域网设备仍需带 token 的访问地址换 Cookie（或 `dsh_require_auth=false` 关认证），这是既有行为。
+7. 调试开关：`DSH_LAN_VISIBILITY_SIMULATE_LAN=1` 时请求带 `x-dsh-simulate-lan: 1` 头即模拟局域网来源（仅测试，默认关闭）。
+8. **会话标题**：管理路由把会话标题一并返回，取法与官方 `session/list` 一致——存活会话用 `sessionProjections.cachedSnapshot(session)` 的 `title` 投影，持久化会话用 `sessionProjectionCache.cachedSnapshot(header)`/`cachedPredecessorTitle(header)`；只有全新空会话没有标题，前端回退显示短 id。
+9. **可见性优先级（覆盖规则）**：会话显式设置 > 所属工作区设置 > 默认（仅本机）。`isSessionShared()` 先查显式记录，未记录才跟随工作区——因此「工作区=局域网、会话=仅本机」时该会话仍只本机可见，反之「工作区=仅本机、会话=局域网」时该会话可被局域网看到。
+10. **右键菜单入口**：官方侧栏提供 list 插槽 `sidebar.workspaces.session.menu.item`（ownerProps `{sessionId, displayTitle}`，标准 props 含 `useMenuOpenState()` 钩子；shipped 行 order：pin 100 / rename 200 / fork 300 / archive 400 / session-id 450），插件注册 `id: lan-visibility, order: 430` 的「共享给局域网 / 取消共享给局域网」行。**工作区右键「...」菜单没有插槽**（`ProjectRowItem` 里写死 rename/delete，`workspaceMenuItems` 固定数组），工作区共享只能走设置页卡片；若未来官方开放工作区菜单插槽再迁移。**管理入口仅对本机页面注册**：客户端 `apply()` 里用 `window.location.hostname` 判断回环（127.0.0.1/localhost/::1），局域网设备打开的页面不注册设置页卡片与右键菜单项（否则其 fetch 管理路由会 403，空转报错）。
+11. **会话列表行可见性标签（DOM 注入）**：官方侧栏**没有「标题后」插槽**（`sidebar.session.row.leading` 是标题前的 16px 状态点格，且 running 时会被状态点替换；hover/row.action 只在悬停时出现），因此标签用客户端 DOM 注入：会话行元素 `[data-row-key="session:<id>"]`，行内结构 `[0]=状态点/leading 槽 span、[1]=标题 span、[2]=时间 span、…、[n]=动作 span`，把 `<span data-dsh-lan-visibility-chip>` 插到标题与时间之间（无时间时 append）；已存在则只更新文案/颜色。React 重建行时由 `MutationObserver(document.body,{childList,subtree})` + 150ms 防抖补回；可见性快照来自管理路由 `GET /__dsh/lan-visibility/list`（右键菜单/设置页切换后立即刷新，另每 30s 周期刷新；快照里缺失的新会话按默认「仅本机」并触发节流刷新）。标签文案/颜色：局域网=强调色（`var(--dsw-alias-accent)`），本机=弱化色（`var(--dsw-alias-fg-secondary)`），10px 圆角小标签。
+12. **插件源码改动不会自动热加载**：dsh web 只在插件树变化时（`dsh plugin add` / 插件管理器启停）才重载插件；直接改 `plugins/` 源码后需把文件同步进 profile 的运行副本（`runtime/dsh-home/profiles/web/node_modules/<插件>`），再触发重载。实测可用的重载入口：插件管理器 RPC `pluginManager/setPluginEnabled`（先 `enabled:false` 再 `enabled:true`，entryId 形如 `include:lan-visibility`）——宿主与客户端 bundle 都会重载，**客户端还需刷新浏览器**。本会话实测：`POST /api/pluginManager/setPluginEnabled`，body `{type:"client-request",rpcId:"...",method:"pluginManager/setPluginEnabled",payload:{args:{id:"include:lan-visibility",enabled:false/true}}}`，需带登录 Cookie；注意运行中的 dsh 进程会锁住 `lib/index.js`（Copy-Item 报“being used by another process”），同内容再次复制可忽略，或改用先停用插件再复制。
+
+**验证**：
+- 离线逻辑验证脚本：`plugins/dsh-lan-visibility/test/verify-visibility.mjs`（mock 上下文，覆盖路由注册/连接分流/策略绑定/跟随工作区/显式覆盖/侧车落盘/路由 403，共 31 项全过）。
+- 在线验证（需重启服务后）：设置页勾选 → 用局域网设备（或 curl 带 `x-dsh-simulate-lan: 1`）验证列表/打开/403 行为。
+
+**当前状态**：插件已通过 `launcher.py --install-plugin` 装进 web profile，**重启服务后生效**（本会话的 GUI 服务未重启）。
+

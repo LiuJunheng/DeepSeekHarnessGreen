@@ -1,0 +1,26 @@
+{
+  "name": "dsh-lan-visibility",
+  "version": "0.1.0",
+  "description": "局域网可见性权限: 每个工作区/对话可设置「仅本机可见」(默认)或「局域网可见」。非回环来源(局域网设备)以受限身份接入, 只能看到/操作被共享的工作区与会话; 管理入口在设置页「局域网可见性」卡片。不修改任何官方文件",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "license": "Apache-2.0"
+}
