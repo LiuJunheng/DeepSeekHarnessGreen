@@ -53,6 +53,18 @@ var LABELS = {
     saveFailed: ['保存失败: ', 'Failed to save: '],
     untitled: ['未命名', 'Untitled'],
     sessionPrefix: ['会话 ', 'Session '],
+    networkTitle: ['局域网地址', 'LAN address'],
+    networkHint: [
+        '复制下面任一条链接发给局域网设备(手机 / 另一台电脑), 对方在浏览器打开即可; 链接已自带访问凭据(约 30 天有效)。',
+        'Copy one of the links below and send it to a LAN device (phone / another computer); it opens directly in a browser. The link already carries the access credential (valid ~30 days).',
+    ],
+    networkLanOff: [
+        '当前服务只绑定本机(127.0.0.1), 局域网设备无法访问。请在启动器里打开「局域网模式」(dsh_host=0.0.0.0)并重启服务。',
+        'The service is bound to localhost only, so LAN devices cannot reach it. Enable LAN mode (dsh_host=0.0.0.0) in the launcher and restart the service.',
+    ],
+    networkNone: ['未检测到局域网地址(请确认已连接网络/已开启局域网模式)。', 'No LAN address detected (check the network and LAN mode).'],
+    networkCopy: ['复制链接', 'Copy link'],
+    networkCopied: ['已复制', 'Copied'],
 };
 
 function textOf(key) {
@@ -71,6 +83,7 @@ window.__ModuleLoader__.load({
 
 		const ROUTE_LIST = "/__dsh/lan-visibility/list";
 		const ROUTE_SET = "/__dsh/lan-visibility/set";
+		const ROUTE_NETWORK = "/__dsh/lan-visibility/network";
 		const GUARD_HEADER = "x-dsh-lan-visibility";
 
 		// 统一的鉴权头 + JSON 请求封装: 路由要求自定义头(防跨站), 否则 403。
@@ -254,6 +267,8 @@ window.__ModuleLoader__.load({
 			const [error, setError] = react.useState(null);
 			const [busy, setBusy] = react.useState(false);
 			const [pendingKey, setPendingKey] = react.useState(null);
+			const [network, setNetwork] = react.useState(null);
+			const [copiedAddress, setCopiedAddress] = react.useState(null);
 
 			const loadList = react.useCallback(async () => {
 				setBusy(true);
@@ -263,6 +278,12 @@ window.__ModuleLoader__.load({
 					setPayload(next);
 					// 同一份数据也作为行标签快照, 避免再发一次请求
 					applySnapshotFromPayload(next);
+					// 局域网地址探测(失败不影响列表展示)
+					try {
+						setNetwork(await requestJson(ROUTE_NETWORK));
+					} catch (_networkError) {
+						setNetwork(null);
+					}
 				} catch (err) {
 					setError(textOf("loadFailed") + String((err && err.message) || err));
 				} finally {
@@ -298,6 +319,40 @@ window.__ModuleLoader__.load({
 					setPendingKey(null);
 				}
 			}, [loadList]);
+
+			// 复制一键打开链接: 优先 Clipboard API, 失败回退 textarea + execCommand。
+			const copyLink = react.useCallback(async (url, address) => {
+				let copied = false;
+				try {
+					if (navigator.clipboard !== undefined && typeof navigator.clipboard.writeText === "function") {
+						await navigator.clipboard.writeText(url);
+						copied = true;
+					}
+				} catch (_error) {
+					// 回退到 execCommand
+				}
+				if (!copied) {
+					try {
+						const textarea = document.createElement("textarea");
+						textarea.value = url;
+						textarea.style.position = "fixed";
+						textarea.style.opacity = "0";
+						document.body.appendChild(textarea);
+						textarea.select();
+						document.execCommand("copy");
+						document.body.removeChild(textarea);
+						copied = true;
+					} catch (_error) {
+						// 复制失败则静默
+					}
+				}
+				if (copied) {
+					setCopiedAddress(address);
+					setTimeout(() => {
+						setCopiedAddress((current) => (current === address ? null : current));
+					}, 1500);
+				}
+			}, []);
 
 			const cardStyle = {
 				border: "1px solid var(--dsw-alias-border, rgba(128,128,128,0.25))",
@@ -349,6 +404,32 @@ window.__ModuleLoader__.load({
 				]),
 				react.createElement("div", { key: "intro", style: noteStyle }, textOf("intro")),
 				error !== null ? react.createElement("div", { key: "error", style: { color: "var(--dsw-alias-error, #d33)", marginBottom: 8, fontSize: 12 } }, error) : null,
+
+				// ---------- 局域网地址(自动检测 + 复制一键打开链接) ----------
+				react.createElement("div", { key: "network-card", style: cardStyle }, [
+					react.createElement("div", { key: "network-title", style: { fontSize: 13, fontWeight: 600, marginBottom: 4 } }, textOf("networkTitle")),
+					network === null
+						? react.createElement("div", { key: "network-loading", style: { fontSize: 12, color: "var(--dsw-alias-fg-secondary, #888)", padding: "6px 0" } }, textOf("loading"))
+						: network.lanMode !== true
+							? react.createElement("div", { key: "network-off", style: { fontSize: 12, color: "var(--dsw-alias-warning, #d97706)", lineHeight: 1.6, padding: "4px 0" } }, textOf("networkLanOff"))
+							: (Array.isArray(network.urls) && network.urls.length > 0
+								? [
+									react.createElement("div", { key: "network-hint", style: { fontSize: 12, color: "var(--dsw-alias-fg-secondary, #888)", lineHeight: 1.6, marginBottom: 4 } }, textOf("networkHint")),
+									network.urls.map((entry) => react.createElement("div", { key: "network-" + entry.address, style: rowStyle }, [
+										react.createElement("div", { key: "info", style: { flex: "1 1 auto", minWidth: 0 } }, [
+											react.createElement("div", { key: "address", style: { fontSize: 13, fontWeight: 600 } }, entry.address),
+											react.createElement("div", { key: "url", style: { fontSize: 11, color: "var(--dsw-alias-fg-secondary, #888)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: entry.url }, entry.url),
+										]),
+										react.createElement("button", {
+											key: "copy",
+											type: "button",
+											onClick: () => { void copyLink(entry.url, entry.address); },
+											style: { fontSize: 12, padding: "2px 10px", cursor: "pointer", flex: "none" },
+										}, copiedAddress === entry.address ? textOf("networkCopied") : textOf("networkCopy")),
+									])),
+								]
+								: react.createElement("div", { key: "network-none", style: { fontSize: 12, color: "var(--dsw-alias-fg-secondary, #888)", padding: "6px 0" } }, textOf("networkNone"))),
+				]),
 
 				// ---------- 工作区 ----------
 				react.createElement("div", { key: "workspaces-card", style: cardStyle }, [

@@ -46,6 +46,8 @@ function makeMockConnection() {
 	const createdPeers = [];
 	return {
 		browserPeer: ownerPeer,
+		// 网络信息路由会读取 launch token(认证开启时局域网设备需要它换 Cookie)
+		browserAuth: { launchToken: "test-launch-token" },
 		createPeer(options) {
 			const peer = {
 				id: "peer-" + createdPeers.length,
@@ -202,6 +204,10 @@ const mockServices = {
 		},
 	},
 	webServer: {
+		// 网络信息路由读取绑定地址/端口/协议 (与官方 dsh-host-webserver 的 getter 一致)
+		host: "0.0.0.0",
+		port: 3080,
+		protocol: "http:",
 		register(route) {
 			capturedRoutes.set(route.path, route);
 			return () => {};
@@ -337,6 +343,26 @@ check("title: 持久化会话标题来自投影缓存", coldRow !== undefined &&
 check("title: 无标题会话回退为空串", refreshedPayload.sessions
 	.filter((session) => session.id !== "session-live" && session.id !== "session-cold")
 	.every((session) => session.title === ""));
+
+// ---------- 9. 局域网地址探测 ----------
+check("router: network 路由已注册", capturedRoutes.has("/__dsh/lan-visibility/network"));
+const networkResponse = await callRoute("/__dsh/lan-visibility/network", makeRequest({
+	remoteAddress: "127.0.0.1",
+	headers: { "x-dsh-lan-visibility": "1" },
+}));
+const networkPayload = jsonOf(networkResponse);
+check("network: 回环+头 200", networkResponse.status === 200 && networkPayload !== null);
+check("network: lanMode 来自绑定地址(0.0.0.0→true)", networkPayload.lanMode === true);
+check("network: 端口来自 webServer", networkPayload.port === "3080");
+check("network: 含访问 token", networkPayload.tokenIncluded === true);
+check("network: urls 为数组", Array.isArray(networkPayload.urls));
+check("network: 每个 url 带 token 且端口正确", networkPayload.urls.every((entry) =>
+	entry.url.startsWith("http://" + entry.address + ":3080/")
+	&& entry.url.includes("?token=test-launch-token")));
+check("network: 非回环来源 403", (await callRoute("/__dsh/lan-visibility/network", makeRequest({
+	remoteAddress: "192.168.1.50",
+	headers: { "x-dsh-lan-visibility": "1" },
+}))).status === 403);
 
 // ---------- 清理 ----------
 try {

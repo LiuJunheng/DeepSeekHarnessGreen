@@ -17,13 +17,13 @@
 //
 // 注意事项:
 // - 「本机」= TCP 来源为回环地址。从本机浏览器用局域网 IP(如 192.168.x.x) 打开
-//   会被判为局域网来源, 这是有意的语义(见 RESEARCH-lan-visibility.md)。
+//   会被判为局域网来源, 这是有意的语义(内部研究文档: doc/RESEARCH-lan-visibility.md, 不进仓库)。
 // - 调试: 设置环境变量 DSH_LAN_VISIBILITY_SIMULATE_LAN=1 后, 请求带
 //   x-dsh-simulate-lan: 1 头即模拟局域网来源, 便于本机 curl 验证权限。
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, networkInterfaces } from "node:os";
 
 const name = "dsh-lan-visibility";
 // 不强制声明硬依赖: 各服务工作区/连接/网关在运行时按需注入, 缺失时插件仍可加载
@@ -32,6 +32,8 @@ const inject = [];
 
 const ROUTE_LIST = "/__dsh/lan-visibility/list";
 const ROUTE_SET = "/__dsh/lan-visibility/set";
+// 局域网地址探测: 返回绑定地址/端口与网卡 IP, 供设置页「复制一键打开链接」使用。
+const ROUTE_NETWORK = "/__dsh/lan-visibility/network";
 const GUARD_HEADER = "x-dsh-lan-visibility";
 const STORAGE_FILE_NAME = "lan_visibility.json";
 const STORAGE_VERSION = 1;
@@ -601,6 +603,61 @@ async function handleVisibilitySet(request, response) {
 	writeJson(response, 200, { ok: true, kind, id, visible });
 }
 
+/**
+ * 收集本机局域网访问信息(仅本机回环路由返回, 供设置页展示/复制一键打开链接):
+ * - bindHost/port/protocol 来自 webServer 服务(实际监听值与绑定地址);
+ * - 网卡 IPv4 地址来自 os.networkInterfaces()(只取非回环);
+ * - launchToken 来自 connection.browserAuth(认证开启时局域网设备需要它换 30 天 Cookie;
+ *   取不到就退回裸地址, 认证关闭时裸地址本来就能直接打开)。
+ */
+function collectNetworkAccess(scopeContext) {
+	const webServer = scopeContext.get("webServer");
+	const bindHost = webServer !== undefined && typeof webServer.host === "string" ? webServer.host : "";
+	const protocol = webServer !== undefined && typeof webServer.protocol === "string" ? webServer.protocol : "http:";
+	const port = webServer !== undefined && webServer.port !== undefined && webServer.port !== null
+		? String(webServer.port)
+		: "";
+	const lanMode = bindHost === "0.0.0.0" || bindHost === "::";
+	const addresses = [];
+	try {
+		const interfaces = networkInterfaces();
+		for (const interfaceName of Object.keys(interfaces)) {
+			const entries = interfaces[interfaceName];
+			if (!Array.isArray(entries)) continue;
+			for (const entry of entries) {
+				if (entry === null || typeof entry !== "object") continue;
+				const isIPv4 = entry.family === "IPv4" || entry.family === 4;
+				if (!isIPv4 || entry.internal !== false) continue;
+				if (typeof entry.address !== "string" || entry.address === "") continue;
+				if (addresses.includes(entry.address)) continue;
+				addresses.push(entry.address);
+			}
+		}
+	} catch {
+		// 网卡信息读取失败只影响展示
+	}
+	let launchToken = "";
+	try {
+		const connection = scopeContext.get("connection");
+		if (connection !== undefined && connection !== null && connection.browserAuth !== undefined
+			&& connection.browserAuth !== null && typeof connection.browserAuth.launchToken === "string") {
+			launchToken = connection.browserAuth.launchToken;
+		}
+	} catch {
+		// 取不到 token 时退回裸地址
+	}
+	const urls = [];
+	for (const address of addresses) {
+		const origin = protocol + "//" + address + (port === "" ? "" : ":" + port);
+		urls.push({
+			address,
+			origin,
+			url: launchToken === "" ? origin + "/" : origin + "/?token=" + encodeURIComponent(launchToken),
+		});
+	}
+	return { lanMode, bindHost, protocol, port, tokenIncluded: launchToken !== "", addresses, urls };
+}
+
 /** 注册管理路由(列表 / 切换), 仅本机回环 + 自定义头可调用。 */
 function installRoutes(scopeContext) {
 	scopeContext.effect(() => scopeContext.webServer.register({
@@ -634,6 +691,23 @@ function installRoutes(scopeContext) {
 			}
 		},
 	}), "dsh-lan-visibility: set route");
+
+	// 局域网地址探测: 供设置页展示「复制一键打开链接」。
+	scopeContext.effect(() => scopeContext.webServer.register({
+		kind: "exact",
+		path: ROUTE_NETWORK,
+		handler: async (request, response) => {
+			if (!isOwnerRouteRequest(request)) {
+				writeText(response, 403, "forbidden");
+				return;
+			}
+			try {
+				writeJson(response, 200, collectNetworkAccess(scopeContext));
+			} catch (error) {
+				writeText(response, 500, String(error !== null && error !== undefined && error.message !== undefined ? error.message : error));
+			}
+		},
+	}), "dsh-lan-visibility: network route");
 }
 
 export function apply(ctx) {
