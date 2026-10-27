@@ -501,6 +501,8 @@ PNPM_HOME_DIR = os.path.join(RUNTIME_DIR, "pnpm-home")      # pnpm 全局 home (
 PNPM_STORE_DIR = os.path.join(RUNTIME_DIR, "pnpm-store")    # pnpm 内容寻址存储
 TMP_DIR = os.path.join(RUNTIME_DIR, "tmp")
 GREEN_UPDATE_DIR = os.path.join(RUNTIME_DIR, "update")      # 绿色版更新暂存目录 (zip/解压/job/备份)
+# 上次启动时记录的本体版本号 (检测"用户更新了绿色版本体", 触发内置插件自动同步)
+LAST_RUN_VERSION_FILE = os.path.join(RUNTIME_DIR, "last_run_version.txt")
 BACKUP_DIR = os.path.join(RUNTIME_DIR, "backup")            # 统一备份目录 (dsh 旧版本备份等)
 # 默认工作区子目录名: 仅在"程序根目录包含临时目录"(绿色便携默认形态)冲突时,
 # 才把它作为默认工作区使用; 不冲突时默认工作区直接用程序根目录本身,
@@ -1415,10 +1417,11 @@ class Launcher:
         仅用于自愈时判断"声明的版本是否与宿主版本一致", 不参与真实解析。"""
         return re.sub(r"[^0-9A-Za-z.+-]", "", str(spec or "").strip())
 
-    def _sync_manifest_core_deps(self, manifest, version_map, package_label):
+    def _sync_manifest_core_deps(self, manifest, version_map, package_label, quiet=False):
         """把单个 package.json 里的 @deepseek-ai/* (及 dsh-invariants 等核心) 依赖同步到
         宿主已装版本。声明版本与宿主一致时跳过; 不一致则改写成宿主精确版本。
-        返回是否发生了改动。package_label 仅用于日志描述。"""
+        返回是否发生了改动。package_label 仅用于日志描述。
+        quiet=True 时只做归一化不写日志 (给"比较两侧清单是否等价"用, 避免刷日志)。"""
         changed = False
         for section_name in ("dependencies", "peerDependencies"):
             dependencies = manifest.get(section_name) or {}
@@ -1432,8 +1435,9 @@ class Launcher:
                 if self._strip_version_spec(declared_spec) == self._strip_version_spec(host_version):
                     continue
                 dependencies[package_name] = host_version
-                self.log("同步 %s 的核心依赖 %s: %s -> %s"
-                         % (package_label, package_name, declared_spec, host_version))
+                if not quiet:
+                    self.log("同步 %s 的核心依赖 %s: %s -> %s"
+                             % (package_label, package_name, declared_spec, host_version))
                 changed = True
         return changed
 
@@ -3885,11 +3889,29 @@ class Launcher:
                 result.append(entry_path)
         return result
 
+    def _installed_plugin_ready(self, profile, package_name):
+        """判断一个内置插件是否"真的已装好": node_modules 下存在真实的包目录。
+
+        为什么不能只看 profile 的 dependencies (2026-10-27):
+        `list_installed_plugins()` 只读 package.json 的 dependencies, 若用户手工删掉
+        `node_modules/<包名>`, 或 pnpm 链接丢失, 旧逻辑会认为"已装 → 跳过安装",
+        这台机器上的该插件就永远修不回来 (update_bundled_plugins 也只会记 not_installed)。
+        这里额外确认副本存在 (含 package.json), 让 install_bundled_plugins 能自动补装。
+        兼容 pnpm 布局: node_modules/<包名> 是符号链接, 先 realpath 再判断。"""
+        module_dir = os.path.join(DSH_HOME_DIR, "profiles", profile,
+                                  "node_modules", package_name)
+        module_dir = os.path.realpath(module_dir)
+        return os.path.isfile(os.path.join(module_dir, "package.json"))
+
     def install_bundled_plugins(self, profile=DEFAULT_PROFILE):
         """把程序目录 plugins/ 下所有内置插件批量装到指定 profile (已装的跳过)。
         返回 (本次新装列表, 已存在跳过列表, 失败列表); 单个失败不中断其余插件。
         安装环境后自动调用 (2026-08-17, 需求: 安装环境最后把所有计划内置插件都装上);
         插件管理窗口的「一键安装内置插件」按钮也复用本方法。
+
+        跳过判定 = dependencies 里有 **且** node_modules 副本存在 (见
+        `_installed_plugin_ready`): 清单里有但副本被删/装坏的插件会被自动补装,
+        避免"这台机器的插件永远是坏的"。
 
         若插件 package.json 含 launcher.defaultDisabled=true, 安装成功后自动
         加入 dsh.profile.disabled 列表 (用户可在插件管理界面手动启用)。"""
@@ -3910,9 +3932,13 @@ class Launcher:
                 failed.append(os.path.basename(folder))
                 self.log("[警告] 内置插件 %s 缺少 name 字段, 已跳过" % folder)
                 continue
-            if package_name in already_installed:
+            if package_name in already_installed and self._installed_plugin_ready(profile, package_name):
                 skipped.append(package_name)
                 continue
+            if package_name in already_installed:
+                # 清单里声明了但副本缺失 (用户手删 node_modules / 链接丢失): 重新装一次
+                self.log("[插件] %s 在 package.json 里声明过但 node_modules 副本缺失, 自动补装"
+                         % package_name)
             spec = "file:" + folder.replace("\\", "/")
             try:
                 self.install_plugin(spec, profile)
@@ -3946,6 +3972,60 @@ class Launcher:
                     result[relative] = "<unreadable>"
         return result
 
+    def _load_plugin_manifest_file(self, plugin_dir):
+        """读取某个插件目录下的 package.json, 失败返回 None (给清单比较用)"""
+        manifest_path = os.path.join(plugin_dir, "package.json")
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as file_handle:
+                return json.load(file_handle)
+        except (OSError, ValueError):
+            return None
+
+    def _plugin_manifests_match_after_core_sync(self, source_dir, installed_dir,
+                                                host_version_map=None):
+        """判断源码与已装副本的 package.json 是否"只在核心依赖版本上有差别"。
+
+        背景 (2026-10-27 实测): 自愈流程 `_heal_profile_dependencies()` 会把本地插件
+        package.json 里 `@deepseek-ai/*` 的核心依赖改写成宿主已装版本 (如 rc.3 → rc.4),
+        而 `plugins/` 里随包分发的是发版时的旧版本号。若按原始哈希比对, 这两个文件会
+        永远"不一致" → 每次同步都报"已更新", 还会把宿主版本改回旧版并反复重写文件。
+        这里把两侧的核心依赖都归一化到宿主版本后再比较: 只有其它字段真的变了才算不同。
+        host_version_map 可由调用方传入 (批量同步时只扫一次核心版本, 省重复扫盘)。
+        返回 True 表示"除核心依赖版本外完全一致, 可视为同一份清单"。"""
+        source_manifest = self._load_plugin_manifest_file(source_dir)
+        installed_manifest = self._load_plugin_manifest_file(installed_dir)
+        if source_manifest is None or installed_manifest is None:
+            return False
+        if host_version_map is None:
+            host_version_map = self._host_core_versions()
+        self._sync_manifest_core_deps(source_manifest, host_version_map, "", quiet=True)
+        self._sync_manifest_core_deps(installed_manifest, host_version_map, "", quiet=True)
+        return source_manifest == installed_manifest
+
+    def _normalize_installed_plugin_manifest(self, installed_dir, host_version_map=None):
+        """把已装副本 package.json 的核心依赖重新对齐到宿主已装版本。
+
+        镜像源码后必须调用: 随包源码里的核心依赖版本可能低于宿主 (发版时钉的旧版),
+        直接留在已装副本里会让"自愈"成果被覆盖, 还会让下次比对永远不一致。
+        返回是否发生了改动。"""
+        manifest = self._load_plugin_manifest_file(installed_dir)
+        if manifest is None:
+            return False
+        if host_version_map is None:
+            host_version_map = self._host_core_versions()
+        plugin_label = "已装插件 %s" % os.path.basename(os.path.normpath(installed_dir))
+        if not self._sync_manifest_core_deps(manifest, host_version_map, plugin_label):
+            return False
+        manifest_path = os.path.join(installed_dir, "package.json")
+        try:
+            with open(manifest_path, "w", encoding="utf-8") as file_handle:
+                json.dump(manifest, file_handle, ensure_ascii=False, indent=2)
+                file_handle.write("\n")
+        except OSError as error:
+            self.log("[警告] 写回 %s 的 package.json 失败: %s" % (plugin_label, error))
+            return False
+        return True
+
     def update_bundled_plugins(self, profile=DEFAULT_PROFILE, package_names=None):
         """把已安装的内置插件一键更新为程序目录 plugins/ 的最新源码 (重装最新版)。
 
@@ -3968,6 +4048,8 @@ class Launcher:
         updated, up_to_date, not_installed, failed = [], [], [], []
         installed = self.list_installed_plugins(profile)
         want = set(package_names or [])
+        # 核心版本表整轮只扫一次 (每个插件比清单都要用, 重复扫盘没必要)
+        host_version_map = self._host_core_versions()
         for folder in self.bundled_plugin_dirs():
             try:
                 with open(os.path.join(folder, "package.json"), "r",
@@ -3995,6 +4077,13 @@ class Launcher:
             try:
                 source_hashes = self._plugin_tree_hashes(folder)
                 installed_hashes = self._plugin_tree_hashes(module_dir)
+                # package.json 的 @deepseek-ai/* 核心依赖版本会被自愈流程改成宿主版本,
+                # 与随包源码天然不同; 这种"只差核心依赖版本"的差异不算源码更新,
+                # 否则每次同步都报"已更新"还会把宿主版本改回旧版 (2026-10-27 实测)。
+                if self._plugin_manifests_match_after_core_sync(folder, module_dir,
+                                                               host_version_map):
+                    source_hashes.pop("package.json", None)
+                    installed_hashes.pop("package.json", None)
                 if source_hashes == installed_hashes:
                     up_to_date.append(package_name)
                     continue
@@ -4002,6 +4091,7 @@ class Launcher:
                 source_files = set(source_hashes.keys())
                 installed_files = set(installed_hashes.keys())
                 errors = []
+                copied_manifest = False
                 for relative in sorted(source_files):
                     if installed_hashes.get(relative) == source_hashes[relative]:
                         continue  # 内容一致, 不重写 (避免触碰被服务占用的未变化文件)
@@ -4010,6 +4100,8 @@ class Launcher:
                     try:
                         os.makedirs(os.path.dirname(dst_path), exist_ok=True)
                         shutil.copy2(src_path, dst_path)
+                        if relative == "package.json":
+                            copied_manifest = True
                     except OSError as error:
                         errors.append("%s: %s" % (relative, error))
                 for relative in sorted(installed_files - source_files):
@@ -4019,6 +4111,10 @@ class Launcher:
                             os.remove(stale_path)
                     except OSError as error:
                         errors.append("删除陈旧文件 %s: %s" % (relative, error))
+                # 刚镜像过去的 package.json 里可能钉着发版时的旧核心版本, 立刻对齐回宿主版本
+                if copied_manifest and self._normalize_installed_plugin_manifest(
+                        module_dir, host_version_map):
+                    self.log("已把内置插件 %s 的核心依赖重新对齐到宿主版本" % package_name)
                 if errors:
                     failed.append((package_name, "; ".join(errors[:5])))
                     self.log("[警告] 内置插件 %s 更新不完整: %s"
@@ -4037,8 +4133,11 @@ class Launcher:
 
         绿色版更新流程: 启动器写标记 -> 退出 -> 独立更新程序覆盖 -> 重启。
         标记放在 runtime/ 下 (更新程序不替换 runtime/), 重启后新启动器检测到
-        标记即自动执行一次 update_bundled_plugins(), 保证"每次绿色版更新后
-        自动同步一次内置插件"。"""
+        标记即自动同步一次内置插件 (先补装新增的, 再把已装副本更新为最新源码)。
+
+        2026-10-27 起标记只是触发条件之一: 另有 runtime/last_run_version.txt 记录
+        上次同步成功的本体版本号, 版本号变化同样会触发同步 (覆盖手动解压覆盖更新的
+        情形, 那种更新没有标记)。两者都在同步成功后才清除/写入。"""
         try:
             with open(os.path.join(RUNTIME_DIR, "pending_bundled_plugin_check"),
                       "w", encoding="utf-8") as file_handle:
@@ -4046,24 +4145,72 @@ class Launcher:
         except OSError:
             pass
 
+    def read_last_run_version(self):
+        """读取上次启动时记录的绿色版本体版本号 (缺失/损坏/未写过一律返回空串)。
+
+        用途: 检测"用户更新了绿色版本体"这一事件, 作为内置插件自动同步的触发条件
+        (见 bundled_sync_pending)。空串表示"本机还没有成功同步过任何一次"。"""
+        try:
+            with open(LAST_RUN_VERSION_FILE, "r", encoding="utf-8") as file_handle:
+                return (file_handle.read() or "").strip()
+        except OSError:
+            return ""
+
+    def write_last_run_version(self):
+        """记录本次启动的本体版本号 (只在同步成功后才写, 失败留待下次启动重试)"""
+        try:
+            os.makedirs(RUNTIME_DIR, exist_ok=True)
+            with open(LAST_RUN_VERSION_FILE, "w", encoding="utf-8") as file_handle:
+                file_handle.write(GREEN_VERSION)
+        except OSError as error:
+            self.log("[警告] 记录绿色版版本号失败: %s" % error)
+
+    def clear_bundled_sync_marker(self):
+        """删除"绿色版更新后需同步"标记 (同步成功后才删, 失败保留以便下次重试)"""
+        marker = os.path.join(RUNTIME_DIR, "pending_bundled_plugin_check")
+        try:
+            if os.path.isfile(marker):
+                os.remove(marker)
+        except OSError:
+            pass
+
+    def bundled_sync_pending(self):
+        """判断本次启动是否需要自动同步一次内置插件, 返回 (是否需要, 上次记录版本号)。
+
+        两个触发条件, 任一成立即需要:
+          1) runtime/pending_bundled_plugin_check 标记存在 —— 走启动器内更新流程
+             (更新前 mark_bundled_plugin_sync_pending() 写入, 更新程序保留 runtime/)。
+          2) 上次启动记录的版本号与当前 GREEN_VERSION 不同 (没记录过也算不同) ——
+             用户用其它方式换了本体 (手动解压覆盖 zip / 直接替换程序文件), 这类更新
+             没有标记, 只能靠版本号发现。
+        条件 2 是 2026-10-27 补上的: 此前只有标记一条路, 手动覆盖更新的用户永远不会
+        触发自动同步, 表现为"更新完内置插件还是旧版, 也没有任何提示"。没记录过版本号
+        也按"需要同步"处理, 使刚升级到本版本的机器立刻补一次同步 (同步完才写版本号)。"""
+        marker = os.path.join(RUNTIME_DIR, "pending_bundled_plugin_check")
+        previous_version = self.read_last_run_version()
+        version_changed = previous_version != GREEN_VERSION
+        return (os.path.isfile(marker) or version_changed), previous_version
+
     def run_post_update_bundled_sync(self):
-        """绿色版更新后自动同步一次内置插件 (幂等: 无标记直接返回)。
+        """启动时自动同步一次内置插件 (幂等: 无标记且版本未变直接返回 None)。
 
         执行顺序: 先装"新增的内置插件"(以前版本没有、老用户机器上不存在的)
         → 再更新"已装但源码变了的"(老插件新源码同步). 两个阶段都有独立日志。
-        GUI 启动与 --start 无界面启动都会调用, 保证更新后首次启动即完成同步。"""
-        marker = os.path.join(RUNTIME_DIR, "pending_bundled_plugin_check")
-        if not os.path.isfile(marker):
-            return
-        try:
-            os.remove(marker)
-        except OSError:
-            pass
+        GUI 启动与 --start 无界面启动都会调用, 保证更新后首次启动即完成同步。
+        仅在两阶段都无失败时记录版本号并清除标记; 失败则保留, 下次启动自动重试。
+
+        返回摘要字典 {new, updated, up_to_date, failed, previous} 供 GUI 弹提示;
+        本函数不弹窗 (GUI 线程安全由调用方负责)。"""
+        pending, previous_version = self.bundled_sync_pending()
+        if not pending:
+            return None
+        newly_installed, updated, up_to_date, failed = [], [], [], []
         try:
             # 阶段 1: 装新增的内置插件 (以前版本没有, 老用户机器上不存在的)。
             newly_installed, _skipped, install_failed = self.install_bundled_plugins()
             # 阶段 2: 更新已装但源码变了的。
-            updated, up_to_date, not_installed, update_failed = self.update_bundled_plugins()
+            updated, up_to_date, _not_installed, update_failed = self.update_bundled_plugins()
+            failed = list(install_failed) + [name for (name, _reason) in update_failed]
             summary = []
             if newly_installed:
                 summary.append("新装 %d 个: %s" % (len(newly_installed), ", ".join(newly_installed)))
@@ -4071,13 +4218,35 @@ class Launcher:
                 summary.append("更新 %d 个: %s" % (len(updated), ", ".join(updated)))
             if up_to_date:
                 summary.append("其余 %d 个已是最新" % len(up_to_date))
-            if install_failed or update_failed:
-                all_failed = install_failed + [n for (n, _) in update_failed]
-                summary.append("失败: %s" % "; ".join(all_failed))
-            self.log("绿色版更新完成, 自动同步内置插件 → "
-                     + ("；".join(summary) if summary else "(无可同步)"))
+            if failed:
+                summary.append("失败: %s" % "; ".join(failed))
+            if previous_version and previous_version != GREEN_VERSION:
+                self.log("检测到绿色版本体版本变化 (%s → %s), 自动同步内置插件 → %s"
+                         % (previous_version, GREEN_VERSION,
+                            "；".join(summary) if summary else "(无可同步)"))
+            elif previous_version == "":
+                # 本机第一次做这项同步 (还没有版本记录): 日志里区分开, 便于排查
+                self.log("首次检查内置插件 → "
+                         + ("；".join(summary) if summary else "(无可同步)"))
+            else:
+                self.log("绿色版更新完成, 自动同步内置插件 → "
+                         + ("；".join(summary) if summary else "(无可同步)"))
+            if failed:
+                self.log("[警告] 内置插件同步未全部完成, 保留待同步标记, 下次启动自动重试; "
+                         "也可以打开「插件管理」点「一键安装内置插件」手动重试")
+            else:
+                self.write_last_run_version()
+                self.clear_bundled_sync_marker()
         except Exception as error:
+            failed = ["%s" % error]
             self.log("[警告] 绿色版更新后的内置插件自动同步失败: %s" % error)
+        return {
+            "new": newly_installed,
+            "updated": updated,
+            "up_to_date": up_to_date,
+            "failed": failed,
+            "previous": previous_version,
+        }
 
     def remove_plugin(self, package_name, profile=DEFAULT_PROFILE):
         """从指定 profile 移除插件 (转发给 pnpm remove), 失败抛异常。
@@ -7961,24 +8130,39 @@ def run_gui():
         """检查环境是否已就绪 (Node + dsh 已安装)"""
         return (app.find_node_exe() is not None) and app.dsh_installed()
 
-    # 绿色版更新后自动同步一次内置插件 (2026-08-27): 更新流程在退出前写标记
-    # (mark_bundled_plugin_sync_pending), 重启后这里检测到标记即后台执行同步,
-    # 不阻塞界面; 环境未就绪时无需同步 (插件尚未安装), 直接清除标记。
-    def auto_sync_bundled_after_green_update():
+    # ---------- 绿色版更新后的内置插件自动同步 (2026-08-27 引入, 2026-10-27 增强) ----------
+    # 触发条件见 Launcher.bundled_sync_pending(): ①更新流程退出前写的标记
+    # (mark_bundled_plugin_sync_pending) ②本体版本号变化 —— 手动解压覆盖更新的用户
+    # 没有标记, 靠版本号发现。
+    # 结果只写启动器日志, 不弹窗 (2026-10-27 用户要求: "放日志里写就好了"): 每个插件的
+    # 处理明细与结尾汇总行都由 run_post_update_bundled_sync() 自己写进日志,
+    # GUI 这层只负责同步期间置忙、结束后恢复按钮。
+    def _safe_after(callback):
+        """跨线程回主线程执行; 窗口已销毁时静默忽略 (关启动器时同步线程可能仍在跑)"""
         try:
-            if check_environment_ready():
-                app.run_post_update_bundled_sync()
-            else:
-                marker = os.path.join(RUNTIME_DIR, "pending_bundled_plugin_check")
-                try:
-                    if os.path.isfile(marker):
-                        os.remove(marker)
-                except OSError:
-                    pass
+            root.after(0, callback)
+        except Exception:
+            pass
+
+    def sync_bundled_after_green_update():
+        """后台线程: 启动时自动同步一次内置插件 (结果写日志, 不弹窗)。
+        环境未就绪 (还没装 Node/dsh) 时不同步也不记录版本号, 留到下次启动自动重试。"""
+        try:
+            pending, _previous_version = app.bundled_sync_pending()
+            if not pending:
+                return
+            if not check_environment_ready():
+                app.log("[提示] 绿色版已更新, 但环境尚未就绪 (缺 Node/dsh), "
+                        "内置插件同步将在下次启动时自动重试")
+                return
+            is_busy[0] = True
+            _safe_after(refresh_status)
+            app.run_post_update_bundled_sync()
         except Exception as error:
             app.log("[警告] 绿色版更新后的内置插件自动同步失败: %s" % error)
-    if os.path.isfile(os.path.join(RUNTIME_DIR, "pending_bundled_plugin_check")):
-        threading.Thread(target=auto_sync_bundled_after_green_update, daemon=True).start()
+        finally:
+            is_busy[0] = False
+            _safe_after(refresh_status)
 
     def python_ok():
         """内置便携 Python 是否就绪 (供 start.bat 脚本版使用; 缺失不影响 dsh 服务)"""
@@ -9846,6 +10030,16 @@ def run_gui():
 
     root.bind("<Map>", on_main_window_reshown, add="+")
 
+    # 启动时: 检测到绿色版本体更新 (更新标记 或 版本号变化) 即后台同步一次内置插件。
+    # 放在这里 (所有按钮/控件已创建) 才安全: 同步期间会置 busy 态禁用「启动服务」,
+    # 避免插件文件正被镜像到 node_modules 时服务就启动, 出现"插件加载失败"。
+    try:
+        _bundled_sync_pending, _ = app.bundled_sync_pending()
+    except Exception:
+        _bundled_sync_pending = False
+    if _bundled_sync_pending:
+        threading.Thread(target=sync_bundled_after_green_update, daemon=True).start()
+
     append_log(i18n.t('log.launch_hint'))
     root.mainloop()
 
@@ -9870,7 +10064,12 @@ def main():
         app = Launcher()
         app.on_log = lambda message: print(message)   # 命令行模式把日志打印到终端
         try:
-            app.run_post_update_bundled_sync()   # 绿色版更新后自动同步一次内置插件
+            # 绿色版更新后 (更新标记 或 版本号变化) 自动同步一次内置插件, 结果打到控制台
+            _sync_result = app.run_post_update_bundled_sync()
+            if _sync_result:
+                print("内置插件同步: 新装 %d 个, 更新 %d 个, 失败 %d 个"
+                      % (len(_sync_result["new"]), len(_sync_result["updated"]),
+                         len(_sync_result["failed"])))
             started = app.start_server(open_browser=False)   # 启动(或复用已运行)服务
             app._ensure_ui_beacon_server()
             port = int(app.config.get("dsh_port", 3080))

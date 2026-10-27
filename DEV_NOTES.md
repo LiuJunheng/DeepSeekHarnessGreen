@@ -97,7 +97,7 @@
 
 * **命令行**：`--start`(守护) / `--stop` / `--purge-archived` / `--purge-session <ID>` / `--restore-session <ID>` / `--install-plugin` / `--remove-plugin`。
 
-* **内置插件自动同步**：`update_bundled_plugins()` 把 `plugins/` 源码镜像进运行副本（逐文件 MD5 比对、只写变化、清理源码已删陈旧文件）；入口＝打开插件管理窗口 / 「一键安装内置插件」/ 绿色版更新后首启。
+* **内置插件自动同步**：`update_bundled_plugins()` 把 `plugins/` 源码镜像进运行副本（逐文件 MD5 比对、只写变化、清理源码已删陈旧文件）；入口＝打开插件管理窗口 / 「一键安装内置插件」/ 绿色版更新后首启。首启同步的触发条件有两路（`bundled_sync_pending()`，2026-10-27 补第二路）：① 启动器内更新流程退出前写的 `runtime/pending_bundled_plugin_check` 标记；② `runtime/last_run_version.txt` 记录的版本号 ≠ 当前 `GREEN_VERSION`（没记录也视为不同）—— 覆盖「手动解压覆盖 zip」这类没有标记的更新。同步成功才写版本号+清标记，失败保留待下次重试；结果**只写启动器日志，不弹窗**（见插件开发坑 26）。
 
 * **pnpm 构建白名单已自动化**：`ensure_pnpm_native_allowbuilds`（装插件/环境时幂等补原生依赖 `false`）+ `auto_allow_git_build`（`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` 时从报错提取含完整 commit 的 allowBuilds key 写 `true` 并重试，幂等）。**绿色版 zip 不含 runtime/，此补丁必须在启动器内自动做**。
 
@@ -169,6 +169,7 @@
 
 1. **本机 Windows PowerShell 禁止运行脚本**（`& script.ps1` 报"在此系统上禁止运行脚本"）→ 正解是**同一进程内**临时放开：`Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force` 后再 `& 脚本`（Process 作用域随进程消失，不动机器/用户策略）。
 2. **判断修复只看 `verification` 记录，不看 `completed` 动作**："操作完成了" ≠ "权限真的变了"；`RECAP` 行才是结论摘要（工具输出只保留尾部）。修完**必须重跑原来失败的那条受限命令**才算闭环。
+3. **把程序根目录当会话工作区会让该会话所有 shell 命令失效（2026-10-27 实测）**：报错形态是 `Windows ACL temp root must be outside the workspace: workspace=E:\...\DeepSeekHarnessLauncher; temp=E:\...\DeepSeekHarnessLauncher\runtime\tmp` —— 因为 `build_env()` 把 dsh 进程的 `TEMP/TMP` 重定向到程序目录内的 `runtime/tmp`（绿色便携），而 DSH 的 Windows ACL 沙箱要求临时根**不能位于会话工作区内部**（`assertTempRootOutsideWorkspace`）。这不是权限问题，改 ACL 没用。**正解**：会话工作区别选程序根目录本身，用启动器自动解析出的 `BASE_DIR/workspace`（`resolve_default_workspace()`：`BASE_DIR` 与 tmp 冲突时自动回退到 `BASE_DIR/workspace`）或程序目录之外的任意目录。同一会话里 `read/glob/grep` 正常、只有 shell（pwsh/命令执行）全挂，就是这个坑的典型特征。
 
 **别做的事**：手改 ACL / 改所有者 / 递归重置子项 / 用 UAC、runas 提权运行 —— 脚本已备份并给了回滚命令，手工介入会把"可回滚"状态破坏掉。**注意机制边界**：这是**环境层**（Windows 文件权限）问题，与"工作区内含 `runtime/tmp` 导致 ACL temp 冲突"是两个不同的坑（后者见 skill 2.5）。
 
@@ -247,6 +248,15 @@
     * **命名（2026-09-29）**：定位已从「轻量侧栏」变为「官方右栏增强」，故插件由 `dsh-sidebar-lite` 更名为 `dsh-sidebar-extend`。改名要同步的硬标识共 5 处：**目录名 / `package.json` 的 `name` / 客户端 `ModuleLoader.load({ id })` / 宿主端 `const name` / 类型 `definition.id` 与插槽 `key`**；另有 3 处内部标识建议一起改：locale 命名空间、防御头常量、宿主路由前缀。**换名安装必须先移除旧包再装新包**——新旧两份包同时在场会因同一个 `kind` 出现两份 `extension` 档注册而 **throw**（官方只允许一个 kind 带一份 builtin + 一份 extension）。
     * **独立的旧版已恢复在 `plugins/dsh-sidebar-lite/`（工作区未提交文件）**，留作与新版对比用：profile 里**已安装但列入 `dsh.profile.disabled`**（`bundles` 不含它，`reconcile_bundles` 会保持这个状态）→ 默认不加载，插件管理里切开关即可启用。它与新版**无任何标识冲突**（包名/路由前缀 `/__dsh/sidebar-lite` 与 `/__dsh/sidebar-extend`/防御头/类型 id 全不同，且旧版只自建外壳、不注册官方 tab 类型）。**验证"默认没加载"的手法**：探测插件自带路由的响应码 —— 有 handler 时缺防御头会返回 **403**，没加载则落到 DSH webserver 的通用 **405**（拿一个确定不存在的 `/__dsh/...` 路径对照即可确认基线）。注意旧版启用后，`dsh-file-browser` / `dsh-media-background` 的浮动弹窗**只避让官方右栏**、不再避让旧版自建面板（它们已改读官方 `data-sidebar-right-*` 标记）。
     * **插件 `launcher.defaultDisabled` 标记（2026-09-29 引入）**：若 `plugins/` 下某插件的 `package.json` 含 `"launcher": { "defaultDisabled": true }`，`install_bundled_plugins()` 安装成功后会自动调 `set_plugin_enabled(pkg, enabled=False)` 把它加进 `dsh.profile.disabled`。**新用户路径全覆盖**：绿色版第一次装环境调 `install_bundled_plugins` 时自动触发；若用预构建 runtime 模板则模板里已预设 disabled。老用户升级已装的插件**不会被自动停用**（`install_bundled_plugins` 对已装的直接 skipped），需手动在插件管理切开关或改 profile。
+
+26. **"更新了绿色版，内置插件却像没更新、也没有任何提示" —— 自动同步只认更新标记，手动覆盖更新永远不触发（2026-10-27 用户反馈 + 修复）**：
+    * **旧机制的两处缺口**：① 只有走启动器内「检查绿色版更新」才会在退出前写 `runtime/pending_bundled_plugin_check`，重启后首启消费它；**用户手动下载 zip 解压覆盖 / 直接替换程序文件时没有标记** → 首启什么也不做，新增的内置插件不会被补装（打开插件管理只跑 `update_bundled_plugins()`，不跑 `install_bundled_plugins()`）。② 即使同步真的跑了，结果只有一行日志，用户基本看不到 → 以为"没更新"。（② 的处置是**把日志写清楚、仍然不弹窗**，用户 2026-10-27 明确要求"放日志里写就好了"。）
+    * **修复**：`bundled_sync_pending()` 增加第二触发条件 —— `runtime/last_run_version.txt` 里记录的版本号 ≠ 当前 `GREEN_VERSION`（没记录也算不同），覆盖手动覆盖更新；`run_post_update_bundled_sync()` 改为返回摘要字典 `{new, updated, up_to_date, failed, previous}`（供 GUI 与 `--start` 复用），**结果只写启动器日志、不弹窗**（2026-10-27 用户明确要求"放日志里写就好了"：每个插件明细 + 结尾一行 `… → 新装 N 个, 更新 N 个, 其余 N 个已是最新`）；**同步成功才写版本号 + 清标记**，失败保留待下次启动重试；同步期间置 busy 态禁用「启动服务」，避免文件镜像到一半服务就把插件加载走。
+    * **跳过判定 = "真装好"，不只是清单里有（同批修复）**：旧 `install_bundled_plugins()` 只按 profile `dependencies` 判断"已装 → 跳过"，若用户手删了 `node_modules/<包名>` 或 pnpm 链接丢失，这台机器的该插件**永远修不回来**（装环境/更新首启都跳过，`update_bundled_plugins()` 也只记 `not_installed`）。现在额外用 `_installed_plugin_ready()` 确认副本存在（`node_modules/<包名>/package.json`，先 `realpath` 兼容 pnpm 符号链接布局），清单里有但副本缺失 → 自动补装并写日志。
+    * **触发线程位置**：`run_gui()` 里必须在**所有按钮创建之后、`root.mainloop()` 之前**启动同步线程（放在函数中段会因 `refresh_status()` 引用尚未创建的按钮而报错）。
+    * **验证口径**：`runtime/last_run_version.txt` 存在且等于 `GREEN_VERSION` = 本版本已同步过；文件缺失/不等 = 下次启动会再同步一次；`--start` 模式把结果直接打印到控制台（`内置插件同步: 新装 N 个, 更新 N 个, 失败 N 个`）。
+    * **pnpm 布局实测（2026-10-27）**：`profiles/web/node_modules/<包名>` 是**符号链接**，真实副本在 `node_modules/.pnpm/<包名>@file+.../node_modules/<包名>` 下 —— 所以 `update_bundled_plugins()` 的 `realpath` + 逐文件镜像**确实在写真实文件**，不是空转（与 `_heal_profile_dependencies` 的拷贝假设一致）。
+    * **`package.json` 的"假差异"坑（2026-10-27 实测 + 修复）**：`_heal_profile_dependencies()` 会把本地插件 `package.json` 里的 `@deepseek-ai/*` 核心依赖改写成**宿主已装版本**（如 `0.2.1-rc.3` → `0.2.1-rc.4`），而 `plugins/` 里随包分发的是发版时钉的旧版本号 → 这个文件**永远哈希不一致**：每次打开插件管理都"已自动更新"两个插件（噪音），并且把宿主版本改回旧版、反复重写文件。修复：① 比较前用 `_plugin_manifests_match_after_core_sync()` 把两侧核心依赖归一化到宿主版本，只差核心依赖就不算更新；② 真需要镜像 `package.json` 时，`_normalize_installed_plugin_manifest()` 在复制后立刻把核心依赖重新对齐到宿主版本。`_sync_manifest_core_deps()` 新增 `quiet=True` 供"只归一化不写日志"使用。
 
 ### PyInstaller / 打包坑
 
@@ -553,7 +563,8 @@
 
 * 跨机 / 整包覆盖会吞掉本地未提交改动（实测覆盖过）→ 发布前先 `git diff` / `git log` 核对，或先把改动 commit。
 
-* 改内置插件源码后必须同步运行副本并**在运行端目验**（见坑 17）。同步已自动化：打开插件管理窗口即同步 / 「一键安装内置插件」/ 绿色版更新后首启。
+* 改内置插件源码后必须同步运行副本并**在运行端目验**（见坑 17）。同步已自动化：打开插件管理窗口即同步 / 「一键安装内置插件」/ 绿色版更新后首启（标记 **或** `runtime/last_run_version.txt` 版本号变化触发，见插件开发坑 26）。
+* 排查"更新了绿色版但插件没更新"：先看 `runtime/last_run_version.txt` 是否等于当前 `GREEN_VERSION`、`runtime/pending_bundled_plugin_check` 是否残留；再看启动器日志里 "自动同步内置插件 → ..." 那行（同步结果只写日志、不弹窗）。手动覆盖更新的机器上，首次启动新启动器会自动补一次同步。
 
 * 改 `launcher.py` 后须重打包 `DSH_Launcher.exe`（build\_exe.bat）；改更新程序 / 其它 exe 同理各自重打包。
 

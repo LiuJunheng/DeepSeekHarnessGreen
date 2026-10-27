@@ -101,6 +101,8 @@ Entry: main window → *Data Maintenance → Session Management* → check sessi
 
 Core updates only touch `runtime/dsh/`. Shell updates only touch the program root directory and **skip `config.json` and `runtime/`** (your settings and sessions are safe). Before overwriting, old files are auto-backed up to `runtime/update/backup/` — if the new version breaks something, manually copy back.
 
+**Built-in plugins are re-synced automatically once after an update**: on the first launch of the new version the launcher installs any newly bundled plugins and updates installed ones to the shipped sources; **the result is written to the launcher log** (no need to remember to open Plugin Manager). The trigger is the version recorded in `runtime/last_run_version.txt`, so a **manual zip overwrite** triggers it too; a failed sync keeps its marker and retries on the next launch.
+
 ---
 
 ## LAN Remote Access
