@@ -563,6 +563,9 @@
 
 * 跨机 / 整包覆盖会吞掉本地未提交改动（实测覆盖过）→ 发布前先 `git diff` / `git log` 核对，或先把改动 commit。
 
+* **彻底删除会话必须清三处, 投影缓存有新旧两种格式**（2026-10-27 修复"会话管理幻影会话"）: `sessions/<编码>/<sid>/` 日志目录、`storages/workspace.json`（sessionIds/archivedSessionIds）、`storages/session_projcache.json`（旧单文件）+ `storages/session_projcache/sessions/session-{sid}.json`（0.1.2-rc.1 起按会话分文件, 写盘中断还会留 `.json.tmp`）。只清旧缓存 → 列表里出现"无日志+无工作区"的**幻影会话**, 勾选删除后刷新依旧存在（删不掉的样子）; 无标题的残留此前还会被静默跳过、连勾选都勾不到。修复后 `purge_session` 同时清两种缓存, 无标题残留也纳入列表, 状态列显示「缓存残留」、底部计数提示可删数量。
+* 排查"会话管理有没来源的会话": 按上面三处逐一核对——有日志=真会话; 无日志无工作区但 projcache 有文件=缓存残留（可删）; 判定代码见 `list_sessions()` 的 `orphan` 标记（无日志+无工作区+未归档）。
+
 * 改内置插件源码后必须同步运行副本并**在运行端目验**（见坑 17）。同步已自动化：打开插件管理窗口即同步 / 「一键安装内置插件」/ 绿色版更新后首启（标记 **或** `runtime/last_run_version.txt` 版本号变化触发，见插件开发坑 26）。
 * 排查"更新了绿色版但插件没更新"：先看 `runtime/last_run_version.txt` 是否等于当前 `GREEN_VERSION`、`runtime/pending_bundled_plugin_check` 是否残留；再看启动器日志里 "自动同步内置插件 → ..." 那行（同步结果只写日志、不弹窗）。手动覆盖更新的机器上，首次启动新启动器会自动补一次同步。
 

@@ -75,7 +75,7 @@ DSH 0.1.2-rc.1 **改成按 session 分文件存储**（旧版是单文件 `sessi
 ### 注意
 
 - 读入时**必须去 BOM**（某些版本可能带 UTF-8 BOM）。
-- 只是缓存：旧行残留无害，dsh 会自行覆盖。
+- 只是缓存：dsh 不读孤儿缓存、旧行残留也不影响 WebUI 会话列表；但启动器「会话管理」会把"无日志+无工作区"的残留列成「缓存残留」，需勾选删除（清理规则见文末「彻底删除」）。
 - 空会话返回 null 是预期行为，别当 bug。
 
 ## 插件清单（profiles/web/package.json）
@@ -106,4 +106,9 @@ dependencies 字段记录已装插件版本，`dsh.profile.bundles` 记录插件
 
 - 每个会话有全局唯一 ID（UUID 格式，如 `a1b2c3d4-e5f6-7890-abcd-ef1234567890`）。
 - 会话 ID 出现在多处：`workspace.json` 的 `sessionIds`/`archivedSessionIds`、`sessions/<编码>/session-<ID>/` 目录名、projcache 文件名（`session-<ID>.json`）。**注意：磁盘路径里统一带 `session-` 前缀，纯 UUID 是不带前缀的，代码里拼路径时要先 normalize**。
-- 彻底删除一个会话 = 清理以上三处数据（服务停止后操作）。
+- 彻底删除一个会话 = 清理**全部四类**数据（服务停止后操作）：
+  1. `sessions/<编码>/<ID>/` 日志目录；
+  2. `workspace.json` 的 `sessionIds` / `archivedSessionIds`；
+  3. 旧版单文件 `storages/session_projcache.json` 里的条目；
+  4. 新版分文件 `storages/session_projcache/sessions/session-<ID>.json`（以及写盘中断留下的 `session-<ID>.json.tmp`）。
+- **避坑（2026-10-27 实测）**：只清旧版单文件会残留新版缓存 → 启动器「会话管理」列表继续从缓存读出"无日志 + 无工作区"的**幻影会话**，勾选删除后刷新依旧存在（删不掉的样子）；无标题的缓存残留此前还会被静默跳过，连勾选都勾不到。判定幻影会话 = 无日志 + 不属于任何工作区 + 未归档。dsh 本身不读这类孤儿缓存（不影响 WebUI 会话列表），删除只影响启动器会话管理列表。

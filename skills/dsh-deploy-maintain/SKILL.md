@@ -121,7 +121,8 @@ updated: "2026-10-24"
 ### 3.3 数据维护（会话恢复 / 永久删除，官方无此能力）
 
 - **dsh 没有"永久删除/取消归档"接口**：网页"归档"只是把会话隐藏（日志 + 注册表全保留）。
-- **彻底删除需服务停止后直接操作数据，三处一并清理**：① `sessions/<编码>/<ID>/` 日志目录（只按 id 遍历查找，**不拼接用户输入进路径，防路径穿越**）；② `workspace.json` 的 `sessionIds`/`archivedSessionIds`；③ projcache 缓存（DSH 0.1.2-rc.1+ 分文件 `sessions/session-{uuid}.json`，旧版单文件 `session_projcache.json`）。
+- **彻底删除需服务停止后直接操作数据，三处一并清理**：① `sessions/<编码>/<ID>/` 日志目录（只按 id 遍历查找，**不拼接用户输入进路径，防路径穿越**）；② `workspace.json` 的 `sessionIds`/`archivedSessionIds`；③ projcache 缓存（DSH 0.1.2-rc.1+ 分文件 `sessions/session-{uuid}.json`，旧版单文件 `session_projcache.json`）——**新旧两种格式都要清**，另清写盘中断残留的 `session-{uuid}.json.tmp`。
+- **「会话管理幻影会话」坑（2026-10-27 实测修复）**：只清旧版单文件、漏清新版分文件缓存 → 列表继续从缓存读出"无日志+无工作区"的幻影行，勾选删除后刷新依旧存在（用户感知＝"删不掉"）；无标题的缓存残留还会被静默跳过、连勾选都勾不到。判定 = 无日志 + 不属于任何工作区 + 未归档。dsh 本身不读这类孤儿缓存（不影响 WebUI），删除只影响启动器列表。修复：`purge_session` 同时清新旧缓存，`list_sessions` 对无标题残留也建记录并打 `orphan` 标记，GUI 状态列显示「缓存残留」+ 底部计数提示可删数量。
 - **复原（取消归档）= 只把 id 从 archivedSessionIds 移除并原子写回**——日志/归属/缓存 dsh 从没动过，天然无损。与 `purge_session` 完全相反。
 - JSON 写回用原子写（同目录临时 + `os.replace`）。GUI「会话管理」弹窗：Treeview 多选 +「恢复选中 (N)」/「删除选中 (N)」，均二次确认；GPU 承担全部删除/恢复（实际启动时服务运行中，WebUI 删不了）。
 - **隔离测试**：复制真实 workspace.json 到副本 + monkeypatch `DSH_HOME_DIR`，不碰真实数据。

@@ -85,7 +85,8 @@ Detailed usage in `plugins/<name>/README.md`.
 Official dsh has **no** "permanently delete session" or "un-archive" — the "archive" button only hides sessions (logs are fully retained). This launcher directly operates local data **while the service is stopped**:
 
 - **Restore (Un-archive)**: Session reappears in the list; logs and content untouched.
-- **Permanently Delete**: Irrecoverable. Logs + registry entries wiped.
+- **Permanently Delete**: Irrecoverable. Logs + workspace registry entries + **both old and new projection-cache formats** wiped.
+- **Cache orphans (phantom sessions)**: after dsh upgrades, some already-deleted sessions leave title caches behind in the projection cache (`storages/session_projcache/sessions/session-*.json`) — they have no logs, belong to no workspace, and never appear in the WebUI. Session Management marks them as *Cache orphan* and the footer shows "N sessions total, M cache orphans"; tick them and click *Delete Selected* to clear them all (fixed 2026-10-27: only the old cache format used to be cleaned, so these rows could never be deleted).
 
 Entry: main window → *Data Maintenance → Session Management* → check sessions → click *Restore Selected / Delete Selected*.
 

@@ -6139,8 +6139,16 @@ class Launcher:
         os.replace(temp_path, path)
 
     def _remove_session_from_registries(self, session_id):
-        """从 storages/workspace.json 与 session_projcache.json 中移除一个会话。
-        返回 (workspace_changed, projcache_changed); 失败抛异常由调用方处理。"""
+        """从 storages/workspace.json 与两种投影缓存中移除一个会话。
+        返回 (workspace_changed, projcache_changed); 失败抛异常由调用方处理。
+
+        2026-10-27 修复: DSH 0.1.2-rc.1 起投影缓存改成按会话分文件
+        (storages/session_projcache/sessions/session-{id}.json), 而旧逻辑只清理
+        旧版单文件 session_projcache.json。后果: 永久删除会话后, 新格式缓存文件
+        残留, 会话管理列表仍从缓存里读出一行"无日志+无工作区"的幻影会话,
+        而且勾选删除后依然是"删不掉"的样子 (列表每次都从残留缓存重建该行)。
+        这里把新旧两种投影缓存一起清理, 彻底消除幻影会话。
+        """
         workspace_storage = os.path.join(DSH_HOME_DIR, "storages", "workspace.json")
         workspace_changed = False
         if os.path.isfile(workspace_storage):
@@ -6164,6 +6172,7 @@ class Launcher:
             if workspace_changed:
                 self._atomic_write_json(workspace_storage, data)
 
+        # 旧格式投影缓存: storages/session_projcache.json (单文件, DSH 0.1.1 及以前)
         projcache_storage = os.path.join(DSH_HOME_DIR, "storages", "session_projcache.json")
         projcache_changed = False
         if os.path.isfile(projcache_storage):
@@ -6176,7 +6185,27 @@ class Launcher:
                 projcache_changed = True
             if projcache_changed:
                 self._atomic_write_json(projcache_storage, data)
-        return workspace_changed, projcache_changed
+
+        # 新格式投影缓存: storages/session_projcache/sessions/session-{id}.json
+        # (按会话分文件, DSH 0.1.2-rc.1 起)。写盘中断还会留下 .tmp, 一并清理。
+        # 安全: 会话 id 只允许作为单个文件名使用, 带路径分隔符/上跳的 id 直接跳过,
+        # 防止构造 id 造成越权删除。
+        new_projcache_changed = False
+        new_projcache_dir = os.path.join(DSH_HOME_DIR, "storages", "session_projcache", "sessions")
+        session_id_safe = (isinstance(session_id, str) and session_id != ""
+                           and "/" not in session_id and "\\" not in session_id
+                           and session_id not in (".", ".."))
+        if os.path.isdir(new_projcache_dir) and session_id_safe:
+            for candidate_name in (session_id + ".json", session_id + ".json.tmp"):
+                candidate_path = os.path.join(new_projcache_dir, candidate_name)
+                if not os.path.isfile(candidate_path):
+                    continue
+                try:
+                    os.remove(candidate_path)
+                    new_projcache_changed = True
+                except OSError as error:
+                    self.log("清理新版投影缓存失败: %s: %s" % (candidate_path, error))
+        return workspace_changed, (projcache_changed or new_projcache_changed)
 
     def purge_session(self, session_id):
         """永久删除一个会话 (需服务已停止)。
@@ -6290,7 +6319,7 @@ class Launcher:
             rec = sessions.get(sid)
             if rec is None:
                 rec = {"id": sid, "title": None, "workspace": None,
-                       "archived": False, "hasLog": False}
+                       "archived": False, "hasLog": False, "orphan": False}
                 sessions[sid] = rec
             return rec
 
@@ -6337,8 +6366,12 @@ class Launcher:
                             continue
                         title_row = (row.get("rows") or {}).get("title") or {}
                         title = title_row.get("val")
+                        # 有标题就记录; 无标题也要 ensure 出记录, 否则无标题的缓存残留
+                        # 不会出现在列表里, 用户就永远勾选不到、删不掉 (2026-10-27)。
                         if isinstance(title, str) and title:
                             ensure(sid)["title"] = title
+                        else:
+                            ensure(sid)
             except Exception:
                 pass
 
@@ -6369,6 +6402,10 @@ class Launcher:
                             title = None
                         if isinstance(title, str) and title:
                             ensure(sid)["title"] = title
+                        else:
+                            # 无标题的缓存残留同样要出现在列表里, 否则无法勾选删除
+                            # (2026-10-27: 幻影会话里的无标题残留此前被静默忽略)。
+                            ensure(sid)
                     except Exception:
                         pass
             except Exception:
@@ -6387,6 +6424,15 @@ class Launcher:
                             ensure(sid)["hasLog"] = True
             except Exception:
                 pass
+
+        # 4) 标记幻影会话 (缓存残留): 无日志 + 无工作区 + 未归档。
+        #    这类记录只剩投影缓存里的标题 (新版按会话分文件的缓存没被清理的历史
+        #    残留), 不会出现在 WebUI 会话列表, 但会出现在本列表。标记后 GUI 状态列
+        #    显示「缓存残留」, 用户勾选「删除选中」即可彻底清掉 (见
+        #    _remove_session_from_registries 的新版缓存清理)。
+        for rec in sessions.values():
+            if not rec["hasLog"] and rec["workspace"] is None and not rec["archived"]:
+                rec["orphan"] = True
 
         result = list(sessions.values())
         result.sort(key=lambda s: ((s["workspace"] or "").lower(),
@@ -8605,7 +8651,12 @@ def run_gui():
                             tags=("all_row",))
                 # 会话行
                 for rec in all_items:
-                    status_text = i18n.t('purge.status_archived') if rec["archived"] else i18n.t('purge.status_normal')
+                    if rec["archived"]:
+                        status_text = i18n.t('purge.status_archived')
+                    elif rec.get("orphan"):
+                        status_text = i18n.t('purge.status_orphan')
+                    else:
+                        status_text = i18n.t('purge.status_normal')
                     tree.insert("", "end", iid=rec["id"], values=(
                         "☐",
                         rec["title"] or i18n.t('purge.untitled'),
@@ -8613,7 +8664,12 @@ def run_gui():
                         status_text,
                         i18n.t('purge.has_log_yes') if rec["hasLog"] else i18n.t('purge.has_log_no'),
                     ))
-            count_label.config(text=i18n.t('purge.total_count', count=len(all_items)))
+            # 幻影(缓存残留)会话: 单独计数提示, 让用户知道这些是历史残留、可勾选删除
+            orphan_count = sum(1 for rec in all_items if rec.get("orphan"))
+            if orphan_count > 0:
+                count_label.config(text=i18n.t('purge.total_count_orphan', count=len(all_items), orphan=orphan_count))
+            else:
+                count_label.config(text=i18n.t('purge.total_count', count=len(all_items)))
             update_check_display()
 
         # 删除选中
