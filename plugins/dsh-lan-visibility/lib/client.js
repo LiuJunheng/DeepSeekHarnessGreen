@@ -109,10 +109,14 @@ window.__ModuleLoader__.load({
 		// 官方会话行结构(ui-workspace SessionNodeItem): [状态点 span][标题 span][时间 span][置顶][操作 span],
 		// 行元素带 data-row-key="session:<id>"。标签插入到「标题」与「时间」之间; React 重建行时
 		// 由 MutationObserver 自动补回, 并以 30s 周期刷新可见性快照。
+		// 仅当服务处于局域网模式(dsh_host=0.0.0.0)时注入: 非局域网模式下不显示任何行标签,
+		// 避免只用本机模式的人看到观感变化。
 		const CHIP_ATTR = "data-dsh-lan-visibility-chip";
 		let visibilitySnapshot = { sessions: new Map(), workspaces: new Map() };
 		let scheduledScanTimer = null;
 		let lastSnapshotRefreshAt = 0;
+		// null=尚未探测; true/false=当前服务是否处于局域网模式(来自 /__dsh/lan-visibility/network)
+		let lanModeActive = null;
 
 		/** 把列表路由返回的数据同时作为可见性快照(供行标签使用), 并重新装饰行。 */
 		function applySnapshotFromPayload(payload) {
@@ -170,8 +174,15 @@ window.__ModuleLoader__.load({
 			chip.title = visible ? textOf("chipLanTitle") : textOf("chipLocalTitle");
 		}
 
-		/** 遍历官方侧栏会话行, 给每行标题后补可见性标签。 */
+		/** 遍历官方侧栏会话行, 给每行标题后补可见性标签(仅局域网模式; 否则清除已有标签)。 */
 		function decorateSessionRows() {
+			if (lanModeActive !== true) {
+				// 非局域网模式: 移除可能残留的标签, 保持会话列表与插件安装前一致
+				for (const chip of document.querySelectorAll("[" + CHIP_ATTR + "]")) {
+					if (chip.parentElement !== null) chip.parentElement.removeChild(chip);
+				}
+				return;
+			}
 			let unknownSession = false;
 			const rows = document.querySelectorAll('[data-row-key^="session:"]');
 			for (const row of rows) {
@@ -206,8 +217,20 @@ window.__ModuleLoader__.load({
 			}, 150);
 		}
 
-		/** 安装行标签: 首次刷新 + 30s 周期刷新 + MutationObserver 增量补回。 */
-		function installSessionRowBadges() {
+		/** 安装行标签: 先探测是否局域网模式; 仅局域网模式才启动(快照刷新 + 30s 周期 + MutationObserver)。 */
+		async function installSessionRowBadges() {
+			let networkPayload = null;
+			try {
+				networkPayload = await requestJson(ROUTE_NETWORK);
+			} catch (_error) {
+				networkPayload = null;
+			}
+			lanModeActive = networkPayload !== null && networkPayload.lanMode === true;
+			if (lanModeActive !== true) {
+				// 非局域网模式: 不注入标签(也清掉可能残留的)
+				decorateSessionRows();
+				return;
+			}
 			void refreshVisibilitySnapshot();
 			setInterval(() => { void refreshVisibilitySnapshot(); }, 30000);
 			try {
@@ -278,9 +301,12 @@ window.__ModuleLoader__.load({
 					setPayload(next);
 					// 同一份数据也作为行标签快照, 避免再发一次请求
 					applySnapshotFromPayload(next);
-					// 局域网地址探测(失败不影响列表展示)
+					// 局域网地址探测(失败不影响列表展示); 同时用于判断是否显示会话行标签
 					try {
-						setNetwork(await requestJson(ROUTE_NETWORK));
+						const networkPayload = await requestJson(ROUTE_NETWORK);
+						setNetwork(networkPayload);
+						lanModeActive = networkPayload !== null && networkPayload.lanMode === true;
+						decorateSessionRows();
 					} catch (_networkError) {
 						setNetwork(null);
 					}
