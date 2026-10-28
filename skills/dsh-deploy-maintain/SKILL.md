@@ -40,6 +40,7 @@ updated: "2026-10-24"
 
 - **Node 二进制**：国内走 `https://registry.npmmirror.com/-/binary/node/...`，官方走 `https://nodejs.org/dist/...`。注意二进制下载与 npm 包注册表是**两个不同镜像路径**。
 - **便携 Node 自带 npm 位置分平台，必须两个都探测**：Windows zip `node_modules/npm/bin/npm-cli.js`（node.exe 在顶层）；Linux/Mac tar.gz `lib/node_modules/npm/bin/npm-cli.js`。
+- **Node 版本要跟上 dsh 的 `engines`**：dsh 0.2.2+ 要求 `>= 24.9.0`（旧绿色包是 22.20.0，npm 只警告不拦安装）。只改默认版本号对老用户无效——更新程序会跳过 `config.json`。必须运行时用 `node --version` 实测，低于最低要求/配置版本才自动升级；升级失败只记日志并继续用旧版；存在多版本目录时按版本号取最高的 `node.exe`，否则旧目录会让升级"回退"。默认推荐 Node 24 LTS（2026-10 为 24.22.1）。
 - **dsh bin 入口**：`node_modules/@deepseek-ai/dsh/lib/bin.js`（不是顶层 `bin/`）。启动/插件管理必须用便携 `node.exe` + 此 `lib/bin.js` 直接调用；**别依赖 `node_modules/.bin/dsh.cmd`**（.cmd 回退分支会调 PATH 里的系统 node，便携/系统搞混）。
 - **镜像附 `--registry`**：`resolve_mirror()` 返回 `("cn", True)` 时附加 `--registry`；auto 模式的 npm install 不会自动挂 registry。
 - **npm 安装"没输出=像卡死"的真因是 npm 而非显示端**：npm stdout 非 TTY（管道）时默认日志级别 notice 会抑制逐包下载输出，只打印完 `added N packages`。**必须加 `--loglevel=http`**（每包实时吐一行；`verbose` 反而刷爆 GUI）；进入 reify（纯本地 I/O 无网络）阶段 http 又静默 → 再配 `_stream_subprocess(heartbeat_interval=60)` 空闲心跳。**网络阶段看 npm http 日志，纯 I/O 阶段看心跳**。

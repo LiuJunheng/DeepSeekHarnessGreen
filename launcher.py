@@ -149,7 +149,7 @@ def _activate_existing_launcher(window_title=WINDOW_TITLE):
 # 默认配置 (用户可在 config.json 中覆盖)
 DEFAULT_CONFIG = {
     "mirror": "auto",            # 镜像: auto=自动检测 / cn=国内 / official=官方
-    "node_version": "22.20.0",   # 便携 Node 版本号
+    "node_version": "24.22.1",   # 便携 Node 版本号 (24.x LTS; dsh 0.2.2+ 要求 >= 24.9.0)
     "python_version": "3.10.20", # 内置便携 Python 版本号 (python-build-standalone)
     "python_release": "20260807",# python-build-standalone 发布标签(日期)
     "dsh_port": 3080,            # dsh web 服务端口
@@ -206,6 +206,36 @@ NPM_REGISTRY = {
     "cn": "https://registry.npmmirror.com",
     "official": "https://registry.npmjs.org",
 }
+
+# 内置便携 Node 的最低版本 (2026-10-28): dsh 0.2.2-alpha.2 的 package.json engines 要求 >= 24.9.0。
+# 启动时 prepare_node 会读取实际 node --version, 低于该版本就自动升级到 config.node_version。
+# 老用户的 config.json 会被更新程序保留 (不覆盖), 所以不能只靠改默认值让老用户升级。
+NODE_MIN_VERSION = "24.9.0"
+
+
+def parse_version_tuple(version_text):
+    """把 "24.22.1" / "v24.22.1" 这类版本号转成 (24, 22, 1) 整数元组, 无法解析返回 None。
+    只取前三段数字, 便于不同长度版本号比较; 用于 Node 版本判断, 不做通用 semver 解析。"""
+    text = str(version_text or "").strip()
+    if text.startswith("v"):
+        text = text[1:]
+    parts = text.split(".")
+    if len(parts) < 2:
+        return None
+    numbers = []
+    for part in parts[:3]:
+        digits = ""
+        for character in part:
+            if character.isdigit():
+                digits += character
+            else:
+                break
+        if digits == "":
+            return None
+        numbers.append(int(digits))
+    while len(numbers) < 3:
+        numbers.append(0)
+    return tuple(numbers)
 
 # 内置便携 Python 下载源 (python-build-standalone, 完整发行自带 tkinter)
 # 文件名规则: cpython-{version}+{release}-x86_64-pc-windows-msvc-install_only.tar.gz
@@ -632,18 +662,33 @@ class Launcher:
 
     # ---------- 路径查找 ----------
     def find_node_exe(self):
-        """在 runtime/node 下查找便携版 node 可执行文件, 找不到返回 None"""
+        """在 runtime/node 下查找便携版 node 可执行文件, 找不到返回 None。
+        同时存在多个版本目录时 (升级后旧目录被占用删除失败), 优先返回版本号最高的那个,
+        避免启动时又切回旧版 Node。"""
         if not os.path.isdir(NODE_DIR):
             return None
-        for entry_name in os.listdir(NODE_DIR):
+        best_node_exe = None
+        best_version = None
+        for entry_name in sorted(os.listdir(NODE_DIR)):
             entry_path = os.path.join(NODE_DIR, entry_name)
+            if not os.path.isdir(entry_path):
+                continue
             if sys.platform == "win32":
                 candidate = os.path.join(entry_path, "node.exe")
             else:
                 candidate = os.path.join(entry_path, "bin", "node")
-            if os.path.isfile(candidate):
-                return candidate
-        return None
+            if not os.path.isfile(candidate):
+                continue
+            # 目录名形如 node-v24.22.1-win-x64, 取 node-v 之后、第一个 "-" 之前的版本号
+            entry_version = parse_version_tuple(entry_name.replace("node-v", "").split("-")[0])
+            if best_node_exe is None:
+                best_node_exe = candidate
+                best_version = entry_version
+                continue
+            if entry_version is not None and (best_version is None or entry_version > best_version):
+                best_node_exe = candidate
+                best_version = entry_version
+        return best_node_exe
 
     def find_python_exe(self):
         """在 runtime/python 下查找内置便携版 python 可执行文件, 找不到返回 None
@@ -758,18 +803,51 @@ class Launcher:
                  % last_error)
         return False
 
-    def prepare_node(self):
-        """确保便携版 Node 就绪, 缺失则自动下载"""
-        node_exe = self.find_node_exe()
-        if node_exe is not None:
-            self.log("Node 已就绪: %s" % node_exe)
-            return node_exe
+    def detect_node_version(self, node_exe):
+        """运行 node --version 读取实际版本号 (如 "24.22.1"), 读取失败返回 None"""
+        try:
+            completed = subprocess.run(
+                [node_exe, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                creationflags=_SUBPROC_NO_WINDOW,
+            )
+        except Exception as error:
+            self.log("读取 Node 版本失败: %s" % error)
+            return None
+        version_text = (completed.stdout or "").strip()
+        if version_text.startswith("v"):
+            version_text = version_text[1:]
+        return version_text or None
 
-        self.log("未检测到便携版 Node, 开始自动下载 (版本 v%s) ..." % self.config["node_version"])
+    def cleanup_old_node_dirs(self, keep_version):
+        """升级后清理 runtime/node 下其它版本的 Node 目录, 释放磁盘空间。
+        只处理 node-v* 目录; 旧版本可能仍被占用 (删除失败), 此时只记日志, 不影响启动
+        (find_node_exe 会优先选择版本号最高的目录)。"""
+        keep_prefix = "node-v" + keep_version + "-"
+        if not os.path.isdir(NODE_DIR):
+            return
+        for entry_name in os.listdir(NODE_DIR):
+            if not entry_name.startswith("node-v"):
+                continue
+            if entry_name.startswith(keep_prefix):
+                continue
+            entry_path = os.path.join(NODE_DIR, entry_name)
+            if not os.path.isdir(entry_path):
+                continue
+            try:
+                shutil.rmtree(entry_path)
+                self.log("已清理旧版 Node 目录: %s" % entry_name)
+            except Exception as error:
+                self.log("清理旧版 Node 目录失败 (可能被占用), 可稍后手动删除 %s: %s"
+                         % (entry_name, error))
+
+    def download_node(self, version):
+        """下载并解压指定版本的便携 Node, 返回解压后的 node 可执行文件路径。
+        解压目标是带版本号的子目录, 下载/解压失败不会破坏已有的可用 Node。"""
         os.makedirs(NODE_DIR, exist_ok=True)
-
-        archive_name = "node-v%s-%s%s" % (
-            self.config["node_version"], NODE_PLATFORM, NODE_ARCHIVE_EXT)
+        archive_name = "node-v%s-%s%s" % (version, NODE_PLATFORM, NODE_ARCHIVE_EXT)
         archive_path = os.path.join(NODE_DIR, archive_name)
 
         # 依次尝试 国内 -> 官方 (自动模式), 或仅尝试指定源
@@ -777,19 +855,23 @@ class Launcher:
         last_error = None
         for source in source_order:
             url = NODE_URL_TEMPLATE[source].format(
-                version=self.config["node_version"], platform=NODE_PLATFORM, ext=NODE_ARCHIVE_EXT)
-            self.log("正在从 [%s] 下载 Node: %s" % (source, url))
+                version=version, platform=NODE_PLATFORM, ext=NODE_ARCHIVE_EXT)
+            self.log("正在从 [%s] 下载 Node v%s: %s" % (source, version, url))
             try:
                 self.download_with_progress(url, archive_path)
                 self.log("下载完成, 正在解压 ...")
                 self.extract_archive(archive_path, NODE_DIR)
-                self.log("Node 解压完成")
                 if os.path.exists(archive_path):
                     os.remove(archive_path)      # 清理压缩包
                 node_exe = self.find_node_exe()
-                if node_exe is not None:
-                    return node_exe
-                raise RuntimeError("解压后未找到 node 可执行文件")
+                if node_exe is None:
+                    raise RuntimeError("解压后未找到 node 可执行文件")
+                installed_version = self.detect_node_version(node_exe)
+                if parse_version_tuple(installed_version) != parse_version_tuple(version):
+                    raise RuntimeError("解压后的 Node 版本 v%s 与目标 v%s 不一致"
+                                       % (installed_version, version))
+                self.log("Node v%s 就绪: %s" % (installed_version, node_exe))
+                return node_exe
             except Exception as error:
                 last_error = error
                 self.log("从 [%s] 下载失败: %s" % (source, error))
@@ -797,6 +879,51 @@ class Launcher:
                     os.remove(archive_path)
 
         raise RuntimeError("Node 下载失败: %s" % last_error)
+
+    def prepare_node(self):
+        """确保便携版 Node 就绪, 且版本不低于 config.node_version 与 dsh 的最低要求。
+        dsh 0.2.2+ 的 engines 要求 Node >= 24.9.0, 旧绿色包里的 Node 22 会在启动时自动升级;
+        升级失败只记日志并继续使用旧版本, 不阻断启动 (旧版 dsh 仍可运行)。"""
+        node_exe = self.find_node_exe()
+        configured_version_text = str(
+            self.config.get("node_version", DEFAULT_CONFIG["node_version"])).strip()
+        target_version_text = configured_version_text
+        configured_version = parse_version_tuple(configured_version_text)
+        minimum_version = parse_version_tuple(NODE_MIN_VERSION)
+        # 老用户的 config.json 被更新程序保留 (不覆盖), 会一直写着 22.20.0;
+        # 低于 dsh 最低要求时改用当前默认版本, 才能升级到本版本推荐的 Node。
+        if configured_version is not None and minimum_version is not None \
+                and configured_version < minimum_version:
+            target_version_text = DEFAULT_CONFIG["node_version"]
+            self.log("配置的 Node v%s 低于 dsh 要求 (>= v%s), 改用内置版本 v%s"
+                     % (configured_version_text, NODE_MIN_VERSION, target_version_text))
+            # 顺手把配置迁移到新版本, 避免每次启动都重复判断 (配置写盘失败只影响下次判断)
+            self.config["node_version"] = target_version_text
+            self.save_config()
+        target_version = parse_version_tuple(target_version_text)
+
+        if node_exe is not None:
+            installed_version_text = self.detect_node_version(node_exe)
+            installed_version = parse_version_tuple(installed_version_text)
+            if installed_version is None or target_version is None:
+                self.log("Node 已就绪: %s (版本识别失败, 跳过自动升级)" % node_exe)
+                return node_exe
+            if installed_version >= target_version:
+                self.log("Node 已就绪: v%s (%s)" % (installed_version_text, node_exe))
+                return node_exe
+            self.log("内置 Node v%s 低于要求的 v%s, 开始自动升级 ..."
+                     % (installed_version_text, target_version_text))
+            try:
+                upgraded_node_exe = self.download_node(target_version_text)
+            except Exception as error:
+                self.log("Node 自动升级失败, 继续使用旧版本 v%s: %s"
+                         % (installed_version_text, error))
+                return node_exe
+            self.cleanup_old_node_dirs(target_version_text)
+            return upgraded_node_exe
+
+        self.log("未检测到便携版 Node, 开始自动下载 (版本 v%s) ..." % target_version_text)
+        return self.download_node(target_version_text)
 
     def download_with_progress(self, url, target_path):
         """带进度提示的下载 (使用 urllib, 无第三方依赖)"""

@@ -109,8 +109,8 @@ runtime\python\python\python.exe launcher.py --install-plugin plugins\dsh-skill-
 
 ```sh
 # 用绿色版自带 node（无依赖）
-runtime\node\node-v22.20.0-win-x64\node.exe workspace\research\skill-center-test.mjs
-runtime\node\node-v22.20.0-win-x64\node.exe workspace\research\skill-center-client-smoke.mjs
+runtime\node\node-v24.22.1-win-x64\node.exe workspace\research\skill-center-test.mjs
+runtime\node\node-v24.22.1-win-x64\node.exe workspace\research\skill-center-client-smoke.mjs
 ```
 
 - 宿主端：51 项断言（路由 / CRUD / ZIP 各布局与安全用例 / 冲突 / 降级）
