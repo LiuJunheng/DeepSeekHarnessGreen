@@ -26,7 +26,7 @@
 
 ## 二、当前状态（版本 / 发布 / 仓库）
 
-* **版本唯一来源 = launcher.py** **`GREEN_VERSION`**；`GREEN_VERSION_DATE` 由 `release_upload.py` 打包当天自动回写（禁止预写未来日期）。zip 名与发布均以此为准。当前已发布 **v1.0.39**。
+* **版本唯一来源 = launcher.py** **`GREEN_VERSION`**；`GREEN_VERSION_DATE` 由 `release_upload.py` 打包当天自动回写（禁止预写未来日期）。zip 名与发布均以此为准。当前已发布 **v1.0.47**。
 
 * **形态**：tkinter 启动器 + 便携 Node/Python + 绿色 zip 分发 + 内置桌面壳 + 双通道自更新。
 
