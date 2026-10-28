@@ -278,6 +278,18 @@ REQUIRED_CORE_BUNDLES_BY_PROFILE = {
 # 任何 profile 都至少需要的基础 core bundle (兜底)
 _MINIMUM_CORE_BUNDLES = ["@deepseek-ai/dsh-base"]
 
+# 官方已退役 / 已合并的 bundle (2026-10-29):
+# 旧版 dsh 会把它们写进 profile 的 dsh.profile.bundles, 新版安装里已不再提供,
+# 启动时只会打印 "cannot resolve profile bundle ... skipping" 然后继续, 属无害噪音,
+# 但会让用户误以为插件损坏。启动前由 _prune_retired_bundles 幂等清理。
+#   dsh-experimental-agent-team-web-profile: 0.1.6 之后不再发布, Web UI 已合并进
+#   dsh-experimental-agent-team-profile ("collaboration, tools, and Web UI in one bundle")。
+#   dsh-experimental-schedule-bundle: 与官方 dsh-official-bundles 的 RETIRED_BUNDLES 保持一致。
+RETIRED_OFFICIAL_BUNDLES = [
+    "@deepseek-ai/dsh-experimental-agent-team-web-profile",
+    "@deepseek-ai/dsh-experimental-schedule-bundle",
+]
+
 # 服务启动失败日志里代表"插件与核心不兼容"的关键字 (冒烟验证/历史日志匹配用)。
 # 匹配到任意关键字 + 日志堆栈里出现 profile 的 bundle 插件路径, 即判定该插件不兼容。
 # 新核心版本常新增的硬校验 (如 v0.1.6 的 typert result codec 必须有 create() 工厂),
@@ -3884,6 +3896,29 @@ class Launcher:
         self.write_profile_manifest(profile, manifest)
         return True, list(bundles)
 
+    def _prune_retired_bundles(self, profile=DEFAULT_PROFILE):
+        """从 profile 的 dsh.profile.bundles 中移除官方已退役/合并的 bundle (幂等)。
+
+        这些名字由旧版 dsh 写进 profile (例如 agent-team-web-profile 在 0.1.6 后合并进
+        agent-team-profile), 新版安装里已不存在, 保留只会让每次启动打印
+        "cannot resolve profile bundle ... skipping"。只改 bundles 列表, 不动 dependencies,
+        不删除任何文件, 清理失败也不影响后续启动。返回是否发生变更。"""
+        manifest = self.read_profile_manifest(profile)
+        if manifest is None:
+            return False
+        bundles = manifest.get("dsh", {}).get("profile", {}).get("bundles")
+        if not isinstance(bundles, list):
+            return False
+        removed_bundles = [name for name in bundles if name in RETIRED_OFFICIAL_BUNDLES]
+        if not removed_bundles:
+            return False
+        manifest["dsh"]["profile"]["bundles"] = [
+            name for name in bundles if name not in RETIRED_OFFICIAL_BUNDLES
+        ]
+        self.write_profile_manifest(profile, manifest)
+        self.log("已清理官方已退役的 bundle: %s" % ", ".join(removed_bundles))
+        return True
+
     def reconcile_bundles(self, profile=DEFAULT_PROFILE, removed=None):
         """把 dependencies 中声明 dsh.bundle 且未停用的包同步进 dsh.profile.bundles;
         停用的依赖包从 bundles 移除; removed 中列出的包 (本次移除操作的目标) 强制清除。
@@ -5476,6 +5511,11 @@ class Launcher:
         self.patch_commands_backoff()
         lan_api_patched = self.patch_lan_api_trust()
         self.patch_auth(require_auth=bool(self.config.get("dsh_require_auth", True)))
+        # 清理旧版 dsh 写进 profile 的已退役 bundle (幂等, 失败不阻断启动)
+        try:
+            self._prune_retired_bundles()
+        except Exception as error:
+            self.log("清理退役 bundle 失败 (不阻断): %s" % error)
         return lan_api_patched
 
     def lan_addresses(self):
