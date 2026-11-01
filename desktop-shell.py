@@ -45,8 +45,11 @@ PID_FILE = os.path.join(BASE_DIR, "runtime", "desktop_shell.pid")
 # WebView2 持久化存储目录 (localStorage / cookie / indexedDB)
 # private_mode=False + 指定 storage_path = 桌面端 localStorage 持久化
 STORAGE_PATH = os.path.join(BASE_DIR, "runtime", "webview2_data")
-WINDOW_WIDTH = 1200
-WINDOW_HEIGHT = 800
+# 桌面窗口尺寸 (2026-11-01): 默认值只用于首次启动; 实际尺寸与最大化状态由
+# config.json 记忆 (desktop_window_width/height/maximized), 窗口关闭时写回。
+# 保存时下限固定为最小尺寸 (避免窗口小到看不清内容), 不限制最大值。
+WINDOW_DEFAULT_WIDTH = 1200
+WINDOW_DEFAULT_HEIGHT = 800
 WINDOW_MIN_WIDTH = 900
 WINDOW_MIN_HEIGHT = 600
 
@@ -212,6 +215,74 @@ def read_server_address():
     if host in ("0.0.0.0", "::"):
         host = DEFAULT_HOST
     return host, port
+
+
+def read_window_state():
+    """读取 config.json 里记住的桌面窗口尺寸与最大化状态。
+
+    尺寸低于最小尺寸 (900x600) 时按最小尺寸使用, 不设上限;
+    字段缺失/非法时回退默认 1200x800、非最大化。
+
+    Returns:
+        (int, int, bool): (width, height, maximized)。
+    """
+    width = WINDOW_DEFAULT_WIDTH
+    height = WINDOW_DEFAULT_HEIGHT
+    maximized = False
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as file_handle:
+            config_data = json.load(file_handle)
+    except Exception as exc:  # noqa: BLE001 - 配置缺失/损坏时用默认窗口尺寸
+        print("[DSH Shell] 读取窗口尺寸失败, 使用默认尺寸:", repr(exc), flush=True)
+        return width, height, maximized
+
+    try:
+        width = int(config_data.get("desktop_window_width", width))
+        height = int(config_data.get("desktop_window_height", height))
+    except (TypeError, ValueError):
+        width = WINDOW_DEFAULT_WIDTH
+        height = WINDOW_DEFAULT_HEIGHT
+    width = max(WINDOW_MIN_WIDTH, width)
+    height = max(WINDOW_MIN_HEIGHT, height)
+    # 只认严格的 JSON true; 手改成 "false" 字符串等异常值一律按非最大化处理
+    maximized = config_data.get("desktop_window_maximized") is True
+    return width, height, maximized
+
+
+def save_window_state(window_handle, maximized):
+    """桌面窗口关闭前把当前尺寸与最大化状态写回 config.json。
+
+    只更新 desktop_window_width / desktop_window_height / desktop_window_maximized
+    三个字段, 其它配置原样保留; 尺寸同样夹到最小尺寸、不限制最大值。
+    写盘失败只打印日志, 不影响窗口关闭流程。
+    """
+    if not window_handle.events.shown.is_set():
+        return   # 窗口还没显示就被关掉, 没有可信尺寸可记录
+    try:
+        width = int(window_handle.width)
+        height = int(window_handle.height)
+    except Exception as exc:  # noqa: BLE001 - 读取尺寸失败则不写盘
+        print("[DSH Shell] 读取窗口尺寸失败, 本次不保存:", repr(exc), flush=True)
+        return
+    width = max(WINDOW_MIN_WIDTH, width)
+    height = max(WINDOW_MIN_HEIGHT, height)
+
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as file_handle:
+            config_data = json.load(file_handle)
+    except Exception as exc:  # noqa: BLE001 - 读不到配置就不要覆盖, 避免写坏 config
+        print("[DSH Shell] 读取 config.json 失败, 本次不保存窗口尺寸:", repr(exc), flush=True)
+        return
+    config_data["desktop_window_width"] = width
+    config_data["desktop_window_height"] = height
+    config_data["desktop_window_maximized"] = bool(maximized)
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as file_handle:
+            json.dump(config_data, file_handle, ensure_ascii=False, indent=2)
+        print("[DSH Shell] 已记录窗口尺寸: %dx%d maximized=%s"
+              % (width, height, bool(maximized)), flush=True)
+    except Exception as exc:  # noqa: BLE001 - 写盘失败不影响关闭
+        print("[DSH Shell] 保存窗口尺寸失败:", repr(exc), flush=True)
 
 
 def webview_runtime_present():
@@ -607,16 +678,39 @@ def open_in_shell_window(server_url, port, icon_path):
         placeholder_url = "data:text/html;charset=utf-8," + urllib.parse.quote(PLACEHOLDER_HTML)
         initial_url = placeholder_url
 
+    # 恢复上次的桌面窗口尺寸与最大化状态 (2026-11-01), 尺寸下限 900x600
+    window_width, window_height, window_maximized = read_window_state()
     window_handle = shell_webview_backend.create_window(
         WINDOW_TITLE,
         initial_url,
-        width=WINDOW_WIDTH,
-        height=WINDOW_HEIGHT,
+        width=window_width,
+        height=window_height,
         min_size=(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT),
         resizable=True,
+        maximized=window_maximized,
         text_select=True,   # 关键: pywebview 默认 text_select=False 会禁用 WebView2 内所有文本选择!
         js_api=DesktopShellApi(),   # 提供 open_external, 供新窗口桥接把登录页交给系统浏览器
     )
+
+    # 记录"当前是否最大化": pywebview 没有可直接查询的 maximized 属性,
+    # 用 events.maximized / events.restored 跟踪状态; 关闭窗口时连同尺寸一起写回。
+    window_state = {"maximized": window_maximized}
+
+    def on_window_maximized(window=None):
+        window_state["maximized"] = True
+
+    def on_window_restored(window=None):
+        window_state["maximized"] = False
+
+    def on_window_closing(window=None):
+        save_window_state(window_handle, window_state["maximized"])
+
+    try:
+        window_handle.events.maximized += on_window_maximized
+        window_handle.events.restored += on_window_restored
+        window_handle.events.closing += on_window_closing
+    except Exception as exc:  # noqa: BLE001 - 事件绑定失败不影响窗口打开
+        print("[DSH Shell] 绑定窗口尺寸事件失败:", repr(exc), flush=True)
 
     i18n_bridge_js = _build_i18n_bridge_js()
 

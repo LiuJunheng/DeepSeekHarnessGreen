@@ -146,6 +146,17 @@ def _activate_existing_launcher(window_title=WINDOW_TITLE):
     user32.BringWindowToTop(hwnd)
     return True
 
+# 启动器主窗口尺寸 (2026-11-01):
+# 默认值只用于首次启动; 用户点「保存设置」时会把当时窗口尺寸记进 config.json,
+# 保存时下限固定为主窗口最小尺寸 (避免窗口小到看不清内容), 不限制最大值。
+LAUNCHER_WINDOW_DEFAULT_WIDTH = 1160
+LAUNCHER_WINDOW_DEFAULT_HEIGHT = 780
+LAUNCHER_WINDOW_MIN_WIDTH = 1000
+LAUNCHER_WINDOW_MIN_HEIGHT = 660
+# 桌面窗口默认尺寸 (desktop-shell.py 读取同名字段; 同样只限制下限, 不限制上限)
+DESKTOP_WINDOW_DEFAULT_WIDTH = 1200
+DESKTOP_WINDOW_DEFAULT_HEIGHT = 800
+
 # 默认配置 (用户可在 config.json 中覆盖)
 DEFAULT_CONFIG = {
     "mirror": "auto",            # 镜像: auto=自动检测 / cn=国内 / official=官方
@@ -183,6 +194,14 @@ DEFAULT_CONFIG = {
     # 升级 dsh 核心前是否自动备份当前版本到 runtime/backup (默认开启)。
     # 关闭后改为"直接覆盖安装": 升级更快、不额外占用磁盘, 但出问题时无法回退旧版。
     "auto_backup_on_dsh_upgrade": True,
+    # 启动器主窗口尺寸 (点「保存设置」时记录当前尺寸; 下限=最小尺寸, 不限上限)
+    "launcher_window_width": LAUNCHER_WINDOW_DEFAULT_WIDTH,
+    "launcher_window_height": LAUNCHER_WINDOW_DEFAULT_HEIGHT,
+    # 桌面窗口尺寸与最大化状态 (由 desktop-shell.py 在关闭窗口时写回;
+    # 同样只限制下限, 不限制上限)
+    "desktop_window_width": DESKTOP_WINDOW_DEFAULT_WIDTH,
+    "desktop_window_height": DESKTOP_WINDOW_DEFAULT_HEIGHT,
+    "desktop_window_maximized": False,
     # 注: 绿色版版本号统一以 GREEN_VERSION 常量为准 (唯一来源, 见 green_local_version)。
     # 曾把 "green_version" 默认值写在这里, 发布新版本时与常量不同步,
     # 导致本地一直显示旧版本号并反复提示更新 (见 DEV_NOTES 需求 #20)。
@@ -336,8 +355,8 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # 发布流程: 打 tag v{GREEN_VERSION} + Release 资产 DSH-GreenPortable-v{tag}.zip
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
-GREEN_VERSION = "1.0.47"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
-GREEN_VERSION_DATE = "2026年10月28日"               # 绿色版版本日期 (release_upload.py 会按构建当天回写)
+GREEN_VERSION = "1.0.48"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
+GREEN_VERSION_DATE = "2026年11月1日"                # 绿色版版本日期 (release_upload.py 会按构建当天回写)
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
 GREEN_RELEASE_MIRROR = ("https://mirror.nju.edu.cn/github-release/%s/latest"
@@ -8306,8 +8325,20 @@ def run_gui():
 
     root = tk.Tk()
     root.title(i18n.t('window.title'))
-    root.geometry("1160x780")
-    root.minsize(1000, 660)
+    # 恢复上次保存的主窗口尺寸 (2026-11-01); 数值非法时回退默认值,
+    # 再统一夹到最小尺寸以下 (防止旧配置/手改配置把窗口压得太小)
+    try:
+        saved_launcher_width = int(app.config.get(
+            "launcher_window_width", LAUNCHER_WINDOW_DEFAULT_WIDTH))
+        saved_launcher_height = int(app.config.get(
+            "launcher_window_height", LAUNCHER_WINDOW_DEFAULT_HEIGHT))
+    except (TypeError, ValueError):
+        saved_launcher_width = LAUNCHER_WINDOW_DEFAULT_WIDTH
+        saved_launcher_height = LAUNCHER_WINDOW_DEFAULT_HEIGHT
+    launcher_width = max(LAUNCHER_WINDOW_MIN_WIDTH, saved_launcher_width)
+    launcher_height = max(LAUNCHER_WINDOW_MIN_HEIGHT, saved_launcher_height)
+    root.geometry("%dx%d" % (launcher_width, launcher_height))
+    root.minsize(LAUNCHER_WINDOW_MIN_WIDTH, LAUNCHER_WINDOW_MIN_HEIGHT)
 
     # ---------- messagebox 统一包装 (2026-09-25) ----------
     # 本函数内后续所有 messagebox.xxx 调用改走包装对象: 弹原生模态框前先确保主窗口
@@ -10126,6 +10157,28 @@ def run_gui():
         app.config["auto_open_browser"] = bool(auto_open_var.get())
         app.config["show_taskbar_on_minimize"] = bool(taskbar_var.get())
         app.config["auto_backup_on_dsh_upgrade"] = bool(upgrade_backup_var.get())
+        # 记住主窗口当前尺寸 (2026-11-01): 下限=最小尺寸, 不限制最大值。
+        # 窗口最小化/未映射时 winfo_width 可能异常, 低于下限就跳过, 保留上次值。
+        try:
+            current_width = root.winfo_width()
+            current_height = root.winfo_height()
+            if current_width >= LAUNCHER_WINDOW_MIN_WIDTH \
+                    and current_height >= LAUNCHER_WINDOW_MIN_HEIGHT:
+                app.config["launcher_window_width"] = current_width
+                app.config["launcher_window_height"] = current_height
+        except Exception:
+            pass  # 读取尺寸失败不影响设置保存
+        # 桌面窗口的尺寸/最大化由 desktop-shell 进程在关闭时写盘; 这里先从
+        # config.json 读回最新值, 避免用启动时的旧值覆盖桌面窗口刚记录的结果。
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as file_handle:
+                latest_config = json.load(file_handle)
+            for desktop_key in ("desktop_window_width", "desktop_window_height",
+                                "desktop_window_maximized"):
+                if desktop_key in latest_config:
+                    app.config[desktop_key] = latest_config[desktop_key]
+        except Exception:
+            pass  # 读取失败沿用内存值, 不阻断保存
         app.save_config()
         return True
 

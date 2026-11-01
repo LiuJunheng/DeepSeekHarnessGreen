@@ -26,7 +26,7 @@
 
 ## 二、当前状态（版本 / 发布 / 仓库）
 
-* **版本唯一来源 = launcher.py** **`GREEN_VERSION`**；`GREEN_VERSION_DATE` 由 `release_upload.py` 打包当天自动回写（禁止预写未来日期）。zip 名与发布均以此为准。当前已发布 **v1.0.47**。
+* **版本唯一来源 = launcher.py** **`GREEN_VERSION`**；`GREEN_VERSION_DATE` 由 `release_upload.py` 打包当天自动回写（禁止预写未来日期）。zip 名与发布均以此为准。当前已发布 **v1.0.48**。
 
 * **形态**：tkinter 启动器 + 便携 Node/Python + 绿色 zip 分发 + 内置桌面壳 + 双通道自更新。
 
@@ -90,6 +90,8 @@
   * `patch_frontend()`：注入心跳脚本 + `crypto.randomUUID` polyfill。
 
 * **WebUI 单页面去重**：后台心跳 `127.0.0.1:3081`，窗口 180s；心跳 URL 用 `location.hostname` 适配局域网；**手动打开（force=True）不拦截，自动（force=False）排重**。
+
+* **窗口尺寸记忆（2026-11-01）**：启动器主窗口在点「保存设置」时把当前尺寸写入 `launcher_window_width/height`（下限 1000×660，不限制上限，启动时恢复并夹到下限）；桌面窗口由 `desktop-shell.py` 在 `events.closing` 时写回 `desktop_window_width/height` 与 `desktop_window_maximized`（下限 900×600），启动时按记忆值 `create_window(maximized=...)`。桌面窗口是独立进程，启动器 `sync_gui` 保存前会先从 `config.json` 重新读取这三个桌面字段，避免内存里的启动旧值覆盖桌面窗口刚写的新值。pywebview 6.2.1 没有可查询的 maximized 属性，最大化状态用 `events.maximized` / `events.restored` 跟踪。
 
 * **新版 dsh web 认证（0.1.2-alpha.2+）**：首次访问需打开带一次性 `?token=<launchToken>` 的认证地址换取 30 天 Cookie 才放行，裸地址 401。launcher 每次启动后从 server.log **最新启动块**解析 token（`_read_launch_token`）+ 拼认证地址（`_web_auth_url`，含"端口已就绪但 token 未打印"的竞态等待）→ `open_ui` / `wait_and_open` / `launch_desktop_shell` 统一使用；桌面壳经 `--url` 接收认证地址（详见坑48）。
 

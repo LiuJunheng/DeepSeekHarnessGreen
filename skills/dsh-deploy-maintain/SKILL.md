@@ -65,6 +65,7 @@ updated: "2026-10-24"
 - **就绪检测**：后台线程 socket 轮询端口，就绪后 `webbrowser.open`。CLI 模式要**同步 `wait_ready()`**（daemon 线程会随主进程退出消失）。
 - **冷启动重复检测**：PID 文件（`runtime/server.pid`）+ 进程存在判断。排查端口监听用 `grep -w 3080`（`grep 3080` 误匹配 `13080`）。
 - **启动前自动清理孤儿 dsh 进程**：残留 dsh 占 3080 时新进程起不来还误报"已就绪"。用 `_find_port_owner(port)`（`Get-NetTCPConnection -LocalPort -State Listen`→`Get-CimInstance Win32_Process`）+ `_cleanup_orphan_dsh(port)` 校验进程名含 `node` 且命令行含 `bin.js web --port`（**绝不误杀普通程序**）才 `taskkill /F /PID`，再 `_wait_port_free` 兜底。
+- **窗口尺寸/最大化记忆（pywebview 6.x）**：`create_window(maximized=...)` 可直接恢复最大化，但 pywebview **没有可查询的 maximized 属性**；用 `events.maximized` / `events.restored` 自己跟踪，并在 `events.closing`（同步锁事件、窗口仍存活）里读 `window.width/height` 写回配置。尺寸只夹下限、不设上限。若启动器与桌面壳是**两个进程**共同写同一份 config，保存前必须重新读盘合并对方刚写的字段，否则旧内存值会覆盖新记录。
 - **【高发】新版 dsh web 认证（0.1.2-alpha.2+，界面显示 "dsh web authentication required"）**：首次访问要求认证，启动时打印带一次性 `?token=<launchToken>` 的 URL，打开它才签发 30 天 Cookie；直接开裸地址 401。launcher 从 server.log **最新启动块**解析 token（`_read_launch_token`）+ 拼认证地址（`_web_auth_url`，`/` 不能省），`open_ui`/`wait_and_open`/桌面壳（`--url`）统一用。**两个坑**：① **竞态**——dsh 先绑端口、插件树加载完才打印 token，`wait_and_open` 必须先 `wait_ready` 再解析地址（端口已监听时最多短等 8s）；② **改 launcher.py 必须重打包 exe**，否则旧 exe 开裸地址必然 401、误判"启动失败"。
 
 ### 2.5 工作区与 ACL 沙箱（Windows 专属大坑）
