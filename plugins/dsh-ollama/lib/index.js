@@ -166,6 +166,51 @@ function writeOverrides(overrides, logger) {
 }
 
 /**
+ * 读取某个 settings namespace 的当前配置值。
+ *
+ * 【坑 48, 2026-11-03】dsh 0.2.2-alpha.2 起 settings 服务的读取 API 变更:
+ *   旧版: settings.get(namespace)          -> 直接返回配置对象
+ *   新版: settings.describe({ redactSecrets }) -> [{ ns, value, schema, ... }]
+ *         新版**没有 get 方法**, describe() 返回的数组里每项带 value 字段。
+ *
+ * 旧代码直接调 sctx.settings.get() 会抛 "sctx.settings.get is not a function",
+ * 该异常冒泡到 dsh-host-webserver 的兜底 catch 后变成**空白 400 响应**
+ * (无 body、日志也无记录), 表现为 WebUI 上「一键接入失败: HTTP 400」。
+ *
+ * 这里统一封装: 新旧两种 API 都兼容, 都失败时返回 undefined (按"无配置"处理),
+ * 绝不向上抛异常 —— 免得一个读取失败就让整个面板不可用。
+ *
+ * @param {object} sctx - ctx.inject(["settings"]) 注入的上下文
+ * @param {string} namespace - settings 命名空间 (如 "llm-pi-ai")
+ * @returns {object|undefined} 该 namespace 的配置值; 读不到时为 undefined
+ */
+function readSettingsNamespace(sctx, namespace) {
+	const settingsService = sctx ? sctx.settings : undefined;
+	if (!settingsService) return undefined;
+	// 优先走旧 API (0.2.1 及更早): get(namespace) 直接返回配置值
+	if (typeof settingsService.get === "function") {
+		try {
+			return settingsService.get(namespace);
+		} catch {
+			// 旧 API 存在但抛异常 (如 namespace 未注册) -> 继续尝试新 API
+		}
+	}
+	// 新 API (0.2.2+): describe() 返回全部 namespace 描述, 从 value 字段取值
+	if (typeof settingsService.describe === "function") {
+		try {
+			const descriptors = settingsService.describe({ redactSecrets: true });
+			if (Array.isArray(descriptors)) {
+				const descriptor = descriptors.find((item) => item && item.ns === namespace);
+				return descriptor ? descriptor.value : undefined;
+			}
+		} catch {
+			return undefined;
+		}
+	}
+	return undefined;
+}
+
+/**
  * 计算当前生效配置: 默认值 + cordis config (entry) + 面板持久化覆盖 (最高优先)。
  * @param {object} entry - cordis.patch.yml 里 config 的原始对象
  * @returns {object} 合并后的生效配置 (键 ⊆ DEFAULT_CONFIG)
@@ -483,7 +528,8 @@ function mergeModelParams(previousModels, nextModels) {
  * @param {object} options - 可选 { force: boolean }
  */
 async function applyOllamaProfile(sctx, settings, profile, logger, options) {
-	const resolved = sctx.settings.get(PI_AI_NAMESPACE);
+	// 兼容 dsh 0.2.2 起 settings API 变更 (旧 get / 新 describe), 详见 readSettingsNamespace
+	const resolved = readSettingsNamespace(sctx, PI_AI_NAMESPACE);
 	const currentProfile = resolved && resolved.providers
 		? resolved.providers[OLLAMA_PROVIDER_ID]
 		: undefined;
@@ -691,23 +737,47 @@ function sanitizeOverrides(body) {
  * @param {Function} logger - 日志函数集 (ctx.logger)
  */
 function registerRoutes(sctx, entry, logger) {
+	// 构造给 WebUI 的配置 + 状态快照。
+	// 防御性设计 (2026-11-03): 这里任何一步抛异常都会冒泡到 dsh-host-webserver
+	// 的兜底 catch, 最终返回空白 400 (连错误信息都没有) —— 整个 Ollama 面板
+	// 因此完全不可用, 且日志里看不到原因。所以统一包一层, 把真实错误写进
+	// payload 让前端可见, 同时保证路由本身始终返回 200。
 	const configPayload = () => {
-		const effective = resolveEffectiveSettings(entry);
-		const resolved = sctx.settings.get(PI_AI_NAMESPACE);
-		const provider = resolved && resolved.providers
-			? resolved.providers[OLLAMA_PROVIDER_ID]
-			: undefined;
-		return {
-			ok: true,
-			config: effective,
-			status: {
-				online: status.online,
-				models: status.models,
-				checkedAt: status.checkedAt,
-				lastError: status.lastError,
-			},
-			providerWritten: provider !== undefined,
-		};
+		try {
+			const effective = resolveEffectiveSettings(entry);
+			// 兼容 dsh 0.2.2 起 settings API 变更 (旧 get / 新 describe),
+			// 详见 readSettingsNamespace。读取失败按"无配置"处理, 不抛异常。
+			const resolved = readSettingsNamespace(sctx, PI_AI_NAMESPACE);
+			const provider = resolved && resolved.providers
+				? resolved.providers[OLLAMA_PROVIDER_ID]
+				: undefined;
+			return {
+				ok: true,
+				config: effective,
+				status: {
+					online: status.online,
+					models: status.models,
+					checkedAt: status.checkedAt,
+					lastError: status.lastError,
+				},
+				providerWritten: provider !== undefined,
+			};
+		} catch (error) {
+			const message = error && error.message ? error.message : String(error);
+			logger.error("[dsh-ollama] 构造配置快照失败: %s", message);
+			return {
+				ok: false,
+				error: "读取 Ollama 配置失败: " + message,
+				config: {},
+				status: {
+					online: false,
+					models: [],
+					checkedAt: null,
+					lastError: message,
+				},
+				providerWritten: false,
+			};
+		}
 	};
 
 	sctx.effect(() => sctx.webServer.register({

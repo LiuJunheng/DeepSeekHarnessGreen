@@ -343,6 +343,12 @@ ctx.on('system-prompt/assemble', async (assembly, _ctx, next) => {
 - **免鉴权服务必带占位 Authorization 头**：`openai-completions` 协议校验 key——无 apiKeyEnv 无头抛 `No API key for provider`、写 `apiKeyEnv` 又缺真 Key 报 `MISSING_CREDENTIAL` → 正解 `headers:{Authorization:"Bearer ollama-local"}`（服务不校验）。
 - **thinking 模型"Deep diving…"是正常思考态**（先流 reasoning-delta 后出正文，本地 4B 冷启动+思考十几秒~几十秒）；`curl` 直测注意 PowerShell 单引号 JSON 被吃（写临时文件 `--data-binary "@file"`）；`api/ps` 空 = 模型未加载。
 - **后台探测型插件要提供「主动重接入」入口**（外部服务比 DSH 晚启动时用户无重试入口）：加独立路由 `POST /<route>/reconnect`（复用 `runDetection(force:true)`），与配置路由**不同 path**（避免同 path 只能注册一次）；`force:true` 全量重写但 `mergeModelParams` 保留手改项；内部只 runDetection，**不写**配置文件（避免点一下清空面板覆盖值）；离线也是正常返回（reconnected:false + lastError）；客户端按钮置忙。
+- **【坑 48】dsh 0.2.2 起 `settings.get()` 被移除 → 插件路由返回"空白 400"**（2026-11-03 实测）：
+  - **API 变更**：≤0.2.1 用 `settings.get(namespace)` 取配置；**≥0.2.2 没有 `get` 了**，改 `settings.describe({redactSecrets:true})` → `[{ns, value, schema, revision, ...}]`，从数组里 `find(item => item.ns === ns)` 再取 `.value`。写入 API `mutate/update/replace` 不变。
+  - **症状极具误导性**：WebUI 只显示 `一键接入失败: HTTP 400`；直接 curl 复现是 **400 + 空响应体 + server.log 无任何异常**。带自定义守卫头的请求 400、不带的返回 403（说明路由注册正常）。
+  - **为什么是空白 400**：`dsh-host-webserver/lib/index.js` 的兜底 catch —— handler 里任何未捕获异常都 `res.writeHead(400); res.end()`，无 body、无 content-type。更隐蔽的是**catch 块里又调了会抛异常的 `configPayload()`**，把原本"200 + error"的友好降级也炸掉。
+  - **正确写法**：封装 `readSettingsNamespace(sctx, ns)`，`typeof settings.get === "function"` 走旧 API、否则走 `describe()`，都失败返回 `undefined`（按"无配置"处理）**绝不向上抛**；`configPayload()` 整体包 try/catch，**路由永远返回 200**，把错误写进 payload。
+  - **通用规则**：① 插件路由 handler 必须自己兜住所有异常（dsh 只会给你空白 400）；② catch 块里不能再调可能抛异常的函数；③ 调宿主服务前先做 `typeof fn === "function"` 能力检测——dsh alpha 阶段 API 变动频繁（0.2.2 删 `settings.get` / 更早删 `installSettingsSection` / 0.1.2 改 `useSession`→`useChat`）；④ 升级大版本后重点核查"读配置"路径，写入 API 通常更稳。
 
 ### 5.11.1 官方模型 id / 定价是"活"的：插件里别硬编码
 

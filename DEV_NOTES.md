@@ -1323,3 +1323,89 @@ for name, def_lines in defs.items():
 
 **当前状态**：插件已通过 `launcher.py --install-plugin` 装进 web profile，**重启服务后生效**（本会话的 GUI 服务未重启）。
 
+## 十四、dsh 0.2.2 settings API 变更导致插件路由 400（坑 48，2026-11-03）
+
+### 现象
+
+WebUI 里点「一键接入」（Ollama）提示 **`一键接入失败: HTTP 400`**。同期 Ollama 设置面板可能整个空白/不可用。
+
+- 服务本身正常：端口监听、13 个插件全部激活、`GET /` 返回 200
+- `GET /__dsh/ollama/config`（不带自定义头）= **403**（说明路由确实注册了）
+- `GET /__dsh/ollama/config`（带 `x-dsh-ollama: 1`）= **400 且响应体为空**
+- `POST /__dsh/ollama/reconnect` = **400 且响应体为空**
+- `server.log` 里**没有任何异常记录**
+
+### 根因
+
+**dsh 0.2.2-alpha.2 起 `settings` 服务的读取 API 变更，`get()` 方法被移除**：
+
+| 版本 | 读取方式 |
+|------|---------|
+| ≤ 0.2.1 | `settings.get(namespace)` → 直接返回配置对象 |
+| ≥ 0.2.2 | `settings.describe({ redactSecrets: true })` → `[{ ns, value, schema, revision, ... }]`，**无 `get`** |
+
+官方依据：`dsh-api-settings-controller/lib/index.js` 用的是 `settings.describe(...)` / `settings.mutate(...)` / `settings.update(...)` / `settings.replace(...)`，`dsh-settings` 的导出里也只有 `SettingsConflictError / SettingsForms / redactSecrets`——**`get` 确实不存在了**。
+
+老代码 `sctx.settings.get(PI_AI_NAMESPACE)` 因此抛：
+
+```
+TypeError: sctx.settings.get is not a function
+```
+
+### 为什么表现成"空白 400"而不是明确报错
+
+`dsh-host-webserver/lib/index.js` L473-486 的兜底逻辑：
+
+```js
+const next = () => {
+    handle(req, res).catch((err) => {
+        this.ctx.logger.warn(err instanceof Error ? err : new Error(String(err)));
+        if (res.headersSent) { res.destroy(); return; }
+        res.writeHead(400);   // ← 无 body、无 content-type
+        res.end();
+    });
+};
+```
+
+即 **handler 里任何未捕获异常都会被转成一个既没有 body、也看不出原因的 400**。
+
+三个连锁细节：
+
+1. `GET /config` 的 GET 分支直接调 `configPayload()` → 抛 → 400
+2. `POST /reconnect` 的 `runDetection()` 内部也会调 `settings.get` → 抛 → 进入 catch
+3. **但 catch 块里又调了 `configPayload()`** → 再抛 → 逃出 handler → 最终同样是空白 400
+
+所以前端拿到的只有 `response.status = 400`，客户端的
+`throw new Error(payload?.error || "HTTP " + response.status)` 只能显示 `HTTP 400`——真实原因完全被吞掉。
+
+### 修复（plugins/dsh-ollama/lib/index.js）
+
+1. 新增 `readSettingsNamespace(sctx, namespace)`：**新旧 API 双兼容**
+   - 优先 `settings.get(ns)`（≤0.2.1）
+   - 回退 `settings.describe({redactSecrets:true})` → `find(item => item.ns === ns)` → 取 `.value`
+   - 两者都不可用 / 抛异常时返回 `undefined`（按"无配置"处理），**绝不向上抛**
+2. 替换 3 处调用：`applyOllamaProfile()` 与 `configPayload()` 里的 `sctx.settings.get(...)`
+3. `configPayload()` 整体包 try/catch：构造失败时返回 `ok:false` + `error` 文案，**路由本身始终 200**，把真实错误暴露给前端
+4. `settings.mutate()` 不变——写入 API 没有变
+
+### 验证
+
+```
+修复前: GET  /__dsh/ollama/config   +guard => 400 (空 body)
+        POST /__dsh/ollama/reconnect       => 400 "一键接入失败: HTTP 400"
+
+修复后: GET  /__dsh/ollama/config   +guard => 200 完整 JSON
+        POST /__dsh/ollama/reconnect       => 200
+        {"ok":true, ..., "providerWritten":true, "reconnected":true}
+```
+
+`providerWritten: true` + `reconnected: true` 表示 provider 真正写入成功、模型同步完成。
+
+### 教训 / 通用规则
+
+1. **插件路由 handler 必须自己兜住所有异常**：dsh 对未捕获异常的处理是"空白 400"，不告诉你任何信息，排查成本极高。凡是读服务、读文件、解析配置的代码都要包 try/catch 并把错误写进响应体。
+2. **catch 块里不能再调用可能抛异常的函数**：本项目里 catch 调 `configPayload()` 再次抛，直接让原本"200 + error"的友好降级变成"400 空白"，这是最隐蔽的一环。
+3. **调用宿主服务前先做能力检测**：`typeof service.method === "function"`，不要假设 API 永远存在。dsh 在 alpha 阶段 API 变动频繁（0.2.2 删 `settings.get`、0.2.2 前删 `installSettingsSection`、0.1.2 改 `useSession`→`useChat`）。
+4. **升级大版本后要主动核查"读配置"这条路**：写配置（`mutate`）往往稳定，读配置容易被重构。
+5. **排查"空白 400"的第一步**：去 `dsh-host-webserver/lib/index.js` 看兜底 catch——它意味着 handler 抛了异常；然后给 handler 加诊断，把 `error.message` 塞进响应体。
+
