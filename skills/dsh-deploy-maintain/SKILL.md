@@ -179,7 +179,7 @@ updated: "2026-10-24"
 
 ### 5.0 Cordis 插件协议核心约束（必须先记住，否则装完服务直接炸）
 
-六条硬约束，踩任何一条都会导致"装完插件服务起不来"：
+七条硬约束，踩任何一条都会导致"装完插件服务起不来"：
 
 | # | 约束 | 违反症状 | 正确写法 |
 | - | - | - | - |
@@ -189,6 +189,9 @@ updated: "2026-10-24"
 | 4 | **files 数组必须包含 cordis.patch.yml** | pnpm 安装时文件被排除 → 插件树注册失败 | `files: ["lib", "cordis.patch.yml"]` |
 | 5 | **name 字段与目录名一致** | 包名/目录名对不上时 pnpm 安装可能出问题 | 目录 `dsh-rules/` → package.json `name: "dsh-rules"` |
 | 6 | **纯 hook 插件 package.json 不能写 `dsh.client`** | `client-modules: dsh-xxx declares dsh.client but exports no "./client" bundle` → 服务启动崩溃 | 只有带 WebUI 的"类型 A"插件才声明 `dsh.client`；纯 hook 插件只声明 `dsh.bundle.patch` |
+| 7 | **peerDependencies 不能钉死宿主 prerelease 版本** | 宿主升级后 pnpm/npm ERESOLVE → 插件装不上或安装后启用失败 | 宿主提供的 `@deepseek-ai/dsh-*` 写 `"*"`；有正式版序列的 `cordis`/`schemastery` 写 `^x.y.z`；确认不 import 的依赖直接删 |
+
+> **为什么不能写范围**：semver 规定"带 prerelease 的版本只在范围里出现同一 `major.minor.patch` 的 prerelease 比较器时才满足"。dsh 是 `0.2.1-rc.5` 这种 prerelease，`>=0.2.1-rc.5`、`^0.2.1-rc.5`、`>=0.2.1-rc.5 <0.3.0` **都匹配不到下一个 `0.2.2-rc.1`**，所以只能写 `"*"`。另外启动器的 `_heal_profile_dependencies()` 只同步 `dependencies`、**不再改写 peer**（否则每次启动都会把 `"*"` 覆盖回宿主精确版本）；`_plugin_manifests_match_after_core_sync()` 比较时也会忽略 peer 的版本写法，避免假更新。
 
 **导出契约完整版**（所有插件都应遵守）：
 

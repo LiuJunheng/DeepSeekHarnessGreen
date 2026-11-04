@@ -265,6 +265,15 @@
     * **验证口径**：`runtime/last_run_version.txt` 存在且等于 `GREEN_VERSION` = 本版本已同步过；文件缺失/不等 = 下次启动会再同步一次；`--start` 模式把结果直接打印到控制台（`内置插件同步: 新装 N 个, 更新 N 个, 失败 N 个`）。
     * **pnpm 布局实测（2026-10-27）**：`profiles/web/node_modules/<包名>` 是**符号链接**，真实副本在 `node_modules/.pnpm/<包名>@file+.../node_modules/<包名>` 下 —— 所以 `update_bundled_plugins()` 的 `realpath` + 逐文件镜像**确实在写真实文件**，不是空转（与 `_heal_profile_dependencies` 的拷贝假设一致）。
     * **`package.json` 的"假差异"坑（2026-10-27 实测 + 修复）**：`_heal_profile_dependencies()` 会把本地插件 `package.json` 里的 `@deepseek-ai/*` 核心依赖改写成**宿主已装版本**（如 `0.2.1-rc.3` → `0.2.1-rc.4`），而 `plugins/` 里随包分发的是发版时钉的旧版本号 → 这个文件**永远哈希不一致**：每次打开插件管理都"已自动更新"两个插件（噪音），并且把宿主版本改回旧版、反复重写文件。修复：① 比较前用 `_plugin_manifests_match_after_core_sync()` 把两侧核心依赖归一化到宿主版本，只差核心依赖就不算更新；② 真需要镜像 `package.json` 时，`_normalize_installed_plugin_manifest()` 在复制后立刻把核心依赖重新对齐到宿主版本。`_sync_manifest_core_deps()` 新增 `quiet=True` 供"只归一化不写日志"使用。
+    * **（2026-11-04 修正）`peerDependencies` 不再参与版本同步**：上面这套"把核心依赖改写为宿主精确版本"只保留给 `dependencies`（npm/pnpm 真实解析的字段）；`peerDependencies` 一律不改写。原因见插件坑 27（dsh 是 prerelease 版本，任何范围写法都匹配不到下一个 rc，钉死精确版本会在宿主升级时触发 ERESOLVE/安装失败）。同时 `_plugin_manifests_match_after_core_sync()` 在比较前会把两侧 peer 的版本写法统一成 `"*"`，只比较"声明了哪些 peer"，避免源码 `*` 与副本旧精确版本被误判成"有更新"。
+
+27. **插件 peerDependencies 绝不能钉死宿主 prerelease 版本（2026-11-04，dsh 0.2.2-rc.1 适配）**：
+    * **表象**：`dsh-memory` 的 `peerDependencies` 写着 `@deepseek-ai/cordis: 4.0.5`、`dsh-session/dsh-system-prompt/dsh-tools: 0.2.1-rc.5`；`dsh-session-rewind` 甚至把 `@deepseek-ai/dsh-session: 0.2.1-rc.5` 写在 `dependencies`（而它代码里明确**不 import** 该包，纯属历史残留）。宿主升到 `cordis 4.1.0` + `dsh 0.2.2-rc.1` 后，npm/pnpm 解析 peer 会 ERESOLVE，表现为插件装不上或安装后启用失败。
+    * **semver 的 prerelease 规则（关键坑）**：带 prerelease 的版本（`0.2.2-rc.1`）**只有在范围里出现同一 `major.minor.patch` 的 prerelease 比较器时才满足**。所以 `">=0.2.1-rc.5 <0.3.0"`、`"^0.2.1-rc.5"`、`">=0.2.1-rc.5"` **全部匹配不到 `0.2.2-rc.1`**——"写个诚实范围"这条路在 dsh 上走不通。
+    * **正解**：宿主提供的 dsh 系列 peer 写 `"*"`（只表达"需要宿主提供"，版本交给运行时）；有正式版序列的依赖写正常范围：`@deepseek-ai/cordis: ^4.0.5`（4.1.0 满足）、`@deepseek-ai/schemastery: ^3.18.5`。确认不需要的依赖直接删（如 `dsh-session-rewind` 的 `@deepseek-ai/dsh-session`）。
+    * **只改插件源码没用**：launcher 的 `_heal_profile_dependencies()` 会在启动时把插件源码 `package.json` 的核心依赖（含 peer）改写成宿主精确版本，等于每次启动都把范围覆盖回去。必须同时改 `_sync_manifest_core_deps()` 只遍历 `("dependencies",)`；否则"改了又被还原"。
+    * **验证口径**（可重复）：构造含 `peerDependencies: {"@deepseek-ai/dsh-session": "*"}` 的 manifest 调 `_sync_manifest_core_deps(..., quiet=True)` → 返回 `False` 且 peer 原样不变；用临时目录造两份 manifest（源码 peer `*` / 副本 peer `0.2.1-rc.5`、dependencies 只差核心版本）调 `_plugin_manifests_match_after_core_sync()` → `True`（不再假更新）；把 `name` 改掉再比 → `False`（真实变化仍能识别）。
+    * **新增插件自查**：`package.json` 的 `peerDependencies` 里出现任何 `0.2.x-rc.x` 精确版本 = 隐患；`dependencies` 里出现 `@deepseek-ai/dsh-*` = 必然会装出第二份宿主包，除非代码真的 import 它。
 
 ### PyInstaller / 打包坑
 

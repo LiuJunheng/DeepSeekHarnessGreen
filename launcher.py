@@ -1576,12 +1576,23 @@ class Launcher:
         return re.sub(r"[^0-9A-Za-z.+-]", "", str(spec or "").strip())
 
     def _sync_manifest_core_deps(self, manifest, version_map, package_label, quiet=False):
-        """把单个 package.json 里的 @deepseek-ai/* (及 dsh-invariants 等核心) 依赖同步到
-        宿主已装版本。声明版本与宿主一致时跳过; 不一致则改写成宿主精确版本。
+        """把单个 package.json 里 dependencies 的 @deepseek-ai/* (及 dsh-invariants 等核心)
+        依赖同步到宿主已装版本。声明版本与宿主一致时跳过; 不一致则改写成宿主精确版本。
         返回是否发生了改动。package_label 仅用于日志描述。
-        quiet=True 时只做归一化不写日志 (给"比较两侧清单是否等价"用, 避免刷日志)。"""
+        quiet=True 时只做归一化不写日志 (给"比较两侧清单是否等价"用, 避免刷日志)。
+
+        2026-11-04 (dsh 0.2.2-rc.1 适配): **peerDependencies 不再同步**。原因:
+          - 宿主 dsh 系列是 prerelease 版本 (0.2.1-rc.5 / 0.2.2-rc.1 ...), semver
+            规定 "带 prerelease 的版本只在范围里出现同一 major.minor.patch 的
+            prerelease 比较器时才满足" —— 也就是说 `>=0.2.1-rc.5 <0.3.0`、`^0.2.1-rc.5`
+            这些范围**都不能**匹配下一个 `0.2.2-rc.1`, 任何"诚实写范围"的写法都会被判不满足;
+          - 若这里继续把 peer 改写为宿主精确版本, 插件源码会被永久钉死在当前宿主版本,
+            宿主一升级就触发 ERESOLVE / 安装失败, 而且本函数会把我们改回的范围又覆盖成
+            精确版本 (等于白改)。
+          - 结论: 插件 peer 统一写 `"*"` (cordis/schemastery 这类有正式版的依赖写 `^x.y.z`),
+            版本兼容交给宿主运行时; 这里只同步 dependencies (npm/pnpm 真实解析的字段)。"""
         changed = False
-        for section_name in ("dependencies", "peerDependencies"):
+        for section_name in ("dependencies",):
             dependencies = manifest.get(section_name) or {}
             for package_name in list(dependencies.keys()):
                 if package_name not in version_map:
@@ -4181,6 +4192,13 @@ class Launcher:
             host_version_map = self._host_core_versions()
         self._sync_manifest_core_deps(source_manifest, host_version_map, "", quiet=True)
         self._sync_manifest_core_deps(installed_manifest, host_version_map, "", quiet=True)
+        # peerDependencies 已不再同步版本 (见 _sync_manifest_core_deps 的说明), 这里把
+        # 两侧 peer 的版本写法统一成 "*" 再比较: 只关心"声明了哪些 peer", 不关心写的是
+        # "*" 还是历史遗留的宿主精确版本, 避免每次同步都误判"有新版本"。
+        for side_manifest in (source_manifest, installed_manifest):
+            peer_dependencies = side_manifest.get("peerDependencies")
+            if isinstance(peer_dependencies, dict):
+                side_manifest["peerDependencies"] = {name: "*" for name in peer_dependencies}
         return source_manifest == installed_manifest
 
     def _normalize_installed_plugin_manifest(self, installed_dir, host_version_map=None):
