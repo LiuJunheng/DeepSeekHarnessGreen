@@ -9,6 +9,7 @@
 //   GET  /__dsh/media-bg/browse?path=<abs>  -> {ok,browse,dir,parent,children,isRoot,drives}
 //                                                         目录浏览 (客户端「选目录」弹窗用)
 //   GET  /__dsh/media-bg/pickdir?path=<abs> -> {ok,dir}   优先弹 Windows 原生文件夹选择框
+//   POST /__dsh/media-bg/relocate -> {ok,found,name,url}  播放失败时按同名+同体积懒重定位一次
 //   GET  /__dsh/media-bg/stream?path=<rel>                视频 Range 流
 // 目录来源优先级:
 //   1) DSH_HOME/media-background-dir.json (面板里改过, 持久)
@@ -163,6 +164,103 @@ async function listVideos(dir, base = "") {
 	// 名称排序 (和 Windows 资源管理器一致的中文友好排序, 逐字 codepoint)。
 	files.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 	return files;
+}
+
+// ---- 播放失败后的"重定位"(懒扫描) ----
+// 只在该清单项播放失败时调用一次, 不用来在启动/打开面板时全量比对清单。
+// 匹配规则: 文件名大小写不敏感 + 体积一致(调用方有记录体积时) + 只能是可播放媒体;
+// 命中多个时优先"与原路径同级"的, 其余按遍历顺序取第一个。
+// 性能上限: 最多访问 RELOCATE_MAX_DIRS 个目录 / RELOCATE_MAX_FILES 个文件, 深度不超过
+// RELOCATE_MAX_DEPTH, 总耗时超过 RELOCATE_TIME_BUDGET_MS 立即返回未命中 —— 大曲库下
+// 宁可找不到, 也不能让一次请求扫到卡住 (扫描本身是异步的, 不阻塞其他播放请求)。
+const RELOCATE_MAX_DEPTH = 5;
+const RELOCATE_MAX_DIRS = 300;
+const RELOCATE_MAX_FILES = 3000;
+const RELOCATE_TIME_BUDGET_MS = 800;
+
+/** 相对路径的父目录 (统一用 "/" 分隔; 根层返回空串)。 */
+function relParent(relPath) {
+	const index = relPath.lastIndexOf("/");
+	return index >= 0 ? relPath.slice(0, index) : "";
+}
+
+// 重定位扫描时"绝不进入"的目录名 (统一转小写比较):
+//   - 回收站 / 系统卷信息 / 系统还原点等系统维护目录;
+//   - Windows / Program Files / ProgramData 等系统目录 —— 即使用户把媒体根目录设成整个盘符
+//     (如 C:\), 也不会进入系统区扫。
+// 另外: 名字以 "." 开头的隐藏目录一律跳过; 符号链接 / junction 一律不跟随 (见下方显式判断)。
+const RELOCATE_SKIP_DIR_NAMES = new Set([
+	"$recycle.bin", "$winreagent", "config.msi", "recycler", "recycled",
+	"system volume information", "recovery", "perflogs",
+	"windows", "program files", "program files (x86)", "programdata", "appdata",
+]);
+
+/** 判断某个子目录是否应该被重定位扫描跳过 (隐藏目录 / 系统目录 / 回收站)。 */
+function shouldSkipRelocateDir(entryName) {
+	if (entryName.startsWith(".")) return true;   // 隐藏目录 (.git / .cache 等)
+	return RELOCATE_SKIP_DIR_NAMES.has(entryName.toLowerCase());
+}
+
+/** 在 media 根目录内查找与 targetName 同名(大小写不敏感)、体积一致的媒体文件。
+ *  扫描范围严格 = 调用方传入的 rootDir (当前配置的唯一媒体根目录) 及其子目录:
+ *  绝不枚举盘符、绝不从原路径向上回溯、原路径不在该根目录下时直接返回未命中。
+ *  BFS 遍历 (先浅层后深层), 同级命中立即返回; 超出任一上限则带着已有结果返回。
+ *  返回 { relName, size } 或 null (未命中)。 */
+async function findRelocatedMedia(rootDir, targetName, expectedSize, oldPath) {
+	const targetBase = path.basename(targetName).toLowerCase();
+	const oldParent = relParent(oldPath || "");
+	const startedAt = Date.now();
+	let visitedDirs = 0;
+	let visitedFiles = 0;
+	let bestMatch = null;
+	const pendingDirs = [{ absoluteDir: rootDir, relativeDir: "" }];
+	while (pendingDirs.length > 0) {
+		if (Date.now() - startedAt > RELOCATE_TIME_BUDGET_MS) break;
+		if (visitedDirs >= RELOCATE_MAX_DIRS) break;
+		if (visitedFiles >= RELOCATE_MAX_FILES) break;
+		const current = pendingDirs.shift();
+		visitedDirs += 1;
+		let entries;
+		try {
+			entries = await readdir(current.absoluteDir, { withFileTypes: true });
+		} catch {
+			continue;   // 无权限/已被删除的目录直接跳过, 不中断整体查找
+		}
+		for (const entry of entries) {
+			if (visitedFiles >= RELOCATE_MAX_FILES) break;
+			const relName = current.relativeDir ? current.relativeDir + "/" + entry.name : entry.name;
+			// 符号链接 / junction 一律不跟随 (Dirent.isDirectory() 对链接本就返回 false, 这里再显式拦一次,
+			// 避免不同平台或 Node 版本的行为差异把扫描带出用户给定目录之外)。
+			if (entry.isSymbolicLink()) continue;
+			if (entry.isDirectory()) {
+				if (shouldSkipRelocateDir(entry.name)) continue;   // 隐藏目录 / 系统目录 / 回收站
+				if (current.relativeDir.split("/").length >= RELOCATE_MAX_DEPTH) continue;
+				pendingDirs.push({ absoluteDir: path.join(current.absoluteDir, entry.name), relativeDir: relName });
+				continue;
+			}
+			if (!entry.isFile()) continue;
+			visitedFiles += 1;   // 每看到一个普通文件都计数, 保证文件数上限真的生效
+			if (entry.name.toLowerCase() !== targetBase) continue;
+			const dot = entry.name.lastIndexOf(".");
+			const ext = dot >= 0 ? entry.name.slice(dot + 1).toLowerCase() : "";
+			if (!VIDEO_EXTS.has(ext) && !AUDIO_EXTS.has(ext)) continue;
+			let candidateSize = null;
+			try {
+				candidateSize = (await stat(path.join(current.absoluteDir, entry.name))).size;
+			} catch {
+				continue;
+			}
+			// 有记录体积时必须同体积; 旧清单没有体积字段时退化为"只看同名"。
+			if (expectedSize !== null && candidateSize !== expectedSize) continue;
+			const isSameParent = (relParent(relName) === oldParent);
+			if (!bestMatch) bestMatch = { relName, size: candidateSize };
+			if (isSameParent) {
+				// 同级命中是最优解, 不必继续往深层找。
+				return { relName, size: candidateSize };
+			}
+		}
+	}
+	return bestMatch ? { relName: bestMatch.relName, size: bestMatch.size } : null;
 }
 
 /** 扫描指定目录的直接子文件夹名 (目录浏览选择器用)。
@@ -493,6 +591,43 @@ function apply(ctx) {
 			sendJson(res, 200, { ok: false, error: "未选择目录或无法弹出原生选择框", fallback: true });
 		} catch (error) {
 			sendJson(res, 200, { ok: false, error: errText(error), fallback: true });
+		}
+	});
+
+	// 播放失败后的懒重定位: 只针对"刚刚播不出来的这一个清单项"做一次目录内查找。
+	// 入参 { name: 清单里的相对文件名, size: 加入清单时记录的文件体积(可空), path: 旧的相对路径 }
+	// 出参 { ok, found, name, path, size, url } —— 前端拿到 url 后替换清单项并只重试播放一次。
+	register(BASE + "/relocate", async (req, res) => {
+		if (req.method !== "POST") return sendJson(res, 405, { error: "use POST" });
+		if (!guarded(req, res)) return;
+		let body;
+		try {
+			body = await readJsonBody(req);
+		} catch (error) {
+			return sendJson(res, 400, { ok: false, error: errText(error) });
+		}
+		const targetName = typeof body.name === "string" ? body.name.trim() : "";
+		const oldPath = typeof body.path === "string" ? body.path.trim() : "";
+		const pickedSize = Number(body.size);
+		const expectedSize = (body.size === null || body.size === undefined || body.size === "" || !Number.isFinite(pickedSize))
+			? null
+			: pickedSize;
+		if (!targetName) return sendJson(res, 400, { ok: false, error: "缺少文件名" });
+		try {
+			const resolved = await resolveDir();
+			if (!resolved.dir) return sendJson(res, 200, { ok: true, found: false, error: "未配置视频目录" });
+			const match = await findRelocatedMedia(resolved.dir, targetName, expectedSize, oldPath);
+			if (!match) return sendJson(res, 200, { ok: true, found: false });
+			sendJson(res, 200, {
+				ok: true,
+				found: true,
+				name: match.relName,
+				path: match.relName,
+				size: match.size,
+				url: "/__dsh/media-bg/stream?path=" + encodeURIComponent(match.relName),
+			});
+		} catch (error) {
+			sendJson(res, 500, { ok: false, error: errText(error) });
 		}
 	});
 

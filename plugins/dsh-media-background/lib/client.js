@@ -64,7 +64,7 @@ window.__ModuleLoader__.load({
 		// ---- 常量 ----
 		const API = "/__dsh/media-bg";
 		const GUARD = "X-DSH-Media-Bg";
-		const STORE_KEY = "dsw-mbg-v1";      // 面板里清单 / 音量 / 浓度 / 循环 等偏好
+		const STORE_KEY = "dsw-mbg-v1";      // 面板里清单 / 音量 / 浓度 / 播放模式 等偏好
 
 		// ---- 状态 ----
 		var S = {
@@ -73,18 +73,40 @@ window.__ModuleLoader__.load({
 			list: [],                         // 播放清单 [{name, url}]
 			cur: -1,                          // 清单当前播放下标
 			preview: null,                    // {name, url} 试播中的单曲 (不入清单)
+			// 上次真正播放过的媒体项 ({name, url, kind}), 随偏好一起持久化:
+			// 启动自动恢复与"点播放但没有任何选中项"时都优先恢复它,
+			// 若它已不在清单里, 则回退到清单第一首 (不会指向不存在的下标)。
+			lastItem: null,
 			playing: false,
 			active: false,                    // 背景是否开启 (video 是否挂载)
 			panelOpen: false,
 			volume: 0.7,
 			opacity: 0.35,
-			loop: true,                       // 循环开关 (默认开; 实质清单循环见 onEnded)
+			// 播放模式 (持久化在 localStorage):
+			//   sequential  = 不循环, 清单播完停止 (旧版"循环"未勾选)
+			//   repeat-one  = 单曲循环 (当前项播完从头再来)
+			//   repeat-all  = 顺序循环, 清单播完回到第 1 首 (旧版"循环"已勾选)
+			//   shuffle     = 随机播放, 每首播完随机换清单里另一首
+			// 统一由 playNextAfterEnded() 解释, 手动上一首/下一首也复用同一份状态。
+			playMode: "repeat-all",
 		};
 
 		// ---- DOM 引用 ----
 		var btn = null, panel = null, dirInput = null, listEl = null;
 		var playlistEl = null, statusEl = null, playIcon = null;
+		var playModeSelect = null;   // 播放模式下拉 (buildUI 时重建)
+		var clearInvalidButton = null;   // 「清理失效项」按钮 (buildUI 时重建)
 		var videoEl = null, rootEl = null;
+		// 播放失败(404/无法解码)的清单地址集合, 形如 { "/__dsh/media-bg/stream?path=...": true }。
+		// 只存内存不写 localStorage: 文件可能被用户放回原处, 能播时 play 事件会自动清除标记。
+		var invalidUrls = {};
+		// 已经为哪些地址做过"重定位"尝试 (url -> true)。同一项只自动扫描一次:
+		// 若重定位后的新地址仍失败, 不再触发第二次全目录扫描, 直接走失效反馈。
+		var relocateTried = {};
+		// 自动播放被浏览器策略拒绝后, 是否还欠用户一次"手势恢复声音"。
+		var needsGestureUnmute = false;
+		// 是否已经挂上一次性手势监听 (避免重复绑定)。
+		var gestureUnmuteArmed = false;
 		// 目录浏览弹窗元素。
 		var browseEl = null, browseBody = null, browsePathEl = null, browseBack = null;
 		// 目录浏览状态: 当前浏览的绝对路径 (空=根/我的电脑)。
@@ -159,7 +181,8 @@ window.__ModuleLoader__.load({
 					list: S.list,
 					volume: S.volume,
 					opacity: S.opacity,
-					loop: S.loop,
+					playMode: S.playMode,
+					lastItem: S.lastItem,
 				}));
 			} catch (error) { /* 忽略存储失败 */ }
 		}
@@ -173,7 +196,23 @@ window.__ModuleLoader__.load({
 				}
 				if (typeof saved.volume === "number") S.volume = saved.volume;
 				if (typeof saved.opacity === "number") S.opacity = saved.opacity;
-				if (typeof saved.loop === "boolean") S.loop = saved.loop;
+				// 播放模式: 新版本直接读 playMode; 旧版本只有布尔 loop, 迁移为
+				// loop=true → 顺序循环, loop=false → 不循环。非法值一律保持默认。
+				var validPlayModes = ["sequential", "repeat-one", "repeat-all", "shuffle"];
+				if (typeof saved.playMode === "string" && validPlayModes.indexOf(saved.playMode) >= 0) {
+					S.playMode = saved.playMode;
+				} else if (typeof saved.loop === "boolean") {
+					S.playMode = saved.loop ? "repeat-all" : "sequential";
+				}
+				// 上次播放项: 只接受带有效 url 的对象; kind 非法时按视频兼容。
+				// 老版本没有该字段时保持 null, 启动恢复会自动回退清单第一首。
+				if (saved.lastItem && typeof saved.lastItem === "object" && typeof saved.lastItem.url === "string" && saved.lastItem.url) {
+					S.lastItem = {
+						name: typeof saved.lastItem.name === "string" ? saved.lastItem.name : "",
+						url: saved.lastItem.url,
+						kind: saved.lastItem.kind === "audio" ? "audio" : "video",
+					};
+				}
 			} catch (error) { /* 读取失败用默认 */ }
 		}
 
@@ -190,8 +229,20 @@ window.__ModuleLoader__.load({
 			// 播放结束自动切下一首 (或按循环策略处理)。
 			videoEl.addEventListener("ended", onEnded);
 			// 用 play/pause 事件同步图标, 比自己维护 S.playing 准确 (video.paused 才是真实状态)。
-			videoEl.addEventListener("play", () => { S.playing = true; updatePlayIcon(); });
+			videoEl.addEventListener("play", () => {
+				S.playing = true;
+				// 能播出来说明这个地址有效: 清掉它的"失效"标记 (用户把文件放回原处后可恢复)。
+				const playingUrl = videoEl.getAttribute("src");
+				if (playingUrl && invalidUrls[playingUrl]) {
+					delete invalidUrls[playingUrl];
+					renderPlaylist();
+				}
+				updatePlayIcon();
+			});
 			videoEl.addEventListener("pause", () => { S.playing = false; updatePlayIcon(); });
+			// 媒体加载失败 (文件被移动/删除时 stream 路由返回 404、编码不支持等):
+			// 必须有明确提示, 否则桌面端表现为"点了没反应"(旧代码只有 play() 的 catch, 看不到原因)。
+			videoEl.addEventListener("error", onVideoError);
 		}
 		if (videoEl.parentNode !== document.body) {
 			// 插到 <body> 最前 (firstChild): 与 harness 工作区同为普通层 (z-index auto/0) 时,
@@ -201,6 +252,175 @@ window.__ModuleLoader__.load({
 		}
 		applyVideoAppearance();
 		return videoEl;
+	}
+
+	// ---- 起播与自动播放策略 (桌面端 WebView2 兼容) ----
+	// 桌面壳 (pywebview + WebView2) 对"没有用户手势的未静音自动播放"一律拒绝
+	// (NotAllowedError); 网页端浏览器因长期交互已拿到播放许可, 所以只在桌面端复现。
+	// 处理: 先按正常音量 play(); 被拒时退回静音起播(静音播放一定被允许), 并挂一次性
+	// 手势监听 —— 用户点一下页面/按一下键就恢复声音继续播放, 不需要再点面板。
+	// 实测注意: WebView2 里把 muted 从 true 改回 false 会让正在播放的视频暂停,
+	// 所以恢复声音后必须再调用一次 play(), 不能只改 muted。
+	function startPlayback(video) {
+		if (!video) return;
+		needsGestureUnmute = false;      // 新的起播重新判定, 不沿用上一次的静音兜底状态
+		video.muted = (S.volume === 0);  // 用户上一次的手势已恢复声音时, 这里重新按音量决定
+		const playPromise = video.play();
+		if (!playPromise || typeof playPromise.catch !== "function") return;
+		playPromise.catch((error) => {
+			if (error && error.name === "NotAllowedError") {
+				// 桌面端首次启动(无手势)走这里: 静音起播 + 等一次性手势恢复声音。
+				video.muted = true;
+				needsGestureUnmute = true;
+				const mutedPromise = video.play();
+				if (mutedPromise && typeof mutedPromise.catch === "function") mutedPromise.catch(() => { });
+				armGestureUnmute();
+				setStatus(_dsht("plugin.media_background.status_autoplay_muted", "浏览器限制自动播放: 已静音起播, 点击页面任意处即可恢复声音"));
+			}
+			// 其它失败(如文件 404)交给 video 的 error 事件给出明确提示。
+		});
+	}
+
+	/** 挂一次性"用户手势恢复声音"监听 (pointerdown / keydown, 捕获阶段, 先于面板逻辑)。 */
+	function armGestureUnmute() {
+		if (gestureUnmuteArmed) return;
+		gestureUnmuteArmed = true;
+		const resumeWithSound = () => {
+			document.removeEventListener("pointerdown", resumeWithSound, true);
+			document.removeEventListener("keydown", resumeWithSound, true);
+			gestureUnmuteArmed = false;
+			if (!needsGestureUnmute || !videoEl) return;
+			needsGestureUnmute = false;
+			videoEl.muted = false;
+			videoEl.volume = S.volume;
+			// 取消静音会让播放暂停(见上方实测说明), 必须紧接着再 play()。
+			const resumePromise = videoEl.play();
+			if (resumePromise && typeof resumePromise.catch === "function") resumePromise.catch(() => { });
+			updatePlayIcon();
+			updateStatus();   // 声音已恢复, 去掉"点击页面恢复声音"的提示后缀
+		};
+		document.addEventListener("pointerdown", resumeWithSound, true);
+		document.addEventListener("keydown", resumeWithSound, true);
+	}
+
+	/** 媒体加载失败: 明确指出是哪一首、什么原因, 并把对应清单行标灰划掉。
+	 *  旧代码只有 play() 的静默 catch, 所以桌面端表现为"点了没反应、也没选中"。 */
+	function onVideoError() {
+		if (!videoEl) return;
+		// 用 getAttribute 取原始相对地址: videoEl.src 会被浏览器补成绝对地址,
+		// 与清单里存的 /__dsh/media-bg/stream?... 不一致, 无法比对。
+		const failedUrl = videoEl.getAttribute("src") || "";
+		if (!failedUrl) return;
+		let failedName = "";
+		const listIndex = findListIndexByUrl(failedUrl);
+		if (listIndex >= 0) failedName = S.list[listIndex].name;
+		else if (S.preview && S.preview.url === failedUrl) failedName = S.preview.name;
+		if (!failedName) failedName = failedUrl;
+		invalidUrls[failedUrl] = true;
+		S.playing = false;
+		renderPlaylist();
+		updatePlayIcon();
+		showMediaFailedStatus(failedName);
+		// 只对"清单里的项"尝试一次懒重定位 (试播项不入清单, 不做自动替换)。
+		if (listIndex >= 0) tryRelocateListIndex(listIndex);
+	}
+
+	/** 统一的"无法播放"状态提示 (失败与重定位失败共用同一句, 避免两处文案漂移)。 */
+	function showMediaFailedStatus(displayName) {
+		setStatus(_dsht("plugin.media_background.status_media_failed_fmt", "无法播放: {{name}} (文件可能已移动/删除或格式不支持; 可点「清理失效项」移除)").replace("{{name}}", displayName));
+	}
+
+	/** 从清单里的 stream url 取出相对路径 (重定位时把旧路径交给服务端做"同级优先"判断)。 */
+	function mediaPathFromUrl(url) {
+		const matched = /[?&]path=([^&]*)/.exec(url || "");
+		if (!matched) return "";
+		try {
+			return decodeURIComponent(matched[1]);
+		} catch (error) {
+			return "";
+		}
+	}
+
+	/** 播放失败后的一次性重定位: 交给服务端在当前媒体根目录内按"同名 + 同体积"找一次。
+	 *  - 每项只尝试一次 (relocateTried), 成功后也只重试播放一次;
+	 *  - 请求不阻塞 UI (异步, 不 await), 扫描失败就回到原有失效反馈;
+	 *  - 不做启动/打开面板时的全量重定位, 只由具体某一次的播放失败触发。 */
+	function tryRelocateListIndex(index) {
+		const listItem = S.list[index];
+		if (!listItem || !listItem.url) return;
+		if (relocateTried[listItem.url]) return;
+		relocateTried[listItem.url] = true;
+		const failedName = listItem.name;
+		setStatus(_dsht("plugin.media_background.status_relocating_fmt", "正在尝试重新定位: {{name}}").replace("{{name}}", failedName));
+		postJson("relocate", {
+			name: listItem.name,
+			size: (typeof listItem.size === "number" && listItem.size > 0) ? listItem.size : null,
+			path: mediaPathFromUrl(listItem.url),
+		}).then((data) => {
+			if (!data || data.found !== true || typeof data.url !== "string" || !data.url) {
+				showMediaFailedStatus(failedName);
+				return;
+			}
+			// 扫描期间清单可能被用户改动, 必须按"当前是否还在清单里"重新定位下标。
+			const currentIndex = findListIndexByUrl(listItem.url);
+			if (currentIndex < 0) return;
+			const oldUrl = S.list[currentIndex].url;
+			S.list[currentIndex].url = data.url;
+			if (typeof data.name === "string" && data.name) S.list[currentIndex].name = data.name;
+			if (typeof data.size === "number") S.list[currentIndex].size = data.size;
+			// 新旧地址都记为已尝试: 新地址若再失败, 不允许触发第二次扫描。
+			relocateTried[data.url] = true;
+			delete invalidUrls[oldUrl];
+			delete invalidUrls[data.url];
+			saveStore();
+			renderPlaylist();
+			if (S.cur === currentIndex) {
+				// 只重试一次播放; 再失败会走普通失效反馈 (error 事件里已不会再重定位)。
+				playListIndex(currentIndex);
+			}
+			setStatus(_dsht("plugin.media_background.status_relocated_fmt", "已重新定位: {{name}}").replace("{{name}}", S.list[currentIndex].name));
+		}).catch(() => {
+			showMediaFailedStatus(failedName);
+		});
+	}
+
+	/** 「清理失效项」按钮只在清单里存在失效项时出现, 顺便显示数量。 */
+	function updateInvalidButton() {
+		if (!clearInvalidButton) return;
+		let invalidCount = 0;
+		for (const listItem of S.list) {
+			if (invalidUrls[listItem.url]) invalidCount += 1;
+		}
+		clearInvalidButton.style.display = (invalidCount > 0) ? "" : "none";
+		clearInvalidButton.textContent = _dsht("plugin.media_background.btn_clean_invalid", "清理失效项") + " (" + invalidCount + ")";
+	}
+
+	/** 清理清单里已标记失效的项 (用户主动点击才执行, 不自动改动用户清单)。 */
+	function removeInvalidItems() {
+		let removedCount = 0;
+		for (const listItem of S.list) {
+			if (invalidUrls[listItem.url]) removedCount += 1;
+		}
+		if (!removedCount) return;
+		const currentUrl = (S.cur >= 0 && S.list[S.cur]) ? S.list[S.cur].url : "";
+		const keptList = [];
+		for (const listItem of S.list) {
+			if (!invalidUrls[listItem.url]) {
+				keptList.push(listItem);
+				continue;
+			}
+			// 失效项被清掉时, 同时清掉它的"已尝试重定位"与"失效"记录。
+			// 否则用户把文件重新加回清单后, 还会被当成"已经扫描过"而不再重定位。
+			delete relocateTried[listItem.url];
+			delete invalidUrls[listItem.url];
+		}
+		S.list = keptList;
+		// 当前项若也被清掉, 下标必须跟着收敛, 不能留下指向不存在项的状态。
+		S.cur = currentUrl ? findListIndexByUrl(currentUrl) : -1;
+		saveStore();
+		renderPlaylist();
+		updateStatus();
+		setStatus(_dsht("plugin.media_background.status_cleaned_invalid_fmt", "已清理 {{count}} 个失效项").replace("{{count}}", removedCount));
 	}
 
 		function applyVideoAppearance() {
@@ -214,19 +434,105 @@ window.__ModuleLoader__.load({
 			else document.documentElement.classList.remove("dsw-mbg-active");
 		}
 
-		function onEnded() {
-			if (S.preview) {
+		/** 取一个随机清单下标; excludeIndex 用于避免"随机到自己"。
+		 *  清单只有一首时没有其它可选项, 直接返回 0 (由调用方重复该首)。 */
+		function pickRandomListIndex(excludeIndex) {
+			if (!S.list.length) return -1;
+			if (S.list.length === 1) return 0;
+			var randomIndex = Math.floor(Math.random() * S.list.length);
+			if (randomIndex === excludeIndex) randomIndex = (randomIndex + 1) % S.list.length;
+			return randomIndex;
+		}
+
+		/** 在清单里按媒体地址查找下标; 找不到返回 -1。
+		 *  用于"上次那首是否还在清单里"的判定, 避免凭旧下标取到不存在的项。 */
+		function findListIndexByUrl(url) {
+			if (!url) return -1;
+			for (var index = 0; index < S.list.length; index += 1) {
+				if (S.list[index] && S.list[index].url === url) return index;
+			}
+			return -1;
+		}
+
+		/** 解析"没有任何显式选中项"时该播哪一首 (启动恢复与播放按钮共用):
+		 *   1) 上次播放项仍在清单里 → 它的下标;
+		 *   2) 否则 → 清单第一首 (下标 0);
+		 *   3) 清单为空 → -1 (调用方视为不可播)。
+		 *  返回值始终是清单内合法下标或 -1, 不会指向不存在的项。 */
+		function resolveResumeIndex() {
+			if (!S.list.length) return -1;
+			if (S.lastItem) {
+				var lastIndex = findListIndexByUrl(S.lastItem.url);
+				if (lastIndex >= 0) return lastIndex;
+			}
+			return 0;
+		}
+
+		/** 启动时自动恢复播放: 上次那首(仍在清单) → 清单第一首, 找到即直接开播。
+		 *  与播放模式无关 —— 四种模式只决定"一首播完后怎么选下一首", 不决定启动是否起播。
+		 *  清单为空则保持关闭, 不自动起播。 */
+		function resumePlaybackOnStartup() {
+			var resumeIndex = resolveResumeIndex();
+			if (resumeIndex < 0) return;
+			var resumeItem = S.list[resumeIndex];
+			playListIndex(resumeIndex);
+			setStatus(_dsht("plugin.media_background.status_resume_fmt", "恢复播放: {{name}} (按上次的播放模式, 可在面板里停掉)").replace("{{name}}", resumeItem.name));
+		}
+
+		/** 重新播放当前试播项 (从头开始, 保持"试播"身份, 不入清单)。 */
+		function replayPreview() {
+			if (!S.preview) return;
+			var previewItem = S.preview;
+			playPreview(previewItem.url, previewItem.name, previewItem.kind);
+		}
+
+		/** 一首播完后按「播放模式」决定下一步; 自然结束(onEnded)与手动切歌都复用这里。
+		 *  试播(清单外的临时单曲)也走同一套模式, 不再"播完就整个停掉":
+		 *    - 单曲循环: 重复这首试播;
+		 *    - 顺序循环: 清单非空则接回清单第 1 首; 清单空则重复这首试播;
+		 *    - 随机播放: 清单非空则随机接回一首; 清单空则重复这首试播;
+		 *    - 不循环: 保持旧行为, 单次试播只播一次, 播完停止。
+		 *  清单当前项播完: 单曲循环重复本项; 顺序循环末项回到第 1 首; 随机换一首; 不循环末项停止。 */
+		function playNextAfterEnded() {
+			var playMode = S.playMode;
+
+			// 单曲循环: 重复当前项 (试播项或清单当前项)。
+			if (playMode === "repeat-one") {
+				if (S.preview) { replayPreview(); return; }
+				if (S.cur >= 0 && S.list[S.cur]) { playListIndex(S.cur); return; }
 				stop();
 				return;
 			}
-			if (!S.list.length || S.cur < 0) { stop(); return; }
-			if (S.cur === S.list.length - 1) {
-				// 到清单末尾。
-				if (S.loop) playListIndex(0);
-				else stop();
-			} else {
-				playListIndex(S.cur + 1);
+
+			// 试播项播完: 按模式决定是否接回清单 (试播本身不在清单里)。
+			if (S.preview) {
+				if (!S.list.length) {
+					if (playMode === "repeat-all" || playMode === "shuffle") { replayPreview(); return; }
+					stop();
+					return;
+				}
+				if (playMode === "shuffle") { playListIndex(pickRandomListIndex(-1)); return; }
+				if (playMode === "repeat-all") { playListIndex(0); return; }
+				// 不循环: 单次试播就是单次, 播完停止 (不擅自开始播整张清单)。
+				stop();
+				return;
 			}
+
+			// 清单为空, 或当前下标已失效 (例如播放中把该项移出清单): 从第 1 首兜底重来。
+			if (!S.list.length) { stop(); return; }
+			if (S.cur < 0 || S.cur >= S.list.length) { playListIndex(0); return; }
+			if (playMode === "shuffle") { playListIndex(pickRandomListIndex(S.cur)); return; }
+			if (S.cur === S.list.length - 1) {
+				// 到清单末尾: 顺序循环回到第 1 首, 不循环则停止。
+				if (playMode === "repeat-all") playListIndex(0);
+				else stop();
+				return;
+			}
+			playListIndex(S.cur + 1);
+		}
+
+		function onEnded() {
+			playNextAfterEnded();
 		}
 
 	/** 当前正在播放的媒体项 (试播优先, 其次是清单当前项); 均无则返回 null。 */
@@ -260,14 +566,17 @@ window.__ModuleLoader__.load({
 			const idx = Math.max(0, Math.min(index, S.list.length - 1));
 			S.preview = null;
 			S.cur = idx;
+			// 记忆最近播放项: 下次启动自动恢复、以及"播放按钮无选中项"时优先用它。
+			S.lastItem = { name: S.list[idx].name, url: S.list[idx].url, kind: S.list[idx].kind || "video" };
+			saveStore();
 			const video = ensureVideo();
 			// 禁用浏览器原生单曲 loop: 否则 loop=true 时 ended 不触发,
 			// 我们的手动"清单循环/切下一首"逻辑(onEnded)永远不会跑。
 			video.loop = false;
 			video.volume = S.volume;
 			video.src = S.list[idx].url;
-			// play() 是异步 Promise —— 事件监听器 play/pause 会自动 sync 图标, 这里不需手动改 S.playing。
-			video.play().catch(() => { /* autoplay 被拒等情况, 图标事件监听器自然会同步 */ });
+			// 统一走 startPlayback: 兼容桌面端无手势时被拒的自动播放 (会静音起播并等待手势恢复声音)。
+			startPlayback(video);
 			S.active = true;
 			applyMediaMode();
 			updatePlayIcon();
@@ -275,14 +584,20 @@ window.__ModuleLoader__.load({
 			renderPlaylist();
 		}
 
-		/** 试播单曲 (不写入清单), 播完即回到默认背景。kind 用于区分视频/纯音乐模式。 */
+		/** 试播单曲 (不写入清单)。kind 用于区分视频/纯音乐模式。
+		 *  播完后做什么由播放模式决定 (见 playNextAfterEnded): 单曲循环重复本曲,
+		 *  顺序循环/随机接回清单, 不循环则停止并回到默认背景。 */
 		function playPreview(url, displayName, kind) {
 			const video = ensureVideo();
 			video.volume = S.volume;
 			video.src = url;
-			video.play().catch(() => { /* autoplay 被拒等情况, 图标事件监听器自然会同步 */ });
+			// 与清单播放共用同一套起播处理, 避免两处各写一份自动播放兼容逻辑。
+			startPlayback(video);
 			S.cur = -1;
 			S.preview = { name: displayName, url: url, kind: kind || "video" };
+			// 试播项同样记为"最近播放项", 供下次启动/播放按钮恢复。
+			S.lastItem = { name: displayName, url: url, kind: kind || "video" };
+			saveStore();
 			S.active = true;
 			applyMediaMode();
 			updatePlayIcon();
@@ -290,11 +605,25 @@ window.__ModuleLoader__.load({
 		}
 
 		function togglePause() {
-			if (!videoEl || !videoEl.src) return;
+			// 没有任何已加载的音源 (首次启动 / 停止之后 / 当前项被移出清单):
+			// 先解析"上次那首 → 清单第一首"并直接起播, 不再静默 return 导致"点播放没反应"。
+			var hasLoadedSource = !!(videoEl && videoEl.src);
+			if (!hasLoadedSource && !S.preview) {
+				var resumeIndex = resolveResumeIndex();
+				if (resumeIndex < 0) {
+					// 清单为空 = 确实没有可播内容, 此时才视为不可播。
+					setStatus(_dsht("plugin.media_background.status_no_video", "请先往播放清单里添加视频"));
+					return;
+				}
+				playListIndex(resumeIndex);
+				return;
+			}
+			if (!videoEl) return;
 			if (videoEl.paused) {
-				videoEl.play().catch(() => { /* 忽略 */ });
+				startPlayback(videoEl);
 			} else {
 				videoEl.pause();
+				needsGestureUnmute = false;   // 用户主动暂停后不再自动恢复声音, 避免"点了暂停又响"
 			}
 			// 事件监听器 play/pause 会自动 sync 图标, 这里再手动补一次 (保险)。
 			updatePlayIcon();
@@ -302,6 +631,8 @@ window.__ModuleLoader__.load({
 
 		function next() {
 			if (!S.list.length) return;
+			// 随机播放: 手动⏭也随机换一首 (当前在试播时 cur=-1, 同样从清单随机起播)。
+			if (S.playMode === "shuffle") { playListIndex(pickRandomListIndex(S.cur)); return; }
 			if (S.cur < 0) { playListIndex(0); return; }
 			playListIndex((S.cur + 1) % S.list.length);
 		}
@@ -309,6 +640,8 @@ window.__ModuleLoader__.load({
 		function prev() {
 			if (!S.list.length) return;
 			if (S.cur < 0) { playListIndex(0); return; }
+			// 随机模式下手动⏮仍按清单顺序回退一首: 随机没有"历史顺序"可回溯,
+			// 按序号回退是可预期、不会原地卡死的做法。
 			playListIndex((S.cur - 1 + S.list.length) % S.list.length);
 		}
 
@@ -327,6 +660,7 @@ window.__ModuleLoader__.load({
 			S.playing = false;
 			S.cur = -1;
 			S.preview = null;
+			needsGestureUnmute = false;   // 停止后不再等到手势去恢复声音
 			setBackgroundActive(false);
 			updatePlayIcon();
 			setStatus(_dsht("plugin.media_background.status_closed", "背景已关闭"));
@@ -457,7 +791,13 @@ window.__ModuleLoader__.load({
 			const mode = S.list.length
 				? _dsht("plugin.media_background.status_list_fmt", "清单 {{count}} 首 · 目录: {{dir}}").replace("{{count}}", S.list.length).replace("{{dir}}", S.dir)
 				: _dsht("plugin.media_background.status_dir_fmt", "目录: {{dir}} (未配置)").replace("{{dir}}", S.dir || "");
-			setStatus(mode);
+			// 桌面端自动播放被拒时, 状态栏提示会被随后的目录扫描结果覆盖掉;
+			// 把"点击页面恢复声音"作为后缀拼在当前状态上, 手势恢复声音后再自然移除。
+			if (needsGestureUnmute) {
+				setStatus(mode + " · " + _dsht("plugin.media_background.status_autoplay_muted_short", "点击页面任意处恢复声音"));
+			} else {
+				setStatus(mode);
+			}
 		}
 
 		function updatePlayIcon() {
@@ -511,23 +851,50 @@ window.__ModuleLoader__.load({
 				setStatus(_dsht("plugin.media_background.status_already_in_list", "已在清单中: ") + file.name);
 				return;
 			}
-			S.list.push({ name: file.name, url: file.url, kind: file.kind || "video" });
+			S.list.push({
+				name: file.name,
+				url: file.url,
+				kind: file.kind || "video",
+				// 记录文件体积: 播放失败后的懒重定位要靠"同名 + 同体积"才不会误认别的文件。
+				// 旧版本清单没有这个字段, 重定位时退化为"只看同名"。
+				size: (typeof file.size === "number") ? file.size : null,
+			});
 			saveStore();
 			renderPlaylist();
 			updateStatus();
-			// 清单从 0 → 1 且 loop=true (收藏夹默认循环) 且当前没在播放 → 自动开始循环播放。
+			// 清单从 0 → 1 且当前没在播放 → 自动开始播这一首 (沿用原有"加入即播"体验)。
 			if (S.list.length === 1 && !S.active) playListIndex(0);
 		}
 
 		function removeFromList(index) {
+			var removedIsCurrent = (index === S.cur);
+			var removedItem = S.list[index];
 			S.list.splice(index, 1);
-			if (S.cur >= S.list.length) S.cur = S.list.length - 1;
+			if (index < S.cur) {
+				// 删除当前项之前的条目: 下标整体前移一位, 保证仍指向同一首歌。
+				S.cur -= 1;
+			} else if (removedIsCurrent) {
+				// 删除正在播放的条目: 声音继续放到本曲结束, 并把这一首转为"试播"身份
+				// (它已不在清单里, 单曲循环仍能重复它); 其余模式由 playNextAfterEnded() 的试播分支统一兜底。
+				S.cur = -1;
+				if (removedItem) {
+					S.preview = { name: removedItem.name, url: removedItem.url, kind: removedItem.kind || "video" };
+				}
+			} else if (S.cur >= S.list.length) {
+				S.cur = S.list.length - 1;
+			}
 			saveStore();
 			renderPlaylist();
 			updateStatus();
 		}
 
 		function clearList() {
+			// 清空时若正在播清单里的某一首: 声音继续, 并把这一首转为"试播"身份
+			// (清单已空, 循环类模式仍能重复它, 不循环则在播完后停止)。
+			if (S.cur >= 0 && S.list[S.cur]) {
+				var currentPlayingItem = S.list[S.cur];
+				S.preview = { name: currentPlayingItem.name, url: currentPlayingItem.url, kind: currentPlayingItem.kind || "video" };
+			}
 			S.list = [];
 			S.cur = -1;
 			saveStore();
@@ -540,11 +907,20 @@ window.__ModuleLoader__.load({
 			playlistEl.textContent = "";
 			if (!S.list.length) {
 				playlistEl.appendChild(el("div", { className: "dsw-mbg-tip" }, _dsht("plugin.media_background.empty_playlist", "播放清单为空")));
+				updateInvalidButton();
 				return;
 			}
 			S.list.forEach((item, index) => {
 				const isCur = (index === S.cur);
-				const row = el("div", { className: "dsw-mbg-item" + (isCur ? " cur" : "") }, [
+				// 播不出来的条目标灰划掉, 让用户一眼看出"不是没选中, 是文件没了"。
+				const isInvalid = !!invalidUrls[item.url];
+				let rowClassName = "dsw-mbg-item";
+				if (isCur) rowClassName += " cur";
+				if (isInvalid) rowClassName += " bad";
+				const row = el("div", {
+					className: rowClassName,
+					title: isInvalid ? _dsht("plugin.media_background.title_row_invalid", "文件已不存在或无法解码") : "",
+				}, [
 					el("span", { className: "dsw-mbg-name", title: item.name },
 						((index + 1) + ". " + item.name)),
 					el("button", {
@@ -555,6 +931,7 @@ window.__ModuleLoader__.load({
 				row.addEventListener("click", () => playListIndex(index));
 				playlistEl.appendChild(row);
 			});
+			updateInvalidButton();
 		}
 
 		// ---- 面板构建 ----
@@ -565,29 +942,43 @@ window.__ModuleLoader__.load({
 					'display:none;flex-direction:column;z-index:2147483001;background:var(--dsw-alias-bg-layer-2);' +
 				'border:1px solid var(--dsw-alias-border-l1);border-radius:12px;color:var(--dsw-alias-label-primary);font-size:13px;' +
 					'font-family:inherit;backdrop-filter:blur(14px);box-sizing:border-box;}',
-				'#dsw-mbg-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l1);cursor:grab;user-select:none;}',
+				'#dsw-mbg-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l1);cursor:grab;user-select:none;flex:0 0 auto;}',
 				'#dsw-mbg-head:active{cursor:grabbing;}',
 				'#dsw-mbg-title{flex:1;font-weight:600;font-size:14px;}',
 				'.dsw-mbg-b{padding:4px 10px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-size:12px;cursor:pointer;}',
 				'.dsw-mbg-b:hover{background:var(--dsw-alias-interactive-bg-hover-solid);}',
 				'.dsw-mbg-b.on{background:var(--dsw-alias-button-primary-fill);border-color:var(--dsw-alias-button-primary-fill);color:#fff;}',
-				'#dsw-mbg-dirrow{display:flex;gap:6px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--dsw-alias-border-l1);}',
+				'#dsw-mbg-dirrow{display:flex;gap:6px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:0 0 auto;}',
 				'#dsw-mbg-dir{flex:1;min-width:0;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:6px;color:var(--dsw-alias-label-primary);font-size:12.5px;padding:5px 8px;}',
-				'.dsw-mbg-block{padding:6px 10px;}',
+				'.dsw-mbg-block{padding:6px 10px;flex:0 0 auto;}',
+				// 中部可滚动区: 目录/清单两块列表都放在这里。面板高度不足时只滚这一块,
+				// 底部设置区 (音量/浓度/播放模式) 与状态栏始终完整留在圆角背景板内,
+				// 不再被挤出背景板下边缘。
+				// 注意: #dsw-mbg-panel 与 #dsw-mbg-ctl 都刻意不加 overflow:hidden,
+				// 否则「播放模式」<select> 展开后的原生浮层会被祖先裁掉。
+				'#dsw-mbg-body{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;}',
 				'.dsw-mbg-cap{font-size:11.5px;color:var(--dsw-alias-label-tertiary);margin:4px 2px;}',
+				// 「播放清单」标题行: 左边标题, 右边「清理失效项」按钮 (无失效项时按钮隐藏)。
+				'.dsw-mbg-cap-row{display:flex;align-items:center;justify-content:space-between;gap:8px;}',
 				'#dsw-mbg-list,#dsw-mbg-playlist{overflow-y:auto;min-height:70px;max-height:150px;}',
 				'.dsw-mbg-item{display:flex;gap:6px;align-items:center;width:100%;padding:4px 6px;border-radius:6px;cursor:pointer;}',
 				'.dsw-mbg-item:hover{background:var(--dsw-alias-interactive-bg-hover);}',
 				'.dsw-mbg-item.cur{background:var(--dsw-alias-interactive-bg-hover-active);}',
+				// 失效项 (文件被移动/删除或无法解码): 降透明度 + 名字划掉, 与"选中"状态区分开。
+				'.dsw-mbg-item.bad{opacity:0.55;}',
+				'.dsw-mbg-item.bad .dsw-mbg-name{text-decoration:line-through;}',
 				'.dsw-mbg-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
 				'.dsw-mbg-act{flex-shrink:0;cursor:pointer;border:0;background:transparent;color:var(--dsw-alias-label-secondary);padding:0 4px;font-size:13px;}',
 				'.dsw-mbg-act:hover{color:var(--dsw-alias-label-primary);}',
 				'.dsw-mbg-tip{color:var(--dsw-alias-label-tertiary);font-size:12px;padding:6px;}',
-				'#dsw-mbg-ctl{border-top:1px solid var(--dsw-alias-border-l1);padding:8px 12px 10px;display:flex;flex-direction:column;gap:6px;}',
+				'#dsw-mbg-ctl{border-top:1px solid var(--dsw-alias-border-l1);padding:8px 12px 10px;display:flex;flex-direction:column;gap:6px;flex:0 0 auto;}',
 				'.dsw-mbg-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
-				'.dsw-mbg-lab{font-size:11.5px;color:var(--dsw-alias-label-tertiary);min-width:34px;}',
+				// 标签定宽: 音量(2字)/浓度(2字)/播放模式(4字) 共用同一起始栅格,
+				// 使右侧两个滑块与下拉框的左边缘严格对齐; 定宽避免 4 字标签撑宽导致错位。
+				'.dsw-mbg-lab{font-size:11.5px;color:var(--dsw-alias-label-tertiary);flex:0 0 48px;width:48px;text-align:left;line-height:1.2;}',
 				'.dsw-mbg-vol{flex:1;min-width:80px;accent-color:var(--dsw-alias-button-primary-fill);}',
-				'#dsw-mbg-status{color:var(--dsw-alias-label-secondary);font-size:11.5px;padding:6px 12px;border-top:1px solid var(--dsw-alias-border-l1);min-height:16px;}',
+				'.dsw-mbg-sel{flex:1;min-width:0;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:6px;color:var(--dsw-alias-label-primary);font-size:12px;padding:3px 6px;}',
+				'#dsw-mbg-status{color:var(--dsw-alias-label-secondary);font-size:11.5px;padding:6px 12px;border-top:1px solid var(--dsw-alias-border-l1);min-height:16px;flex:0 0 auto;}',
 			// 目录浏览弹窗 (覆盖层)。
 			'#dsw-mbg-browse{position:fixed;inset:0;z-index:2147483002;display:none;align-items:center;justify-content:center;background:var(--dsw-alias-bg-mask-2);}',
 			'#dsw-mbg-browse .box{width:440px;max-width:90vw;height:60vh;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-3);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;color:var(--dsw-alias-label-primary);font-size:13px;}',
@@ -650,11 +1041,26 @@ window.__ModuleLoader__.load({
 				el("div", { className: "dsw-mbg-cap" }, _dsht("plugin.media_background.hint_dir_videos", "目录视频（点击即播，▷ 试播，＋ 加入清单）")),
 				listEl,
 			]);
+			// 「清理失效项」按钮: 默认隐藏, 只有清单里出现播放失败(404/无法解码)的条目时才显示,
+			// 由 updateInvalidButton() 统一控制显隐与数量, 不干扰正常界面。
+			clearInvalidButton = el("button", {
+				className: "dsw-mbg-b",
+				textContent: _dsht("plugin.media_background.btn_clean_invalid", "清理失效项"),
+				title: _dsht("plugin.media_background.title_clean_invalid", "移除清单里已无法播放的条目"),
+				on: { click: removeInvalidItems },
+			});
+			clearInvalidButton.style.display = "none";
 			const playBlock = el("div", { className: "dsw-mbg-block" }, [
-				el("div", { className: "dsw-mbg-cap" }, _dsht("plugin.media_background.hint_playlist", "播放清单")),
+				el("div", { className: "dsw-mbg-cap dsw-mbg-cap-row" }, [
+					el("span", { textContent: _dsht("plugin.media_background.hint_playlist", "播放清单") }),
+					clearInvalidButton,
+				]),
 				playlistEl,
 			]);
 			playIcon = el("span", {});
+			// 中部滚动区: 两块列表同属一个容器, 面板变矮时由它承接滚动,
+			// 保证底部控制区 (音量/浓度/播放模式三行) 不被挤出背景板。
+			const bodyEl = el("div", { id: "dsw-mbg-body" }, [fileBlock, playBlock]);
 			const ctl = el("div", { id: "dsw-mbg-ctl" }, [
 				el("div", { className: "dsw-mbg-row" }, [
 					el("button", { className: "dsw-mbg-b", textContent: "⏮", title: _dsht("plugin.media_background.btn_prev", "上一首"), on: { click: prev } }),
@@ -676,16 +1082,31 @@ window.__ModuleLoader__.load({
 						className: "dsw-mbg-vol", type: "range", min: 0, max: 100, value: Math.round(S.opacity * 100),
 						on: { input: (ev) => { S.opacity = Number(ev.target.value) / 100; applyVideoAppearance(); saveStore(); } },
 					}),
-					el("label", { className: "dsw-mbg-lab", textContent: _dsht("plugin.media_background.label_loop", "循环") }),
-					el("input", { type: "checkbox", checked: S.loop, on: { change: (ev) => { S.loop = ev.target.checked; saveStore(); } } }),
+				]),
+				el("div", { className: "dsw-mbg-row" }, [
+					el("label", { className: "dsw-mbg-lab", textContent: _dsht("plugin.media_background.label_play_mode", "播放模式") }),
+					// 播放模式下拉: 单曲循环 / 顺序循环 / 随机播放 / 不循环(播完停止)。
+					// 选择立即写入 S.playMode + localStorage; 只影响"下一首怎么选", 不打断当前播放。
+					(playModeSelect = el("select", {
+						className: "dsw-mbg-sel",
+						title: _dsht("plugin.media_background.title_play_mode", "选择清单播完后的行为"),
+						on: { change: (ev) => { S.playMode = ev.target.value; saveStore(); } },
+					}, [
+						el("option", { value: "repeat-one", textContent: _dsht("plugin.media_background.mode_repeat_one", "单曲循环") }),
+						el("option", { value: "repeat-all", textContent: _dsht("plugin.media_background.mode_repeat_all", "顺序循环（播单循环）") }),
+						el("option", { value: "shuffle", textContent: _dsht("plugin.media_background.mode_shuffle", "随机播放") }),
+						el("option", { value: "sequential", textContent: _dsht("plugin.media_background.mode_sequential", "不循环（播完即止）") }),
+					])),
 				]),
 			]);
+			// 选项建好后再回填当前模式 (select.value 在无 option 时设置无效)。
+			playModeSelect.value = S.playMode;
 			statusEl = el("div", { id: "dsw-mbg-status", textContent: _dsht("plugin.media_background.status_scanning", "扫描中…") });
 			// 三手柄: 右 / 下 / 右下拉伸
 			var rh = el("div", { className: "rh" });
 			var bh = el("div", { className: "bh" });
 			var brh = el("div", { className: "brh" });
-			panel = el("div", { id: "dsw-mbg-panel" }, [head, dirRow, fileBlock, playBlock, ctl, statusEl]);
+			panel = el("div", { id: "dsw-mbg-panel" }, [head, dirRow, bodyEl, ctl, statusEl]);
 			rootEl.appendChild(panel);
 
 			// 目录浏览弹窗 (覆盖整个页面, 在其内部逐层下钻选择目录)。
@@ -705,7 +1126,9 @@ window.__ModuleLoader__.load({
 			rootEl.appendChild(browseEl);
 
 			// ---- 弹窗几何: 避让官方右侧栏 + 可拖拽 + 可拉伸 ----
-			var MIN_W=280,MAX_W=520,MIN_H=220;
+			// MIN_H 需保证: 头部 + 目录行 + 状态栏 + 底部设置区(含音量/浓度/播放模式三行) 完整可见,
+			// 余下高度留给中部滚动区, 因此下限取 320px (旧值 220 会把设置区挤出背景板)。
+			var MIN_W=280,MAX_W=520,MIN_H=320;
 			var panelWin=null,dragState=null;
 			// 读取官方右侧栏 (dsh-client-ui-sidebar-right) 当前实际占位宽度 (px):
 			// 官方停靠面板带 data-sidebar-right-* 标记 —— 展开态才有 data-sidebar-right-open;
@@ -737,7 +1160,9 @@ window.__ModuleLoader__.load({
 				var vh=window.innerHeight||800;
 				var pad=side+20;
 				var w=Math.min(Math.max(340,MIN_W),vw-pad-16);
-				var h=Math.min(vh-92,560);
+				// 初始高度兜底 MIN_H: 旧逻辑 min(vh-92,560) 在矮窗口下会小于设置区所需高度,
+				// 导致底部的「播放模式」行溢出圆角背景板。上限仍为 560。
+				var h=Math.min(Math.max(vh-92,MIN_H),560);
 				return{left:vw-w-pad,top:14,width:w,height:h,_autoPos:true};
 			}
 			function pd(ev,mode){
@@ -816,18 +1241,14 @@ window.__ModuleLoader__.load({
 			buildUI();
 			applyVideoAppearance();
 			updatePlayIcon();
-			loadConfig().then(() => {
-				scanList().then(() => {
-					// 恢复播放: loop=true 且清单有内容 → 自动从第一首开始循环 (上次关闭前的习惯延续)。
-					// 只恢复循环播放模式, 不恢复单次试播 (preview 是临时的, 关了页面就丢)。
-					if (S.loop && S.list.length > 0) {
-						playListIndex(0);
-						setStatus(_dsht("plugin.media_background.status_resume_fmt", "恢复播放: {{name}} (上次循环清单, 可在面板里停掉)").replace("{{name}}", S.list[0].name));
-					}
-				});
-			});
 			renderPlaylist();
 			updateStatus();
+			// 启动即自动恢复播放 (上次那首仍在清单 → 它的下标, 否则清单第一首),
+			// 不再依赖播放模式; 清单为空则不起播。放在目录扫描之前, 避免网络往返拖慢起播。
+			resumePlaybackOnStartup();
+			loadConfig().then(() => {
+				scanList();
+			});
 		}
 
 		// ---- 插件契约 ----
