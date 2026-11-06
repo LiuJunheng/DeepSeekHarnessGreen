@@ -564,6 +564,10 @@ TMP_DIR = os.path.join(RUNTIME_DIR, "tmp")
 GREEN_UPDATE_DIR = os.path.join(RUNTIME_DIR, "update")      # 绿色版更新暂存目录 (zip/解压/job/备份)
 # 上次启动时记录的本体版本号 (检测"用户更新了绿色版本体", 触发内置插件自动同步)
 LAST_RUN_VERSION_FILE = os.path.join(RUNTIME_DIR, "last_run_version.txt")
+# 上次成功同步时 plugins/ 源码的指纹 (13 个内置插件合计约 1MB, 哈希耗时几十毫秒)。
+# 用途: 本体版本号没变、但插件源码被改动 (开发/热修/替换单个文件) 时也能在下次
+# 启动时自动把已装副本同步成最新, 避免"桌面端仍在跑旧插件"的隐性分叉。
+PLUGIN_SOURCE_FINGERPRINT_FILE = os.path.join(RUNTIME_DIR, "bundled_plugins_fingerprint.txt")
 BACKUP_DIR = os.path.join(RUNTIME_DIR, "backup")            # 统一备份目录 (dsh 旧版本备份等)
 # 默认工作区子目录名: 仅在"程序根目录包含临时目录"(绿色便携默认形态)冲突时,
 # 才把它作为默认工作区使用; 不冲突时默认工作区直接用程序根目录本身,
@@ -4364,6 +4368,50 @@ class Launcher:
         except OSError as error:
             self.log("[警告] 记录绿色版版本号失败: %s" % error)
 
+    def plugins_source_fingerprint(self):
+        """计算 plugins/ 下全部内置插件源码的指纹 (相对路径 + 文件内容 MD5)。
+
+        用途: 本体版本号没变、但插件源码被改动时, 也能发现"已装副本落后于源码"。
+        返回 32 位十六进制字符串; 一个内置插件都没有时返回空串 (调用方按"不比对"处理)。
+        13 个插件合计约 1MB, 启动时读一遍耗时可忽略; 内容哈希不受复制/改时间戳影响,
+        比单看文件大小或修改时间更确定。"""
+        digest = hashlib.md5()
+        has_file = False
+        for folder in self.bundled_plugin_dirs():
+            for dirpath, dirnames, filenames in os.walk(folder):
+                dirnames.sort()   # 固定遍历顺序, 保证同一份源码每次算出同一个指纹
+                for name in sorted(filenames):
+                    full_path = os.path.join(dirpath, name)
+                    relative = os.path.relpath(full_path, BASE_DIR)
+                    try:
+                        with open(full_path, "rb") as file_handle:
+                            body = file_handle.read()
+                    except OSError:
+                        body = b"<unreadable>"
+                    digest.update(relative.encode("utf-8"))
+                    digest.update(hashlib.md5(body).hexdigest().encode("utf-8"))
+                    has_file = True
+        if not has_file:
+            return ""
+        return digest.hexdigest()
+
+    def read_plugins_source_fingerprint(self):
+        """读取上次成功同步时记录的插件源码指纹 (缺失/损坏返回空串)。"""
+        try:
+            with open(PLUGIN_SOURCE_FINGERPRINT_FILE, "r", encoding="utf-8") as file_handle:
+                return (file_handle.read() or "").strip()
+        except OSError:
+            return ""
+
+    def write_plugins_source_fingerprint(self):
+        """记录本次同步时的插件源码指纹 (只在同步成功后写)。"""
+        try:
+            os.makedirs(RUNTIME_DIR, exist_ok=True)
+            with open(PLUGIN_SOURCE_FINGERPRINT_FILE, "w", encoding="utf-8") as file_handle:
+                file_handle.write(self.plugins_source_fingerprint())
+        except OSError as error:
+            self.log("[警告] 记录内置插件源码指纹失败: %s" % error)
+
     def clear_bundled_sync_marker(self):
         """删除"绿色版更新后需同步"标记 (同步成功后才删, 失败保留以便下次重试)"""
         marker = os.path.join(RUNTIME_DIR, "pending_bundled_plugin_check")
@@ -4384,11 +4432,17 @@ class Launcher:
              没有标记, 只能靠版本号发现。
         条件 2 是 2026-10-27 补上的: 此前只有标记一条路, 手动覆盖更新的用户永远不会
         触发自动同步, 表现为"更新完内置插件还是旧版, 也没有任何提示"。没记录过版本号
-        也按"需要同步"处理, 使刚升级到本版本的机器立刻补一次同步 (同步完才写版本号)。"""
+        也按"需要同步"处理, 使刚升级到本版本的机器立刻补一次同步 (同步完才写版本号)。
+        条件 3 是 2026-11-06 补上的: 本体版本号不变、只改了 plugins/ 里某个插件的源码时,
+        前两条都不成立 -> 已装副本永远不更新, 桌面端一直跑旧插件 (本次"观星插件改动
+        不生效"就是这一类)。改为比对 plugins/ 源码指纹, 有差异就同步一次。"""
         marker = os.path.join(RUNTIME_DIR, "pending_bundled_plugin_check")
         previous_version = self.read_last_run_version()
         version_changed = previous_version != GREEN_VERSION
-        return (os.path.isfile(marker) or version_changed), previous_version
+        source_fingerprint = self.plugins_source_fingerprint()
+        recorded_fingerprint = self.read_plugins_source_fingerprint()
+        fingerprint_changed = bool(source_fingerprint) and (source_fingerprint != recorded_fingerprint)
+        return (os.path.isfile(marker) or version_changed or fingerprint_changed), previous_version
 
     def run_post_update_bundled_sync(self):
         """启动时自动同步一次内置插件 (幂等: 无标记且版本未变直接返回 None)。
@@ -4435,6 +4489,7 @@ class Launcher:
                          "也可以打开「插件管理」点「一键安装内置插件」手动重试")
             else:
                 self.write_last_run_version()
+                self.write_plugins_source_fingerprint()
                 self.clear_bundled_sync_marker()
         except Exception as error:
             failed = ["%s" % error]
