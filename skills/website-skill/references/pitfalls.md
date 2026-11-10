@@ -1,4 +1,4 @@
-# 21 条高频踩坑经验（完整版）
+# 46 条高频踩坑经验（完整版）
 
 ## 一、爬虫 & SEO 类（最痛的）
 
@@ -99,4 +99,18 @@
 
 40. **`X-Robots-Tag: noindex` 不阻止 sitemap 被处理** — sitemap 本身 noindex 是正常的（Product Expert 明确说明）。真正的问题是 WAF/CDN 对 Googlebot 返回 HTML、挑战页或空响应，而不是 XML。
 
-→ 完整排查手册见 `references/sitemap-standards.md`
+## 七、内容列表 / 缓存 / 下载（v1.3 新增）
+
+41. **静态内嵌卡片与动态卡片混渲染，重渲染后新版被排到最后** — 列表页为了让爬虫有内容，HTML 里硬编码了最新几条卡片；JS 重渲染时如果只往容器末尾 append，比静态卡片更新的版本会排到所有卡片之后，用户首屏仍然看到旧版本。正确做法：静态卡片加 `data-embedded="true"` + `data-tag`；重渲染只删 `.item:not([data-embedded])`；比静态卡片新的条目 `insertBefore(第一张静态卡片)`。
+
+42. **缓存命中后后台拿到新版本却不重渲染** — 先渲染 localStorage 缓存、再后台静默请求，这个模式本身没错；错在拿到新数据后只写了缓存，没有更新内存数组和 DOM，用户怎么刷新都是旧的（直到缓存过期）。判定：`长度变化` 或 `首项唯一键变化` 时必须 `renderAll()`。详见 @references/changelog-data-pipeline.md
+
+43. **多来源合并后没按时间重排** — seed.json 与 API 数据按来源顺序拼接，会出现新旧交错。必须按唯一键（`tag_name`）去重后，统一按 `published_at` 降序重排。
+
+44. **`/assets/*` 下的 seed.json 被搜索引擎收录** — 辅助数据文件（JSON/HTML 片段）也在可访问路径下，可能被索引成重复内容。`_headers` 加一条 `/assets/* → X-Robots-Tag: noindex`。
+
+45. **下载按钮硬编码版本号** — 每次发版改所有语言页面，必漏；旧文件清理后还会 404。改为 `data-dl` 标记 + 运行时获取最新 release + 15 分钟缓存 + 失败静默回退。Gitee API 无 CORS，只 fetch GitHub 再拼 Gitee 直链。详见 @references/download-links.md
+
+46. **子目录 robots.txt 不存在却被访问** — Cloudflare Pages 的 SPA fallback 会把 `/zh/robots.txt` 这类不存在的文件返回成首页 HTML，Google 读到的是无效 robots。要么在对应子目录真实放置 robots.txt，要么不要在 sitemap/文档里引用子目录 robots；root 的一份已足够。
+
+→ 完整排查手册见 @references/sitemap-standards.md

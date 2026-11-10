@@ -24,15 +24,17 @@ website-skill/
 │   ├── cache-versioning.md          ← 缓存版本号铁律详解 + 事故记录
 │   ├── multilingual-architecture.md ← 多语言架构全规范（hreflang / 路径 / 繁体转换）
 │   ├── pagination-seo.md            ← 分页/无限滚动 SEO 安全（三层架构 + 代码示例）
+│   ├── changelog-data-pipeline.md   ← 内容列表页：静态种子 + 增量 API + 分页 + 缓存
+│   ├── download-links.md            ← 下载按钮自动指向最新版（双镜像 / 无 CORS / 回退）
 │   ├── markdown-escape.md           ← Markdown 渲染 HTML escape 完整代码（JS + Python）
 │   ├── deployment-cloudflare.md     ← Cloudflare Pages 部署方案（Pretty URLs / _headers / CNAME / 301）
 │   ├── sitemap-standards.md         ← ★ Sitemap「Google 读不了」完整排查手册（真实案例 + 验证脚本）
 │   ├── seo-standards.md             ← 完整 SEO 清单
-│   ├── pitfalls.md                  ← 40 条高频踩坑经验完整版
+│   ├── pitfalls.md                  ← 46 条高频踩坑经验完整版
 │   ├── ad-standards.md              ← AdSense 接入规范
 │   └── code-style.md                ← 代码规范
 └── templates/
-    └── _headers                     ← Cloudflare _headers 示例模板
+    └── _headers                     ← Cloudflare _headers 示例（含 /assets/* noindex）
 ```
 
 ## 最高优先级规范（直接抄在 SKILL.md 里的）
@@ -45,10 +47,12 @@ website-skill/
 6. **URL 无扩展名铁律**：Cloudflare Pages 上 `.html` 一律 308，sitemap/canonical/hreflang/内链全部无扩展名
 7. **sitemap 读不了先测状态码**：不要反复改 XML 格式，用不跟随重定向的客户端逐条测 `<loc>`
 8. **`Couldn't fetch` 不一定是失败**：站点侧全部通过、又没有具体错误码时，按 pending 处理，等 1–2 周，不要反复重提交
+9. **静态卡片和动态卡片要能区分**：静态卡片打 `data-embedded`，重渲染只删动态卡片，更新的条目 `insertBefore` 到最前
+10. **下载按钮不写死版本号**：运行时取最新 release + 缓存 TTL + 失败静默回退
 
-> sitemap 排查完整手册见 `references/sitemap-standards.md`（这是本项目失败最多次的地方）。
+> sitemap 排查完整手册见 @references/sitemap-standards.md（这是本项目失败最多次的地方）。
 
-## 高频避坑（完整 40 条在 references/pitfalls.md）
+## 高频避坑（完整 46 条在 @references/pitfalls.md）
 
 | # | 坑 | 解法 |
 |---|---|---|
@@ -84,11 +88,14 @@ SKILL.md 的 frontmatter description 说清楚了调用时机：
 - 改了 CSS/JS → 记得版本号同步
 - 做 Markdown 渲染 → 记得 htmlEscape
 - 改了分页/无限滚动 → 记得不清空容器
-- **改 sitemap / GSC 报"读不了" → 先读 `references/sitemap-standards.md`，不要盲改 XML**
+- **加内容列表 / 更新日志 → 先读 @references/changelog-data-pipeline.md（静态卡片 + 增量 API + 缓存重渲染）**
+- **做下载按钮 → 不要硬编码版本号，见 @references/download-links.md**
+- **改 sitemap / GSC 报"读不了" → 先读 @references/sitemap-standards.md，不要盲改 XML**
 - **改了 URL 风格 / 页面结构 → 全站统一无扩展名（sitemap + canonical + hreflang + 内链）**
 
 ## 版本历史
 
+- v=1.3.0（2026-11-10）：按 TRAE/WorkBuddy 技能规范补齐 frontmatter（display_name / version / author 等）；新增 @references/changelog-data-pipeline.md（静态种子 + 增量 API + 混合渲染 + 缓存）与 @references/download-links.md（下载按钮自动指向最新版）；避坑经验扩到 46 条；引用统一为 @references 格式；补充 release-checklist 内容型页面更新项
 - v=1.2（2026-10-25）：补充「`Couldn't fetch` 多数是 pending/误报」的权威解释；新增换 URL workaround（GSC 按 URL 缓存失败）；新增 `http://` vs `https://` 命名空间坑；避坑经验扩到 40 条
-- v=1.1（2026-10-24）：新增 `references/sitemap-standards.md`（Sitemap「Google 读不了」完整排查手册）；补充 Cloudflare Pages Pretty URLs 的 `.html` 308 规则；全站 URL 统一无扩展名；避坑经验扩到 28 条
+- v=1.1（2026-10-24）：新增 @references/sitemap-standards.md（Sitemap「Google 读不了」完整排查手册）；补充 Cloudflare Pages Pretty URLs 的 `.html` 308 规则；全站 URL 统一无扩展名；避坑经验扩到 28 条
 - v=1.0（2026-09-15）：首次创建，沉淀自一个完整的多语言静态网站项目

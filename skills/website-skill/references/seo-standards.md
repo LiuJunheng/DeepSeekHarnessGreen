@@ -2,7 +2,7 @@
 
 ## sitemap.xml
 
-> **读不了时先看 `references/sitemap-standards.md`，不要反复改 XML 格式。**
+> **读不了时先看 @references/sitemap-standards.md，不要反复改 XML 格式。**
 
 - [ ] 文件 UTF-8 **无 BOM**（前 3 字节不是 `EF BB BF`）
 - [ ] 行尾**纯 LF**（`\r\n` 数量 = 0）

@@ -1,13 +1,21 @@
 ---
 name: website-skill
-description: "通用静态网站开发规范：纯原生 HTML/CSS/JS、多语言架构、SEO、Sitemap 排查、Cloudflare Pages 部署（.html 308）、广告接入、Markdown 渲染安全、分页爬虫兼容。新建/维护站点或 GSC 报 sitemap 读不了时加载。"
-updated: "2026-10-25"
+display_name: 静态网站开发与运维规范
+display_name_en: Static-Website-Development-Guide
+description: "通用静态网站开发规范：纯原生 HTML/CSS/JS、多语言架构、SEO、Sitemap 排查、Cloudflare Pages 部署（.html 308）、内容列表页数据管线、下载按钮、广告接入、Markdown 渲染安全、分页爬虫兼容。新建/维护站点或 GSC 报 sitemap 读不了时加载。"
+description_zh: 通用静态网站开发与运维规范，覆盖多语言架构、SEO、Cloudflare Pages 部署与爬虫兼容。
+description_en: General static website development and operations guide covering multilingual architecture, SEO, Cloudflare Pages deployment, and crawler compatibility.
+category: development
+version: 1.3.0
+author: 刘俊亨
 ---
 
 # 通用静态网站开发与运维规范
 
+> 版本日期：2026-11-10
+
 > 本 Skill 沉淀自一个完整的多语言静态网站项目（Cloudflare Pages 托管 + GitHub/Gitee 双镜像）的实测经验，只记录对日后开发有复用价值的内容：架构、规范、避坑。不存档设计过程、时间线与一次性审计。
-> 本 Skill 自包含：**SKILL.md 是核心索引**与最高优先级规范，详细说明在 `references/`，逐项核对清单在 `checklists/`，代码模板在 `templates/`。按需查阅。
+> 本 Skill 自包含：**SKILL.md 是核心索引**与最高优先级规范，详细说明在 @references/，逐项核对清单在 @checklists/，代码模板在 @templates/。按需查阅。
 
 ## 一、适用场景
 
@@ -16,6 +24,8 @@ updated: "2026-10-25"
 - **SEO 排查**：收录掉了、爬虫看到空壳、百度/搜狗不爬 → 翻「爬虫能力分级」「分页 SEO 安全」
 - **Markdown 渲染**：发布说明、博客、文档页用 markdown → 必须看「HTML escape 坑」
 - **分页/无限滚动**：加载更多 + 爬虫兼容 → 看「分页 SEO 安全」
+- **内容列表页**：更新日志、博客列表、版本列表要持续新增 → 看「静态内嵌卡片 + 动态渲染混合」
+- **下载按钮**：安装包/压缩包要始终指向最新版 → 看「下载按钮自动指向最新版」
 
 ## 二、技术选型铁律
 
@@ -30,7 +40,7 @@ updated: "2026-10-25"
 
 曾出现过 index.html 还在 `app.js?v=3.8`、changelog.html 已 `v=3.10` 的中间态——用户加载旧缓存看到 SEO 段落被截断，排查了 3 小时才定位。
 
-→ 完整说明见 `references/cache-versioning.md`
+→ 完整说明见 @references/cache-versioning.md
 
 ## 四、多语言架构（目录式单语言）
 
@@ -47,7 +57,7 @@ pages/
 
 **路径相对路径铁律**：根入口 `./assets/xxx`，子页 `../assets/xxx`；JS 跳转必须 `./zh/` 不能 `/zh/`。
 
-→ 完整说明见 `references/multilingual-architecture.md`
+→ 完整说明见 @references/multilingual-architecture.md
 
 ## 五、分页/无限滚动的 SEO 安全（爬虫保底核心）
 
@@ -63,7 +73,19 @@ JS 启动后**绝对不要做** `container.innerHTML = ""`——这会删掉 HTM
 
 按钮永远是容器最后一个子节点。
 
-→ 完整代码示例见 `references/pagination-seo.md`
+### 静态内嵌卡片 + 动态渲染混合（内容列表页通用）
+
+列表页同时存在「HTML 里给爬虫的静态卡片」和「JS 动态渲染的卡片」时，必须能区分两者：
+
+- 静态卡片加 `data-embedded="true"`（配合 `data-tag` 记录版本/唯一键）
+- 重渲染只删除 `.item:not([data-embedded])`，**绝不清空整个容器**
+- 比静态卡片更新的条目（如缓存命中后后台拉到新版本）必须 `insertBefore(第一张静态卡片)`，不能只往末尾 append
+- 缓存命中 → 后台静默请求 → 发现「长度变化或首项 tag 变化」→ 更新缓存并 `renderAll()`；只更新缓存不重渲染会让用户永远看到旧内容
+- 多来源合并按唯一键去重后，**统一按发布时间降序重排**，不能按来源顺序拼接
+
+→ 完整实现与验证方法见 @references/changelog-data-pipeline.md
+
+→ 完整代码示例见 @references/pagination-seo.md
 
 ## 六、Markdown 渲染的 HTML escape 大坑（必看）
 
@@ -78,7 +100,7 @@ renderInline 执行顺序**不能乱**：
 
 **JS 和 Python 版渲染器必须逻辑一致**——Python 预渲染 seed.json，JS 运行时渲染，漏了一个都会出问题。
 
-→ 完整代码见 `references/markdown-escape.md`
+→ 完整代码见 @references/markdown-escape.md
 
 ## 七、爬虫能力分级应对
 
@@ -123,8 +145,14 @@ renderInline 执行顺序**不能乱**：
 | 28 | GSC 按精确 URL 缓存失败记录 | 换查询参数 / 新文件名，绕开旧记录 |
 | 29 | sitemap 命名空间写成 `https://` | 必须 `http://`，Google 不认 https 命名空间 |
 | 30 | 反复重提交同一个 sitemap URL | 会重置 pending，保留现有记录等待 |
+| 41 | **静态卡片与动态卡片混渲染，重渲染后新版排到最后** | 静态卡片加 `data-embedded`，新版 `insertBefore` 到最前 |
+| 42 | **缓存命中后后台拿到新版却不重渲染** | 长度或首项 tag 变化时必须 `renderAll()` |
+| 43 | **多来源合并后没按时间重排** | 去重后统一按 `published_at` 降序 |
+| 44 | `/assets/*` 里的 seed.json 被搜索引擎收录 | `_headers` 加 `/assets/* → X-Robots-Tag: noindex` |
+| 45 | **下载按钮硬编码版本号** | 用 API 动态检测最新 release + 缓存 + 静默回退 |
+| 46 | 子目录 robots.txt 不存在却被访问 | SPA fallback 会返回 HTML；要引用就真实放文件 |
 
-→ 完整避坑经验（40 条）见 `references/pitfalls.md`
+→ 完整避坑经验（46 条）见 @references/pitfalls.md
 
 ## 九、发版后必做清单
 
@@ -136,7 +164,7 @@ renderInline 执行顺序**不能乱**：
 6. Google Search Console 重新提交 sitemap
 7. 观察 2-3 天收录数
 
-→ 完整 checklist 见 `checklists/release-checklist.md`
+→ 完整 checklist 见 @checklists/release-checklist.md
 
 ## 十、Sitemap 与 URL 规范（血泪教训，必读）
 
@@ -223,7 +251,19 @@ GSC 又只给 "Couldn't fetch"、没有具体错误码时，**大概率是 Googl
 （best effort，可能几天到几个月）。不要继续大改站点，等 1–2 周；
 可用 **Rich Results Tester（Desktop bot）** 确认 Google 能抓到 XML。
 
-→ **完整排查手册、真实案例复盘、可复制验证脚本见 `references/sitemap-standards.md`**
+→ **完整排查手册、真实案例复盘、可复制验证脚本见 @references/sitemap-standards.md**
+
+## 十一、下载按钮自动指向最新版
+
+静态站的下载按钮不要硬编码版本号或 zip 文件名（每次发版都要改一堆 HTML，必漏）。标准做法：
+
+- 按钮只保留稳定的 `data-dl="github|gitee"` 标记，`href` 先指向 `/releases/latest` 作为无 JS 回退
+- 页面加载后用 API 取最新 release，挑选目标资源（如 `*.zip` 且文件名含产品标识），再改 `href`
+- GitHub API 有 CORS 可直接 fetch；Gitee 无 CORS，**只 fetch GitHub，拿到文件名后拼 Gitee 直链**（两端文件名保持一致）
+- 结果写 `localStorage` 缓存（15 分钟级 TTL，key 带版本后缀）；TTL 太长会让新版本发布后用户仍下旧包
+- 任何失败（限流/404/断网）都要**静默回退**到 `releases/latest`，不能让按钮变成死链
+
+→ 完整代码与坑位见 @references/download-links.md
 
 ---
 
@@ -241,14 +281,15 @@ skills/website-skill/
 │   ├── cache-versioning.md          ← 缓存版本号铁律详解
 │   ├── multilingual-architecture.md ← 多语言架构全规范
 │   ├── pagination-seo.md            ← 分页/无限滚动 SEO 安全实现
+│   ├── changelog-data-pipeline.md   ← ★ 内容列表页：静态种子 + 增量 API + 分页
+│   ├── download-links.md            ← 下载按钮自动指向最新版
 │   ├── markdown-escape.md           ← Markdown 渲染 HTML escape 完整代码
 │   ├── deployment-cloudflare.md     ← Cloudflare Pages 部署方案
 │   ├── sitemap-standards.md         ← ★ Sitemap 读不了的完整排查手册（重点）
 │   ├── seo-standards.md             ← 完整 SEO 清单
-│   ├── pitfalls.md                  ← 40 条避坑经验完整版
+│   ├── pitfalls.md                  ← 46 条避坑经验完整版
 │   ├── ad-standards.md              ← AdSense 接入规范
 │   └── code-style.md                ← 代码规范
 └── templates/
-    ├── SKILL.md（模板）              ← 新建子 Skill 参考
-    └── _headers（模板）             ← Cloudflare _headers 示例
+    └── _headers                     ← Cloudflare _headers 示例（含 /assets/* noindex）
 ```

@@ -20,7 +20,17 @@
 - [ ] Content-Type = `text/xml`（`_headers` 已写进文件，部署后线上验证）
 - [ ] GSC 里若有旧失败条目，先删除再重新提交
 - [ ] 确认输出根目录有 `404.html`，未知路径返回 404（不是 200 首页）
-- [ ] 详见 `references/sitemap-standards.md`
+- [ ] 详见 @references/sitemap-standards.md
+
+## 内容型页面更新（changelog / 下载列表）
+
+- [ ] `assets/*-seed.json` 已追加新版本条目（字段与远端一致）
+- [ ] 所有语言页面的 HTML 内嵌卡片更新为最新 N 条
+- [ ] 静态卡片都有 `data-tag` + `data-embedded="true"`，数量各语言一致
+- [ ] 想让用户立刻看到新内容时，缓存 key 后缀 +1（如 `-v3` → `-v4`）
+- [ ] 下载按钮没有硬编码版本号；失败时仍回退到 `releases/latest`
+- [ ] `_headers` 含 `/assets/* → X-Robots-Tag: noindex`
+- [ ] 详见 @references/changelog-data-pipeline.md 与 @references/download-links.md
 
 ## 本地验证（Ctrl+Shift+R 硬刷新）
 

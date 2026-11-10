@@ -79,7 +79,7 @@ pages/
 | 返回首页 | `href="./"` | `href="index.html"`（308） |
 | 带锚点 | `href="./#faq"` | `href="index.html#faq"`（308，且易丢 `#`） |
 
-> 详见 `references/deployment-cloudflare.md` 的 Pretty URLs 一节和 `references/sitemap-standards.md`。
+> 详见 @references/deployment-cloudflare.md 的 Pretty URLs 一节和 @references/sitemap-standards.md。
 
 ## 浏览器语言检测
 
