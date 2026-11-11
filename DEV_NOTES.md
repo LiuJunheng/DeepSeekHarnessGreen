@@ -26,7 +26,7 @@
 
 ## 二、当前状态（版本 / 发布 / 仓库）
 
-* **版本唯一来源 = launcher.py** **`GREEN_VERSION`**；`GREEN_VERSION_DATE` 由 `release_upload.py` 打包当天自动回写（禁止预写未来日期）。zip 名与发布均以此为准。当前已发布 **v1.0.48**。
+* **版本唯一来源 = launcher.py** **`GREEN_VERSION`**；`GREEN_VERSION_DATE` 由 `release_upload.py` 打包当天自动回写（禁止预写未来日期）。zip 名与发布均以此为准。当前已发布 **v1.0.49**。
 
 * **形态**：tkinter 启动器 + 便携 Node/Python + 绿色 zip 分发 + 内置桌面壳 + 双通道自更新。
 
@@ -606,6 +606,7 @@
 
 ## 七、待办 / 后续建议
 
+* **dsh 0.2.2-rc.2 适配三项**（侧栏文件树搜索被接管、归档会话工作树残留、工具错误码影响回退统计）已记录在 `TODO_OPTIMIZE.md`，各含背景/方案/验证口径；当前决策是暂不升级、先观察 rc 稳定性。
 * auto 镜像"国内优先、失败回退"扩到 npm install 阶段（坑 8）。
 
 * README\_EN 随中文 README 每次发布一次性翻译对齐。
