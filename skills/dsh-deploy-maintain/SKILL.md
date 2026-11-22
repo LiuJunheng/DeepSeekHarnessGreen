@@ -83,6 +83,7 @@ updated: "2026-10-24"
 - **onefile 下 `__file__` 不可作程序根目录**（指向 `_MEIPASS`）。`get_base_dir()` = frozen 时取 `os.path.dirname(sys.executable)`，否则脚本目录。
 - **必须显式补齐全套 VC 运行库三件套**：`--add-binary vcruntime140.dll/vcruntime140_1.dll/vcruntime140_threads.dll;.`，否则目标机 `Failed to load Python DLL ... 找不到指定的模块`。诊断：`pyi-archive_viewer -l DSH_Launcher.exe` 过滤 `vcruntime|python310`；单 DLL 依赖用 PE 导入表解析。
 - **内置便携 Python**：python-build-standalone 解压后有**顶层子目录**（`runtime/python/python/python.exe`），`find_python_exe()` 必须"先查顶层，再遍历一层子目录"兼容两种布局。
+- **便携 Python 下载源（2026-11-12 扩容）**：产物只发布在 GitHub Release，国内按 `南京大学 GitHub Release 镜像 → gh-proxy.com → ghproxy.net → 官方 GitHub` 依次回退（`PYTHON_URL_TEMPLATE`，三源 Content-Length 一致 = 39634596 字节，可互为备份）。**单靠 NJU 不够**：部分网络会 SSL 握手失败或长时间 0 字节，所以即使 `config.mirror=cn` 也要保留后面的代理与官方兜底。全部失败时仍可用系统 Python 跑 `start.bat`（dsh 服务由 Node 运行）。
 - **校验用便携 python，别用系统 python**（可能是 2.7，`nonlocal` 误报语法错）：`runtime\python\python\python.exe -m py_compile`。
 - **重新打包纪律**：改 `launcher.py`（含 `GREEN_VERSION` 版本号）或 `update_agent.py` 后**必须**重打包 exe（`build_exe.bat`），否则用户跑旧 exe（"界面改了没反应"/"运行时版本比 Release tag 低一级"十有八九是旧 exe）。`release_upload.py` v3.0+ 已强制校验 exe 新鲜度（打包前比 mtime + 跑 `--print-green-version` 对比源码版本，任一失败 exit(2)）。**两条"看起来通过其实没校验"的坑（exe 被占用时 copy 失败却打印 Build complete 假成功；根目录下 `--print-green-version` 返回 -1 被静默跳过，要去 `dist/` 跑或比对 root/dist 的 Get-FileHash；发布脚本须在 `PYTHONIOENCODING=utf-8` 下运行）详见 `references/release-workflow.md`**。
 
@@ -471,7 +472,9 @@ ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.regi
 | 远程能聊天但改设置 403 | 正常——PRIVILEGED_METHODS 仅回环可调，官方安全保护 |
 | 填了受信任主机没生效 / 局域网 /api 403 | 新版 dsh 只认显式 `--trusted-host`（不再自动并入 lanAddresses）：`build_server_command` 在留空时自动追加本机局域网 IPv4，填写时只信任填写的；`patch_lan_trust` 仅兼容旧版 |
 | 升级后出现"跳过 client-connection 补丁/结构不匹配" | 官方重写 `isSameAuthorityOrigin()`；v4 锚点是 `const hostUrl = parseAuthority(host, scheme);\n\treturn hostUrl !== void 0 && originUrl.host === hostUrl.host;`；验证用 `curl -H "Origin: http://127.0.0.1" .../api`（401=已放行，403=未放行），别用首页判断 |
-| 关了 web token 认证但裸地址仍 401 | 新版锚点在 `admit()`（`if (this.browserAuth.isAuthenticated(request, secure)) return { peer: this.browserPeer };`）与 `authorizeIndex(request, response)`；旧锚点已不存在，patch_auth 会静默跳过 |
+| 关了 web token 认证但裸地址仍 401 | `patch_auth` 按 v3 → v2 → v1 匹配：v3（0.2.3+）是 `webserver/authorize` 里的 `const admission = this.authentication.authenticate(facts);` 与 `admit()` 里的 `return this.authentication.authenticate(request);`，两处都换成 `{ peer: this.browserPeer }`；v2（0.2.1-rc.2+）是 `admit()` 的 `browserAuth.isAuthenticated` 早退 + `authorizeIndex(request, response)` 开头 `return true;`；v1 更旧。全不命中才会静默跳过并打警告 |
+| ui-commands 退避补丁失效 / 日志「文件结构不匹配」 | 0.2.3+ 客户端产物压缩成单行，多行锚点失效。改用短锚点 `if(entry.state===\`failed\`)throw new Error(\`command directory warmup failed:`，在 `throw` 前插 1.5s 退避，幂等标记 `setTimeout(resolveDelay,1500)` |
+| 装完 dsh 0.2.3-alpha.1 启动即退出（`does not provide an export named 'EntryValidationError'` 或 `reading 'call'`） | 上游 manifest 与代码不一致：app-boot 需要 loader 1.2 / cordis 4.2，但声明的是 1.1 / 4.1。把 `next` 频道五个包整套换齐（core + profiles 两棵树）：`cordis@4.2.0-alpha.1`、`cordis-plugin-loader@1.2.0-alpha.1`、`cordis-plugin-include@1.2.0-alpha.1`、`cosmokit@1.10.0-alpha.1`、`schemastery@3.20.0-alpha.1`；重装 dsh 会复发，建议回 `latest` 或等正式版 |
 | 模型选择器无 Ollama/报 No API key | 查 `llm-pi-ai.providers.<id>` 已写（重启服务持久）；免鉴权服务带占位 `headers.Authorization`；thinking 模型等待式思考正常 |
 | Ollama 能对话从不调工具 | **compat 缺失**（OpenAI 兼容端点不认官方方言）→ 配置带 `compat:{...}`；查 settings.yaml 的 providers.<id>.compat |
 | 对话停"Deep diving…"很久 | thinking 模型先思考后出正文（本地冷启动+思考十几秒~几十秒）；`GET /api/ps` 确认已加载 |

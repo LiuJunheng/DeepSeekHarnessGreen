@@ -301,9 +301,17 @@ function analyzeEvents(events) {
 				break;
 			case "tool/result":
 				if (current !== null && d.error !== void 0) {
-					const code = (d.error && typeof d.error.code === "string" && d.error.code) || "ERROR";
-					current.errors[code] = (current.errors[code] || 0) + 1;
-					totalErrors[code] = (totalErrors[code] || 0) + 1;
+					// dsh 0.2.3+ 的 tool/result.error 统一为 { name, code }:
+					// 优先用具体 code, 缺失时退回错误名 (如 AbortError), 都没有才归为 ERROR,
+					// 避免错误分布全部塌缩成一个 "ERROR" 分组。
+					let errorCode = "ERROR";
+					if (typeof d.error.code === "string" && d.error.code !== "") {
+						errorCode = d.error.code;
+					} else if (typeof d.error.name === "string" && d.error.name !== "") {
+						errorCode = d.error.name;
+					}
+					current.errors[errorCode] = (current.errors[errorCode] || 0) + 1;
+					totalErrors[errorCode] = (totalErrors[errorCode] || 0) + 1;
 				}
 				break;
 			default:

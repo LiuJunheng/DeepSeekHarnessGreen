@@ -121,28 +121,48 @@ function workspaceRootOf(ctx, sessionId) {
 /**
  * 解析文件浏览弹窗的起始目录 (默认路径)。
  * 优先级 (与侧栏插件一致, 避免默认路径显示成 dsh 程序目录 runtime\dsh):
- *   1) 当前激活会话 header.cwd (用户为该会话指定的工作目录, 权威来源);
- *   2) 工作区注册表 workspaceRegistry 的工作区根 (会话所属工作区或注册表第一个);
- *   3) sandboxPolicy.workspaceRoot (仅显式配置, 与默认值 process.cwd() 不同才可信);
- *   4) 空串 (宿主端报错提示未配置)。
+ *   1) 会话当前检出目录 sandboxPolicy.resolve({ session }).workspaceRoot
+ *      (dsh 0.2.3+ 起它跟随 enter_worktree / exit_worktree 移动, 与官方文件树、
+ *       目录监听读取的是同一个目录; 旧版 dsh 无 resolve 时等价于 header.cwd);
+ *   2) 会话 header.cwd (原始项目; 旧版 dsh 或 resolve 不可用时的权威来源);
+ *   3) 工作区注册表 workspaceRegistry 的工作区根 (会话所属工作区或注册表第一个);
+ *   4) sandboxPolicy.workspaceRoot (仅显式配置, 与默认值 process.cwd() 不同才可信);
+ *   5) 空串 (宿主端报错提示未配置)。
  * @param {object} ctx - cordis 宿主上下文。
- * @param {string} [sessionId] - 会话 id, 用于优先读会话 header.cwd / 匹配工作区。
+ * @param {string} [sessionId] - 会话 id, 用于读当前检出目录 / header.cwd / 匹配工作区。
  * @returns {string} 起始目录绝对路径, 找不到时返回空串。
  */
 function homeRootOf(ctx, sessionId) {
-	// 1) 会话 header.cwd: 当前激活会话的工作目录。
+	// 先取会话对象: 下面两步共用; 取不到会话就跳过会话级来源。
+	let session = null;
 	try {
 		const sessions = ctx.get("sessions");
-		const session = sessions && typeof sessions.get === "function" && sessionId ? sessions.get(sessionId) : null;
-		const headerCwd = session && session.header && typeof session.header.cwd === "string" ? session.header.cwd : "";
-		if (headerCwd !== "") {
-			return headerCwd;
-		}
+		session = sessions && typeof sessions.get === "function" && sessionId ? sessions.get(sessionId) : null;
 	} catch { /* sessions 服务不可用则忽略 */ }
-	// 2) 工作区注册表 (工作区根)。
+	if (session !== null && session !== undefined) {
+		// 1) 会话当前检出目录 (dsh 0.2.3+): resolve() 内部取 workingDirectory.get(session)
+		//    再回退 header.cwd, 进入 worktree 后自动指向 worktree 目录。
+		try {
+			const sandboxPolicy = ctx.get("sandboxPolicy");
+			if (sandboxPolicy && typeof sandboxPolicy.resolve === "function") {
+				const resolved = sandboxPolicy.resolve({ session });
+				if (resolved && typeof resolved.workspaceRoot === "string" && resolved.workspaceRoot !== "") {
+					return resolved.workspaceRoot;
+				}
+			}
+		} catch { /* resolve 失败(相对路径/NUL)则回退 header.cwd */ }
+		// 2) 会话 header.cwd: 用户为该会话指定的工作目录 (原始项目)。
+		try {
+			const headerCwd = session.header && typeof session.header.cwd === "string" ? session.header.cwd : "";
+			if (headerCwd !== "") {
+				return headerCwd;
+			}
+		} catch { /* 忽略 */ }
+	}
+	// 3) 工作区注册表 (工作区根)。
 	const workspaceRoot = workspaceRootOf(ctx, sessionId);
 	if (workspaceRoot !== "") return workspaceRoot;
-	// 3) sandboxPolicy.workspaceRoot 显式配置。
+	// 4) sandboxPolicy.workspaceRoot 显式配置。
 	try {
 		const sandboxPolicy = ctx.get("sandboxPolicy");
 		const root = sandboxPolicy && typeof sandboxPolicy.workspaceRoot === "string" && sandboxPolicy.workspaceRoot !== ""

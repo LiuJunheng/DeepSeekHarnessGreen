@@ -258,9 +258,18 @@ def parse_version_tuple(version_text):
 
 # 内置便携 Python 下载源 (python-build-standalone, 完整发行自带 tkinter)
 # 文件名规则: cpython-{version}+{release}-x86_64-pc-windows-msvc-install_only.tar.gz
+# 2026-11-12: 由"单一国内镜像 + GitHub"扩为"国内镜像 + 两个 GitHub 加速代理 + 官方",
+# 因为 python-build-standalone 的产物只发布在 GitHub Release, 国内直连/单镜像在部分
+# 网络下会 SSL 握手失败或长时间 0 字节 (用户反馈其他机器一直下载失败)。
+# 三个国内可用源的 Content-Length 均为 39634596 字节, 内容一致, 可互为备份。
 PYTHON_ARCHIVE_TEMPLATE = "cpython-{version}+{release}-x86_64-pc-windows-msvc-install_only.tar.gz"
 PYTHON_URL_TEMPLATE = {
+    # 南京大学 GitHub Release 镜像 (整包同步, 速度最快, 但个别网络会 SSL 握手失败)
     "cn": "https://mirror.nju.edu.cn/github-release/astral-sh/python-build-standalone/{release}/{archive}",
+    # GitHub 加速代理: 直接把原始 GitHub 下载地址拼在域名后面, 支持 Range/断点
+    "proxy1": "https://gh-proxy.com/https://github.com/astral-sh/python-build-standalone/releases/download/{release}/{archive}",
+    "proxy2": "https://ghproxy.net/https://github.com/astral-sh/python-build-standalone/releases/download/{release}/{archive}",
+    # 官方源最后兜底 (海外网络/代理环境可用)
     "official": "https://github.com/astral-sh/python-build-standalone/releases/download/{release}/{archive}",
 }
 
@@ -297,15 +306,22 @@ REQUIRED_CORE_BUNDLES_BY_PROFILE = {
 # 任何 profile 都至少需要的基础 core bundle (兜底)
 _MINIMUM_CORE_BUNDLES = ["@deepseek-ai/dsh-base"]
 
-# 官方已退役 / 已合并的 bundle (2026-10-29):
+# 官方已退役 / 已合并的 bundle (2026-10-29 建立, 2026-11-22 按 0.2.3-alpha.1 补齐):
 # 旧版 dsh 会把它们写进 profile 的 dsh.profile.bundles, 新版安装里已不再提供,
 # 启动时只会打印 "cannot resolve profile bundle ... skipping" 然后继续, 属无害噪音,
 # 但会让用户误以为插件损坏。启动前由 _prune_retired_bundles 幂等清理。
-#   dsh-experimental-agent-team-web-profile: 0.1.6 之后不再发布, Web UI 已合并进
-#   dsh-experimental-agent-team-profile ("collaboration, tools, and Web UI in one bundle")。
+# 来源: 官方 @deepseek-ai/dsh-official-bundles 的 RETIRED_BUNDLES 常量, 按版本取并集
+# (新版 dsh 自己也会清理, 这里兜底旧版 profile 与手工解压覆盖的场景)。
+#   dsh-experimental-agent-team-web-profile: 0.1.6 之前的旧名, Web UI 已合并进
+#     dsh-experimental-agent-team-profile; 旧版环境仍需清理, 故保留。
+#   dsh-experimental-agent-team-profile: 0.2.3-alpha.1 起进入官方 RETIRED_BUNDLES。
+#   dsh-personalized-recommendations: 0.2.3-alpha.1 起退役, 推荐组件由 dsh-web-app
+#     直接挂载, 总开关移到「设置 → 通用设置」。
 #   dsh-experimental-schedule-bundle: 与官方 dsh-official-bundles 的 RETIRED_BUNDLES 保持一致。
 RETIRED_OFFICIAL_BUNDLES = [
     "@deepseek-ai/dsh-experimental-agent-team-web-profile",
+    "@deepseek-ai/dsh-experimental-agent-team-profile",
+    "@deepseek-ai/dsh-personalized-recommendations",
     "@deepseek-ai/dsh-experimental-schedule-bundle",
 ]
 
@@ -355,8 +371,8 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # 发布流程: 打 tag v{GREEN_VERSION} + Release 资产 DSH-GreenPortable-v{tag}.zip
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
-GREEN_VERSION = "1.0.49"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
-GREEN_VERSION_DATE = "2026年11月12日"               # 绿色版版本日期 (release_upload.py 会按构建当天回写)
+GREEN_VERSION = "1.0.50"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
+GREEN_VERSION_DATE = "2026年11月22日"               # 绿色版版本日期 (release_upload.py 会按构建当天回写)
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
 GREEN_RELEASE_MIRROR = ("https://mirror.nju.edu.cn/github-release/%s/latest"
@@ -791,15 +807,16 @@ class Launcher:
         archive_name = PYTHON_ARCHIVE_TEMPLATE.format(
             version=python_version, release=python_release)
         archive_path = os.path.join(RUNTIME_DIR, archive_name)
-        # 依次尝试 国内镜像 -> GitHub (自动模式), 或仅尝试指定源。
+        # 依次尝试 国内镜像 -> GitHub 加速代理 -> 官方 (自动模式), 或仅尝试指定源。
         # 重点避坑 (2026-08-17): python 的国内源是 mirror.nju.edu.cn, 在部分机器/网络上
         # 会 SSL 握手失败 (实测 curl 退出码 35 / urllib 报 Errno 2), 而 Node/npm 的国内源
-        # registry.npmmirror.com 是正常的。因此内置 python 下载**无条件**把官方 GitHub 源
-        # 作为最后兜底, 即使 config.mirror="cn" 也要试 official, 避免"国内源失败就整体失败
-        # 且无任何官方回退"。去重后确定源顺序。
+        # registry.npmmirror.com 是正常的。2026-11-12 补充: 用户反馈部分机器连 NJU 也一直
+        # 失败 (0 字节/超时), 因此增加两个 GitHub 加速代理, 并**无条件**把官方 GitHub 源
+        # 作为最后兜底 —— 即使 config.mirror="cn" 也要试 official, 避免"国内源失败就整体
+        # 失败且无任何回退"。去重后确定源顺序。
         resolved_mirror, mirror_is_auto = self.resolve_mirror()
         if mirror_is_auto or resolved_mirror == "cn":
-            source_order = ["cn", "official"]
+            source_order = ["cn", "proxy1", "proxy2", "official"]
         else:
             source_order = ["official"]
         source_order = list(dict.fromkeys(source_order))   # 去重, 保留顺序
@@ -5143,6 +5160,16 @@ class Launcher:
             '\t\t\t\t}\n'
             '\t\t\t}'
         )
+        # ---- 0.2.3+ 客户端产物压缩成单行 (2026-11-22) ----
+        # 新版 dsh 的客户端 bundle 改成压缩产物, 没有换行与 tab 缩进, 上面的多行锚点
+        # 永远匹配不到。这里改用一段不含模板占位符的短锚点, 只在 failed 分支的 throw
+        # 前插入 1.5s 退避: 不改 throw 语义, 也不依赖压缩后被改名的 abortReason 等标识符。
+        minified_anchor = ("if(entry.state===`failed`)throw new Error("
+                           "`command directory warmup failed:")
+        minified_replacement = ("if(entry.state===`failed`){await new Promise("
+                                "function(resolveDelay){setTimeout(resolveDelay,1500)});"
+                                "throw new Error(`command directory warmup failed:")
+        minified_marker = "setTimeout(resolveDelay,1500)"
         for commands_path in commands_paths:
             if not os.path.isfile(commands_path):
                 continue
@@ -5151,15 +5178,26 @@ class Launcher:
                     text = file_handle.read()
             except OSError:
                 continue
-            # 幂等检查: 只要存在 1.5s 退避即视为已打
+            # 幂等检查: 压缩版短标记或可读版退避, 只要存在其一即视为已打
+            if minified_marker in text:
+                any_ok = True
+                continue
             if "await new Promise((resolve) => setTimeout(resolve, 1500))" in text:
                 any_ok = True
                 continue
-            if original_block not in text:
+            # 0.2.3+: 压缩单行产物 —— 短锚点必须唯一, 出现多次说明结构异常, 不强行替换
+            if minified_anchor in text:
+                if text.count(minified_anchor) != 1:
+                    self.log("[警告] ui-commands 压缩产物中锚点出现多次, 目录退避补丁未应用 @ %s"
+                             % commands_path)
+                    continue
+                new_text = text.replace(minified_anchor, minified_replacement, 1)
+            elif original_block in text:
+                new_text = text.replace(original_block, patched_block, 1)
+            else:
                 self.log("[警告] ui-commands 文件结构不匹配, 目录退避补丁未应用 @ %s "
                          "(dsh 版本可能已变化, 待人工确认)" % commands_path)
                 continue
-            new_text = text.replace(original_block, patched_block, 1)
             try:
                 with open(commands_path, "w", encoding="utf-8") as file_handle:
                     file_handle.write(new_text)
@@ -5458,6 +5496,30 @@ class Launcher:
         "\t\t/* v8 ignore next -- node:http always supplies url on server requests. */\n"
         '\t\tconst url = new URL(req.url ?? "/", "http://dsh.invalid");'
     )
+    # ---- v3 (dsh 0.2.3+, ConnectionAuthentication 代) ----
+    # 官方删除了 BrowserAuth 与 authorizeIndex(), 把凭据校验收进
+    # ConnectionAuthentication(服务名 "connection.authentication"), 页面(/ 与 index.html)
+    # 和 /api 都统一经 this.authentication.authenticate(...) 判定:
+    #   - webserver/authorize 监听器里 "const admission = this.authentication.authenticate(facts);"
+    #   - admit(request) 里 "return this.authentication.authenticate(request);"
+    # 两处相互独立: 只把 authenticate 换成共享的 this.browserPeer, 保留前置的
+    # isTrustedRequest(403) / disposed(401) 与 policy 分支, 语义与 v2「只关 token 层」一致。
+    # browserPeer 在 0.2.3 仍由构造函数创建 (principal: { kind: "owner" })。
+    # 注意: 这里不用 f-string, 锚点里的反引号/花括号均为普通字符。
+    _AUTH_PATCH_V3_PAIRS = [
+        (
+            "\t\t\tconst admission = this.authentication.authenticate(facts);",
+            "\t\t\t// dsh-launcher auth patch (2026-11-22): 跳过 ConnectionAuthentication 校验, "
+            "只保留 Host/Origin 围栏与 403/401 判定. 用户 config dsh_require_auth=False.\n"
+            "\t\t\tconst admission = { peer: this.browserPeer };",
+        ),
+        (
+            "\t\treturn this.authentication.authenticate(request);",
+            "\t\t// dsh-launcher auth patch (2026-11-22): admit() 直接返回浏览器 Peer, "
+            "跳过凭据校验. 用户 config dsh_require_auth=False.\n"
+            "\t\treturn { peer: this.browserPeer };",
+        ),
+    ]
 
     def patch_auth(self, require_auth=True):
         """补丁 dsh client-connection 的 token 认证层 (条件式, 幂等可重复, 双副本覆盖)。
@@ -5469,10 +5531,16 @@ class Launcher:
         所以"关 token"≠ 回到旧版 0.1.1-rc.2 裸奔 (旧版两层都没), 仅 127.0.0.1 下 loopback 自动
         放行 403, 与旧版无异; 0.0.0.0 下等于"局域网任何人靠 Host header 就能直接访问"。
 
-        两个精确 patch 点 (官方打包纯 tab 缩进):
-          1. requestRejection(): 第二行 "return this.browserAuth.isAuthenticated... ? void 0 : 401"
-             → 改为 "return void 0;" 让 /api RPC 通道跳过 cookie 校验 (Host 围栏保留)。
-          2. authorizeIndex(): 方法体开头插入 "return true;" 让 index.html 直接放行, 跳过 401。
+        patch 锚点按官方结构分三代, 匹配优先级 v3 → v2 → v1 (双版本兼容, 命中即停):
+          v3 (0.2.3+): ConnectionAuthentication 代. 官方删除了 BrowserAuth/authorizeIndex,
+             页面与 /api 统一走 this.authentication.authenticate(...)。两个独立锚点:
+               1) webserver/authorize 监听器里的 "const admission = this.authentication.authenticate(facts);"
+               2) admit(request) 里的 "return this.authentication.authenticate(request);"
+             都替换为共享的 this.browserPeer, 保留前置 403/401 与 policy 分支。
+          v2 (0.2.1-rc.2+ ~ 0.2.2): admit() 的 browserAuth.isAuthenticated 早退 +
+             authorizeIndex(request, response) 开头 return true。
+          v1 (更旧): requestRejection() 的 isAuthenticated ? void 0 : 401 +
+             authorizeIndex(req, res) 开头 return true。
 
         双副本覆盖: core (DSH_DIR/node_modules) + shared (DSH_HOME_DIR/profiles/node_modules),
         与 patch_lan_api_trust / patch_commands_backoff 套路一致。
@@ -5510,6 +5578,10 @@ class Launcher:
                 if not has_patch:
                     any_ok = True   # 已是原始状态, 幂等跳过
                     continue
+                # 还原 v3 (0.2.3+): ConnectionAuthentication 两处锚点, 各自独立还原
+                for v3_original, v3_patched in self._AUTH_PATCH_V3_PAIRS:
+                    if v3_patched in text:
+                        text = text.replace(v3_patched, v3_original, 1)
                 # 还原 patch 1: admit() (新版) / requestRejection (旧版)
                 if self._AUTH_PATCH_NEW_1 in text:
                     text = text.replace(self._AUTH_PATCH_NEW_1, self._AUTH_PATCH_ORIGINAL_1, 1)
@@ -5531,26 +5603,41 @@ class Launcher:
                 if has_patch:
                     any_ok = True   # 已是 patch 状态, 幂等跳过
                     continue
-                # patch 1: admit() (新版) / requestRejection (旧版) —— 跳 browserAuth,
-                # 保留 Host/Origin 围栏
-                if self._AUTH_PATCH_ORIGINAL_1 in text:
+                # v3 (0.2.3+): 两个锚点相互独立, 命中哪个换哪个; 命中其一即可写回,
+                # 不再要求像 v2 那样两处必须成对出现。
+                v3_matched = False
+                for v3_original, v3_patched in self._AUTH_PATCH_V3_PAIRS:
+                    if v3_original in text:
+                        text = text.replace(v3_original, v3_patched, 1)
+                        v3_matched = True
+                if v3_matched:
+                    # ConnectionAuthentication 代已覆盖 webserver/authorize (含 index.html)
+                    # 与 admit() 两个通道, 无需再走 v2/v1 锚点。
+                    pass
+                elif self._AUTH_PATCH_ORIGINAL_1 in text:
+                    # v2 (0.2.1-rc.2+): admit() 跳 browserAuth + authorizeIndex 放行,
+                    # 保留 Host/Origin 围栏
                     text = text.replace(self._AUTH_PATCH_ORIGINAL_1, self._AUTH_PATCH_NEW_1, 1)
+                    if self._AUTH_PATCH_ORIGINAL_2 in text:
+                        text = text.replace(self._AUTH_PATCH_ORIGINAL_2, self._AUTH_PATCH_NEW_2, 1)
+                    else:
+                        self.log("[警告] auth patch: 未找到 authorizeIndex 原始锚点, "
+                                 "结构不匹配跳过 @ %s" % connection_path)
+                        continue
                 elif self._AUTH_PATCH_LEGACY_ORIGINAL_1 in text:
+                    # v1 (旧版): requestRejection + authorizeIndex(req, res)
                     text = text.replace(self._AUTH_PATCH_LEGACY_ORIGINAL_1,
                                         self._AUTH_PATCH_LEGACY_NEW_1, 1)
+                    if self._AUTH_PATCH_LEGACY_ORIGINAL_2 in text:
+                        text = text.replace(self._AUTH_PATCH_LEGACY_ORIGINAL_2,
+                                            self._AUTH_PATCH_LEGACY_NEW_2, 1)
+                    else:
+                        self.log("[警告] auth patch: 未找到 authorizeIndex 原始锚点, "
+                                 "结构不匹配跳过 @ %s" % connection_path)
+                        continue
                 else:
-                    self.log("[警告] auth patch: 未找到 requestRejection/admit 原始锚点, "
-                             "结构不匹配跳过 @ %s" % connection_path)
-                    continue
-                # patch 2: authorizeIndex —— 直接 return true 跳过 token/Cookie 校验
-                if self._AUTH_PATCH_ORIGINAL_2 in text:
-                    text = text.replace(self._AUTH_PATCH_ORIGINAL_2, self._AUTH_PATCH_NEW_2, 1)
-                elif self._AUTH_PATCH_LEGACY_ORIGINAL_2 in text:
-                    text = text.replace(self._AUTH_PATCH_LEGACY_ORIGINAL_2,
-                                        self._AUTH_PATCH_LEGACY_NEW_2, 1)
-                else:
-                    self.log("[警告] auth patch: 未找到 authorizeIndex 原始锚点, "
-                             "结构不匹配跳过 @ %s" % connection_path)
+                    self.log("[警告] auth patch: 未找到 ConnectionAuthentication/admit/"
+                             "requestRejection 原始锚点, 结构不匹配跳过 @ %s" % connection_path)
                     continue
 
             # 写回文件

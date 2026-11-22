@@ -164,7 +164,7 @@ ctx.effect(() => ctx.sidebarRightTabs.register({
 | 来源能力（Better Sidebar） | 本版取舍 |
 |---|---|
 | 文件资源管理器 / 文件预览 | **保留并接管官方 files tab**（核心；放开上级 / 任意路径浏览） |
-| 会话工作目录溯源（`session.header.cwd`）与工作区兜底 | **保留**（资源管理器默认根 = 会话工作目录 `header.cwd`；无会话 / 无 cwd 时回退**工作区根**，权威来源 `workspaceRegistry`；兜底链绝不落 `process.cwd()`) |
+| 会话工作目录溯源（`sandboxPolicy.resolve` + `session.header.cwd`）与工作区兜底 | **保留并升级**（dsh 0.2.3+ 优先 `sandboxPolicy.resolve({session}).workspaceRoot`，跟随 `enter_worktree` / `exit_worktree`，与官方文件树同源；旧版或服务缺失时回退 `header.cwd`；无会话 / 无 cwd 时回退**工作区根**，权威来源 `workspaceRegistry`；兜底链绝不落 `process.cwd()`) |
 | 资源管理器「回到工作目录」按钮 | **保留 + 图标升级**（SVG 房子 + 「目录」文字标签，悬停显示实际目标路径） |
 | 运行中会话定位（`current` vs `sessionId`） | **保留修复**（官方 list store 用 `current` 字段表示当前激活会话 id） |
 | 内嵌浏览器 | **删除 → 官方 `browser` tab**（本插件用一行 patch 启用） |

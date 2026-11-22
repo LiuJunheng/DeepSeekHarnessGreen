@@ -147,7 +147,10 @@ function defaultRootOf(ctx, sessionId) {
 }
 
 /**
- * 取当前激活会话的工作目录 (权威来源是会话 header.cwd)。
+ * 取当前激活会话的工作目录。
+ * 权威来源分两层: dsh 0.2.3+ 优先 sandboxPolicy.resolve({ session }).workspaceRoot
+ * (它跟随 enter_worktree / exit_worktree 移动, 与官方文件树/目录监听同源),
+ * 旧版 dsh 或 resolve 不可用时回退会话 header.cwd (原始项目)。
  * 这里用 ctx.get("sessions") 动态取服务, 拿不到会话时回退到兜底根目录。
  * 若会话无 cwd 且客户端提供了 cwd, 则用客户端 cwd。
  * @param {object} ctx - cordis 宿主上下文。
@@ -160,6 +163,23 @@ function sessionCwdOf(ctx, sessionId, clientCwd, fallbackRoot) {
 	try {
 		const sessions = ctx.get("sessions");
 		const session = sessions && sessions.get(sessionId);
+		// 1) 当前检出目录 (dsh 0.2.3+): resolve() 取 workingDirectory.get(session),
+		//    进入 worktree 后自动指向 worktree 目录; 旧版 dsh 无 resolve 则跳过。
+		if (session !== undefined && session !== null) {
+			try {
+				const sandboxPolicy = ctx.get("sandboxPolicy");
+				if (sandboxPolicy && typeof sandboxPolicy.resolve === "function") {
+					const resolved = sandboxPolicy.resolve({ session });
+					if (resolved && typeof resolved.workspaceRoot === "string" && resolved.workspaceRoot !== "") {
+						console.log("[dsh-sidebar-extend] sessionCwdOf: 用当前检出目录 =", resolved.workspaceRoot, "(sessionId =", sessionId + ")");
+						return resolved.workspaceRoot;
+					}
+				}
+			} catch (resolveError) {
+				console.log("[dsh-sidebar-extend] sessionCwdOf: resolve 失败, 回退 header.cwd", resolveError && resolveError.message);
+			}
+		}
+		// 2) 会话 header.cwd (原始项目; 旧版 dsh 或 resolve 不可用时的权威来源)。
 		const headerCwd = session && session.header && session.header.cwd;
 		if (typeof headerCwd === "string" && headerCwd !== "") {
 			console.log("[dsh-sidebar-extend] sessionCwdOf: 用 header.cwd =", headerCwd, "(sessionId =", sessionId + ")");
