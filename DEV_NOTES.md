@@ -77,7 +77,7 @@
 
 * **dsh 启动**：`node <dsh>/node_modules/@deepseek-ai/dsh/lib/bin.js web --port 3080 --no-open`。**stdin 必须** **`PIPE`** **保持打开**，否则 dsh 读到 EOF 静默退出（"Failed to fetch"）。
 
-* **便携 Node 版本自动升级（2026-10-28）**：dsh 0.2.2-alpha.2 的 `engines` 要求 Node `>= 24.9.0`，内置默认版本改为 **24.22.1 LTS**（`config.json` 同步）。`prepare_node()` 每次启动用 `node --version` 实测实际版本；低于 `config.node_version`（若配置值本身低于 `NODE_MIN_VERSION` 则改用默认版本）就自动下载升级；升级失败只记日志并继续用旧版，不阻断启动；升级成功后清理旧 `runtime/node/node-v*` 目录。`find_node_exe()` 按目录版本号取最高，防止旧目录残留导致回退。
+* **便携 Node 版本自动升级（2026-11-22 更新）**：dsh `0.2.3-alpha.2` 起 `engines` 要求 Node **24.x ≥ 24.22.3**（26.x 需 ≥ 26.13.1），内置默认版本改为 **24.22.3 LTS**（`config.json` 会在启动时自动迁移）。`prepare_node()` 每次启动用 `node --version` 实测实际版本；低于 `config.node_version`（若配置值本身低于 `NODE_MIN_VERSION` 则改用默认版本）就自动下载升级；升级失败只记日志并继续用旧版，不阻断启动；升级成功后清理旧 `runtime/node/node-v*` 目录。`find_node_exe()` 按目录版本号取最高，防止旧目录残留导致回退。版本比较用数字元组而非字符串，26.x 不会被 24.x 下限误判。注意 dsh 的 engines 是 `^24.22.3 || >=26.13.1`（不包含 25.x）；启动器只会下载 24.22.3，若用户手工往 `runtime/node` 放 25.x 目录，`find_node_exe()` 会取它并放行，需手工移除。
 
 * **关键补丁（全部幂等；install\_dsh 末尾 + start\_server 前各打一次，因 dsh 升级重装会还原 node\_modules 内文件）**：
 
@@ -157,7 +157,7 @@
 
 14. **局域网模式 dsh 会多打印一行 `dsh web: listening on 0.0.0.0 ...`（没有 token）**（2026-10-18 实证）。`_read_launch_token()` 原来用 `re.search(r"dsh web:\s*(\S+)")` 取**第一条**匹配，局域网模式下第一条是 `listening`，解析不到 token → `_web_auth_url()` 回退裸地址 → 界面 401、桌面窗口打不开，日志表现为「服务已就绪: http://127.0.0.1:3080」后面没有 `?token=`，且每条局域网地址都间隔 8 秒（等待 token 超时）。修复：用 `re.findall` 收集所有 `dsh web:` 后的 URL，**从后往前**找带 `token=` 的那条。本机模式不受影响，因为本机模式没有 `listening` 这一行，容易漏测。
 
-15. **更新程序跳过 `config.json`，老用户会一直保留旧 `node_version`（2026-10-28 实证）**：`update_agent.py` 覆盖安装时明确跳过 config.json（保护用户配置），所以只改 `DEFAULT_CONFIG["node_version"]` 对已装用户无效。正解是做运行时检测：读实际 `node --version` 与 `NODE_MIN_VERSION`（24.9.0，dsh 0.2.2+ 的 engines 要求）比较，过低才自动升级；同时 `find_node_exe()` 在存在多个版本目录时必须按版本号取最高，否则旧目录先被遍历到会「升级后又用回 22」。升级失败不要阻断启动（旧版 dsh 仍可运行）。
+15. **更新程序跳过 `config.json`，老用户会一直保留旧 `node_version`（2026-11-22 复核）**：`update_agent.py` 覆盖安装时明确跳过 config.json（保护用户配置），所以只改 `DEFAULT_CONFIG["node_version"]` 对已装用户无效。正解是做运行时检测：读实际 `node --version` 与 `NODE_MIN_VERSION`（24.22.3，dsh 0.2.3-alpha.2+ 对 24.x 的 engines 要求）比较，过低才自动升级；同时 `find_node_exe()` 在存在多个版本目录时必须按版本号取最高，否则旧目录先被遍历到会「升级后又用回旧版」。升级失败不要阻断启动（旧版 dsh 仍可运行）。
 
 16. **dsh 0.2.3-alpha.1：认证层换血 + 客户端产物压缩（2026-11-22 实测）**：
    * 认证从 `BrowserAuth` 换成 `ConnectionAuthentication` 服务 + 新包 `@deepseek-ai/dsh-host-authentication-token`，`authorizeIndex()` 删除 → `patch_auth` 的 v2/v1 锚点全部失效。处置见第四节「web token 认证开关」的三代锚点说明（v3 两处 `this.authentication.authenticate(...)` 替换为 `{ peer: this.browserPeer }`）。

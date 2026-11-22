@@ -160,7 +160,7 @@ DESKTOP_WINDOW_DEFAULT_HEIGHT = 800
 # 默认配置 (用户可在 config.json 中覆盖)
 DEFAULT_CONFIG = {
     "mirror": "auto",            # 镜像: auto=自动检测 / cn=国内 / official=官方
-    "node_version": "24.22.1",   # 便携 Node 版本号 (24.x LTS; dsh 0.2.2+ 要求 >= 24.9.0)
+    "node_version": "24.22.3",   # 便携 Node 版本号 (24.x LTS; dsh 0.2.3-alpha.2+ 要求 >= 24.22.3)
     "python_version": "3.10.20", # 内置便携 Python 版本号 (python-build-standalone)
     "python_release": "20260807",# python-build-standalone 发布标签(日期)
     "dsh_port": 3080,            # dsh web 服务端口
@@ -226,10 +226,11 @@ NPM_REGISTRY = {
     "official": "https://registry.npmjs.org",
 }
 
-# 内置便携 Node 的最低版本 (2026-10-28): dsh 0.2.2-alpha.2 的 package.json engines 要求 >= 24.9.0。
+# 内置便携 Node 的最低版本 (2026-11-22): dsh 0.2.3-alpha.2 的 engines 要求 24.x 系列 >= 24.22.3
+# (26.x 系列要求 >= 26.13.1; 版本比较按数字元组, 26.x 天然高于此下限, 不会被误判)。
 # 启动时 prepare_node 会读取实际 node --version, 低于该版本就自动升级到 config.node_version。
 # 老用户的 config.json 会被更新程序保留 (不覆盖), 所以不能只靠改默认值让老用户升级。
-NODE_MIN_VERSION = "24.9.0"
+NODE_MIN_VERSION = "24.22.3"
 
 
 def parse_version_tuple(version_text):
@@ -934,7 +935,8 @@ class Launcher:
 
     def prepare_node(self):
         """确保便携版 Node 就绪, 且版本不低于 config.node_version 与 dsh 的最低要求。
-        dsh 0.2.2+ 的 engines 要求 Node >= 24.9.0, 旧绿色包里的 Node 22 会在启动时自动升级;
+        dsh 0.2.3-alpha.2+ 的 engines 要求 Node 24.x >= 24.22.3 (26.x >= 26.13.1),
+        旧绿色包里的 Node 24.22.1 / 22.x 会在启动时自动升级;
         升级失败只记日志并继续使用旧版本, 不阻断启动 (旧版 dsh 仍可运行)。"""
         node_exe = self.find_node_exe()
         configured_version_text = str(

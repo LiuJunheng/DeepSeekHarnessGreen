@@ -40,7 +40,7 @@ updated: "2026-10-24"
 
 - **Node 二进制**：国内走 `https://registry.npmmirror.com/-/binary/node/...`，官方走 `https://nodejs.org/dist/...`。注意二进制下载与 npm 包注册表是**两个不同镜像路径**。
 - **便携 Node 自带 npm 位置分平台，必须两个都探测**：Windows zip `node_modules/npm/bin/npm-cli.js`（node.exe 在顶层）；Linux/Mac tar.gz `lib/node_modules/npm/bin/npm-cli.js`。
-- **Node 版本要跟上 dsh 的 `engines`**：dsh 0.2.2+ 要求 `>= 24.9.0`（旧绿色包是 22.20.0，npm 只警告不拦安装）。只改默认版本号对老用户无效——更新程序会跳过 `config.json`。必须运行时用 `node --version` 实测，低于最低要求/配置版本才自动升级；升级失败只记日志并继续用旧版；存在多版本目录时按版本号取最高的 `node.exe`，否则旧目录会让升级"回退"。默认推荐 Node 24 LTS（2026-10 为 24.22.1）。
+- **Node 版本要跟上 dsh 的 `engines`**：dsh 0.2.3-alpha.2+ 要求 Node 24.x `>= 24.22.3`（26.x 需 `>= 26.13.1`；旧绿色包是 24.22.1 / 22.20.0，npm 只警告不拦安装）。只改默认版本号对老用户无效——更新程序会跳过 `config.json`。必须运行时用 `node --version` 实测，低于最低要求/配置版本才自动升级；升级失败只记日志并继续用旧版；存在多版本目录时按版本号取最高的 `node.exe`，否则旧目录会让升级"回退"。默认推荐 Node 24 LTS（2026-11 最新 24.x 为 24.22.3）。
 - **dsh bin 入口**：`node_modules/@deepseek-ai/dsh/lib/bin.js`（不是顶层 `bin/`）。启动/插件管理必须用便携 `node.exe` + 此 `lib/bin.js` 直接调用；**别依赖 `node_modules/.bin/dsh.cmd`**（.cmd 回退分支会调 PATH 里的系统 node，便携/系统搞混）。
 - **官方会退役/合并 bundle**：旧 profile 的 `dsh.profile.bundles` 可能残留已停发的包名（如 `dsh-experimental-agent-team-web-profile` 在 0.1.6 后合并进 `-agent-team-profile`），启动只打印 `cannot resolve profile bundle ... skipping`，功能正常。维护一份与官方 `dsh-official-bundles` 的 `RETIRED_BUNDLES` 对齐的清理名单，在安装/启动时幂等移除；**别按日志关键字批量删除**，会误伤正常依赖。
 - **镜像附 `--registry`**：`resolve_mirror()` 返回 `("cn", True)` 时附加 `--registry`；auto 模式的 npm install 不会自动挂 registry。
