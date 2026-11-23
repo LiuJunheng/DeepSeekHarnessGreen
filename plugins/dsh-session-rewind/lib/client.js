@@ -98,7 +98,7 @@ window.__ModuleLoader__.load({
 					react.createElement("span", {
 						key: c,
 						title: c + "×" + errors[c],
-						style: { fontSize: 11, color: "var(--dsw-alias-state-error-primary)", background: "var(--dsw-alias-state-error-secondary)", borderRadius: 3, padding: "1px 6px", whiteSpace: "nowrap", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }
+						style: { fontSize: 11, color: "var(--dsw-alias-label-on-color, #ffffff)", background: "var(--dsw-alias-state-error-secondary)", borderRadius: 3, padding: "1px 6px", whiteSpace: "nowrap", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }
 					}, c + "×" + errors[c])
 				)
 			);
@@ -205,7 +205,7 @@ window.__ModuleLoader__.load({
 					react.createElement("span", { key: "turn", style: { fontWeight: 600, color: t.complete ? "var(--dsw-alias-label-secondary)" : "var(--dsw-alias-state-error-primary)" } }, _dsht("plugin.session_rewind.turn_fmt", "回合 #{n}").replace("{n}", t.turn)),
 					react.createElement("span", { key: "steps" }, _dsht("plugin.session_rewind.steps_fmt", "步骤 {n}").replace("{n}", t.steps)),
 					react.createElement("span", { key: "tools" }, _dsht("plugin.session_rewind.tools_fmt", "工具调用 {n}").replace("{n}", t.toolCalls)),
-					!t.complete && react.createElement("span", { key: "unfin", style: { fontSize: 11, color: "var(--dsw-alias-state-error-primary)", background: "var(--dsw-alias-state-error-secondary)", borderRadius: 3, padding: "1px 6px", fontWeight: 600, whiteSpace: "nowrap" } }, _dsht("plugin.session_rewind.pending_tag", "⚠ 未完成")),
+					!t.complete && react.createElement("span", { key: "unfin", style: { fontSize: 11, color: "var(--dsw-alias-label-on-color, #ffffff)", background: "var(--dsw-alias-state-error-secondary)", borderRadius: 3, padding: "1px 6px", fontWeight: 600, whiteSpace: "nowrap" } }, _dsht("plugin.session_rewind.pending_tag", "⚠ 未完成")),
 					errorBadge(t.errors),
 					t.complete && react.createElement("button", {
 						key: "btn",
@@ -389,7 +389,7 @@ window.__ModuleLoader__.load({
 					poisonHints.length > 0 && react.createElement("div", { style: { fontSize: 13, color: "var(--dsw-alias-state-warn-primary)", background: "var(--dsw-alias-state-warn-secondary)", borderRadius: 4, padding: "8px 12px", lineHeight: 1.6 } },
 						poisonHints.map((h, i) => react.createElement("div", { key: i }, "⚠ " + h))
 					),
-					summary.unfinishedTurns > 0 && react.createElement("div", { style: { fontSize: 13, color: "var(--dsw-alias-state-error-primary)", background: "var(--dsw-alias-state-error-secondary)", borderRadius: 4, padding: "8px 12px", lineHeight: 1.6 } },
+					summary.unfinishedTurns > 0 && react.createElement("div", { style: { fontSize: 13, color: "var(--dsw-alias-label-on-color, #ffffff)", background: "var(--dsw-alias-state-error-secondary)", borderRadius: 4, padding: "8px 12px", lineHeight: 1.6 } },
 						_dsht("plugin.session_rewind.unfinished_warn_prefix", "检测到 {n} 个未完成回合(有开始无结束, 通常是出错/中断留下)。").replace("{n}", summary.unfinishedTurns) +
 						(lastCompleted
 							? _dsht("plugin.session_rewind.unfinished_warn_suggest", "建议回退到最后一个已完成回合(第 {turn} 回合)之后。").replace("{turn}", lastCompleted.turn)

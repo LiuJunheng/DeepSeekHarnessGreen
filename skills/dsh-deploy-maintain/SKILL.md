@@ -53,9 +53,10 @@ updated: "2026-10-24"
 | `DSH_HOME` | `runtime/dsh-home` | 会话/配置/存储（**不设则写用户主目录，破坏便携**） |
 | `npm_config_cache` | `runtime/npm-cache` | 下载缓存（否则写 `~/.npm`） |
 | `npm_config_userconfig` | `runtime/npm-userconfig` | 阻断读写 `~/.npmrc` |
-| `PNPM_HOME` | `runtime/pnpm-home` | pnpm 全局（dsh 插件管理依赖） |
-| `npm_config_store_dir` | `runtime/pnpm-store` | pnpm 内容寻址存储 |
+| `PNPM_HOME` | `runtime/pnpm-home` | pnpm 全局（dsh 插件管理依赖）；只设它时 store 落在 `runtime/pnpm-home/store` |
 | `TEMP`/`TMP` | `runtime/tmp` | 进程临时目录（与 ACL 沙箱相关，见 2.5） |
+
+> **pnpm store 位置不能靠环境变量**：`npm_config_store_dir` 环境变量、项目级与 userconfig 的 `.npmrc` `store-dir` 对 pnpm 11 **全部无效**（实测）；只有 `pnpm-workspace.yaml` 的 `storeDir`（或 CLI `--store-dir`）生效。启动器由 `ensure_profile_store_dir` 在每次启动/装插件前写入各 profile 的 `pnpm-workspace.yaml`（值用正斜杠，绿色目录搬走后自动校正），真正落点 `runtime/pnpm-store`；`runtime/pnpm-home/store` 是只设 `PNPM_HOME` 时的旧落点，需一并纳入清理。
 
 > **pip 缓存别忘了重定向**：pip 默认把 wheel 缓存写到 `%LOCALAPPDATA%\pip\Cache`（C 盘），不算在 npm 那套环境变量里。本项目所有 `pip install` 都显式带 `--cache-dir runtime/pip-cache`，构建脚本改用 `PIP_CACHE_DIR` 环境变量；只保证持久缓存不落 C 盘，pip 解包用的临时目录仍是系统 `%TEMP%`。
 
@@ -272,7 +273,7 @@ export { apply };
 > 完整规范（变量速查表/错误示范/设计语义速查）见 `references/theme-adaptation.md`，这里只留三条铁律：
 
 1. **背景和文字必须一起走 CSS 变量**（DSH 自动根据 `data-theme="dark|light"` 切换值）。绝对不要"背景硬编码 + 文字走变量"或反过来。输入框背景用 `--dsw-specific-input-major`。
-2. **同色系必糊**：同一个状态色的 `primary`（主色）和 `secondary`（淡底色）**不能同时用**在同一个元素上——不管深浅主题，对比度都不够。Badge/Chip 只用文字色无背景；按钮才用深彩底 + 白字（唯一可接受的硬编码 = 按钮白字 `#ffffff`）。
+2. **同色系必糊**：同一个状态色的 `primary`（主色）和 `secondary`（实心彩底，**不是浅色底**）**不能同时用**在同一个元素上——不管深浅主题，对比度都不够。Badge/Chip 优先只用文字色无背景；确实需要彩底（错误码/错误标签/告警块）时，底色用 `state-xxx-primary`、文字用 `var(--dsw-alias-label-on-color, #fff)` 白字；按钮才用深彩底 + 白字（唯一可接受的硬编码 = 按钮白字 `#ffffff`）。
 3. **颜色语义**：运行中/在线 = success（绿），离线/错误 = error（红），信息提示 = business（蓝），真正危险才用 warn（橙）。排查硬编码残留：`Select-String -Path "lib\client.js" -Pattern '#([0-9a-fA-F]{3,8})|rgb\(|rgba\('`。
 
 ### 5.8 改源码必须同步运行副本（最易"改了没生效"）
@@ -463,7 +464,7 @@ ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.regi
 | 会话突然全部 400（孤儿 tool_calls 毒化） | 「会话回退」插件分析 → 在崩溃回合前已完成回合「回退到此」派生续接 |
 | 界面空白（GUI） | `ttk.Panedwindow` 漏 `.add()`；滚动条被列宽挤成 1x1 |
 | 升级不想备份旧 dsh / 备份占用大 | 常规设置关闭「升级 DSH 前自动备份」（`auto_backup_on_dsh_upgrade=false`）；关闭后升级确认底部与完成弹窗会自动改为"未备份"文案，别只改一处 |
-| 分不清「清理更新缓存」和「清理版本备份」 | 更新缓存按钮统一清 `runtime/update` 升级暂存 + `runtime/npm-cache` + `runtime/pnpm-store` + `runtime/pip-cache`（都是可重建的下载缓存，已装插件/会话/登录态不受影响）；版本备份 = `runtime/backup` 旧 dsh 拷贝，清理后无法回退。别把 `webview2_data`、`npm-userconfig`、`pnpm-home`、`tmp` 混进去 |
+| 分不清「清理更新缓存」和「清理版本备份」 | 更新缓存按钮统一清 `runtime/update` 升级暂存 + `runtime/npm-cache` + `runtime/pnpm-store` + `runtime/pnpm-home/store`（旧落点）+ `runtime/pip-cache`（都是可重建的下载缓存，已装插件/会话/登录态不受影响）；版本备份 = `runtime/backup` 旧 dsh 拷贝，清理后无法回退。别把 `webview2_data`、`npm-userconfig`、`pnpm-home` 本体、`tmp` 混进去 |
 | 多次重启累积 WebUI 标签页 | `dist/index.html` 无 `dsh-launcher-ui-beacon`（patch_frontend 没跑/旧 exe）；有心跳仍开新页查 3081 占用/token |
 | 「检查绿色版更新」查不到 | 网络 api.github.com / 镜像；Release tag 带 v 前缀；资产名以 `DSH-GreenPortable-v` 开头（`green_find_zip_asset` 用 `startswith()`，旧前缀 `DSH_Launcher_GreenPortable_Online_` 的存量版本仍可匹配） |
 | 更新后启动器没被替换 | 独立更新程序 `DSH_Update.exe --apply`：查 `runtime/update/backup/`、`update_job.json`、server.log |

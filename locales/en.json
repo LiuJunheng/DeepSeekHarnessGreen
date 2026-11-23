@@ -910,7 +910,7 @@
   },
   "cleanup": {
     "update_confirm_title": "Clear Update Cache",
-    "update_confirm_detail": "Will clear these local caches (all safely rebuildable; anything needed is downloaded again automatically):\n- Update staging (runtime/update): cached new-version zip, extracted content, pre-overwrite file backups, update job files\n- npm download cache (runtime/npm-cache)\n- pnpm content-addressable store (runtime/pnpm-store)\n- pip download cache (runtime/pip-cache)\n\nInstalled versions, plugins, sessions and login state are not affected; occupied files will be skipped. Continue?",
+    "update_confirm_detail": "Will clear these local caches (all safely rebuildable; anything needed is downloaded again automatically):\n- Update staging (runtime/update): cached new-version zip, extracted content, pre-overwrite file backups, update job files\n- npm download cache (runtime/npm-cache)\n- pnpm content-addressable store (runtime/pnpm-store)\n- pnpm legacy store cache (runtime/pnpm-home/store)\n- pip download cache (runtime/pip-cache)\n\nInstalled versions, plugins, sessions and login state are not affected; occupied files will be skipped. Continue?",
     "backup_confirm_title": "Clear Version Backups",
     "backup_confirm_detail": "Will clear the version backup directory (runtime/backup),\nincluding: old-version dirs auto-backed up before dsh upgrades, and old scattered dsh-backup-* residues.\n\nNote: after clearing you cannot roll back to old versions! Continue?",
     "cancelled_update": "User cancelled clearing update cache",

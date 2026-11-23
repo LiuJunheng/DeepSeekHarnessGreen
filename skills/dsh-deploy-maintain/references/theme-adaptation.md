@@ -56,7 +56,10 @@ const running = { color: "var(--dsw-alias-state-success-primary)" };
 | 元素类型               | 正确写法                    | 原因                                 |
 | ------------------ | ----------------------- | ---------------------------------- |
 | Badge/Chip/标签（非交互） | **只用文字色**，不要 background | 轻量标注不需要背景块                         |
+| 必须带彩底的徽标/告警块       | **实心彩底 + `label-on-color` 白字** | 底色用 `state-xxx-secondary`（red-400）或 `-primary`（更深，小字对比更强）；文字必须 `var(--dsw-alias-label-on-color, #fff)` |
 | 按钮（可点击）            | **深彩底 + 白字**            | `state-xxx-primary` 做背景，`#fff` 做文字 |
+
+> ⚠ `state-xxx-secondary` 在 dsh 主题里**不是浅色底**，而是实心彩色（如 `state-error-secondary` = red-400）。用它当背景再配 `state-error-primary` 文字就是红字红底；必须带底色时，文字统一用 `var(--dsw-alias-label-on-color, #fff)`。
 
 ```js
 // ❌ primary 文字 + secondary 背景 (同色系糊片!)
@@ -66,6 +69,11 @@ const deleteBtn = { color: "var(--dsw-alias-state-error-primary)", background: "
 // ✅ Badge: 只有文字色, 无背景
 const runningBadge = { color: "var(--dsw-alias-state-success-primary)" };
 const tag = { color: "var(--dsw-alias-state-business-primary)" };
+
+// ✅ 彩底徽标: 实心彩底 + 白字 (错误码/错误标签等必须带底色的场景)
+const errorChip = { background: "var(--dsw-alias-state-error-secondary)", color: "var(--dsw-alias-label-on-color, #fff)" };
+// 11px 小字建议改用更深的 primary 底, 白字对比更强
+const strongErrorChip = { background: "var(--dsw-alias-state-error-primary)", color: "var(--dsw-alias-label-on-color, #fff)" };
 
 // ✅ 按钮: 深彩底 + 白字
 const deleteBtn = { background: "var(--dsw-alias-state-error-primary)", color: "#fff", border: "none" };

@@ -1,6 +1,6 @@
 {
-  "mirror": "cn",
-  "node_version": "24.22.1",
+  "mirror": "auto",
+  "node_version": "24.22.3",
   "python_version": "3.10.20",
   "python_release": "20260807",
   "dsh_port": 3080,
