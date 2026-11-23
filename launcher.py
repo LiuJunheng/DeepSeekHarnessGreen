@@ -5190,11 +5190,20 @@ class Launcher:
         # 新版 dsh 的客户端 bundle 改成压缩产物, 没有换行与 tab 缩进, 上面的多行锚点
         # 永远匹配不到。这里改用一段不含模板占位符的短锚点, 只在 failed 分支的 throw
         # 前插入 1.5s 退避: 不改 throw 语义, 也不依赖压缩后被改名的 abortReason 等标识符。
+        # ⚠ 绝不能把原 if 包成 { ...; throw ... } —— 压缩产物里 throw 后紧跟的两个 }
+        # 分别关闭 while 和 ensureReady 方法, 多开一个 { 就会吃掉方法的右括号, 导致
+        # "Unexpected token '{'"、client 模块加载后未注册 (2026-11-23 实测踩坑)。
+        # 因此这里用两条并列的 if, 不新增任何花括号块。
         minified_anchor = ("if(entry.state===`failed`)throw new Error("
                            "`command directory warmup failed:")
-        minified_replacement = ("if(entry.state===`failed`){await new Promise("
+        minified_replacement = ("if(entry.state===`failed`)await new Promise("
                                 "function(resolveDelay){setTimeout(resolveDelay,1500)});"
-                                "throw new Error(`command directory warmup failed:")
+                                "if(entry.state===`failed`)throw new Error("
+                                "`command directory warmup failed:")
+        # 早期错误版本 (多开 { 未补 }) 的原文, 用于把已写坏的旧安装自动改回正确形态。
+        minified_broken_replacement = ("if(entry.state===`failed`){await new Promise("
+                                       "function(resolveDelay){setTimeout(resolveDelay,1500)});"
+                                       "throw new Error(`command directory warmup failed:")
         minified_marker = "setTimeout(resolveDelay,1500)"
         for commands_path in commands_paths:
             if not os.path.isfile(commands_path):
@@ -5204,6 +5213,20 @@ class Launcher:
                     text = file_handle.read()
             except OSError:
                 continue
+            # 先修复早期错误补丁写坏的文件 (花括号不配对, 会让 client 模块整体加载失败)
+            if minified_broken_replacement in text:
+                repaired_text = text.replace(minified_broken_replacement,
+                                             minified_replacement, 1)
+                try:
+                    with open(commands_path, "w", encoding="utf-8") as file_handle:
+                        file_handle.write(repaired_text)
+                    text = repaired_text
+                    any_ok = True
+                    self.log("已修复 ui-commands 压缩产物中多余的左花括号 @ %s"
+                             % commands_path)
+                except OSError as error:
+                    self.log("[警告] 修复 ui-commands 压缩产物失败 @ %s: %s"
+                             % (commands_path, error))
             # 幂等检查: 压缩版短标记或可读版退避, 只要存在其一即视为已打
             if minified_marker in text:
                 any_ok = True
