@@ -57,6 +57,8 @@ updated: "2026-10-24"
 | `npm_config_store_dir` | `runtime/pnpm-store` | pnpm 内容寻址存储 |
 | `TEMP`/`TMP` | `runtime/tmp` | 进程临时目录（与 ACL 沙箱相关，见 2.5） |
 
+> **pip 缓存别忘了重定向**：pip 默认把 wheel 缓存写到 `%LOCALAPPDATA%\pip\Cache`（C 盘），不算在 npm 那套环境变量里。本项目所有 `pip install` 都显式带 `--cache-dir runtime/pip-cache`，构建脚本改用 `PIP_CACHE_DIR` 环境变量；只保证持久缓存不落 C 盘，pip 解包用的临时目录仍是系统 `%TEMP%`。
+
 ### 2.4 服务启动与进程管理
 
 - **启动**：`node <dsh>/node_modules/@deepseek-ai/dsh/lib/bin.js web --port 3080 [--no-open]`。
@@ -461,7 +463,7 @@ ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.regi
 | 会话突然全部 400（孤儿 tool_calls 毒化） | 「会话回退」插件分析 → 在崩溃回合前已完成回合「回退到此」派生续接 |
 | 界面空白（GUI） | `ttk.Panedwindow` 漏 `.add()`；滚动条被列宽挤成 1x1 |
 | 升级不想备份旧 dsh / 备份占用大 | 常规设置关闭「升级 DSH 前自动备份」（`auto_backup_on_dsh_upgrade=false`）；关闭后升级确认底部与完成弹窗会自动改为"未备份"文案，别只改一处 |
-| 分不清「清理更新缓存」和「清理版本备份」 | 更新缓存 = `runtime/update` 升级临时文件，可随时清；版本备份 = `runtime/backup` 旧 dsh 拷贝，清理后无法回退 |
+| 分不清「清理更新缓存」和「清理版本备份」 | 更新缓存按钮统一清 `runtime/update` 升级暂存 + `runtime/npm-cache` + `runtime/pnpm-store` + `runtime/pip-cache`（都是可重建的下载缓存，已装插件/会话/登录态不受影响）；版本备份 = `runtime/backup` 旧 dsh 拷贝，清理后无法回退。别把 `webview2_data`、`npm-userconfig`、`pnpm-home`、`tmp` 混进去 |
 | 多次重启累积 WebUI 标签页 | `dist/index.html` 无 `dsh-launcher-ui-beacon`（patch_frontend 没跑/旧 exe）；有心跳仍开新页查 3081 占用/token |
 | 「检查绿色版更新」查不到 | 网络 api.github.com / 镜像；Release tag 带 v 前缀；资产名以 `DSH-GreenPortable-v` 开头（`green_find_zip_asset` 用 `startswith()`，旧前缀 `DSH_Launcher_GreenPortable_Online_` 的存量版本仍可匹配） |
 | 更新后启动器没被替换 | 独立更新程序 `DSH_Update.exe --apply`：查 `runtime/update/backup/`、`update_job.json`、server.log |

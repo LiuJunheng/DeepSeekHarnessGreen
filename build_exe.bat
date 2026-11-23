@@ -20,6 +20,8 @@ set "PY_DIR=%~dp0runtime\python"
 set "PYTHON_EXE=%PY_DIR%\python\python.exe"
 set "PYINSTALLER_DIR=%~dp0runtime\pyinstaller"
 set "PIP_MIRROR=-i https://pypi.tuna.tsinghua.edu.cn/simple"
+rem Keep pip wheel cache inside the green directory instead of C:\Users\...\AppData\Local\pip
+set "PIP_CACHE_DIR=%~dp0runtime\pip-cache"
 set "PY_INSTALLER=runtime\tmp\python-%PY_VERSION%-amd64.exe"
 
 rem ---------- 1. Locate or repair portable Python ----------

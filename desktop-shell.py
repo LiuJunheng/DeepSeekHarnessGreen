@@ -54,6 +54,9 @@ WINDOW_MIN_WIDTH = 900
 WINDOW_MIN_HEIGHT = 600
 
 PIP_MIRROR = "https://mirrors.aliyun.com/pypi/simple/"
+# pip 提示: 未指定时 pip 会把 wheel 缓存到 %LOCALAPPDATA%\pip\Cache (C 盘);
+# 显式指定到 runtime/ 下, 保持绿色便携、不占系统盘。
+PIP_CACHE_DIR = os.path.join(BASE_DIR, "runtime", "pip-cache")
 PORT_POLL_SECONDS = 1.5
 
 # 服务未启动时展示的固定提示页 (data: URL), 避免加载真实地址出现"连接失败"。
@@ -334,6 +337,7 @@ def ensure_pywebview():
             sys.executable, "-m", "pip", "install",
             "pywebview", "pythonnet",
             "--index-url", PIP_MIRROR,
+            "--cache-dir", PIP_CACHE_DIR,   # 下载缓存留在 runtime/, 不写 C 盘默认缓存
             "--no-warn-script-location",
         ]
         try:

@@ -910,14 +910,14 @@
   },
   "cleanup": {
     "update_confirm_title": "Clear Update Cache",
-    "update_confirm_detail": "Will clear the update cache directory (runtime/update),\nincluding: cached new-version zip, extracted content, pre-overwrite file backups, update job files.\n\nThese are temporary files from the upgrade process; clearing them does not affect the installed version.\nIf the updater is still running, occupied files will be skipped without affecting updates. Continue?",
+    "update_confirm_detail": "Will clear these local caches (all safely rebuildable; anything needed is downloaded again automatically):\n- Update staging (runtime/update): cached new-version zip, extracted content, pre-overwrite file backups, update job files\n- npm download cache (runtime/npm-cache)\n- pnpm content-addressable store (runtime/pnpm-store)\n- pip download cache (runtime/pip-cache)\n\nInstalled versions, plugins, sessions and login state are not affected; occupied files will be skipped. Continue?",
     "backup_confirm_title": "Clear Version Backups",
     "backup_confirm_detail": "Will clear the version backup directory (runtime/backup),\nincluding: old-version dirs auto-backed up before dsh upgrades, and old scattered dsh-backup-* residues.\n\nNote: after clearing you cannot roll back to old versions! Continue?",
     "cancelled_update": "User cancelled clearing update cache",
     "cancelled_backup": "User cancelled clearing version backups",
     "update_done_title": "Clear Update Cache",
     "backup_done_title": "Clear Version Backups",
-    "update_done_detail": "Cleared update cache directory, deleted {count} items.",
+    "update_done_detail": "Cleared local caches (update staging/npm/pnpm/pip), deleted {count} items.",
     "backup_done_detail": "Cleared version backup directory, deleted {count} items."
   },
   "install": {

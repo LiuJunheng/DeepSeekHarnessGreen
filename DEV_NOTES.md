@@ -12,6 +12,8 @@
 
 * **绿色便携**：所有运行时数据（Node / dsh / 会话 / 缓存 / TEMP）落本目录（`DSH_HOME=runtime/dsh-home`；npm 缓存、pnpm store、TEMP 重定向 `runtime/` 下），整目录拷走、免写系统、不自装 Python/Node。**零第三方 Python 依赖（仅标准库）**。
 
+* **pip 缓存也留在绿色目录**：pip 默认把 wheel 缓存写到 `%LOCALAPPDATA%\pip\Cache`（C 盘）。所有 `pip install` 都显式带 `--cache-dir runtime/pip-cache`（`launcher.prepare_desktop_deps`、`desktop-shell.ensure_pywebview`），`build_exe.bat` 则设 `PIP_CACHE_DIR=%~dp0runtime\pip-cache`。注意 pip 解包用的临时目录仍是系统 `%TEMP%`，只保证**持久缓存**不落 C 盘；`proxy_tools` 等 wheel 是被缓存的正常产物，不是额外手动依赖。玩家不会主动清这些目录，所以启动器「清理更新缓存」按钮统一清理 `CLEANABLE_CACHE_DIRS` 四处：`runtime/update`（升级暂存）、`runtime/npm-cache`、`runtime/pnpm-store`（pnpm 内容寻址存储）、`runtime/pip-cache`；被占用的文件跳过。刻意不包含：`runtime/backup`（有独立按钮）、`runtime/webview2_data`（登录态与站点数据）、`runtime/npm-userconfig`（配置）、`runtime/pnpm-home`（pnpm 程序本体）、`runtime/tmp`（运行中进程正在使用的临时文件，强删可能打断 npm/pip/服务）。
+
 * **网络**：镜像自动检测（国内优先、失败回退官方）；更新检查优先 npm dist-tags，不畅再退 GitHub/Gitee。
 
 * **自更新**：两套**完全独立**通道——官方核心（`runtime/dsh/`，GUI「检查更新」）+ 绿色版外围（程序根目录，GUI「检查绿色版更新」）；核心升级默认自动备份（配置项 `auto_backup_on_dsh_upgrade`，GUI「常规设置」可关闭），失败给出手动地址。**注意**：该开关只影响 dsh 核心升级备份，不影响绿色版外围更新自身的 `runtime/update/backup` 机制；所有"会自动备份"的提示文案（升级确认底部、完成弹窗）必须随开关切换，避免误导。

@@ -69,6 +69,9 @@ DSH_HOME_DIR = os.path.join(RUNTIME_DIR, "dsh-home")   # dsh 数据目录(会话
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")    # 配置文件
 PID_FILE = os.path.join(RUNTIME_DIR, "server.pid")     # 服务进程号文件
 LOG_FILE = os.path.join(RUNTIME_DIR, "server.log")     # 服务运行日志
+# pip 下载缓存目录: 默认 pip 会写到 %LOCALAPPDATA%\pip\Cache (C 盘), 与"整目录便携"冲突;
+# 给所有 pip install 显式带 --cache-dir, 缓存留在绿色目录内, 拷走/删除都不影响系统盘。
+PIP_CACHE_DIR = os.path.join(RUNTIME_DIR, "pip-cache")  # pip 下载缓存目录
 
 
 def get_icon_path():
@@ -586,6 +589,19 @@ LAST_RUN_VERSION_FILE = os.path.join(RUNTIME_DIR, "last_run_version.txt")
 # 启动时自动把已装副本同步成最新, 避免"桌面端仍在跑旧插件"的隐性分叉。
 PLUGIN_SOURCE_FINGERPRINT_FILE = os.path.join(RUNTIME_DIR, "bundled_plugins_fingerprint.txt")
 BACKUP_DIR = os.path.join(RUNTIME_DIR, "backup")            # 统一备份目录 (dsh 旧版本备份等)
+
+# 「清理更新缓存」按钮统一清理的本地缓存目录 (标签只用于日志)。
+# 只收"可安全重建的下载缓存/升级暂存": 删了不影响已装版本、插件、会话与登录状态。
+# 刻意不收: runtime/backup (有独立按钮)、runtime/webview2_data (登录与站点数据)、
+# runtime/npm-userconfig (配置)、runtime/pnpm-home (pnpm 程序本体)、runtime/tmp
+# (运行中进程正在用的临时文件, 强删可能打断 npm/pip/服务)。
+CLEANABLE_CACHE_DIRS = [
+    (GREEN_UPDATE_DIR, "更新暂存"),
+    (NPM_CACHE_DIR, "npm 下载缓存"),
+    (PNPM_STORE_DIR, "pnpm 内容寻址存储"),
+    (PIP_CACHE_DIR, "pip 下载缓存"),
+]
+
 # 默认工作区子目录名: 仅在"程序根目录包含临时目录"(绿色便携默认形态)冲突时,
 # 才把它作为默认工作区使用; 不冲突时默认工作区直接用程序根目录本身,
 # 由 resolve_default_workspace() 自动判定, 不再写死完整路径。
@@ -2263,13 +2279,20 @@ class Launcher:
         return (problems_found, problems_fixed, problems_unfixed)
 
     def cleanup_update_files(self):
-        """清空绿色版更新目录 (runtime/update): 暂存 zip / 解压内容 / 覆盖前旧文件备份 / 更新任务文件。
-        更新程序运行中时被锁定的文件会跳过 (不报错)。返回删除的文件/目录项数"""
-        if not os.path.isdir(GREEN_UPDATE_DIR):
-            self.log("更新目录不存在, 无需清理: %s" % GREEN_UPDATE_DIR)
-            return 0
-        removed_count = self._clear_directory_contents(GREEN_UPDATE_DIR)
-        self.log("已清理更新缓存目录: %s (删除 %d 项)" % (GREEN_UPDATE_DIR, removed_count))
+        """清空「清理更新缓存」按钮覆盖的全部本地缓存 (见 CLEANABLE_CACHE_DIRS):
+        更新暂存 runtime/update、npm 下载缓存、pnpm 内容寻址存储、pip 下载缓存。
+        这些都是可安全重建的下载缓存/升级暂存, 删除不影响已装版本、插件、会话与登录状态;
+        需要时 npm/pnpm/pip 会自动重新下载。被占用的文件跳过 (不报错)。
+        返回删除的文件/目录项数"""
+        removed_count = 0
+        for cache_dir, cache_label in CLEANABLE_CACHE_DIRS:
+            if not os.path.isdir(cache_dir):
+                self.log("%s 目录不存在, 无需清理: %s" % (cache_label, cache_dir))
+                continue
+            removed_in_dir = self._clear_directory_contents(cache_dir)
+            removed_count += removed_in_dir
+            self.log("已清理 %s: %s (删除 %d 项)"
+                     % (cache_label, cache_dir, removed_in_dir))
         return removed_count
 
     def cleanup_backup_files(self):
@@ -4944,6 +4967,7 @@ class Launcher:
             python_exe, "-m", "pip", "install",
             "pywebview", "pythonnet",
             "--index-url", "https://mirrors.aliyun.com/pypi/simple/",
+            "--cache-dir", PIP_CACHE_DIR,   # 下载缓存留在 runtime/, 不写 C 盘默认缓存
             "--no-warn-script-location",
         ]
         try:
@@ -9237,7 +9261,7 @@ def run_gui():
         threading.Thread(target=worker, daemon=True).start()
 
     def on_cleanup_update():
-        """清空绿色版更新暂存目录 (runtime/update): 暂存 zip / 解压内容 / 覆盖前旧文件备份 / 任务文件
+        """清空「清理更新缓存」按钮覆盖的本地缓存: 更新暂存 + npm/pnpm/pip 下载缓存
         注: 文件删除可能涉及大目录递归, 用后台线程异步执行避免 UI 冻结"""
         if is_busy[0]:
             return
@@ -9256,7 +9280,7 @@ def run_gui():
                     i18n.t('cleanup.update_done_title'),
                     i18n.t('cleanup.update_done_detail', count=removed_count)))
                 root.after(0, lambda: append_log(
-                    "已清理更新缓存目录, 删除 %d 项" % removed_count))
+                    "已清理本地缓存 (更新暂存/npm/pnpm/pip), 删除 %d 项" % removed_count))
             except Exception as error:
                 root.after(0, lambda: messagebox.showerror(
                     i18n.t('cleanup.update_done_title'),

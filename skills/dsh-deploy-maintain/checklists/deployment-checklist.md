@@ -6,7 +6,7 @@
 - [ ] `find_npm_cli()` 能正确找到 npm-cli.js（Windows 在 `node_modules/npm/bin/`，Linux 在 `lib/node_modules/npm/bin/`）
 - [ ] dsh 安装用 `node.exe npm-cli.js install --prefix runtime/dsh @deepseek-ai/dsh`，并带 `--registry`（国内镜像时）
 - [ ] `DSH_HOME` 已设为 `runtime/dsh-home`（不设则破坏便携）
-- [ ] 所有环境变量已重定向到 `runtime/` 下（npm 缓存/pnpm store/TEMP 等）
+- [ ] 所有环境变量已重定向到 `runtime/` 下（npm 缓存/pnpm store/TEMP/pip 缓存等）
 - [ ] pnpm 已装进 `runtime/pnpm-home` 并加入 PATH
 - [ ] 镜像配置正确（auto 模式在国内需确认 npm install 走哪个源）
 
