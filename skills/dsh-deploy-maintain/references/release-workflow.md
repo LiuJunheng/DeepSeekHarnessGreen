@@ -161,6 +161,24 @@ python release_upload.py
 
 - **不要先 `--pack-only` 再 `--upload-only`**——`--pack-only` 会回写 `GREEN_VERSION_DATE` 刷新 launcher.py 的 mtime，导致紧接着 `--upload-only` 报"exe 构建时间早于 launcher.py"。脚本实际上不认 pack-only。
 - 正确做法：`build_exe.bat → python release_upload.py` **一口气**跑完，中间不插任何脚本。
+- **补发另一平台 Release 时同样会被 mtime 阻断**：上一次发版已经回写过 `GREEN_VERSION_DATE`，launcher.py 的 mtime 比 exe 新，即使 `git diff` 为空、内容与提交完全一致，重跑脚本也会报"exe 构建时间早于 launcher.py"。两种解法：① 把 launcher.py 的 mtime 调回 exe 构建之前（`(Get-Item launcher.py).LastWriteTime = Get-Date "yyyy-MM-dd HH:mm:ss"`），内容零改动；② 重跑 `build_exe.bat`（exe 二进制会变，需重新提交）。补发只发一个平台时优先 ①。
+
+### 系统代理会拦掉 GitHub API（补发场景最常见）
+
+Windows 配了 `127.0.0.1:7890` 一类系统代理、但代理进程没启动时：
+- `curl.exe https://api.github.com` 返回 `000`，`urllib` 默认 opener 也会走系统代理而失败；
+- `git ls-remote github` 报 `Failed to connect to 127.0.0.1 port 7890`（`github.com` 不可达），但 `api.github.com` 与 `uploads.github.com` 本身是通的。
+
+**发版/补发前设置 `NO_PROXY=*` 让 urllib 直连**（不改脚本代码）：
+
+```powershell
+$env:NO_PROXY="*"; $env:no_proxy="*"
+$env:GITHUB_TOKEN=$env:GH_TOKEN
+$env:PYTHONIOENCODING='utf-8'; $env:PYTHONUTF8='1'
+python release_upload.py
+```
+
+判读顺序：先 `curl.exe --noproxy "*" https://api.github.com` 确认 200；GitHub 的 git 通道不通**不影响**发 Release（Release 创建/资产上传只走 `api.github.com` 与 `uploads.github.com`）。若 tag 还没镜像到 GitHub，先确认 `GET /repos/<owner>/<repo>/git/ref/tags/v<VER>` 与 master 的 sha 都已同步，再创建 Release，避免 tag 指向旧提交。
 
 ---
 

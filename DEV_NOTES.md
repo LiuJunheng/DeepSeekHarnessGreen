@@ -12,9 +12,9 @@
 
 * **绿色便携**：所有运行时数据（Node / dsh / 会话 / 缓存 / TEMP）落本目录（`DSH_HOME=runtime/dsh-home`；npm 缓存、pnpm store、TEMP 重定向 `runtime/` 下），整目录拷走、免写系统、不自装 Python/Node。**零第三方 Python 依赖（仅标准库）**。
 
-* **pip 缓存也留在绿色目录**：pip 默认把 wheel 缓存写到 `%LOCALAPPDATA%\pip\Cache`（C 盘）。所有 `pip install` 都显式带 `--cache-dir runtime/pip-cache`（`launcher.prepare_desktop_deps`、`desktop-shell.ensure_pywebview`），`build_exe.bat` 则设 `PIP_CACHE_DIR=%~dp0runtime\pip-cache`。注意 pip 解包用的临时目录仍是系统 `%TEMP%`，只保证**持久缓存**不落 C 盘；`proxy_tools` 等 wheel 是被缓存的正常产物，不是额外手动依赖。玩家不会主动清这些目录，所以启动器「清理更新缓存」按钮统一清理 `CLEANABLE_CACHE_DIRS` 五处：`runtime/update`（升级暂存）、`runtime/npm-cache`、`runtime/pnpm-store`（当前正式 store）、`runtime/pnpm-home/store`（pnpm 11 只设 `PNPM_HOME` 时的旧落点，兼容存量，实测有数百 MB）、`runtime/pip-cache`；被占用的文件跳过。刻意不包含：`runtime/backup`（有独立按钮）、`runtime/webview2_data`（登录态与站点数据）、`runtime/npm-userconfig`（配置）、`runtime/pnpm-home` 本体（只清其 `store` 子目录）、`runtime/tmp`（运行中进程正在使用的临时文件，强删可能打断 npm/pip/服务）。
+* **pip 缓存也留在绿色目录**：pip 默认把 wheel 缓存写到 `%LOCALAPPDATA%\pip\Cache`（C 盘）。所有 `pip install` 都显式带 `--cache-dir runtime/pip-cache`（`launcher.prepare_desktop_deps`、`desktop-shell.ensure_pywebview`），`build_exe.bat` 则设 `PIP_CACHE_DIR=%~dp0runtime\pip-cache`。注意 pip 解包用的临时目录仍是系统 `%TEMP%`，只保证**持久缓存**不落 C 盘；`proxy_tools` 等 wheel 是被缓存的正常产物，不是额外手动依赖。玩家不会主动清这些目录，所以启动器「清理更新缓存」按钮统一清理 `CLEANABLE_CACHE_DIRS` 五处：`runtime/update`（升级暂存）、`runtime/npm-cache`、`runtime/pnpm-home/store`（pnpm 真实内容寻址存储）、`runtime/pnpm-store`（v1.0.51 误配置留下的空目录，兜底清理）、`runtime/pip-cache`；被占用的文件跳过。刻意不包含：`runtime/backup`（有独立按钮）、`runtime/webview2_data`（登录态与站点数据）、`runtime/npm-userconfig`（配置）、`runtime/pnpm-home` 本体（只清其 `store` 子目录）、`runtime/tmp`（运行中进程正在使用的临时文件，强删可能打断 npm/pip/服务）。
 
-* **npm / Node / pnpm 的 C 盘缓存边界（实测结论，改动前先读）**：npm 由 `npm_config_cache` + `npm_config_userconfig` + `npm_config_global=false` 全部重定向，新安装不写 `%LOCALAPPDATA%\npm-cache`、`~/.npm`、`~/.npmrc`；Node 本身没有持久缓存，本机 `%LOCALAPPDATA%\node\corepack`、`%LOCALAPPDATA%\node-gyp` 均不存在，`NODE_COMPILE_CACHE` 未启用。pnpm 只设 `PNPM_HOME` 时默认 store 落在 `runtime/pnpm-home/store`（仍在绿色目录内，不写 C 盘）。**避坑：`npm_config_store_dir` 环境变量、项目级与 userconfig 的 `.npmrc` `store-dir` 对 pnpm 11 全部无效，只有 `pnpm-workspace.yaml` 的 `storeDir`（或 CLI `--store-dir`）生效**；因此由 `ensure_profile_store_dir` 在每次启动/装插件前把 `storeDir` 写进各 profile 的 `pnpm-workspace.yaml`，绿色目录整体搬走后会自动按新路径校正。不要再用环境变量控制 pnpm store 位置。
+* **npm / Node / pnpm 的 C 盘缓存边界（实测结论，改动前先读）**：npm 由 `npm_config_cache` + `npm_config_userconfig` + `npm_config_global=false` 全部重定向，新安装不写 `%LOCALAPPDATA%\npm-cache`、`~/.npm`、`~/.npmrc`；Node 本身没有持久缓存，本机 `%LOCALAPPDATA%\node\corepack`、`%LOCALAPPDATA%\node-gyp` 均不存在，`NODE_COMPILE_CACHE` 未启用。pnpm 只设 `PNPM_HOME` 时 store 落在 `runtime/pnpm-home/store`（绿色目录内，不写 C 盘）。**铁律：不要给 pnpm 另指 store 位置**——`npm_config_store_dir` 环境变量与 `.npmrc` 的 `store-dir` 对 pnpm 11 本来就被忽略；而写进 `pnpm-workspace.yaml` 的 `storeDir` 虽然生效，却会让 pnpm 认为"当前 store 与 node_modules 的 `.modules.yaml` 记录不一致"，直接抛 `ERR_PNPM_UNEXPECTED_STORE`，**拒绝一切安装/卸载**（v1.0.51 踩过：插件装不上、卸不掉，只能 `pnpm install` 重建依赖树才能恢复）。启动器由 `remove_profile_store_dir_override` 幂等删除这个旧覆盖，保持 store 与 node_modules 天然一致。
 
 * **网络**：镜像自动检测（国内优先、失败回退官方）；更新检查优先 npm dist-tags，不畅再退 GitHub/Gitee。
 
@@ -30,7 +30,7 @@
 
 ## 二、当前状态（版本 / 发布 / 仓库）
 
-* **版本唯一来源 = launcher.py** **`GREEN_VERSION`**；`GREEN_VERSION_DATE` 由 `release_upload.py` 打包当天自动回写（禁止预写未来日期）。zip 名与发布均以此为准。当前版本 **v1.0.51**（缓存统一治理：pnpm store 固定到 `runtime/pnpm-store`、清理按钮覆盖新旧 store；含会话回退配色与命令面板压缩产物补丁修复）。
+* **版本唯一来源 = launcher.py** **`GREEN_VERSION`**；`GREEN_VERSION_DATE` 由 `release_upload.py` 打包当天自动回写（禁止预写未来日期）。zip 名与发布均以此为准。当前版本 **v1.0.51**（缓存治理：pnpm store 保持 `runtime/pnpm-home/store`、清理按钮覆盖 npm/pnpm/pip；会话回退配色与命令面板压缩产物补丁修复）。
 
 * **形态**：tkinter 启动器 + 便携 Node/Python + 绿色 zip 分发 + 内置桌面壳 + 双通道自更新。
 

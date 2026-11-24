@@ -910,7 +910,7 @@
   },
   "cleanup": {
     "update_confirm_title": "清理更新缓存",
-    "update_confirm_detail": "将清空以下本地缓存 (都可安全重建, 需要时会自动重新下载):\n· 更新暂存 (runtime/update): 暂存的新版 zip、解压内容、覆盖前旧文件备份、更新任务文件\n· npm 下载缓存 (runtime/npm-cache)\n· pnpm 内容寻址存储 (runtime/pnpm-store)\n· pnpm 旧版存储缓存 (runtime/pnpm-home/store)\n· pip 下载缓存 (runtime/pip-cache)\n\n已安装的版本、插件、会话与登录状态都不受影响; 被占用的文件会跳过。是否继续?",
+    "update_confirm_detail": "将清空以下本地缓存 (都可安全重建, 需要时会自动重新下载):\n· 更新暂存 (runtime/update): 暂存的新版 zip、解压内容、覆盖前旧文件备份、更新任务文件\n· npm 下载缓存 (runtime/npm-cache)\n· pnpm 内容寻址存储 (runtime/pnpm-home/store)\n· pnpm 旧版误配置存储 (runtime/pnpm-store)\n· pip 下载缓存 (runtime/pip-cache)\n\n已安装的版本、插件、会话与登录状态都不受影响; 被占用的文件会跳过。是否继续?",
     "backup_confirm_title": "清理版本备份",
     "backup_confirm_detail": "将清空版本备份目录 (runtime/backup),\n包括: 升级 dsh 前自动备份的旧版本目录, 以及旧版散落的 dsh-backup-* 残留。\n\n注意: 清理后将无法回退到旧版本! 是否继续?",
     "cancelled_update": "用户取消清理更新缓存",

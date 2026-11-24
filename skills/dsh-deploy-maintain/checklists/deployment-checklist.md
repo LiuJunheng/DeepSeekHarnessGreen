@@ -71,7 +71,7 @@
 
 - [ ] 服务启动后 HTTP 200，页面标题 "DeepSeek Harness"
 - [ ] 用户主目录零残留（`~/.npm`、`~/.pnpm-store`、`~/.local/share/pnpm` 等均未产生）
-- [ ] pnpm store 落在绿色目录：profile 的 `pnpm-workspace.yaml` 含 `storeDir: '<runtime>/pnpm-store'`，在 profile 目录执行 `pnpm store path` 返回 `runtime\pnpm-store\v11`（环境变量 `npm_config_store_dir` 对 pnpm 11 无效）
+- [ ] pnpm store 落在绿色目录且与 node_modules 一致：profile 的 `pnpm-workspace.yaml` **不含** `storeDir`；在 profile 目录执行 `pnpm store path` 返回 `runtime\pnpm-home\store\v11`，`pnpm list --depth 0` 不报 `ERR_PNPM_UNEXPECTED_STORE`
 - [ ] 插件管理 - 已安装列表正常显示
 - [ ] 插件管理 - 搜索/安装/移除功能正常
 - [ ] 数据维护 - 清理归档/删除会话功能正常

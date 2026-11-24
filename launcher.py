@@ -376,7 +376,7 @@ GITHUB_TOPIC_URL = "https://github.com/topics/dsh-plugin"
 # ---------------------------------------------------------------------------
 GITHUB_REPO = "LiuJunheng/DeepSeekHarnessGreen"    # 本绿色版仓库 (owner/repo)
 GREEN_VERSION = "1.0.51"                           # 绿色版版本号 (与 Release tag 一致, 不含 v 前缀)
-GREEN_VERSION_DATE = "2026年11月23日"               # 绿色版版本日期 (release_upload.py 会按构建当天回写)
+GREEN_VERSION_DATE = "2026年11月24日"               # 绿色版版本日期 (release_upload.py 会按构建当天回写)
 GREEN_RELEASE_API = ("https://api.github.com/repos/%s/releases/latest"
                      % GITHUB_REPO)                # GitHub 官方 Releases API
 GREEN_RELEASE_MIRROR = ("https://mirror.nju.edu.cn/github-release/%s/latest"
@@ -579,11 +579,14 @@ def _classify_core_compat(manifest, host_versions):
 NPM_CACHE_DIR = os.path.join(RUNTIME_DIR, "npm-cache")      # npm 下载缓存
 NPM_USER_CONFIG = os.path.join(RUNTIME_DIR, "npm-userconfig")  # npm 用户配置文件(本地空文件)
 PNPM_HOME_DIR = os.path.join(RUNTIME_DIR, "pnpm-home")      # pnpm 全局 home (插件管理)
-PNPM_STORE_DIR = os.path.join(RUNTIME_DIR, "pnpm-store")    # pnpm 内容寻址存储
-# pnpm 11 只设置 PNPM_HOME 时的默认 store 落点: <PNPM_HOME>\store。
-# 旧版启动器设置的 npm_config_store_dir 对 pnpm 11 无效, 实际缓存都落在这里,
-# 因此清理按钮需要同时覆盖它 (真实有几百 MB, 见 DEV_NOTES 缓存章节)。
-PNPM_STORE_LEGACY_DIR = os.path.join(PNPM_HOME_DIR, "store")
+# pnpm 11 的内容寻址存储实际落在 <PNPM_HOME>\store (设置 PNPM_HOME 后不再写用户主目录)。
+# 【重要】不要用 pnpm-workspace.yaml 的 storeDir / 环境变量另指位置:
+# 已装 node_modules 的 .modules.yaml 记录了安装时的 store 绝对路径, 一旦指向别处,
+# pnpm 会以 ERR_PNPM_UNEXPECTED_STORE 拒绝一切安装/卸载, 只能 pnpm install 重建才能恢复
+# (v1.0.51 踩过此坑: 插件装不上、卸不掉)。
+PNPM_STORE_DIR = os.path.join(PNPM_HOME_DIR, "store")       # pnpm 内容寻址存储 (真实落点)
+# v1.0.51 曾错误地把 storeDir 覆盖到该位置; 保留常量用于识别并移除该覆盖配置。
+PNPM_STORE_OVERRIDE_DIR = os.path.join(RUNTIME_DIR, "pnpm-store")
 TMP_DIR = os.path.join(RUNTIME_DIR, "tmp")
 GREEN_UPDATE_DIR = os.path.join(RUNTIME_DIR, "update")      # 绿色版更新暂存目录 (zip/解压/job/备份)
 # 上次启动时记录的本体版本号 (检测"用户更新了绿色版本体", 触发内置插件自动同步)
@@ -603,7 +606,7 @@ CLEANABLE_CACHE_DIRS = [
     (GREEN_UPDATE_DIR, "更新暂存"),
     (NPM_CACHE_DIR, "npm 下载缓存"),
     (PNPM_STORE_DIR, "pnpm 内容寻址存储"),
-    (PNPM_STORE_LEGACY_DIR, "pnpm 旧版存储缓存"),
+    (PNPM_STORE_OVERRIDE_DIR, "pnpm 旧版误配置存储"),
     (PIP_CACHE_DIR, "pip 下载缓存"),
 ]
 
@@ -3297,9 +3300,10 @@ class Launcher:
         env["npm_config_update_notifier"] = "false"
         env["npm_config_fund"] = "false"
         # pnpm: 全局 home → 本地 (dsh 的插件管理基于 pnpm)。
-        # 内容寻址存储位置不能靠环境变量: pnpm 11 实测只认 pnpm-workspace.yaml 里的
-        # storeDir (npm_config_store_dir 与 .npmrc 的 store-dir 均被忽略)。
-        # 由 ensure_profile_store_dir 在每次启动/装插件前写入 profile 的 pnpm-workspace.yaml。
+        # 内容寻址存储不要另指位置: 只设 PNPM_HOME 时 pnpm 11 会自动落到
+        # <PNPM_HOME>\store, 与已装 node_modules 记录的 store 天然一致。
+        # 另设 storeDir 会触发 ERR_PNPM_UNEXPECTED_STORE (v1.0.51 踩坑, 见
+        # remove_profile_store_dir_override)。
         env["PNPM_HOME"] = PNPM_HOME_DIR
         # 临时目录 → 本地 (绿色便携, 默认 runtime/tmp; config.json 的 tmp_dir 可覆盖)
         tmp_dir = self.config.get("tmp_dir") or TMP_DIR
@@ -3691,39 +3695,41 @@ class Launcher:
             file_handle.write(text)
         return True
 
-    def ensure_profile_store_dir(self, profile):
-        """把 pnpm 内容寻址存储固定到 runtime/pnpm-store, 返回是否发生修改。
+    def remove_profile_store_dir_override(self, profile):
+        """移除 v1.0.51 写入 pnpm-workspace.yaml 的 storeDir 覆盖行, 返回是否修改。
 
-        背景: pnpm 11 只从 pnpm-workspace.yaml 的 storeDir 读取该设置。实测
-        npm_config_store_dir 环境变量、项目级与 userconfig 的 .npmrc store-dir 全部被忽略;
-        只设置 PNPM_HOME 时 store 会落到 runtime/pnpm-home/store。写进 yaml 才能同时
-        覆盖启动器直接调用的 pnpm 和 dsh 运行中自己转发的 pnpm (两者 cwd 都在 profile)。
-        绿色目录可能被整体搬走, 所以每次启动/装插件前都按当前绝对路径校对一次。"""
+        v1.0.51 把 storeDir 指到 runtime/pnpm-store, 但 profile 里既有 node_modules
+        的 .modules.yaml 记录的是安装时的真实 store (runtime/pnpm-home/store/v11)。
+        pnpm 11 发现当前 store 与记录不一致会报 ERR_PNPM_UNEXPECTED_STORE, 直接拒绝
+        所有安装/卸载 (用户表现为插件装不上、卸不掉)。
+        这里只删"等于旧版启动器写入值"的覆盖行, 用户自定义的其它 storeDir 保留;
+        删掉后 pnpm 回到 PNPM_HOME 决定的默认 store, 与 node_modules 天然一致。"""
         yaml_path = self._pnpm_workspace_yaml(profile)
         if not os.path.isfile(yaml_path):
             return False
-        # YAML 值统一用正斜杠: 反斜杠在双引号里是转义符; 冒号不加引号会被当成 key 分隔
-        store_dir_value = PNPM_STORE_DIR.replace("\\", "/")
-        target_line = "storeDir: '%s'" % store_dir_value
         with open(yaml_path, "r", encoding="utf-8") as file_handle:
             text = file_handle.read()
-        store_match = re.search(r"(?m)^storeDir[ \t]*:[ \t]*.*$", text)
-        if store_match:
-            current_value = store_match.group(0).split(":", 1)[1].strip().strip("'\"")
-            if current_value.replace("\\", "/").lower() == store_dir_value.lower():
-                return False   # 已是目标路径 (大小写/斜杠差异不重写)
-            text = text[:store_match.start()] + target_line + text[store_match.end():]
-        else:
-            # 放在文件开头: pnpm 10+ 允许 settings 与 packages 等字段并列, 位置不影响解析
-            text = target_line + "\n" + text
+        override_value = PNPM_STORE_OVERRIDE_DIR.replace("\\", "/").lower()
+        removed = False
+        kept_lines = []
+        for each_line in text.splitlines(True):
+            line_match = re.match(r"^storeDir[ \t]*:[ \t]*(\S.*?)[ \t]*\r?\n?$", each_line)
+            if line_match:
+                current_value = line_match.group(1).strip().strip("'\"")
+                if current_value.replace("\\", "/").rstrip("/").lower() == override_value.rstrip("/"):
+                    removed = True
+                    continue
+            kept_lines.append(each_line)
+        if not removed:
+            return False
         with open(yaml_path, "w", encoding="utf-8") as file_handle:
-            file_handle.write(text)
-        self.log("已把 pnpm 存储目录固定到 %s (profile %s)" % (PNPM_STORE_DIR, profile))
+            file_handle.write("".join(kept_lines))
+        self.log("已移除 pnpm storeDir 覆盖, 恢复默认存储位置 (profile %s)" % profile)
         return True
 
-    def ensure_all_profiles_store_dir(self):
-        """对所有已存在的 profile 校正 pnpm storeDir (幂等, 服务启动前调用),
-        避免 dsh 运行中装插件时 store 落到盘符根目录或用户主目录。"""
+    def remove_all_profiles_store_dir_override(self):
+        """对所有已存在的 profile 移除旧版 storeDir 覆盖 (幂等, 服务启动前调用),
+        修复 v1.0.51 升级用户"插件装不上/卸不掉"的问题。"""
         profiles_dir = os.path.join(DSH_HOME_DIR, "profiles")
         if not os.path.isdir(profiles_dir):
             return
@@ -3731,18 +3737,19 @@ class Launcher:
             if not os.path.isdir(os.path.join(profiles_dir, profile)):
                 continue
             try:
-                self.ensure_profile_store_dir(profile)
+                self.remove_profile_store_dir_override(profile)
             except Exception as error:
-                self.log("[警告] 设置 profile %s 的 pnpm storeDir 失败: %s" % (profile, error))
+                self.log("[警告] 移除 profile %s 的 pnpm storeDir 覆盖失败: %s" % (profile, error))
 
     def ensure_pnpm_native_allowbuilds(self, profile):
         """首次装插件/装环境时幂等补齐已预构建原生依赖的 false 声明, 避免
         ERR_PNPM_IGNORED_BUILDS 让安装以非 0 退出 (避坑 44)。
-        同一份 pnpm-workspace.yaml 里还负责校正 pnpm storeDir (见 ensure_profile_store_dir)。"""
+        同一份 pnpm-workspace.yaml 里还负责移除旧版 storeDir 覆盖 (见
+        remove_profile_store_dir_override), 避免 ERR_PNPM_UNEXPECTED_STORE。"""
         try:
-            self.ensure_profile_store_dir(profile)
+            self.remove_profile_store_dir_override(profile)
         except Exception as error:
-            self.log("[警告] 设置 pnpm storeDir 失败: %s" % error)
+            self.log("[警告] 移除 pnpm storeDir 覆盖失败: %s" % error)
         entry_mapping = {}
         for package_name in ("cloudflared", "cpu-features", "koffi",
                              "node-pty", "protobufjs", "ssh2"):
@@ -4962,8 +4969,9 @@ class Launcher:
         # 元数据一致性、peer 依赖补齐、核心版本同步。幂等, 已好的项直接跳过; 发现问题
         # 时自动 pnpm install 修复, 让「安装环境」一次到位而不会留下隐藏的依赖隐患。
         if self.dsh_installed():
-            # 先校正 pnpm store 位置: 后续依赖修复/插件安装的下载缓存才留在 runtime 内
-            self.ensure_all_profiles_store_dir()
+            # 先移除旧版 pnpm storeDir 覆盖: 否则与已装 node_modules 的 store 不一致,
+            # 依赖修复/插件安装都会以 ERR_PNPM_UNEXPECTED_STORE 失败
+            self.remove_all_profiles_store_dir_override()
             found, fixed, unfixed = self.verify_environment_integrity()
             if unfixed > 0:
                 self.log("[警告] 发现 %d 个依赖问题未能自动修复, 服务可能无法正常加载 "
